@@ -1,12 +1,10 @@
-// Bot WhatsApp + IA via l'API officielle WhatsApp Cloud (Meta)
-// Pas de Chromium local — Meta héberge la connexion WhatsApp.
+// Bot WhatsApp + IA via l'API officielle WhatsApp Cloud (Meta) + Groq (IA)
 // Lancer avec : node server.js
 
 require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 app.use(express.json());
@@ -15,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 const BUSINESS_INFO_PATH = path.join(__dirname, 'business-info.txt');
 const HISTORY_PATH = path.join(__dirname, 'conversation-log.json');
@@ -38,39 +36,52 @@ function logConversation(entry) {
   fs.writeFileSync(HISTORY_PATH, JSON.stringify(log, null, 2));
 }
 
-// --- IA (Gemini) ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
 const conversationHistory = {};
 
+// --- IA via Groq (compatible format OpenAI) ---
 async function generateReply(userId, userText) {
   const businessInfo = loadBusinessInfo();
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
-  const historyText = conversationHistory[userId]
-    .slice(-6)
-    .map(h => `${h.role}: ${h.text}`)
-    .join('\n');
+  const historyMessages = conversationHistory[userId].slice(-6);
 
-  const prompt = `Tu es l'assistant WhatsApp officiel de cette entreprise. Réponds toujours en français, de façon claire, amicale et concise (2-4 phrases max sauf si le client demande plus de détails).
+  const systemPrompt = `Tu es l'assistant WhatsApp officiel de cette entreprise. Réponds toujours en français, de façon claire, amicale et concise (2-4 phrases max sauf si le client demande plus de détails).
 
 INFORMATIONS SUR L'ENTREPRISE :
 ${businessInfo}
 
-HISTORIQUE RÉCENT DE LA CONVERSATION :
-${historyText}
-
-NOUVEAU MESSAGE DU CLIENT :
-${userText}
-
 Réponds directement, sans préambule ni "Voici ma réponse :".`;
 
-  const result = await model.generateContent(prompt);
-  const reply = result.response.text().trim();
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages,
+    { role: 'user', content: userText }
+  ];
 
-  conversationHistory[userId].push({ role: 'Client', text: userText });
-  conversationHistory[userId].push({ role: 'Assistant', text: reply });
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages: messages,
+      temperature: 0.7
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('Erreur Groq :', data);
+    throw new Error(data.error?.message || 'Erreur IA');
+  }
+
+  const reply = data.choices[0].message.content.trim();
+
+  conversationHistory[userId].push({ role: 'user', content: userText });
+  conversationHistory[userId].push({ role: 'assistant', content: reply });
 
   return reply;
 }
@@ -117,7 +128,7 @@ app.get('/webhook', (req, res) => {
 
 // --- Réception des messages WhatsApp ---
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200); // Répondre immédiatement à Meta (obligatoire, sinon Meta réessaie)
+  res.sendStatus(200);
 
   try {
     const entry = req.body.entry?.[0];
@@ -125,10 +136,10 @@ app.post('/webhook', async (req, res) => {
     const value = change?.value;
     const message = value?.messages?.[0];
 
-    if (!message) return; // Pas un message entrant (peut être un statut de livraison, etc.)
-    if (message.type !== 'text') return; // On ne gère que le texte pour l'instant
+    if (!message) return;
+    if (message.type !== 'text') return;
 
-    const from = message.from; // numéro du client
+    const from = message.from;
     const userText = message.text.body;
 
     console.log(`📩 Message reçu de ${from} : ${userText}`);
@@ -154,6 +165,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Serveur démarré sur http://localhost:${PORT}`);
-  console.log(`Webhook à configurer dans Meta : [ton-url-publique]/webhook`);
+  console.log(`Serveur démarré sur le port ${PORT}`);
 });
