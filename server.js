@@ -1,7 +1,16 @@
 // ============================================================
 // MONDECO - BOT WHATSAPP + IA GROQ + CLOUDFLARE
-// Fichier : server.js
-// WhatsApp Cloud API officielle Meta
+// server.js
+//
+// Ajouts V5 :
+// - Paramètres persistants /data/settings.json
+// - Activation / désactivation IA
+// - Audience : tous / nouveaux / pubs / équipe
+// - Horaires personnalisés
+// - Message d'absence
+// - Relance automatique persistante
+// - Gestion images client configurable
+// - Pause IA après intervention humaine (si webhook echo disponible)
 // ============================================================
 
 require('dotenv').config();
@@ -13,6 +22,7 @@ const path = require('path');
 const {
   adminRouter,
   getBusinessContext,
+  getBotSettings,
   setChatHandler,
   setImageChatHandler,
   setCustomizationHandler
@@ -26,17 +36,10 @@ app.use(
   })
 );
 
-// ============================================================
-// ADMIN
-// ============================================================
-
-app.use(
-  '/admin',
-  adminRouter
-);
+app.use('/admin', adminRouter);
 
 // ============================================================
-// VARIABLES D'ENVIRONNEMENT
+// VARIABLES
 // ============================================================
 
 const PORT =
@@ -79,10 +82,6 @@ const CLOUDFLARE_API_TOKEN =
     ''
   ).trim();
 
-// ============================================================
-// STOCKAGE PERSISTANT RAILWAY
-// ============================================================
-
 const DATA_DIR =
   (
     process.env.DATA_DIR ||
@@ -90,28 +89,15 @@ const DATA_DIR =
     __dirname
   ).trim();
 
-fs.mkdirSync(
-  DATA_DIR,
-  {
-    recursive: true
-  }
-);
+fs.mkdirSync(DATA_DIR, {
+  recursive: true
+});
 
-// ============================================================
-// META API
-// ============================================================
-
-// Ton tableau Meta utilise actuellement v26.0.
-// Tu peux remplacer dans Railway avec META_API_VERSION.
 const META_API_VERSION =
   (
     process.env.META_API_VERSION ||
     'v26.0'
   ).trim();
-
-// ============================================================
-// MODÈLES IA
-// ============================================================
 
 const GROQ_MODEL =
   (
@@ -144,102 +130,127 @@ const CLOUDFLARE_IMAGE_HEIGHT =
   );
 
 // ============================================================
-// DIAGNOSTIC AU DÉMARRAGE
+// LOGS DÉMARRAGE
 // ============================================================
 
 console.log('');
 console.log(
   '=============================================='
 );
-
-console.log(
-  '🚀 MONDECO WHATSAPP BOT'
-);
-
+console.log('🚀 MONDECO WHATSAPP BOT');
 console.log(
   '=============================================='
 );
-
-console.log(
-  'Node :',
-  process.version
-);
-
+console.log('Node :', process.version);
 console.log(
   'VERIFY_TOKEN :',
-  VERIFY_TOKEN
-    ? '✅ OK'
-    : '❌ MANQUANT'
+  VERIFY_TOKEN ? '✅ OK' : '❌ MANQUANT'
 );
-
 console.log(
   'WHATSAPP_TOKEN :',
-  WHATSAPP_TOKEN
-    ? '✅ OK'
-    : '❌ MANQUANT'
+  WHATSAPP_TOKEN ? '✅ OK' : '❌ MANQUANT'
 );
-
 console.log(
   'PHONE_NUMBER_ID :',
-  PHONE_NUMBER_ID
-    ? '✅ OK'
-    : '❌ MANQUANT'
+  PHONE_NUMBER_ID ? '✅ OK' : '❌ MANQUANT'
 );
-
 console.log(
   'GROQ_API_KEY :',
-  GROQ_API_KEY
-    ? '✅ OK'
-    : '❌ MANQUANT'
+  GROQ_API_KEY ? '✅ OK' : '❌ MANQUANT'
 );
-
 console.log(
   'CLOUDFLARE_ACCOUNT_ID :',
   CLOUDFLARE_ACCOUNT_ID
     ? '✅ OK'
     : '⚠️ MANQUANT'
 );
-
 console.log(
   'CLOUDFLARE_API_TOKEN :',
   CLOUDFLARE_API_TOKEN
     ? '✅ OK'
     : '⚠️ MANQUANT'
 );
-
-console.log(
-  'DATA_DIR :',
-  DATA_DIR
-);
-
+console.log('DATA_DIR :', DATA_DIR);
 console.log(
   'META_API_VERSION :',
   META_API_VERSION
 );
-
 console.log(
   'GROQ_MODEL :',
   GROQ_MODEL
 );
-
 console.log(
   'GROQ_VISION_MODEL :',
   GROQ_VISION_MODEL
 );
-
 console.log(
   'CLOUDFLARE_IMAGE_MODEL :',
   CLOUDFLARE_IMAGE_MODEL
 );
-
 console.log(
   '=============================================='
 );
-
 console.log('');
 
 // ============================================================
-// HISTORIQUE CONVERSATIONS
+// HELPERS
+// ============================================================
+
+function safeString(value) {
+  return String(value ?? '').trim();
+}
+
+function normalizePhone(value) {
+  return safeString(value).replace(/\D/g, '');
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tmp = `${filePath}.tmp`;
+
+  fs.mkdirSync(
+    path.dirname(filePath),
+    { recursive: true }
+  );
+
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify(data, null, 2),
+    'utf8'
+  );
+
+  fs.renameSync(tmp, filePath);
+}
+
+function readJsonObject(filePath, fallback = {}) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, 'utf8') ||
+      '{}'
+    );
+
+    return (
+      parsed &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
+    )
+      ? parsed
+      : fallback;
+  } catch (error) {
+    console.error(
+      `❌ Lecture ${path.basename(filePath)} :`,
+      error.message
+    );
+
+    return fallback;
+  }
+}
+
+// ============================================================
+// LOG CONVERSATIONS
 // ============================================================
 
 const HISTORY_PATH =
@@ -248,88 +259,250 @@ const HISTORY_PATH =
     'conversation-log.json'
   );
 
-function logConversation(
-  entry
-) {
-
+function logConversation(entry) {
   try {
-
     let logs = [];
 
-    if (
-      fs.existsSync(
-        HISTORY_PATH
-      )
-    ) {
-
+    if (fs.existsSync(HISTORY_PATH)) {
       try {
+        const parsed = JSON.parse(
+          fs.readFileSync(HISTORY_PATH, 'utf8') ||
+          '[]'
+        );
 
-        const content =
-          fs.readFileSync(
-            HISTORY_PATH,
-            'utf8'
-          );
-
-        if (
-          content.trim()
-        ) {
-
-          const parsed =
-            JSON.parse(
-              content
-            );
-
-          if (
-            Array.isArray(
-              parsed
-            )
-          ) {
-
-            logs =
-              parsed;
-          }
+        if (Array.isArray(parsed)) {
+          logs = parsed;
         }
-
       } catch {
-
         logs = [];
       }
     }
 
-    logs.push(
-      entry
-    );
+    logs.push(entry);
 
-    if (
-      logs.length >
-      500
-    ) {
-
-      logs =
-        logs.slice(
-          -500
-        );
+    if (logs.length > 1000) {
+      logs = logs.slice(-1000);
     }
 
-    fs.writeFileSync(
+    writeJsonAtomic(
       HISTORY_PATH,
-      JSON.stringify(
-        logs,
-        null,
-        2
-      ),
-      'utf8'
+      logs
     );
-
-  } catch (
-    error
-  ) {
-
+  } catch (error) {
     console.error(
       '⚠️ Impossible d’enregistrer conversation-log.json :',
       error.message
     );
   }
+}
+
+// ============================================================
+// ÉTAT PERSISTANT DES CLIENTS
+// ============================================================
+
+const CONVERSATION_STATE_PATH =
+  path.join(
+    DATA_DIR,
+    'conversation-state.json'
+  );
+
+function loadConversationStates() {
+  return readJsonObject(
+    CONVERSATION_STATE_PATH,
+    {}
+  );
+}
+
+function saveConversationStates(states) {
+  writeJsonAtomic(
+    CONVERSATION_STATE_PATH,
+    states
+  );
+}
+
+function getConversationState(phone) {
+  const states =
+    loadConversationStates();
+
+  return (
+    states[phone] &&
+    typeof states[phone] === 'object'
+      ? states[phone]
+      : null
+  );
+}
+
+function updateConversationState(
+  phone,
+  updater
+) {
+  const states =
+    loadConversationStates();
+
+  const current =
+    states[phone] &&
+    typeof states[phone] === 'object'
+      ? states[phone]
+      : {};
+
+  const updated =
+    updater({
+      ...current
+    }) || current;
+
+  states[phone] = updated;
+
+  saveConversationStates(states);
+
+  return updated;
+}
+
+function markCustomerMessage(
+  phone,
+  message,
+  isAdReferral
+) {
+  const now =
+    new Date().toISOString();
+
+  return updateConversationState(
+    phone,
+    current => ({
+      ...current,
+
+      firstSeenAt:
+        current.firstSeenAt ||
+        now,
+
+      lastCustomerAt:
+        now,
+
+      lastCustomerText:
+        safeString(
+          message?.text?.body ||
+          message?.image?.caption ||
+          ''
+        ),
+
+      lastInboundType:
+        safeString(
+          message?.type
+        ),
+
+      lastMessageWasAd:
+        Boolean(isAdReferral),
+
+      awaitingResponse:
+        false,
+
+      followUpsSent:
+        0
+    })
+  );
+}
+
+function markBotMessage(
+  phone,
+  type = 'reply'
+) {
+  const now =
+    new Date().toISOString();
+
+  const shouldAwaitResponse =
+    type !== 'absence';
+
+  return updateConversationState(
+    phone,
+    current => ({
+      ...current,
+
+      lastBotAt:
+        now,
+
+      lastBotType:
+        type,
+
+      awaitingResponse:
+        shouldAwaitResponse,
+
+      followUpsSent:
+        type === 'followup'
+          ? (
+            Number(
+              current.followUpsSent ||
+              0
+            ) + 1
+          )
+          : 0
+    })
+  );
+}
+
+function markHumanTakeover(phone, settings) {
+  const minutes =
+    Number(
+      settings.humanPauseMinutes ||
+      120
+    );
+
+  const pausedUntil =
+    Date.now() +
+    minutes * 60 * 1000;
+
+  updateConversationState(
+    phone,
+    current => ({
+      ...current,
+
+      humanPaused:
+        true,
+
+      pausedUntil:
+        new Date(
+          pausedUntil
+        ).toISOString(),
+
+      awaitingResponse:
+        false
+    })
+  );
+
+  console.log(
+    `🤝 IA suspendue pour ${phone} pendant ${minutes} min`
+  );
+}
+
+function isHumanPaused(phone) {
+  const state =
+    getConversationState(phone);
+
+  if (!state?.humanPaused) {
+    return false;
+  }
+
+  const until =
+    Date.parse(
+      state.pausedUntil ||
+      ''
+    );
+
+  if (
+    Number.isFinite(until) &&
+    until > Date.now()
+  ) {
+    return true;
+  }
+
+  updateConversationState(
+    phone,
+    current => ({
+      ...current,
+      humanPaused: false,
+      pausedUntil: null
+    })
+  );
+
+  return false;
 }
 
 // ============================================================
@@ -342,28 +515,15 @@ const conversationHistory =
 const MAX_HISTORY_MESSAGES =
   12;
 
-function getUserHistory(
-  userId
-) {
-
-  if (
-    !conversationHistory
-      .has(
-        userId
-      )
-  ) {
-
-    conversationHistory
-      .set(
-        userId,
-        []
-      );
+function getUserHistory(userId) {
+  if (!conversationHistory.has(userId)) {
+    conversationHistory.set(
+      userId,
+      []
+    );
   }
 
-  return conversationHistory
-    .get(
-      userId
-    );
+  return conversationHistory.get(userId);
 }
 
 function addHistoryMessage(
@@ -371,11 +531,8 @@ function addHistoryMessage(
   role,
   content
 ) {
-
   const history =
-    getUserHistory(
-      userId
-    );
+    getUserHistory(userId);
 
   history.push({
     role,
@@ -386,107 +543,277 @@ function addHistoryMessage(
     history.length >
     MAX_HISTORY_MESSAGES
   ) {
-
-    conversationHistory
-      .set(
-        userId,
-        history.slice(
-          -MAX_HISTORY_MESSAGES
-        )
-      );
+    conversationHistory.set(
+      userId,
+      history.slice(
+        -MAX_HISTORY_MESSAGES
+      )
+    );
   }
 }
 
 // ============================================================
-// ANTI-DOUBLON WEBHOOK
+// ANTI-DOUBLON
 // ============================================================
 
 const processedMessageIds =
   new Map();
 
 const MESSAGE_ID_TTL =
-  30 *
-  60 *
-  1000;
+  30 * 60 * 1000;
 
 function cleanupProcessedMessageIds() {
-
-  const now =
-    Date.now();
+  const now = Date.now();
 
   for (
-    const [
-      id,
-      timestamp
-    ]
+    const [id, timestamp]
     of processedMessageIds.entries()
   ) {
-
     if (
-      now -
-      timestamp >
+      now - timestamp >
       MESSAGE_ID_TTL
     ) {
-
-      processedMessageIds
-        .delete(
-          id
-        );
+      processedMessageIds.delete(id);
     }
   }
 }
 
-function isDuplicateMessage(
-  messageId
-) {
-
-  if (
-    !messageId
-  ) {
-
-    return false;
-  }
+function isDuplicateMessage(messageId) {
+  if (!messageId) return false;
 
   cleanupProcessedMessageIds();
 
   if (
-    processedMessageIds
-      .has(
-        messageId
-      )
+    processedMessageIds.has(messageId)
   ) {
-
     return true;
   }
 
-  processedMessageIds
-    .set(
-      messageId,
-      Date.now()
-    );
+  processedMessageIds.set(
+    messageId,
+    Date.now()
+  );
 
   return false;
 }
 
 // ============================================================
-// PROMPT MONDECO
+// HORAIRES / AUDIENCE
+// ============================================================
+
+const WEEKDAY_MAP = {
+  Mon: 'mon',
+  Tue: 'tue',
+  Wed: 'wed',
+  Thu: 'thu',
+  Fri: 'fri',
+  Sat: 'sat',
+  Sun: 'sun'
+};
+
+function getLocalDateParts(
+  timezone,
+  date = new Date()
+) {
+  try {
+    const formatter =
+      new Intl.DateTimeFormat(
+        'en-US',
+        {
+          timeZone:
+            timezone ||
+            'Africa/Tunis',
+
+          weekday:
+            'short',
+
+          hour:
+            '2-digit',
+
+          minute:
+            '2-digit',
+
+          hourCycle:
+            'h23'
+        }
+      );
+
+    const parts =
+      formatter
+        .formatToParts(date)
+        .reduce(
+          (acc, part) => {
+            if (
+              part.type !== 'literal'
+            ) {
+              acc[part.type] =
+                part.value;
+            }
+
+            return acc;
+          },
+          {}
+        );
+
+    return {
+      day:
+        WEEKDAY_MAP[
+          parts.weekday
+        ] || 'mon',
+
+      hour:
+        Number(parts.hour),
+
+      minute:
+        Number(parts.minute)
+    };
+  } catch (error) {
+    console.warn(
+      '⚠️ Fuseau horaire invalide, fallback Africa/Tunis :',
+      error.message
+    );
+
+    return getLocalDateParts(
+      'Africa/Tunis',
+      date
+    );
+  }
+}
+
+function timeToMinutes(value) {
+  const match =
+    /^(\d{2}):(\d{2})$/
+      .exec(
+        safeString(value)
+      );
+
+  if (!match) return null;
+
+  return (
+    Number(match[1]) * 60 +
+    Number(match[2])
+  );
+}
+
+function isWithinSchedule(
+  settings,
+  date = new Date()
+) {
+  if (
+    settings?.schedule?.mode !==
+    'custom'
+  ) {
+    return true;
+  }
+
+  const parts =
+    getLocalDateParts(
+      settings.timezone,
+      date
+    );
+
+  const today =
+    settings
+      ?.schedule
+      ?.weekly
+      ?.[parts.day];
+
+  if (!today?.enabled) {
+    return false;
+  }
+
+  const start =
+    timeToMinutes(
+      today.start
+    );
+
+  const end =
+    timeToMinutes(
+      today.end
+    );
+
+  if (
+    start === null ||
+    end === null
+  ) {
+    return false;
+  }
+
+  const current =
+    parts.hour * 60 +
+    parts.minute;
+
+  if (start === end) {
+    return true;
+  }
+
+  if (start < end) {
+    return (
+      current >= start &&
+      current < end
+    );
+  }
+
+  // Horaire traversant minuit
+  return (
+    current >= start ||
+    current < end
+  );
+}
+
+function messageHasAdReferral(message) {
+  return Boolean(
+    message?.referral?.source_id ||
+    message?.referral?.source_url
+  );
+}
+
+function audienceAllows(
+  settings,
+  phone,
+  isNewCustomer,
+  message
+) {
+  switch (settings.audience) {
+    case 'new':
+      return isNewCustomer;
+
+    case 'ads':
+      return messageHasAdReferral(
+        message
+      );
+
+    case 'team': {
+      const team =
+        Array.isArray(
+          settings.teamPhones
+        )
+          ? settings.teamPhones
+          : [];
+
+      return team
+        .map(normalizePhone)
+        .includes(phone);
+    }
+
+    case 'all':
+    default:
+      return true;
+  }
+}
+
+// ============================================================
+// PROMPT
 // ============================================================
 
 function buildBusinessSystemPrompt() {
-
-  let businessContext =
-    '';
+  let businessContext = '';
 
   try {
-
     businessContext =
       getBusinessContext() ||
       '';
-
-  } catch (
-    error
-  ) {
-
+  } catch (error) {
     console.error(
       '❌ Impossible de charger le contexte MONDECO :',
       error.message
@@ -533,14 +860,8 @@ FIN DU CONTEXTE MONDECO
 // GROQ
 // ============================================================
 
-async function callGroqChat(
-  payload
-) {
-
-  if (
-    !GROQ_API_KEY
-  ) {
-
+async function callGroqChat(payload) {
+  if (!GROQ_API_KEY) {
     throw new Error(
       'GROQ_API_KEY manquante dans Railway.'
     );
@@ -550,11 +871,9 @@ async function callGroqChat(
     await fetch(
       'https://api.groq.com/openai/v1/chat/completions',
       {
-        method:
-          'POST',
+        method: 'POST',
 
         headers: {
-
           Authorization:
             `Bearer ${GROQ_API_KEY}`,
 
@@ -563,35 +882,24 @@ async function callGroqChat(
         },
 
         body:
-          JSON.stringify(
-            payload
-          )
+          JSON.stringify(payload)
       }
     );
 
   let data;
 
   try {
-
-    data =
-      await response.json();
-
+    data = await response.json();
   } catch {
-
     throw new Error(
       `Réponse Groq invalide - HTTP ${response.status}`
     );
   }
 
-  if (
-    !response.ok
-  ) {
-
+  if (!response.ok) {
     console.error(
       '❌ Erreur Groq :',
-      JSON.stringify(
-        data
-      )
+      JSON.stringify(data)
     );
 
     throw new Error(
@@ -608,10 +916,7 @@ async function callGroqChat(
       ?.content
       ?.trim();
 
-  if (
-    !reply
-  ) {
-
+  if (!reply) {
     throw new Error(
       'Groq a retourné une réponse vide.'
     );
@@ -620,41 +925,25 @@ async function callGroqChat(
   return reply;
 }
 
-// ============================================================
-// RÉPONSE IA TEXTE
-// ============================================================
-
 async function generateReply(
   userId,
   userText
 ) {
-
   const cleanText =
-    String(
-      userText ||
-      ''
-    ).trim();
+    safeString(userText);
 
-  if (
-    !cleanText
-  ) {
-
+  if (!cleanText) {
     throw new Error(
       'Message utilisateur vide.'
     );
   }
 
   const history =
-    getUserHistory(
-      userId
-    );
+    getUserHistory(userId);
 
   const messages = [
-
     {
-      role:
-        'system',
-
+      role: 'system',
       content:
         buildBusinessSystemPrompt()
     },
@@ -662,24 +951,16 @@ async function generateReply(
     ...history,
 
     {
-      role:
-        'user',
-
-      content:
-        cleanText
+      role: 'user',
+      content: cleanText
     }
   ];
 
   const reply =
     await callGroqChat({
-
-      model:
-        GROQ_MODEL,
-
+      model: GROQ_MODEL,
       messages,
-
-      max_completion_tokens:
-        700
+      max_completion_tokens: 700
     });
 
   addHistoryMessage(
@@ -698,7 +979,7 @@ async function generateReply(
 }
 
 // ============================================================
-// ANALYSE IMAGE - ADMIN UNIQUEMENT
+// VISION
 // ============================================================
 
 async function generateVisionReply(
@@ -706,35 +987,29 @@ async function generateVisionReply(
   userText,
   image
 ) {
-
   if (
     !image?.buffer ||
     !image?.mimetype
   ) {
-
     throw new Error(
       'Image de test invalide.'
     );
   }
 
   const cleanText =
-    String(
-      userText ||
-      ''
-    ).trim() ||
+    safeString(userText) ||
     'Analyse cette image et explique ce que tu vois.';
 
   const base64Image =
-    image.buffer
-      .toString(
-        'base64'
-      );
+    image.buffer.toString(
+      'base64'
+    );
 
   const imageDataUrl =
     `data:${image.mimetype};base64,${base64Image}`;
 
   const visionRules = `
-MODE INTERNE : ANALYSE D'IMAGE DANS LA DISCUSSION DE TEST ADMIN MONDECO.
+MODE ANALYSE IMAGE MONDECO.
 
 RÈGLES :
 - Décris précisément le meuble.
@@ -747,54 +1022,115 @@ RÈGLES :
 - Si pertinent, termine par : Confiance : élevée / moyenne / faible.
 `.trim();
 
-  const reply =
-    await callGroqChat({
+  return callGroqChat({
+    model:
+      GROQ_VISION_MODEL,
 
-      model:
-        GROQ_VISION_MODEL,
+    messages: [
+      {
+        role: 'system',
 
-      messages: [
+        content:
+          `${buildBusinessSystemPrompt()}\n\n${visionRules}`
+      },
 
-        {
-          role:
-            'system',
+      {
+        role: 'user',
 
-          content:
-            `${buildBusinessSystemPrompt()}\n\n${visionRules}`
-        },
+        content: [
+          {
+            type: 'text',
+            text: cleanText
+          },
 
-        {
-          role:
-            'user',
+          {
+            type: 'image_url',
 
-          content: [
-
-            {
-              type:
-                'text',
-
-              text:
-                cleanText
-            },
-
-            {
-              type:
-                'image_url',
-
-              image_url: {
-                url:
-                  imageDataUrl
-              }
+            image_url: {
+              url: imageDataUrl
             }
-          ]
+          }
+        ]
+      }
+    ],
+
+    max_completion_tokens:
+      900
+  });
+}
+
+// ============================================================
+// MÉDIAS WHATSAPP
+// ============================================================
+
+async function downloadWhatsAppMedia(
+  mediaId
+) {
+  if (!mediaId) {
+    throw new Error(
+      'ID média WhatsApp manquant.'
+    );
+  }
+
+  const metadataResponse =
+    await fetch(
+      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(mediaId)}`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_TOKEN}`
         }
-      ],
+      }
+    );
 
-      max_completion_tokens:
-        900
-    });
+  const metadata =
+    await metadataResponse.json();
 
-  return reply;
+  if (!metadataResponse.ok) {
+    throw new Error(
+      metadata?.error?.message ||
+      `Impossible de lire le média WhatsApp (${metadataResponse.status}).`
+    );
+  }
+
+  if (!metadata?.url) {
+    throw new Error(
+      'URL média WhatsApp absente.'
+    );
+  }
+
+  const mediaResponse =
+    await fetch(
+      metadata.url,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_TOKEN}`
+        }
+      }
+    );
+
+  if (!mediaResponse.ok) {
+    throw new Error(
+      `Téléchargement média WhatsApp impossible (${mediaResponse.status}).`
+    );
+  }
+
+  return {
+    buffer:
+      Buffer.from(
+        await mediaResponse.arrayBuffer()
+      ),
+
+    mimetype:
+      mediaResponse.headers
+        .get('content-type') ||
+      metadata.mime_type ||
+      'image/jpeg',
+
+    originalname:
+      `whatsapp-${mediaId}`
+  };
 }
 
 // ============================================================
@@ -804,57 +1140,39 @@ RÈGLES :
 function buildCustomizationRequestText(
   request = {}
 ) {
-
   const lines = [];
 
-  if (
-    request.color
-  ) {
-
+  if (request.color) {
     lines.push(
       `Couleur souhaitée : ${request.color}`
     );
   }
 
-  if (
-    request.fabric
-  ) {
-
+  if (request.fabric) {
     lines.push(
       `Tissu / matière souhaité(e) : ${request.fabric}`
     );
   }
 
-  if (
-    request.dimensions
-  ) {
-
+  if (request.dimensions) {
     lines.push(
       `Dimensions souhaitées : ${request.dimensions}`
     );
   }
 
-  if (
-    request.corner
-  ) {
-
+  if (request.corner) {
     lines.push(
       `Coin / orientation souhaité(e) : ${request.corner}`
     );
   }
 
-  if (
-    request.notes
-  ) {
-
+  if (request.notes) {
     lines.push(
       `Autres demandes : ${request.notes}`
     );
   }
 
-  return lines.join(
-    '\n'
-  );
+  return lines.join('\n');
 }
 
 async function analyzeCustomizationImage(
@@ -862,13 +1180,7 @@ async function analyzeCustomizationImage(
   request,
   sourceImage
 ) {
-
-  if (
-    !GROQ_API_KEY
-  ) {
-
-    return '';
-  }
+  if (!GROQ_API_KEY) return '';
 
   const imageDataUrl =
     `data:${sourceImage.mimetype};base64,${sourceImage.buffer.toString('base64')}`;
@@ -890,13 +1202,8 @@ async function analyzeCustomizationImage(
             ? `Couleurs catalogue : ${product.colors}`
             : ''
         ]
-          .filter(
-            Boolean
-          )
-          .join(
-            '\n'
-          )
-
+          .filter(Boolean)
+          .join('\n')
       : 'Image libre non liée avec certitude à un produit catalogue.';
 
   const requestText =
@@ -933,35 +1240,25 @@ Ne donne aucun prix.
 `.trim();
 
   try {
-
     return await callGroqChat({
-
       model:
         GROQ_VISION_MODEL,
 
       messages: [
-
         {
-          role:
-            'user',
+          role: 'user',
 
           content: [
-
             {
-              type:
-                'text',
-
-              text:
-                prompt
+              type: 'text',
+              text: prompt
             },
 
             {
-              type:
-                'image_url',
+              type: 'image_url',
 
               image_url: {
-                url:
-                  imageDataUrl
+                url: imageDataUrl
               }
             }
           ]
@@ -971,11 +1268,7 @@ Ne donne aucun prix.
       max_completion_tokens:
         600
     });
-
-  } catch (
-    error
-  ) {
-
+  } catch (error) {
     console.warn(
       '⚠️ Analyse Groq personnalisation indisponible :',
       error.message
@@ -990,7 +1283,6 @@ function buildImageEditPrompt(
   request,
   analysis
 ) {
-
   const requestedChanges =
     buildCustomizationRequestText(
       request
@@ -1042,50 +1334,31 @@ RÈGLES :
 `.trim();
 }
 
-// ============================================================
-// CLOUDFLARE IMAGE
-// ============================================================
-
 async function callCloudflareImageEdit(
   sourceImage,
   prompt,
   requestedWidth,
   requestedHeight
 ) {
-
-  if (
-    !CLOUDFLARE_ACCOUNT_ID
-  ) {
-
+  if (!CLOUDFLARE_ACCOUNT_ID) {
     throw new Error(
       'CLOUDFLARE_ACCOUNT_ID manquant.'
     );
   }
 
-  if (
-    !CLOUDFLARE_API_TOKEN
-  ) {
-
+  if (!CLOUDFLARE_API_TOKEN) {
     throw new Error(
       'CLOUDFLARE_API_TOKEN manquant.'
     );
   }
 
   const clampDimension =
-    (
-      value,
-      fallback
-    ) => {
-
+    (value, fallback) => {
       const parsed =
-        Number(
-          value
-        );
+        Number(value);
 
       const safe =
-        Number.isFinite(
-          parsed
-        )
+        Number.isFinite(parsed)
           ? parsed
           : fallback;
 
@@ -1093,9 +1366,7 @@ async function callCloudflareImageEdit(
         256,
         Math.min(
           1920,
-          Math.round(
-            safe
-          )
+          Math.round(safe)
         )
       );
     };
@@ -1124,25 +1395,19 @@ async function callCloudflareImageEdit(
 
   formData.append(
     'width',
-    String(
-      width
-    )
+    String(width)
   );
 
   formData.append(
     'height',
-    String(
-      height
-    )
+    String(height)
   );
 
   formData.append(
     'input_image_0',
 
     new Blob(
-      [
-        sourceImage.buffer
-      ],
+      [sourceImage.buffer],
       {
         type:
           sourceImage.mimetype ||
@@ -1163,37 +1428,29 @@ async function callCloudflareImageEdit(
     await fetch(
       url,
       {
-        method:
-          'POST',
+        method: 'POST',
 
         headers: {
           Authorization:
             `Bearer ${CLOUDFLARE_API_TOKEN}`
         },
 
-        body:
-          formData
+        body: formData
       }
     );
 
   const contentType =
-    String(
-      response.headers
-        .get(
-          'content-type'
-        ) ||
-      ''
+    safeString(
+      response.headers.get(
+        'content-type'
+      )
     ).toLowerCase();
 
-  if (
-    !response.ok
-  ) {
-
+  if (!response.ok) {
     let errorMessage =
       `Erreur Cloudflare HTTP ${response.status}`;
 
     try {
-
       const errorData =
         contentType.includes(
           'application/json'
@@ -1206,9 +1463,7 @@ async function callCloudflareImageEdit(
 
       console.error(
         '❌ Cloudflare :',
-        JSON.stringify(
-          errorData
-        )
+        JSON.stringify(errorData)
       );
 
       errorMessage =
@@ -1224,15 +1479,12 @@ async function callCloudflareImageEdit(
         errorData
           ?.raw ||
         errorMessage;
-
     } catch {
-      // garder erreur générique
+      // conserver message générique
     }
 
     throw new Error(
-      String(
-        errorMessage
-      )
+      String(errorMessage)
     );
   }
 
@@ -1241,19 +1493,14 @@ async function callCloudflareImageEdit(
       'image/'
     )
   ) {
-
     return {
-
       imageBuffer:
         Buffer.from(
           await response.arrayBuffer()
         ),
 
       mimeType:
-        contentType
-          .split(
-            ';'
-          )[0] ||
+        contentType.split(';')[0] ||
         'image/jpeg'
     };
   }
@@ -1261,22 +1508,15 @@ async function callCloudflareImageEdit(
   let data;
 
   try {
-
     data =
       await response.json();
-
   } catch {
-
     throw new Error(
       'Réponse image Cloudflare invalide.'
     );
   }
 
-  if (
-    data?.success ===
-    false
-  ) {
-
+  if (data?.success === false) {
     throw new Error(
       data
         ?.errors
@@ -1292,15 +1532,10 @@ async function callCloudflareImageEdit(
     data?.result?.output?.image ||
     '';
 
-  if (
-    !imageBase64
-  ) {
-
+  if (!imageBase64) {
     console.error(
       '❌ Cloudflare sans image :',
-      JSON.stringify(
-        data
-      )
+      JSON.stringify(data)
     );
 
     throw new Error(
@@ -1309,9 +1544,7 @@ async function callCloudflareImageEdit(
   }
 
   const raw =
-    String(
-      imageBase64
-    );
+    String(imageBase64);
 
   const mimeMatch =
     raw.match(
@@ -1324,15 +1557,12 @@ async function callCloudflareImageEdit(
       ''
     );
 
-  const imageBuffer =
-    Buffer.from(
-      cleanBase64,
-      'base64'
-    );
-
   return {
-
-    imageBuffer,
+    imageBuffer:
+      Buffer.from(
+        cleanBase64,
+        'base64'
+      ),
 
     mimeType:
       mimeMatch?.[1] ||
@@ -1347,11 +1577,7 @@ async function generateCustomizationSimulation({
   outputWidth,
   outputHeight
 }) {
-
-  if (
-    !sourceImage?.buffer
-  ) {
-
+  if (!sourceImage?.buffer) {
     throw new Error(
       'Image de référence manquante.'
     );
@@ -1386,16 +1612,11 @@ async function generateCustomizationSimulation({
 }
 
 // ============================================================
-// CONNECTION ADMIN <-> IA
+// CONNECTION ADMIN
 // ============================================================
 
-setChatHandler(
-  generateReply
-);
-
-setImageChatHandler(
-  generateVisionReply
-);
+setChatHandler(generateReply);
+setImageChatHandler(generateVisionReply);
 
 setCustomizationHandler(
   generateCustomizationSimulation
@@ -1409,54 +1630,31 @@ async function sendWhatsAppMessage(
   to,
   text
 ) {
-
-  if (
-    !WHATSAPP_TOKEN
-  ) {
-
+  if (!WHATSAPP_TOKEN) {
     throw new Error(
       'WHATSAPP_TOKEN manquant.'
     );
   }
 
-  if (
-    !PHONE_NUMBER_ID
-  ) {
-
+  if (!PHONE_NUMBER_ID) {
     throw new Error(
       'PHONE_NUMBER_ID manquant.'
     );
   }
 
   const cleanRecipient =
-    String(
-      to ||
-      ''
-    )
-      .replace(
-        /\D/g,
-        ''
-      );
+    normalizePhone(to);
 
   const cleanText =
-    String(
-      text ||
-      ''
-    ).trim();
+    safeString(text);
 
-  if (
-    !cleanRecipient
-  ) {
-
+  if (!cleanRecipient) {
     throw new Error(
       'Destinataire WhatsApp manquant.'
     );
   }
 
-  if (
-    !cleanText
-  ) {
-
+  if (!cleanText) {
     throw new Error(
       'Message WhatsApp vide.'
     );
@@ -1467,11 +1665,6 @@ async function sendWhatsAppMessage(
     cleanRecipient
   );
 
-  console.log(
-    '📞 PHONE_NUMBER_ID :',
-    PHONE_NUMBER_ID
-  );
-
   const url =
     `https://graph.facebook.com/${META_API_VERSION}/` +
     `${PHONE_NUMBER_ID}/messages`;
@@ -1480,11 +1673,9 @@ async function sendWhatsAppMessage(
     await fetch(
       url,
       {
-        method:
-          'POST',
+        method: 'POST',
 
         headers: {
-
           Authorization:
             `Bearer ${WHATSAPP_TOKEN}`,
 
@@ -1494,7 +1685,6 @@ async function sendWhatsAppMessage(
 
         body:
           JSON.stringify({
-
             messaging_product:
               'whatsapp',
 
@@ -1508,7 +1698,6 @@ async function sendWhatsAppMessage(
               'text',
 
             text: {
-
               preview_url:
                 false,
 
@@ -1522,23 +1711,15 @@ async function sendWhatsAppMessage(
   let data = {};
 
   try {
-
-    data =
-      await response.json();
-
+    data = await response.json();
   } catch {
     data = {};
   }
 
-  if (
-    !response.ok
-  ) {
-
+  if (!response.ok) {
     console.error(
       '❌ Meta WhatsApp API :',
-      JSON.stringify(
-        data
-      )
+      JSON.stringify(data)
     );
 
     throw new Error(
@@ -1562,391 +1743,347 @@ async function sendWhatsAppMessage(
 }
 
 // ============================================================
-// ROUTE PRINCIPALE
+// POLITIQUE DE RÉPONSE
 // ============================================================
 
-app.get(
-  '/',
-  (
-    req,
-    res
-  ) => {
+async function checkWhetherBotShouldReply(
+  phone,
+  message,
+  isNewCustomer
+) {
+  const settings =
+    getBotSettings();
 
-    res
-      .status(200)
-      .send(
-        '✅ Bot WhatsApp MONDECO actif.'
-      );
+  if (!settings.aiEnabled) {
+    return {
+      allowed: false,
+      reason: 'ai_disabled',
+      settings
+    };
   }
-);
 
-// ============================================================
-// HEALTH
-// ============================================================
-
-app.get(
-  '/health',
-  (
-    req,
-    res
-  ) => {
-
-    res
-      .status(200)
-      .json({
-
-        status:
-          'ok',
-
-        service:
-          'bot-whatsapp-mondeco',
-
-        node:
-          process.version,
-
-        timestamp:
-          new Date()
-            .toISOString()
-      });
+  if (
+    settings.pauseWhenHumanReplies &&
+    isHumanPaused(phone)
+  ) {
+    return {
+      allowed: false,
+      reason: 'human_pause',
+      settings
+    };
   }
-);
 
-// ============================================================
-// DEBUG VARIABLES
-// ============================================================
-
-app.get(
-  '/debug-env',
-  (
-    req,
-    res
-  ) => {
-
-    res
-      .status(200)
-      .json({
-
-        status:
-          'ok',
-
-        railway_environment:
-          process.env
-            .RAILWAY_ENVIRONMENT_NAME ||
-          null,
-
-        railway_service:
-          process.env
-            .RAILWAY_SERVICE_NAME ||
-          null,
-
-        verify_token_present:
-          Boolean(
-            VERIFY_TOKEN
-          ),
-
-        whatsapp_token_present:
-          Boolean(
-            WHATSAPP_TOKEN
-          ),
-
-        phone_number_id_present:
-          Boolean(
-            PHONE_NUMBER_ID
-          ),
-
-        groq_api_key_present:
-          Boolean(
-            GROQ_API_KEY
-          ),
-
-        cloudflare_account_id_present:
-          Boolean(
-            CLOUDFLARE_ACCOUNT_ID
-          ),
-
-        cloudflare_api_token_present:
-          Boolean(
-            CLOUDFLARE_API_TOKEN
-          ),
-
-        admin_password_present:
-          Boolean(
-            process.env.ADMIN_PASSWORD
-          ),
-
-        data_dir:
-          DATA_DIR,
-
-        persistent_storage:
-          DATA_DIR !==
-          __dirname,
-
-        meta_api_version:
-          META_API_VERSION,
-
-        groq_model:
-          GROQ_MODEL,
-
-        groq_vision_model:
-          GROQ_VISION_MODEL,
-
-        cloudflare_image_model:
-          CLOUDFLARE_IMAGE_MODEL
-      });
+  if (
+    !audienceAllows(
+      settings,
+      phone,
+      isNewCustomer,
+      message
+    )
+  ) {
+    return {
+      allowed: false,
+      reason: 'audience',
+      settings
+    };
   }
-);
 
-// ============================================================
-// DEBUG LOG RAILWAY
-// ============================================================
+  const inSchedule =
+    isWithinSchedule(settings);
 
-app.get(
-  '/debug-log',
-  (
-    req,
-    res
-  ) => {
+  if (!inSchedule) {
+    const behavior =
+      settings
+        ?.schedule
+        ?.outOfHours ||
+      'none';
 
-    console.log(
-      '🧪 TEST LOG RAILWAY REÇU :',
-      new Date()
-        .toISOString()
-    );
-
-    return res.json({
-
-      success:
-        true,
-
-      message:
-        'Le log a été envoyé vers Railway.',
-
-      timestamp:
-        new Date()
-          .toISOString()
-    });
-  }
-);
-
-// ============================================================
-// WEBHOOK META - VÉRIFICATION GET
-// ============================================================
-
-app.get(
-  '/webhook',
-  (
-    req,
-    res
-  ) => {
-
-    const mode =
-      req.query[
-        'hub.mode'
-      ];
-
-    const token =
-      req.query[
-        'hub.verify_token'
-      ];
-
-    const challenge =
-      req.query[
-        'hub.challenge'
-      ];
-
-    console.log(
-      '🔍 Vérification webhook Meta demandée'
-    );
-
-    if (
-      mode ===
-        'subscribe' &&
-      token ===
-        VERIFY_TOKEN
-    ) {
-
-      console.log(
-        '✅ Webhook Meta vérifié'
-      );
-
-      return res
-        .status(200)
-        .send(
-          challenge
-        );
+    if (behavior === 'ai') {
+      return {
+        allowed: true,
+        reason: 'outside_hours_ai',
+        settings
+      };
     }
 
-    console.warn(
-      '❌ Échec vérification webhook Meta'
+    if (behavior === 'message') {
+      return {
+        allowed: false,
+        reason: 'outside_hours_message',
+        sendAbsence: true,
+        settings
+      };
+    }
+
+    return {
+      allowed: false,
+      reason: 'outside_hours',
+      settings
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: 'ok',
+    settings
+  };
+}
+
+// ============================================================
+// ROUTES
+// ============================================================
+
+app.get('/', (req, res) => {
+  res
+    .status(200)
+    .send(
+      '✅ Bot WhatsApp MONDECO actif.'
+    );
+});
+
+app.get('/health', (req, res) => {
+  const settings =
+    getBotSettings();
+
+  res
+    .status(200)
+    .json({
+      status: 'ok',
+      service:
+        'bot-whatsapp-mondeco',
+      node:
+        process.version,
+      ai_enabled:
+        settings.aiEnabled,
+      timestamp:
+        new Date().toISOString()
+    });
+});
+
+app.get('/debug-env', (req, res) => {
+  const settings =
+    getBotSettings();
+
+  res
+    .status(200)
+    .json({
+      status: 'ok',
+
+      railway_environment:
+        process.env
+          .RAILWAY_ENVIRONMENT_NAME ||
+        null,
+
+      railway_service:
+        process.env
+          .RAILWAY_SERVICE_NAME ||
+        null,
+
+      verify_token_present:
+        Boolean(VERIFY_TOKEN),
+
+      whatsapp_token_present:
+        Boolean(WHATSAPP_TOKEN),
+
+      phone_number_id_present:
+        Boolean(PHONE_NUMBER_ID),
+
+      groq_api_key_present:
+        Boolean(GROQ_API_KEY),
+
+      cloudflare_account_id_present:
+        Boolean(
+          CLOUDFLARE_ACCOUNT_ID
+        ),
+
+      cloudflare_api_token_present:
+        Boolean(
+          CLOUDFLARE_API_TOKEN
+        ),
+
+      admin_password_present:
+        Boolean(
+          process.env.ADMIN_PASSWORD
+        ),
+
+      data_dir:
+        DATA_DIR,
+
+      persistent_storage:
+        DATA_DIR !== __dirname,
+
+      meta_api_version:
+        META_API_VERSION,
+
+      groq_model:
+        GROQ_MODEL,
+
+      groq_vision_model:
+        GROQ_VISION_MODEL,
+
+      cloudflare_image_model:
+        CLOUDFLARE_IMAGE_MODEL,
+
+      ai_enabled:
+        settings.aiEnabled,
+
+      audience:
+        settings.audience
+    });
+});
+
+app.get('/debug-log', (req, res) => {
+  console.log(
+    '🧪 TEST LOG RAILWAY REÇU :',
+    new Date().toISOString()
+  );
+
+  return res.json({
+    success: true,
+    message:
+      'Le log a été envoyé vers Railway.',
+    timestamp:
+      new Date().toISOString()
+  });
+});
+
+// ============================================================
+// WEBHOOK GET
+// ============================================================
+
+app.get('/webhook', (req, res) => {
+  const mode =
+    req.query['hub.mode'];
+
+  const token =
+    req.query['hub.verify_token'];
+
+  const challenge =
+    req.query['hub.challenge'];
+
+  console.log(
+    '🔍 Vérification webhook Meta demandée'
+  );
+
+  if (
+    mode === 'subscribe' &&
+    token === VERIFY_TOKEN
+  ) {
+    console.log(
+      '✅ Webhook Meta vérifié'
     );
 
     return res
-      .sendStatus(
-        403
-      );
+      .status(200)
+      .send(challenge);
   }
-);
+
+  console.warn(
+    '❌ Échec vérification webhook Meta'
+  );
+
+  return res.sendStatus(403);
+});
 
 // ============================================================
-// WEBHOOK META - RÉCEPTION POST
+// WEBHOOK POST
 // ============================================================
 
-app.post(
-  '/webhook',
-  (
-    req,
-    res
-  ) => {
-
-    console.log('');
-
-    console.log(
-      '=============================================='
-    );
-
-    console.log(
-      '📩 WEBHOOK WHATSAPP REÇU'
-    );
-
-    console.log(
-      '🕐 Date :',
-      new Date()
-        .toISOString()
-    );
-
-    console.log(
-      '📦 Payload :',
-      JSON.stringify(
-        req.body,
-        null,
-        2
-      )
-    );
-
-    console.log(
-      '=============================================='
-    );
-
-    // Répondre immédiatement à Meta
-    res.sendStatus(
-      200
-    );
-
-    processWhatsAppWebhook(
-      req.body
+app.post('/webhook', (req, res) => {
+  console.log('');
+  console.log(
+    '=============================================='
+  );
+  console.log(
+    '📩 WEBHOOK WHATSAPP REÇU'
+  );
+  console.log(
+    '🕐 Date :',
+    new Date().toISOString()
+  );
+  console.log(
+    '📦 Payload :',
+    JSON.stringify(
+      req.body,
+      null,
+      2
     )
-      .catch(
-        error => {
+  );
+  console.log(
+    '=============================================='
+  );
 
-          console.error(
-            '❌ Erreur globale webhook :',
-            error
-          );
-        }
-      );
-  }
-);
+  // Meta doit recevoir 200 rapidement
+  res.sendStatus(200);
+
+  processWhatsAppWebhook(
+    req.body
+  ).catch(error => {
+    console.error(
+      '❌ Erreur globale webhook :',
+      error
+    );
+  });
+});
 
 // ============================================================
-// TRAITEMENT DU WEBHOOK
+// WEBHOOK PROCESSING
 // ============================================================
 
-async function processWhatsAppWebhook(
-  body
-) {
-
+async function processWhatsAppWebhook(body) {
   if (
     body?.object !==
     'whatsapp_business_account'
   ) {
-
-    console.log(
-      'ℹ️ Webhook ignoré : objet non WhatsApp.'
-    );
-
     return;
   }
 
   const entries =
-    Array.isArray(
-      body?.entry
-    )
+    Array.isArray(body?.entry)
       ? body.entry
       : [];
 
-  if (
-    entries.length ===
-    0
-  ) {
-
-    console.log(
-      'ℹ️ Webhook sans entry.'
-    );
-
-    return;
-  }
-
-  for (
-    const entry
-    of entries
-  ) {
-
+  for (const entry of entries) {
     const changes =
-      Array.isArray(
-        entry?.changes
-      )
+      Array.isArray(entry?.changes)
         ? entry.changes
         : [];
 
-    for (
-      const change
-      of changes
-    ) {
+    for (const change of changes) {
+      const field =
+        safeString(change?.field);
 
-      if (
-        change?.field &&
-        change.field !==
-          'messages'
-      ) {
+      const value =
+        change?.value;
 
-        console.log(
-          `ℹ️ Champ ignoré : ${change.field}`
+      if (!value) continue;
+
+      // ======================================================
+      // COEXISTENCE : ÉCHO MESSAGE ENVOYÉ PAR COMMERCIAL
+      // ======================================================
+
+      if (field === 'smb_message_echoes') {
+        handleHumanMessageEcho(
+          value
         );
 
         continue;
       }
 
-      const value =
-        change?.value;
-
-      if (
-        !value
-      ) {
+      if (field !== 'messages') {
+        console.log(
+          `ℹ️ Champ ignoré : ${field}`
+        );
 
         continue;
       }
 
       const incomingPhoneNumberId =
-        String(
+        safeString(
           value
             ?.metadata
-            ?.phone_number_id ||
-          ''
-        ).trim();
-
-      if (
-        incomingPhoneNumberId
-      ) {
-
-        console.log(
-          '📲 Phone Number ID reçu :',
-          incomingPhoneNumberId
+            ?.phone_number_id
         );
-      }
-
-      // ======================================================
-      // PROTECTION CONTRE LE BOUTON "TEST" META
-      // ======================================================
 
       if (
         PHONE_NUMBER_ID &&
@@ -1954,40 +2091,19 @@ async function processWhatsAppWebhook(
         incomingPhoneNumberId !==
           PHONE_NUMBER_ID
       ) {
-
         console.log(
-          '🧪 Webhook de test ou autre numéro ignoré.'
-        );
-
-        console.log(
-          'Reçu :',
-          incomingPhoneNumberId
-        );
-
-        console.log(
-          'Attendu :',
-          PHONE_NUMBER_ID
+          '🧪 Webhook autre numéro ignoré.'
         );
 
         continue;
       }
 
-      // ======================================================
-      // STATUTS MESSAGES
-      // ======================================================
-
       const statuses =
-        Array.isArray(
-          value.statuses
-        )
+        Array.isArray(value.statuses)
           ? value.statuses
           : [];
 
-      for (
-        const status
-        of statuses
-      ) {
-
+      for (const status of statuses) {
         console.log(
           '📨 Statut WhatsApp :',
           status?.status ||
@@ -1998,44 +2114,17 @@ async function processWhatsAppWebhook(
         );
       }
 
-      // ======================================================
-      // MESSAGES ENTRANTS
-      // ======================================================
-
       const messages =
-        Array.isArray(
-          value.messages
-        )
+        Array.isArray(value.messages)
           ? value.messages
           : [];
 
-      if (
-        messages.length ===
-        0 &&
-        statuses.length ===
-        0
-      ) {
-
-        console.log(
-          'ℹ️ Événement sans message entrant.'
-        );
-      }
-
-      for (
-        const message
-        of messages
-      ) {
-
+      for (const message of messages) {
         try {
-
           await processSingleMessage(
             message
           );
-
-        } catch (
-          error
-        ) {
-
+        } catch (error) {
           console.error(
             '❌ Erreur message WhatsApp :',
             error
@@ -2047,43 +2136,65 @@ async function processWhatsAppWebhook(
 }
 
 // ============================================================
-// TRAITEMENT D'UN MESSAGE CLIENT
+// DÉTECTION INTERVENTION HUMAINE
 // ============================================================
 
-async function processSingleMessage(
-  message
-) {
+function handleHumanMessageEcho(value) {
+  const settings =
+    getBotSettings();
 
-  const messageId =
-    String(
-      message?.id ||
-      ''
-    ).trim();
+  if (
+    !settings.pauseWhenHumanReplies
+  ) {
+    return;
+  }
 
-  const from =
-    String(
-      message?.from ||
-      ''
-    )
-      .replace(
-        /\D/g,
+  const messages =
+    Array.isArray(value?.messages)
+      ? value.messages
+      : [];
+
+  for (const message of messages) {
+    const candidate =
+      normalizePhone(
+        message?.to ||
+        message?.recipient_id ||
+        message?.recipient ||
+        message?.customer ||
         ''
       );
 
+    if (!candidate) continue;
+
+    markHumanTakeover(
+      candidate,
+      settings
+    );
+  }
+}
+
+// ============================================================
+// MESSAGE CLIENT
+// ============================================================
+
+async function processSingleMessage(message) {
+  const messageId =
+    safeString(message?.id);
+
+  const from =
+    normalizePhone(
+      message?.from
+    );
+
   const messageType =
-    String(
-      message?.type ||
-      ''
-    ).trim();
+    safeString(
+      message?.type
+    );
 
-  if (
-    !from
-  ) {
-
+  if (!from) {
     console.log(
       '⚠️ Message reçu sans expéditeur.'
     );
-
     return;
   }
 
@@ -2099,47 +2210,77 @@ async function processSingleMessage(
     'sans-id'
   );
 
-  // ==========================================================
-  // ANTI DOUBLON
-  // ==========================================================
-
   if (
     messageId &&
-    isDuplicateMessage(
-      messageId
-    )
+    isDuplicateMessage(messageId)
   ) {
-
     console.log(
       `♻️ Message déjà traité : ${messageId}`
     );
+    return;
+  }
+
+  const previousState =
+    getConversationState(from);
+
+  const isNewCustomer =
+    !previousState?.firstSeenAt;
+
+  const isAdReferral =
+    messageHasAdReferral(
+      message
+    );
+
+  markCustomerMessage(
+    from,
+    message,
+    isAdReferral
+  );
+
+  const decision =
+    await checkWhetherBotShouldReply(
+      from,
+      message,
+      isNewCustomer
+    );
+
+  if (decision.sendAbsence) {
+    const absenceMessage =
+      safeString(
+        decision
+          .settings
+          ?.schedule
+          ?.absenceMessage
+      );
+
+    if (absenceMessage) {
+      try {
+        await sendWhatsAppMessage(
+          from,
+          absenceMessage
+        );
+
+        markBotMessage(
+          from,
+          'absence'
+        );
+      } catch (error) {
+        console.error(
+          '❌ Message absence :',
+          error.message
+        );
+      }
+    }
 
     return;
   }
 
-  // ==========================================================
-  // IMAGES / DOCUMENTS / AUDIO CLIENT
-  //
-  // IMPORTANT :
-  // Ne pas répondre automatiquement.
-  // Commercial requis.
-  // ==========================================================
-
-  if (
-    messageType !==
-    'text'
-  ) {
-
+  if (!decision.allowed) {
     console.log(
-      `👤 Message non texte reçu de ${from} (${messageType}).`
-    );
-
-    console.log(
-      '➡️ Aucune réponse IA - commercial requis.'
+      `⏸️ IA ne répond pas : ${decision.reason}`
     );
 
     logConversation({
-
       message_id:
         messageId ||
         null,
@@ -2148,8 +2289,224 @@ async function processSingleMessage(
         from,
 
       type:
-        messageType ||
-        'unknown',
+        messageType,
+
+      action:
+        decision.reason,
+
+      reply_sent:
+        false,
+
+      time:
+        new Date().toISOString()
+    });
+
+    return;
+  }
+
+  // ==========================================================
+  // TEXTE
+  // ==========================================================
+
+  if (messageType === 'text') {
+    const userText =
+      safeString(
+        message
+          ?.text
+          ?.body
+      );
+
+    if (!userText) return;
+
+    console.log(
+      '💬 TEXTE CLIENT :',
+      userText
+    );
+
+    let reply;
+
+    try {
+      console.log(
+        '🤖 Génération réponse Groq...'
+      );
+
+      reply =
+        await generateReply(
+          from,
+          userText
+        );
+
+      console.log(
+        '✅ RÉPONSE IA :',
+        reply
+      );
+    } catch (error) {
+      console.error(
+        '❌ Impossible de générer la réponse :',
+        error.message
+      );
+
+      logConversation({
+        message_id:
+          messageId ||
+          null,
+
+        contact:
+          from,
+
+        incoming:
+          userText,
+
+        error:
+          error.message,
+
+        reply_sent:
+          false,
+
+        time:
+          new Date().toISOString()
+      });
+
+      return;
+    }
+
+    try {
+      const metaResult =
+        await sendWhatsAppMessage(
+          from,
+          reply
+        );
+
+      markBotMessage(
+        from,
+        'reply'
+      );
+
+      logConversation({
+        message_id:
+          messageId ||
+          null,
+
+        contact:
+          from,
+
+        incoming:
+          userText,
+
+        reply,
+
+        source:
+          isAdReferral
+            ? 'meta_ad'
+            : 'organic',
+
+        meta_message_id:
+          metaResult
+            ?.messages
+            ?.[0]
+            ?.id ||
+          null,
+
+        reply_sent:
+          true,
+
+        time:
+          new Date().toISOString()
+      });
+
+      console.log(
+        `✅ Réponse WhatsApp envoyée à ${from}`
+      );
+    } catch (error) {
+      console.error(
+        '❌ Impossible d’envoyer WhatsApp :',
+        error.message
+      );
+    }
+
+    return;
+  }
+
+  // ==========================================================
+  // IMAGE
+  // ==========================================================
+
+  if (messageType === 'image') {
+    await processWhatsAppImage(
+      from,
+      message,
+      decision.settings
+    );
+
+    return;
+  }
+
+  // ==========================================================
+  // AUTRES MÉDIAS
+  // ==========================================================
+
+  console.log(
+    `👤 Message non texte reçu de ${from} (${messageType}).`
+  );
+
+  console.log(
+    '➡️ Commercial requis.'
+  );
+
+  logConversation({
+    message_id:
+      messageId ||
+      null,
+
+    contact:
+      from,
+
+    type:
+      messageType ||
+      'unknown',
+
+    action:
+      'commercial_required',
+
+    reply_sent:
+      false,
+
+    time:
+      new Date().toISOString()
+  });
+}
+
+// ============================================================
+// IMAGE WHATSAPP
+// ============================================================
+
+async function processWhatsAppImage(
+  from,
+  message,
+  settings
+) {
+  const imageHandling =
+    settings.imageHandling ||
+    'commercial';
+
+  if (
+    imageHandling ===
+    'commercial'
+  ) {
+    console.log(
+      '🖼️ Image client → commercial requis.'
+    );
+
+    logConversation({
+      message_id:
+        message?.id ||
+        null,
+
+      contact:
+        from,
+
+      type:
+        'image',
 
       action:
         'commercial_required',
@@ -2158,84 +2515,134 @@ async function processSingleMessage(
         false,
 
       time:
-        new Date()
-          .toISOString()
+        new Date().toISOString()
     });
 
     return;
   }
 
-  // ==========================================================
-  // TEXTE CLIENT
-  // ==========================================================
-
-  const userText =
-    String(
-      message
-        ?.text
-        ?.body ||
-      ''
-    ).trim();
-
-  if (
-    !userText
-  ) {
-
-    console.log(
-      '⚠️ Message texte vide.'
+  const mediaId =
+    safeString(
+      message?.image?.id
     );
 
+  if (!mediaId) {
+    console.log(
+      '⚠️ Image WhatsApp sans media ID.'
+    );
     return;
   }
 
-  console.log(
-    '💬 TEXTE CLIENT :',
-    userText
-  );
-
-  // ==========================================================
-  // GROQ
-  // ==========================================================
-
-  let reply;
-
   try {
-
-    console.log(
-      '🤖 Génération réponse Groq...'
-    );
-
-    reply =
-      await generateReply(
-        from,
-        userText
+    const image =
+      await downloadWhatsAppMedia(
+        mediaId
       );
 
-    console.log(
-      '✅ RÉPONSE IA :',
-      reply
-    );
+    const caption =
+      safeString(
+        message?.image?.caption
+      );
 
-  } catch (
-    error
-  ) {
+    const analysis =
+      await generateVisionReply(
+        from,
+        caption ||
+        'Analyse cette image envoyée par le client. Identifie le type de meuble et indique clairement si le modèle exact n’est pas certain.',
+        image
+      );
 
+    if (
+      imageHandling ===
+      'analyze_only'
+    ) {
+      console.log(
+        '🖼️ Analyse image terminée, aucune réponse client.'
+      );
+
+      logConversation({
+        message_id:
+          message?.id ||
+          null,
+
+        contact:
+          from,
+
+        type:
+          'image',
+
+        action:
+          'image_analyzed_only',
+
+        analysis,
+
+        reply_sent:
+          false,
+
+        time:
+          new Date().toISOString()
+      });
+
+      return;
+    }
+
+    if (
+      imageHandling ===
+      'analyze_reply'
+    ) {
+      await sendWhatsAppMessage(
+        from,
+        analysis
+      );
+
+      markBotMessage(
+        from,
+        'image_reply'
+      );
+
+      logConversation({
+        message_id:
+          message?.id ||
+          null,
+
+        contact:
+          from,
+
+        type:
+          'image',
+
+        action:
+          'image_analyzed_and_replied',
+
+        reply:
+          analysis,
+
+        reply_sent:
+          true,
+
+        time:
+          new Date().toISOString()
+      });
+    }
+  } catch (error) {
     console.error(
-      '❌ Impossible de générer la réponse :',
+      '❌ Analyse image WhatsApp :',
       error.message
     );
 
     logConversation({
-
       message_id:
-        messageId ||
+        message?.id ||
         null,
 
       contact:
         from,
 
-      incoming:
-        userText,
+      type:
+        'image',
+
+      action:
+        'image_analysis_error',
 
       error:
         error.message,
@@ -2244,121 +2651,197 @@ async function processSingleMessage(
         false,
 
       time:
-        new Date()
-          .toISOString()
+        new Date().toISOString()
     });
-
-    return;
   }
-
-  // ==========================================================
-  // ENVOI META
-  // ==========================================================
-
-  let metaResult;
-
-  try {
-
-    metaResult =
-      await sendWhatsAppMessage(
-        from,
-        reply
-      );
-
-  } catch (
-    error
-  ) {
-
-    console.error(
-      '❌ Impossible d’envoyer WhatsApp :',
-      error.message
-    );
-
-    logConversation({
-
-      message_id:
-        messageId ||
-        null,
-
-      contact:
-        from,
-
-      incoming:
-        userText,
-
-      generated_reply:
-        reply,
-
-      whatsapp_error:
-        error.message,
-
-      reply_sent:
-        false,
-
-      time:
-        new Date()
-          .toISOString()
-    });
-
-    return;
-  }
-
-  // ==========================================================
-  // LOG SUCCÈS
-  // ==========================================================
-
-  logConversation({
-
-    message_id:
-      messageId ||
-      null,
-
-    contact:
-      from,
-
-    incoming:
-      userText,
-
-    reply,
-
-    meta_message_id:
-      metaResult
-        ?.messages
-        ?.[0]
-        ?.id ||
-      null,
-
-    reply_sent:
-      true,
-
-    time:
-      new Date()
-        .toISOString()
-  });
-
-  console.log(
-    `✅ Réponse WhatsApp envoyée à ${from}`
-  );
 }
 
 // ============================================================
-// TEST IA DIRECT
+// RELANCE AUTOMATIQUE
+// ============================================================
+
+let followUpRunning = false;
+
+async function checkFollowUps() {
+  if (followUpRunning) return;
+
+  followUpRunning = true;
+
+  try {
+    const settings =
+      getBotSettings();
+
+    if (
+      !settings.aiEnabled ||
+      !settings.followUp?.enabled
+    ) {
+      return;
+    }
+
+    if (!isWithinSchedule(settings)) {
+      return;
+    }
+
+    const delayMs =
+      Number(
+        settings.followUp.delayMinutes ||
+        60
+      ) *
+      60 *
+      1000;
+
+    const maxFollowUps =
+      Number(
+        settings.followUp.maxFollowUps ||
+        1
+      );
+
+    const message =
+      safeString(
+        settings.followUp.message
+      );
+
+    if (!message) return;
+
+    const states =
+      loadConversationStates();
+
+    let changed = false;
+
+    for (
+      const [phone, state]
+      of Object.entries(states)
+    ) {
+      if (!state?.awaitingResponse) {
+        continue;
+      }
+
+      if (
+        settings.pauseWhenHumanReplies &&
+        state.humanPaused
+      ) {
+        const until =
+          Date.parse(
+            state.pausedUntil ||
+            ''
+          );
+
+        if (
+          Number.isFinite(until) &&
+          until > Date.now()
+        ) {
+          continue;
+        }
+      }
+
+      const sent =
+        Number(
+          state.followUpsSent ||
+          0
+        );
+
+      if (sent >= maxFollowUps) {
+        continue;
+      }
+
+      const lastBotAt =
+        Date.parse(
+          state.lastBotAt ||
+          ''
+        );
+
+      if (
+        !Number.isFinite(lastBotAt) ||
+        Date.now() - lastBotAt <
+          delayMs
+      ) {
+        continue;
+      }
+
+      try {
+        await sendWhatsAppMessage(
+          phone,
+          message
+        );
+
+        state.lastBotAt =
+          new Date().toISOString();
+
+        state.lastBotType =
+          'followup';
+
+        state.followUpsSent =
+          sent + 1;
+
+        changed = true;
+
+        logConversation({
+          contact:
+            phone,
+
+          action:
+            'automatic_followup',
+
+          reply:
+            message,
+
+          reply_sent:
+            true,
+
+          time:
+            new Date().toISOString()
+        });
+
+        console.log(
+          `🔔 Relance automatique envoyée à ${phone}`
+        );
+      } catch (error) {
+        console.error(
+          `❌ Relance ${phone} :`,
+          error.message
+        );
+      }
+    }
+
+    if (changed) {
+      saveConversationStates(states);
+    }
+  } catch (error) {
+    console.error(
+      '❌ Vérification relances :',
+      error
+    );
+  } finally {
+    followUpRunning = false;
+  }
+}
+
+const followUpTimer =
+  setInterval(
+    checkFollowUps,
+    60 * 1000
+  );
+
+if (
+  typeof followUpTimer.unref ===
+  'function'
+) {
+  followUpTimer.unref();
+}
+
+// ============================================================
+// TEST IA
 // ============================================================
 
 app.get(
   '/test-ia',
-  async (
-    req,
-    res
-  ) => {
-
+  async (req, res) => {
     try {
-
       const message =
-        String(
-          req.query.message ||
-          'Bonjour'
-        ).trim();
+        safeString(
+          req.query.message
+        ) ||
+        'Bonjour';
 
       const reply =
         await generateReply(
@@ -2367,85 +2850,50 @@ app.get(
         );
 
       return res.json({
-
-        success:
-          true,
-
-        question:
-          message,
-
-        response:
-          reply
+        success: true,
+        question: message,
+        response: reply
       });
-
-    } catch (
-      error
-    ) {
-
+    } catch (error) {
       return res
         .status(500)
         .json({
-
-          success:
-            false,
-
-          error:
-            error.message
+          success: false,
+          error: error.message
         });
     }
   }
 );
 
-// ============================================================
-// RESET HISTORIQUE TEST
-// ============================================================
-
 app.post(
   '/reset-test-history',
-  (
-    req,
-    res
-  ) => {
+  (req, res) => {
+    conversationHistory.delete(
+      'test-browser'
+    );
 
-    conversationHistory
-      .delete(
-        'test-browser'
-      );
-
-    conversationHistory
-      .delete(
-        'admin-test-session'
-      );
+    conversationHistory.delete(
+      'admin-test-session'
+    );
 
     return res.json({
-      success:
-        true
+      success: true
     });
   }
 );
 
 // ============================================================
-// 404
+// 404 / ERREURS
 // ============================================================
 
-app.use(
-  (
-    req,
-    res
-  ) => {
-
-    return res
-      .status(404)
-      .json({
-        error:
-          'Route introuvable'
-      });
-  }
-);
-
-// ============================================================
-// ERREUR EXPRESS
-// ============================================================
+app.use((req, res) => {
+  return res
+    .status(404)
+    .json({
+      error:
+        'Route introuvable'
+    });
+});
 
 app.use(
   (
@@ -2454,19 +2902,13 @@ app.use(
     res,
     next
   ) => {
-
     console.error(
       '❌ Erreur Express :',
       error
     );
 
-    if (
-      res.headersSent
-    ) {
-
-      return next(
-        error
-      );
+    if (res.headersSent) {
+      return next(error);
     }
 
     return res
@@ -2478,14 +2920,9 @@ app.use(
   }
 );
 
-// ============================================================
-// ERREURS PROMISES
-// ============================================================
-
 process.on(
   'unhandledRejection',
   reason => {
-
     console.error(
       '❌ Unhandled Promise Rejection :',
       reason
@@ -2501,35 +2938,27 @@ app.listen(
   PORT,
   '0.0.0.0',
   () => {
-
     console.log(
       '=============================================='
     );
-
     console.log(
       '✅ SERVEUR MONDECO DÉMARRÉ'
     );
-
     console.log(
       `✅ Port : ${PORT}`
     );
-
     console.log(
       '✅ Health : /health'
     );
-
     console.log(
       '✅ Admin : /admin'
     );
-
     console.log(
       '✅ Webhook : /webhook'
     );
-
     console.log(
       '✅ Debug logs : /debug-log'
     );
-
     console.log(
       '=============================================='
     );
