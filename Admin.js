@@ -120,7 +120,7 @@ router.post('/logout', (req, res) => {
 
 // --- Dashboard (protégé) ---
 router.get('/', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+  res.sendFile(path.join(__dirname, 'public', 'Admin.html'));
 });
 
 // --- API Produits (protégée) ---
