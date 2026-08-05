@@ -1,8 +1,16 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
-// Admin.js
-// Stockage persistant Railway + Produits + Instructions
-// + Test IA image + Personnalisation visuelle
+// Fichier : Admin.js
+//
+// Fonctions :
+// - Authentification Admin
+// - Produits + images
+// - Instructions IA persistantes
+// - Migration automatique business-info.txt UNE SEULE FOIS
+// - Railway Volume /data
+// - Discussion de test texte + image
+// - Personnalisation visuelle
+// - Sauvegardes JSON .bak
 // ============================================================
 
 const express = require('express');
@@ -14,7 +22,7 @@ const multer = require('multer');
 const router = express.Router();
 
 // ============================================================
-// CONFIGURATION
+// CONFIGURATION GÉNÉRALE
 // ============================================================
 
 const APP_DIR = __dirname;
@@ -25,18 +33,46 @@ const DATA_DIR = (
   APP_DIR
 ).trim();
 
-const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
-const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
+// ============================================================
+// FICHIERS PERSISTANTS
+// ============================================================
+
+const PRODUCTS_PATH = path.join(
+  DATA_DIR,
+  'products.json'
+);
+
+const INSTRUCTIONS_PATH = path.join(
+  DATA_DIR,
+  'instructions.json'
+);
+
 const CUSTOMIZATIONS_PATH = path.join(
   DATA_DIR,
   'customization-requests.json'
 );
 
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const UPLOADS_DIR = path.join(
+  DATA_DIR,
+  'uploads'
+);
+
 const CUSTOMIZATIONS_DIR = path.join(
   DATA_DIR,
   'customizations'
 );
+
+// Marqueur très important.
+// Il indique que l'ancien business-info.txt
+// a déjà été migré une fois.
+const INSTRUCTIONS_MIGRATION_MARKER = path.join(
+  DATA_DIR,
+  '.instructions-migration-done'
+);
+
+// ============================================================
+// ANCIENS FICHIERS DANS /app
+// ============================================================
 
 const LEGACY_PRODUCTS_PATH = path.join(
   APP_DIR,
@@ -73,350 +109,45 @@ const ADMIN_HTML_PATH = path.join(
   'Admin.html'
 );
 
+// ============================================================
+// MOT DE PASSE ADMIN
+// ============================================================
+
 const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
 
-fs.mkdirSync(DATA_DIR, {
-  recursive: true
-});
+// ============================================================
+// CRÉATION DES DOSSIERS
+// ============================================================
 
-fs.mkdirSync(UPLOADS_DIR, {
-  recursive: true
-});
+fs.mkdirSync(
+  DATA_DIR,
+  {
+    recursive: true
+  }
+);
 
-fs.mkdirSync(CUSTOMIZATIONS_DIR, {
-  recursive: true
-});
+fs.mkdirSync(
+  UPLOADS_DIR,
+  {
+    recursive: true
+  }
+);
+
+fs.mkdirSync(
+  CUSTOMIZATIONS_DIR,
+  {
+    recursive: true
+  }
+);
 
 router.use(
   express.json({
     limit: '5mb'
   })
 );
-
-// ============================================================
-// STOCKAGE PERSISTANT
-// ============================================================
-
-function samePath(a, b) {
-  return path.resolve(a) === path.resolve(b);
-}
-
-function fileExistsWithContent(filePath) {
-  try {
-    return (
-      fs.existsSync(filePath) &&
-      fs.statSync(filePath).size > 0
-    );
-  } catch {
-    return false;
-  }
-}
-
-function copyFileIfTargetMissing(
-  source,
-  target,
-  label
-) {
-  try {
-    if (samePath(source, target)) {
-      return false;
-    }
-
-    if (!fileExistsWithContent(source)) {
-      return false;
-    }
-
-    if (fileExistsWithContent(target)) {
-      return false;
-    }
-
-    fs.mkdirSync(
-      path.dirname(target),
-      {
-        recursive: true
-      }
-    );
-
-    fs.copyFileSync(
-      source,
-      target
-    );
-
-    console.log(
-      `✅ Migration ${label} vers ${target}`
-    );
-
-    return true;
-  } catch (error) {
-    console.warn(
-      `⚠️ Migration ${label} impossible : ${error.message}`
-    );
-
-    return false;
-  }
-}
-
-function copyMissingFiles(
-  sourceDir,
-  targetDir,
-  label
-) {
-  try {
-    if (samePath(sourceDir, targetDir)) {
-      return 0;
-    }
-
-    if (!fs.existsSync(sourceDir)) {
-      return 0;
-    }
-
-    fs.mkdirSync(
-      targetDir,
-      {
-        recursive: true
-      }
-    );
-
-    let copied = 0;
-
-    const entries = fs.readdirSync(
-      sourceDir,
-      {
-        withFileTypes: true
-      }
-    );
-
-    for (const entry of entries) {
-      if (!entry.isFile()) {
-        continue;
-      }
-
-      const source = path.join(
-        sourceDir,
-        entry.name
-      );
-
-      const target = path.join(
-        targetDir,
-        entry.name
-      );
-
-      if (fs.existsSync(target)) {
-        continue;
-      }
-
-      fs.copyFileSync(
-        source,
-        target
-      );
-
-      copied += 1;
-    }
-
-    if (copied > 0) {
-      console.log(
-        `✅ ${copied} fichier(s) ${label} migré(s)`
-      );
-    }
-
-    return copied;
-  } catch (error) {
-    console.warn(
-      `⚠️ Migration ${label} impossible : ${error.message}`
-    );
-
-    return 0;
-  }
-}
-
-function migrateLegacyData() {
-  if (samePath(DATA_DIR, APP_DIR)) {
-    return;
-  }
-
-  copyFileIfTargetMissing(
-    LEGACY_PRODUCTS_PATH,
-    PRODUCTS_PATH,
-    'products.json'
-  );
-
-  copyFileIfTargetMissing(
-    LEGACY_INSTRUCTIONS_PATH,
-    INSTRUCTIONS_PATH,
-    'instructions.json'
-  );
-
-  copyFileIfTargetMissing(
-    LEGACY_CUSTOMIZATIONS_PATH,
-    CUSTOMIZATIONS_PATH,
-    'customization-requests.json'
-  );
-
-  copyMissingFiles(
-    LEGACY_UPLOADS_DIR,
-    UPLOADS_DIR,
-    'images produits'
-  );
-
-  copyMissingFiles(
-    LEGACY_CUSTOMIZATIONS_DIR,
-    CUSTOMIZATIONS_DIR,
-    'images personnalisations'
-  );
-}
-
-function writeJsonAtomic(
-  filePath,
-  data
-) {
-  const tempPath =
-    `${filePath}.tmp`;
-
-  const backupPath =
-    `${filePath}.bak`;
-
-  fs.mkdirSync(
-    path.dirname(filePath),
-    {
-      recursive: true
-    }
-  );
-
-  if (fileExistsWithContent(filePath)) {
-    try {
-      fs.copyFileSync(
-        filePath,
-        backupPath
-      );
-    } catch (error) {
-      console.warn(
-        `⚠️ Sauvegarde .bak impossible : ${error.message}`
-      );
-    }
-  }
-
-  fs.writeFileSync(
-    tempPath,
-    JSON.stringify(
-      data,
-      null,
-      2
-    ),
-    'utf8'
-  );
-
-  fs.renameSync(
-    tempPath,
-    filePath
-  );
-}
-
-function readJsonArray(
-  filePath,
-  label
-) {
-  const backupPath =
-    `${filePath}.bak`;
-
-  function read(candidate) {
-    if (!fileExistsWithContent(candidate)) {
-      return null;
-    }
-
-    const content =
-      fs.readFileSync(
-        candidate,
-        'utf8'
-      );
-
-    const parsed =
-      JSON.parse(content);
-
-    return Array.isArray(parsed)
-      ? parsed
-      : [];
-  }
-
-  try {
-    const data = read(filePath);
-
-    return data === null
-      ? []
-      : data;
-  } catch (error) {
-    console.error(
-      `❌ Lecture ${label} impossible : ${error.message}`
-    );
-
-    try {
-      const backup =
-        read(backupPath);
-
-      if (backup !== null) {
-        console.warn(
-          `⚠️ ${label} chargé depuis ${path.basename(
-            backupPath
-          )}`
-        );
-
-        return backup;
-      }
-    } catch (backupError) {
-      console.error(
-        `❌ Backup ${label} invalide : ${backupError.message}`
-      );
-    }
-
-    return [];
-  }
-}
-
-function storageIsWritable() {
-  const testFile = path.join(
-    DATA_DIR,
-    `.write-test-${process.pid}-${Date.now()}`
-  );
-
-  try {
-    fs.writeFileSync(
-      testFile,
-      'ok',
-      'utf8'
-    );
-
-    fs.unlinkSync(testFile);
-
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-migrateLegacyData();
-
-console.log(
-  '💾 Stockage MONDECO :',
-  {
-    dataDir: DATA_DIR,
-    persistentConfigured:
-      DATA_DIR !== APP_DIR,
-    writable:
-      storageIsWritable()
-  }
-);
-
-if (
-  DATA_DIR === APP_DIR &&
-  process.env.RAILWAY_ENVIRONMENT_NAME
-) {
-  console.warn(
-    '⚠️ Railway détecté sans stockage persistant. ' +
-    'Montez un Volume sur /data puis ajoutez DATA_DIR=/data.'
-  );
-}
 
 // ============================================================
 // HELPERS
@@ -459,9 +190,25 @@ function parseBoolean(
   );
 }
 
-function deleteFileIfExists(
-  filePath
-) {
+function samePath(a, b) {
+  return (
+    path.resolve(a) ===
+    path.resolve(b)
+  );
+}
+
+function fileExistsWithContent(filePath) {
+  try {
+    return (
+      fs.existsSync(filePath) &&
+      fs.statSync(filePath).size > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function deleteFileIfExists(filePath) {
   try {
     if (
       filePath &&
@@ -471,41 +218,866 @@ function deleteFileIfExists(
     }
   } catch (error) {
     console.warn(
-      `⚠️ Suppression fichier impossible : ${error.message}`
+      '⚠️ Suppression fichier impossible :',
+      error.message
     );
   }
 }
 
-function mimeTypeFromPath(
-  filePath
+// ============================================================
+// ÉCRITURE JSON ATOMIQUE + BACKUP
+// ============================================================
+
+function writeJsonAtomic(
+  filePath,
+  data
 ) {
+  const tempPath =
+    `${filePath}.tmp`;
+
+  const backupPath =
+    `${filePath}.bak`;
+
+  fs.mkdirSync(
+    path.dirname(filePath),
+    {
+      recursive: true
+    }
+  );
+
+  if (
+    fileExistsWithContent(
+      filePath
+    )
+  ) {
+    try {
+      fs.copyFileSync(
+        filePath,
+        backupPath
+      );
+    } catch (error) {
+      console.warn(
+        '⚠️ Backup JSON impossible :',
+        error.message
+      );
+    }
+  }
+
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify(
+      data,
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  fs.renameSync(
+    tempPath,
+    filePath
+  );
+}
+
+// ============================================================
+// LECTURE JSON
+// ============================================================
+
+function readJsonArray(
+  filePath,
+  label
+) {
+  const backupPath =
+    `${filePath}.bak`;
+
+  function read(candidate) {
+    if (
+      !fileExistsWithContent(
+        candidate
+      )
+    ) {
+      return null;
+    }
+
+    const content =
+      fs.readFileSync(
+        candidate,
+        'utf8'
+      );
+
+    const parsed =
+      JSON.parse(
+        content
+      );
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+  }
+
+  try {
+    const data =
+      read(filePath);
+
+    return data === null
+      ? []
+      : data;
+
+  } catch (error) {
+
+    console.error(
+      `❌ Lecture ${label} impossible :`,
+      error.message
+    );
+
+    try {
+      const backup =
+        read(backupPath);
+
+      if (
+        backup !== null
+      ) {
+        console.warn(
+          `♻️ ${label} restauré depuis backup`
+        );
+
+        return backup;
+      }
+
+    } catch (backupError) {
+
+      console.error(
+        `❌ Backup ${label} invalide :`,
+        backupError.message
+      );
+    }
+
+    return [];
+  }
+}
+
+// ============================================================
+// TEST ÉCRITURE VOLUME
+// ============================================================
+
+function storageIsWritable() {
+  const testFile = path.join(
+    DATA_DIR,
+    `.write-test-${process.pid}-${Date.now()}`
+  );
+
+  try {
+    fs.writeFileSync(
+      testFile,
+      'ok',
+      'utf8'
+    );
+
+    fs.unlinkSync(
+      testFile
+    );
+
+    return true;
+
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// COPIE FICHIER ANCIEN -> VOLUME
+// ============================================================
+
+function copyFileIfTargetMissing(
+  source,
+  target,
+  label
+) {
+  try {
+    if (
+      samePath(
+        source,
+        target
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      !fileExistsWithContent(
+        source
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      fileExistsWithContent(
+        target
+      )
+    ) {
+      return false;
+    }
+
+    fs.mkdirSync(
+      path.dirname(target),
+      {
+        recursive: true
+      }
+    );
+
+    fs.copyFileSync(
+      source,
+      target
+    );
+
+    console.log(
+      `✅ Migration ${label} vers ${target}`
+    );
+
+    return true;
+
+  } catch (error) {
+
+    console.warn(
+      `⚠️ Migration ${label} impossible :`,
+      error.message
+    );
+
+    return false;
+  }
+}
+
+// ============================================================
+// COPIE DOSSIER ANCIEN -> VOLUME
+// ============================================================
+
+function copyMissingFiles(
+  sourceDir,
+  targetDir,
+  label
+) {
+  try {
+    if (
+      samePath(
+        sourceDir,
+        targetDir
+      )
+    ) {
+      return 0;
+    }
+
+    if (
+      !fs.existsSync(
+        sourceDir
+      )
+    ) {
+      return 0;
+    }
+
+    fs.mkdirSync(
+      targetDir,
+      {
+        recursive: true
+      }
+    );
+
+    let copied = 0;
+
+    const entries =
+      fs.readdirSync(
+        sourceDir,
+        {
+          withFileTypes: true
+        }
+      );
+
+    for (
+      const entry
+      of entries
+    ) {
+      if (
+        !entry.isFile()
+      ) {
+        continue;
+      }
+
+      const source =
+        path.join(
+          sourceDir,
+          entry.name
+        );
+
+      const target =
+        path.join(
+          targetDir,
+          entry.name
+        );
+
+      if (
+        fs.existsSync(
+          target
+        )
+      ) {
+        continue;
+      }
+
+      fs.copyFileSync(
+        source,
+        target
+      );
+
+      copied++;
+    }
+
+    if (
+      copied > 0
+    ) {
+      console.log(
+        `✅ ${copied} fichier(s) ${label} migré(s)`
+      );
+    }
+
+    return copied;
+
+  } catch (error) {
+
+    console.warn(
+      `⚠️ Migration ${label} impossible :`,
+      error.message
+    );
+
+    return 0;
+  }
+}
+
+// ============================================================
+// MIGRATION PRODUITS + IMAGES + PERSONNALISATIONS
+// ============================================================
+
+function migrateLegacyData() {
+  if (
+    samePath(
+      DATA_DIR,
+      APP_DIR
+    )
+  ) {
+    return;
+  }
+
+  // PRODUITS
+  copyFileIfTargetMissing(
+    LEGACY_PRODUCTS_PATH,
+    PRODUCTS_PATH,
+    'products.json'
+  );
+
+  // PERSONNALISATIONS
+  copyFileIfTargetMissing(
+    LEGACY_CUSTOMIZATIONS_PATH,
+    CUSTOMIZATIONS_PATH,
+    'customization-requests.json'
+  );
+
+  // PHOTOS PRODUITS
+  copyMissingFiles(
+    LEGACY_UPLOADS_DIR,
+    UPLOADS_DIR,
+    'images produits'
+  );
+
+  // IMAGES PERSONNALISATIONS
+  copyMissingFiles(
+    LEGACY_CUSTOMIZATIONS_DIR,
+    CUSTOMIZATIONS_DIR,
+    'images personnalisations'
+  );
+}
+
+// ============================================================
+// PARSER BUSINESS-INFO.TXT
+// ============================================================
+
+function parseInstructionBlocks(text) {
+  return safeString(text)
+    .split(
+      /\n\s*\n+/
+    )
+    .map(
+      block =>
+        block.trim()
+    )
+    .filter(Boolean)
+    .map(
+      (
+        block,
+        index
+      ) => {
+        const lines =
+          block
+            .split('\n')
+            .map(
+              line =>
+                line.trim()
+            )
+            .filter(Boolean);
+
+        const title =
+          lines[0] ||
+          `Instruction ${index + 1}`;
+
+        const content =
+          lines.length > 1
+            ? lines
+                .slice(1)
+                .join('\n')
+            : lines[0];
+
+        return {
+          title,
+          content
+        };
+      }
+    );
+}
+
+// ============================================================
+// BUSINESS INFO
+// ============================================================
+
+function loadLegacyBusinessInfo() {
+  try {
+    if (
+      !fs.existsSync(
+        LEGACY_BUSINESS_INFO_PATH
+      )
+    ) {
+      return '';
+    }
+
+    return fs.readFileSync(
+      LEGACY_BUSINESS_INFO_PATH,
+      'utf8'
+    );
+
+  } catch (error) {
+
+    console.error(
+      '❌ business-info.txt :',
+      error.message
+    );
+
+    return '';
+  }
+}
+
+// ============================================================
+// CRÉER INSTRUCTIONS DEPUIS BUSINESS-INFO
+// ============================================================
+
+function createInstructionsFromLegacyBusinessInfo() {
+  const text =
+    loadLegacyBusinessInfo()
+      .trim();
+
+  if (!text) {
+    return [];
+  }
+
+  const parsed =
+    parseInstructionBlocks(
+      text
+    );
+
+  const now =
+    new Date()
+      .toISOString();
+
+  return parsed.map(
+    item => ({
+      id:
+        crypto.randomUUID(),
+
+      title:
+        item.title,
+
+      content:
+        item.content,
+
+      active:
+        true,
+
+      source:
+        'business-info.txt',
+
+      createdAt:
+        now,
+
+      updatedAt:
+        now
+    })
+  );
+}
+
+// ============================================================
+// MARQUEUR MIGRATION INSTRUCTIONS
+// ============================================================
+
+function markInstructionsMigrationDone() {
+  try {
+    fs.writeFileSync(
+      INSTRUCTIONS_MIGRATION_MARKER,
+      new Date()
+        .toISOString(),
+      'utf8'
+    );
+  } catch (error) {
+    console.warn(
+      '⚠️ Impossible de créer le marqueur instructions :',
+      error.message
+    );
+  }
+}
+
+// ============================================================
+// INITIALISATION INSTRUCTIONS PERSISTANTES
+// ============================================================
+
+function initializePersistentInstructions() {
+  try {
+
+    // ========================================================
+    // CAS 1 :
+    // instructions.json existe déjà
+    // ========================================================
+
+    if (
+      fs.existsSync(
+        INSTRUCTIONS_PATH
+      )
+    ) {
+      try {
+        const content =
+          fs.readFileSync(
+            INSTRUCTIONS_PATH,
+            'utf8'
+          );
+
+        const parsed =
+          JSON.parse(
+            content || '[]'
+          );
+
+        if (
+          Array.isArray(
+            parsed
+          )
+        ) {
+
+          // Si instructions existantes > 0,
+          // elles sont considérées comme persistantes.
+          if (
+            parsed.length > 0
+          ) {
+            if (
+              !fs.existsSync(
+                INSTRUCTIONS_MIGRATION_MARKER
+              )
+            ) {
+              markInstructionsMigrationDone();
+            }
+
+            console.log(
+              `📋 Instructions persistantes trouvées : ${parsed.length}`
+            );
+
+            return parsed;
+          }
+
+          // Si tableau vide ET marqueur existe,
+          // cela signifie que l'utilisateur
+          // a volontairement tout supprimé.
+          if (
+            parsed.length === 0 &&
+            fs.existsSync(
+              INSTRUCTIONS_MIGRATION_MARKER
+            )
+          ) {
+            console.log(
+              '📋 instructions.json existe et contient 0 instruction.'
+            );
+
+            return [];
+          }
+        }
+
+      } catch (error) {
+
+        console.warn(
+          '⚠️ instructions.json invalide :',
+          error.message
+        );
+      }
+    }
+
+    // ========================================================
+    // CAS 2 :
+    // ancien instructions.json dans /app
+    // ========================================================
+
+    if (
+      !samePath(
+        LEGACY_INSTRUCTIONS_PATH,
+        INSTRUCTIONS_PATH
+      ) &&
+      fileExistsWithContent(
+        LEGACY_INSTRUCTIONS_PATH
+      )
+    ) {
+      try {
+        const legacyContent =
+          fs.readFileSync(
+            LEGACY_INSTRUCTIONS_PATH,
+            'utf8'
+          );
+
+        const legacyInstructions =
+          JSON.parse(
+            legacyContent
+          );
+
+        if (
+          Array.isArray(
+            legacyInstructions
+          ) &&
+          legacyInstructions.length > 0
+        ) {
+          writeJsonAtomic(
+            INSTRUCTIONS_PATH,
+            legacyInstructions
+          );
+
+          markInstructionsMigrationDone();
+
+          console.log(
+            `✅ ${legacyInstructions.length} instruction(s) migrée(s) depuis /app`
+          );
+
+          return legacyInstructions;
+        }
+
+      } catch (error) {
+
+        console.warn(
+          '⚠️ Ancien instructions.json invalide :',
+          error.message
+        );
+      }
+    }
+
+    // ========================================================
+    // CAS 3 :
+    // Import automatique business-info.txt
+    // UNE SEULE FOIS
+    // ========================================================
+
+    if (
+      !fs.existsSync(
+        INSTRUCTIONS_MIGRATION_MARKER
+      )
+    ) {
+      const imported =
+        createInstructionsFromLegacyBusinessInfo();
+
+      if (
+        imported.length > 0
+      ) {
+        writeJsonAtomic(
+          INSTRUCTIONS_PATH,
+          imported
+        );
+
+        markInstructionsMigrationDone();
+
+        console.log(
+          `✅ Import automatique business-info.txt : ${imported.length} instruction(s)`
+        );
+
+        return imported;
+      }
+    }
+
+    // ========================================================
+    // CAS 4 :
+    // Rien trouvé
+    // ========================================================
+
+    if (
+      !fs.existsSync(
+        INSTRUCTIONS_PATH
+      )
+    ) {
+      writeJsonAtomic(
+        INSTRUCTIONS_PATH,
+        []
+      );
+    }
+
+    return [];
+
+  } catch (error) {
+
+    console.error(
+      '❌ Initialisation instructions persistantes :',
+      error
+    );
+
+    return [];
+  }
+}
+
+// ============================================================
+// PRODUITS
+// ============================================================
+
+function loadProducts() {
+  return readJsonArray(
+    PRODUCTS_PATH,
+    'products.json'
+  );
+}
+
+function saveProducts(products) {
+  writeJsonAtomic(
+    PRODUCTS_PATH,
+    products
+  );
+}
+
+// ============================================================
+// INSTRUCTIONS
+// ============================================================
+
+function loadInstructions() {
+  // Sécurité :
+  // si le fichier a disparu,
+  // relancer initialisation.
+  if (
+    !fs.existsSync(
+      INSTRUCTIONS_PATH
+    )
+  ) {
+    return initializePersistentInstructions();
+  }
+
+  return readJsonArray(
+    INSTRUCTIONS_PATH,
+    'instructions.json'
+  );
+}
+
+function saveInstructions(instructions) {
+  writeJsonAtomic(
+    INSTRUCTIONS_PATH,
+    instructions
+  );
+
+  // Très important :
+  // une fois que l'utilisateur a commencé
+  // à gérer les instructions dans l'Admin,
+  // ne plus réimporter business-info.txt.
+  markInstructionsMigrationDone();
+}
+
+// ============================================================
+// PERSONNALISATIONS
+// ============================================================
+
+function loadCustomizations() {
+  return readJsonArray(
+    CUSTOMIZATIONS_PATH,
+    'customization-requests.json'
+  );
+}
+
+function saveCustomizations(items) {
+  writeJsonAtomic(
+    CUSTOMIZATIONS_PATH,
+    items
+  );
+}
+
+// ============================================================
+// INITIALISATION STORAGE
+// ============================================================
+
+migrateLegacyData();
+
+initializePersistentInstructions();
+
+console.log(
+  '💾 Stockage MONDECO :',
+  {
+    dataDir:
+      DATA_DIR,
+
+    persistentConfigured:
+      DATA_DIR !==
+      APP_DIR,
+
+    writable:
+      storageIsWritable()
+  }
+);
+
+if (
+  DATA_DIR === APP_DIR &&
+  process.env
+    .RAILWAY_ENVIRONMENT_NAME
+) {
+  console.warn(
+    '⚠️ Railway détecté sans stockage persistant. ' +
+    'Montez un Volume sur /data puis ajoutez DATA_DIR=/data.'
+  );
+}
+
+// ============================================================
+// MIME IMAGES
+// ============================================================
+
+function mimeTypeFromPath(filePath) {
   const ext =
     path.extname(
       filePath || ''
-    ).toLowerCase();
+    )
+      .toLowerCase();
 
-  if (ext === '.png') {
+  if (
+    ext === '.png'
+  ) {
     return 'image/png';
   }
 
-  if (ext === '.webp') {
+  if (
+    ext === '.webp'
+  ) {
     return 'image/webp';
   }
 
   return 'image/jpeg';
 }
 
-function extensionFromMimeType(
-  mimetype
-) {
+function extensionFromMimeType(mimetype) {
   if (
-    mimetype === 'image/png'
+    mimetype ===
+    'image/png'
   ) {
     return '.png';
   }
 
   if (
-    mimetype === 'image/webp'
+    mimetype ===
+    'image/webp'
   ) {
     return '.webp';
   }
@@ -513,14 +1085,18 @@ function extensionFromMimeType(
   return '.jpg';
 }
 
-function getLocalProductImagePath(
-  product
-) {
+// ============================================================
+// CHEMIN IMAGE PRODUIT
+// ============================================================
+
+function getLocalProductImagePath(product) {
   if (!product) {
     return null;
   }
 
-  if (product.imageFilename) {
+  if (
+    product.imageFilename
+  ) {
     return path.join(
       UPLOADS_DIR,
       path.basename(
@@ -548,89 +1124,10 @@ function getLocalProductImagePath(
 }
 
 // ============================================================
-// DONNÉES
-// ============================================================
-
-function loadProducts() {
-  return readJsonArray(
-    PRODUCTS_PATH,
-    'products.json'
-  );
-}
-
-function saveProducts(
-  products
-) {
-  writeJsonAtomic(
-    PRODUCTS_PATH,
-    products
-  );
-}
-
-function loadInstructions() {
-  return readJsonArray(
-    INSTRUCTIONS_PATH,
-    'instructions.json'
-  );
-}
-
-function saveInstructions(
-  instructions
-) {
-  writeJsonAtomic(
-    INSTRUCTIONS_PATH,
-    instructions
-  );
-}
-
-function loadCustomizations() {
-  return readJsonArray(
-    CUSTOMIZATIONS_PATH,
-    'customization-requests.json'
-  );
-}
-
-function saveCustomizations(
-  items
-) {
-  writeJsonAtomic(
-    CUSTOMIZATIONS_PATH,
-    items
-  );
-}
-
-function loadLegacyBusinessInfo() {
-  try {
-    if (
-      !fs.existsSync(
-        LEGACY_BUSINESS_INFO_PATH
-      )
-    ) {
-      return '';
-    }
-
-    return fs.readFileSync(
-      LEGACY_BUSINESS_INFO_PATH,
-      'utf8'
-    );
-  } catch {
-    return '';
-  }
-}
-
-function structuredInstructionsStoreExists() {
-  return fs.existsSync(
-    INSTRUCTIONS_PATH
-  );
-}
-
-// ============================================================
 // CONTEXTE IA
 // ============================================================
 
-function availabilityLabel(
-  value
-) {
+function availabilityLabel(value) {
   const labels = {
     in_stock:
       'En stock',
@@ -655,9 +1152,11 @@ function availabilityLabel(
   );
 }
 
-function productToContext(
-  product
-) {
+// ============================================================
+// PRODUIT -> CONTEXTE IA
+// ============================================================
+
+function productToContext(product) {
   const lines = [];
 
   lines.push(
@@ -666,7 +1165,9 @@ function productToContext(
     )}`
   );
 
-  if (product.category) {
+  if (
+    product.category
+  ) {
     lines.push(
       `Catégorie : ${safeString(
         product.category
@@ -674,7 +1175,9 @@ function productToContext(
     );
   }
 
-  if (product.price) {
+  if (
+    product.price
+  ) {
     lines.push(
       `Prix normal : ${safeString(
         product.price
@@ -682,7 +1185,9 @@ function productToContext(
     );
   }
 
-  if (product.promoPrice) {
+  if (
+    product.promoPrice
+  ) {
     lines.push(
       `Prix promotionnel : ${safeString(
         product.promoPrice
@@ -690,7 +1195,9 @@ function productToContext(
     );
   }
 
-  if (product.availability) {
+  if (
+    product.availability
+  ) {
     lines.push(
       `Disponibilité : ${availabilityLabel(
         product.availability
@@ -698,7 +1205,9 @@ function productToContext(
     );
   }
 
-  if (product.dimensions) {
+  if (
+    product.dimensions
+  ) {
     lines.push(
       `Dimensions : ${safeString(
         product.dimensions
@@ -706,7 +1215,9 @@ function productToContext(
     );
   }
 
-  if (product.composition) {
+  if (
+    product.composition
+  ) {
     lines.push(
       `Composition : ${safeString(
         product.composition
@@ -714,7 +1225,9 @@ function productToContext(
     );
   }
 
-  if (product.colors) {
+  if (
+    product.colors
+  ) {
     lines.push(
       `Couleurs disponibles : ${safeString(
         product.colors
@@ -722,7 +1235,9 @@ function productToContext(
     );
   }
 
-  if (product.showrooms) {
+  if (
+    product.showrooms
+  ) {
     lines.push(
       `Showrooms : ${safeString(
         product.showrooms
@@ -730,7 +1245,9 @@ function productToContext(
     );
   }
 
-  if (product.productUrl) {
+  if (
+    product.productUrl
+  ) {
     lines.push(
       `Lien produit : ${safeString(
         product.productUrl
@@ -738,7 +1255,9 @@ function productToContext(
     );
   }
 
-  if (product.categoryUrl) {
+  if (
+    product.categoryUrl
+  ) {
     lines.push(
       `Lien catégorie : ${safeString(
         product.categoryUrl
@@ -749,7 +1268,8 @@ function productToContext(
   const customizations = [];
 
   if (
-    product.customizableColor === true
+    product.customizableColor ===
+    true
   ) {
     customizations.push(
       'couleur'
@@ -757,7 +1277,8 @@ function productToContext(
   }
 
   if (
-    product.customizableFabric === true
+    product.customizableFabric ===
+    true
   ) {
     customizations.push(
       'tissu'
@@ -765,7 +1286,8 @@ function productToContext(
   }
 
   if (
-    product.customizableDimensions === true
+    product.customizableDimensions ===
+    true
   ) {
     customizations.push(
       'dimensions'
@@ -773,7 +1295,8 @@ function productToContext(
   }
 
   if (
-    product.customizableCorner === true
+    product.customizableCorner ===
+    true
   ) {
     customizations.push(
       'coin/orientation'
@@ -784,13 +1307,13 @@ function productToContext(
     customizations.length
   ) {
     lines.push(
-      `Personnalisation possible : ${customizations.join(
-        ', '
-      )}`
+      `Personnalisation possible : ${customizations.join(', ')}`
     );
   }
 
-  if (product.description) {
+  if (
+    product.description
+  ) {
     lines.push(
       `Description : ${safeString(
         product.description
@@ -798,50 +1321,52 @@ function productToContext(
     );
   }
 
-  return lines.join('\n');
+  return lines.join(
+    '\n'
+  );
 }
 
-function getBusinessContext() {
-  let instructionsText = '';
+// ============================================================
+// BUSINESS CONTEXT
+// ============================================================
 
-  if (
-    structuredInstructionsStoreExists()
-  ) {
-    const activeInstructions =
-      loadInstructions().filter(
+function getBusinessContext() {
+  const activeInstructions =
+    loadInstructions()
+      .filter(
         item =>
-          item.active !== false
+          item.active !==
+          false
       );
 
-    instructionsText =
-      activeInstructions
-        .map(
-          (
-            item,
-            index
-          ) => {
-            return (
-              `${index + 1}. ${safeString(
-                item.title
-              )}\n` +
-              safeString(
-                item.content
-              )
-            );
-          }
-        )
-        .join('\n\n');
-  } else {
-    instructionsText =
-      loadLegacyBusinessInfo()
-        .trim();
-  }
+  const instructionsText =
+    activeInstructions
+      .map(
+        (
+          item,
+          index
+        ) => {
+          return (
+            `${index + 1}. ${safeString(
+              item.title
+            )}\n` +
+            safeString(
+              item.content
+            )
+          );
+        }
+      )
+      .join(
+        '\n\n'
+      );
 
   const activeProducts =
-    loadProducts().filter(
-      product =>
-        product.active !== false
-    );
+    loadProducts()
+      .filter(
+        product =>
+          product.active !==
+          false
+      );
 
   const productsText =
     activeProducts
@@ -858,7 +1383,9 @@ function getBusinessContext() {
           );
         }
       )
-      .join('\n\n');
+      .join(
+        '\n\n'
+      );
 
   return [
     instructionsText
@@ -894,9 +1421,11 @@ const SESSION_DURATION =
   60 *
   1000;
 
-function parseCookies(
-  header = ''
-) {
+// ============================================================
+// COOKIES
+// ============================================================
+
+function parseCookies(header = '') {
   const cookies = {};
 
   for (
@@ -945,6 +1474,10 @@ function parseCookies(
   return cookies;
 }
 
+// ============================================================
+// NETTOYER SESSIONS
+// ============================================================
+
 function cleanupSessions() {
   const now =
     Date.now();
@@ -966,32 +1499,41 @@ function cleanupSessions() {
   }
 }
 
-function getSessionToken(
-  req
-) {
+// ============================================================
+// TOKEN SESSION
+// ============================================================
+
+function getSessionToken(req) {
   return (
     parseCookies(
-      req.headers.cookie || ''
+      req.headers.cookie ||
+      ''
     )
       .mondeco_admin_session ||
     ''
   );
 }
 
-function isAuthenticated(
-  req
-) {
+// ============================================================
+// AUTH
+// ============================================================
+
+function isAuthenticated(req) {
   cleanupSessions();
 
   const token =
-    getSessionToken(req);
+    getSessionToken(
+      req
+    );
 
   if (!token) {
     return false;
   }
 
   const expiresAt =
-    sessions.get(token);
+    sessions.get(
+      token
+    );
 
   if (
     !expiresAt ||
@@ -1013,7 +1555,9 @@ function requireAuth(
   next
 ) {
   if (
-    isAuthenticated(req)
+    isAuthenticated(
+      req
+    )
   ) {
     return next();
   }
@@ -1036,9 +1580,11 @@ function requireAuth(
   );
 }
 
-function secureCookie(
-  req
-) {
+// ============================================================
+// COOKIE SECURE
+// ============================================================
+
+function secureCookie(req) {
   const forwardedProto =
     safeString(
       req.headers[
@@ -1047,7 +1593,8 @@ function secureCookie(
     );
 
   return (
-    forwardedProto === 'https' ||
+    forwardedProto ===
+    'https' ||
     Boolean(
       process.env
         .RAILWAY_ENVIRONMENT_NAME
@@ -1063,17 +1610,21 @@ function renderLoginPage() {
   return `
 <!doctype html>
 <html lang="fr">
+
 <head>
 <meta charset="utf-8">
+
 <meta
   name="viewport"
   content="width=device-width,initial-scale=1"
 >
+
 <title>
 Mondeco — Administration
 </title>
 
 <style>
+
 *{
   box-sizing:border-box;
 }
@@ -1095,23 +1646,18 @@ body{
   max-width:400px;
   border-radius:14px;
   padding:38px;
-  box-shadow:
-    0 20px 60px
-    rgba(0,0,0,.3);
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
 }
 
 h1{
   margin:0;
-  font-family:
-    Georgia,
-    serif;
+  font-family:Georgia,serif;
   font-size:30px;
 }
 
 .sub{
   color:#756d61;
-  margin:
-    5px 0 28px;
+  margin:5px 0 28px;
 }
 
 label{
@@ -1124,9 +1670,7 @@ label{
 input{
   width:100%;
   padding:12px;
-  border:
-    1px solid
-    #ddd5c8;
+  border:1px solid #ddd5c8;
   border-radius:8px;
   font-size:15px;
 }
@@ -1150,6 +1694,7 @@ button{
   font-size:13px;
   margin-top:12px;
 }
+
 </style>
 </head>
 
@@ -1157,7 +1702,9 @@ button{
 
 <div class="card">
 
-<h1>Mondeco</h1>
+<h1>
+Mondeco
+</h1>
 
 <div class="sub">
 Administration du bot WhatsApp
@@ -1266,7 +1813,7 @@ form.addEventListener(
       err.style.display =
         'block';
 
-    } catch (error) {
+    } catch {
 
       err.textContent =
         'Impossible de contacter le serveur.';
@@ -1293,7 +1840,7 @@ form.addEventListener(
 }
 
 // ============================================================
-// ROUTES LOGIN
+// LOGIN ROUTES
 // ============================================================
 
 router.get(
@@ -1304,7 +1851,9 @@ router.get(
   ) => {
 
     if (
-      isAuthenticated(req)
+      isAuthenticated(
+        req
+      )
     ) {
       return res.redirect(
         '/admin'
@@ -1334,7 +1883,7 @@ router.post(
     if (
       !password ||
       password !==
-        ADMIN_PASSWORD
+      ADMIN_PASSWORD
     ) {
       return res
         .status(401)
@@ -1356,9 +1905,7 @@ router.post(
     );
 
     const cookieParts = [
-      `mondeco_admin_session=${encodeURIComponent(
-        token
-      )}`,
+      `mondeco_admin_session=${encodeURIComponent(token)}`,
       'HttpOnly',
       'SameSite=Lax',
       'Path=/',
@@ -1369,7 +1916,9 @@ router.post(
     ];
 
     if (
-      secureCookie(req)
+      secureCookie(
+        req
+      )
     ) {
       cookieParts.push(
         'Secure'
@@ -1384,10 +1933,15 @@ router.post(
     );
 
     return res.json({
-      success:true
+      success:
+        true
     });
   }
 );
+
+// ============================================================
+// LOGOUT
+// ============================================================
 
 router.post(
   '/logout',
@@ -1397,7 +1951,9 @@ router.post(
   ) => {
 
     const token =
-      getSessionToken(req);
+      getSessionToken(
+        req
+      );
 
     if (token) {
       sessions.delete(
@@ -1414,7 +1970,9 @@ router.post(
     ];
 
     if (
-      secureCookie(req)
+      secureCookie(
+        req
+      )
     ) {
       cookieParts.push(
         'Secure'
@@ -1429,10 +1987,15 @@ router.post(
     );
 
     return res.json({
-      success:true
+      success:
+        true
     });
   }
 );
+
+// ============================================================
+// ADMIN HTML
+// ============================================================
 
 router.get(
   '/',
@@ -1495,6 +2058,10 @@ function imageFileFilter(
   );
 }
 
+// ============================================================
+// STOCKAGE IMAGE PRODUIT
+// ============================================================
+
 const productStorage =
   multer.diskStorage({
 
@@ -1542,6 +2109,10 @@ const productUpload =
       imageFileFilter
   });
 
+// ============================================================
+// MEMORY UPLOAD
+// ============================================================
+
 const memoryUpload =
   multer({
     storage:
@@ -1557,6 +2128,10 @@ const memoryUpload =
     fileFilter:
       imageFileFilter
   });
+
+// ============================================================
+// WRAPPER MULTER
+// ============================================================
 
 function multerSingle(
   upload,
@@ -1635,7 +2210,7 @@ const uploadCustomizationImage =
   );
 
 // ============================================================
-// SERVIR LES IMAGES
+// SERVIR PHOTOS PRODUITS
 // ============================================================
 
 router.get(
@@ -1680,6 +2255,10 @@ router.get(
   }
 );
 
+// ============================================================
+// SERVIR SIMULATIONS
+// ============================================================
+
 router.get(
   '/customizations/:filename',
   requireAuth,
@@ -1723,7 +2302,7 @@ router.get(
 );
 
 // ============================================================
-// API PRODUITS
+// GET PRODUITS
 // ============================================================
 
 router.get(
@@ -1766,8 +2345,9 @@ router.post(
         );
 
       if (!name) {
-
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -1782,8 +2362,9 @@ router.post(
       }
 
       if (!category) {
-
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -1797,7 +2378,9 @@ router.post(
           });
       }
 
-      if (!req.file) {
+      if (
+        !req.file
+      ) {
         return res
           .status(400)
           .json({
@@ -1925,7 +2508,6 @@ router.post(
       );
 
       try {
-
         saveProducts(
           products
         );
@@ -1964,7 +2546,7 @@ router.post(
 );
 
 // ============================================================
-// MODIFICATION PRODUIT
+// MODIFIER PRODUIT
 // ============================================================
 
 router.put(
@@ -1991,8 +2573,9 @@ router.put(
       if (
         index === -1
       ) {
-
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -2017,11 +2600,9 @@ router.put(
       const name =
         req.body?.name !==
         undefined
-
           ? safeString(
               req.body.name
             )
-
           : safeString(
               current.name
             );
@@ -2029,18 +2610,17 @@ router.put(
       const category =
         req.body?.category !==
         undefined
-
           ? safeString(
               req.body.category
             )
-
           : safeString(
               current.category
             );
 
       if (!name) {
-
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -2055,8 +2635,9 @@ router.put(
       }
 
       if (!category) {
-
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -2093,11 +2674,9 @@ router.put(
         price:
           req.body?.price !==
           undefined
-
             ? safeString(
                 req.body.price
               )
-
             : safeString(
                 current.price
               ),
@@ -2105,11 +2684,9 @@ router.put(
         promoPrice:
           req.body?.promoPrice !==
           undefined
-
             ? safeString(
                 req.body.promoPrice
               )
-
             : safeString(
                 current.promoPrice
               ),
@@ -2117,11 +2694,9 @@ router.put(
         availability:
           req.body?.availability !==
           undefined
-
             ? safeString(
                 req.body.availability
               )
-
             : (
               safeString(
                 current.availability
@@ -2132,11 +2707,9 @@ router.put(
         dimensions:
           req.body?.dimensions !==
           undefined
-
             ? safeString(
                 req.body.dimensions
               )
-
             : safeString(
                 current.dimensions
               ),
@@ -2144,11 +2717,9 @@ router.put(
         composition:
           req.body?.composition !==
           undefined
-
             ? safeString(
                 req.body.composition
               )
-
             : safeString(
                 current.composition
               ),
@@ -2156,11 +2727,9 @@ router.put(
         colors:
           req.body?.colors !==
           undefined
-
             ? safeString(
                 req.body.colors
               )
-
             : safeString(
                 current.colors
               ),
@@ -2168,11 +2737,9 @@ router.put(
         showrooms:
           req.body?.showrooms !==
           undefined
-
             ? safeString(
                 req.body.showrooms
               )
-
             : safeString(
                 current.showrooms
               ),
@@ -2180,11 +2747,9 @@ router.put(
         productUrl:
           req.body?.productUrl !==
           undefined
-
             ? safeString(
                 req.body.productUrl
               )
-
             : safeString(
                 current.productUrl
               ),
@@ -2192,11 +2757,9 @@ router.put(
         categoryUrl:
           req.body?.categoryUrl !==
           undefined
-
             ? safeString(
                 req.body.categoryUrl
               )
-
             : safeString(
                 current.categoryUrl
               ),
@@ -2204,11 +2767,9 @@ router.put(
         description:
           req.body?.description !==
           undefined
-
             ? safeString(
                 req.body.description
               )
-
             : safeString(
                 current.description
               ),
@@ -2217,13 +2778,11 @@ router.put(
           req.body
             ?.customizableColor !==
           undefined
-
             ? parseBoolean(
                 req.body
                   .customizableColor,
                 false
               )
-
             : (
               current
                 .customizableColor ===
@@ -2234,13 +2793,11 @@ router.put(
           req.body
             ?.customizableFabric !==
           undefined
-
             ? parseBoolean(
                 req.body
                   .customizableFabric,
                 false
               )
-
             : (
               current
                 .customizableFabric ===
@@ -2251,13 +2808,11 @@ router.put(
           req.body
             ?.customizableDimensions !==
           undefined
-
             ? parseBoolean(
                 req.body
                   .customizableDimensions,
                 false
               )
-
             : (
               current
                 .customizableDimensions ===
@@ -2268,13 +2823,11 @@ router.put(
           req.body
             ?.customizableCorner !==
           undefined
-
             ? parseBoolean(
                 req.body
                   .customizableCorner,
                 false
               )
-
             : (
               current
                 .customizableCorner ===
@@ -2284,12 +2837,10 @@ router.put(
         active:
           req.body?.active !==
           undefined
-
             ? parseBoolean(
                 req.body.active,
                 true
               )
-
             : (
               current.active !==
               false
@@ -2300,8 +2851,9 @@ router.put(
             .toISOString()
       };
 
-      if (req.file) {
-
+      if (
+        req.file
+      ) {
         updated.image =
           `/admin/uploads/${req.file.filename}`;
 
@@ -2313,14 +2865,15 @@ router.put(
         updated;
 
       try {
-
         saveProducts(
           products
         );
 
       } catch (error) {
 
-        if (req.file) {
+        if (
+          req.file
+        ) {
           deleteFileIfExists(
             req.file.path
           );
@@ -2333,7 +2886,7 @@ router.put(
         req.file &&
         oldImagePath &&
         oldImagePath !==
-          req.file.path
+        req.file.path
       ) {
         deleteFileIfExists(
           oldImagePath
@@ -2363,7 +2916,7 @@ router.put(
 );
 
 // ============================================================
-// SUPPRESSION PRODUIT
+// SUPPRIMER PRODUIT
 // ============================================================
 
 router.delete(
@@ -2386,7 +2939,9 @@ router.delete(
             req.params.id
         );
 
-      if (!product) {
+      if (
+        !product
+      ) {
         return res
           .status(404)
           .json({
@@ -2408,14 +2963,17 @@ router.delete(
           product
         );
 
-      if (imagePath) {
+      if (
+        imagePath
+      ) {
         deleteFileIfExists(
           imagePath
         );
       }
 
       return res.json({
-        success:true
+        success:
+          true
       });
 
     } catch (error) {
@@ -2436,68 +2994,16 @@ router.delete(
 );
 
 // ============================================================
-// INSTRUCTIONS
+// FINGERPRINT INSTRUCTIONS
 // ============================================================
-
-function parseInstructionBlocks(
-  text
-) {
-  return safeString(text)
-    .split(
-      /\n\s*\n+/
-    )
-    .map(
-      block =>
-        block.trim()
-    )
-    .filter(Boolean)
-    .map(
-      (
-        block,
-        index
-      ) => {
-
-        const lines =
-          block
-            .split('\n')
-            .map(
-              line =>
-                line.trim()
-            )
-            .filter(Boolean);
-
-        const title =
-          lines[0] ||
-          `Instruction ${index + 1}`;
-
-        const content =
-          lines.length > 1
-
-            ? lines
-                .slice(1)
-                .join('\n')
-
-            : lines[0];
-
-        return {
-          title,
-          content
-        };
-      }
-    );
-}
 
 function instructionFingerprint(
   title,
   content
 ) {
   return (
-    `${safeString(
-      title
-    ).toLowerCase()}::` +
-    safeString(
-      content
-    ).toLowerCase()
+    `${safeString(title).toLowerCase()}::` +
+    safeString(content).toLowerCase()
   );
 }
 
@@ -2543,7 +3049,9 @@ router.post(
           req.body?.content
         );
 
-      if (!title) {
+      if (
+        !title
+      ) {
         return res
           .status(400)
           .json({
@@ -2552,7 +3060,9 @@ router.post(
           });
       }
 
-      if (!content) {
+      if (
+        !content
+      ) {
         return res
           .status(400)
           .json({
@@ -2622,7 +3132,7 @@ router.post(
 );
 
 // ============================================================
-// MODIFICATION INSTRUCTION
+// MODIFIER INSTRUCTION
 // ============================================================
 
 router.put(
@@ -2639,12 +3149,11 @@ router.put(
         loadInstructions();
 
       const index =
-        instructions
-          .findIndex(
-            item =>
-              item.id ===
-              req.params.id
-          );
+        instructions.findIndex(
+          item =>
+            item.id ===
+            req.params.id
+        );
 
       if (
         index === -1
@@ -2663,11 +3172,9 @@ router.put(
       const title =
         req.body?.title !==
         undefined
-
           ? safeString(
               req.body.title
             )
-
           : safeString(
               current.title
             );
@@ -2675,16 +3182,16 @@ router.put(
       const content =
         req.body?.content !==
         undefined
-
           ? safeString(
               req.body.content
             )
-
           : safeString(
               current.content
             );
 
-      if (!title) {
+      if (
+        !title
+      ) {
         return res
           .status(400)
           .json({
@@ -2693,7 +3200,9 @@ router.put(
           });
       }
 
-      if (!content) {
+      if (
+        !content
+      ) {
         return res
           .status(400)
           .json({
@@ -2713,12 +3222,10 @@ router.put(
         active:
           req.body?.active !==
           undefined
-
             ? parseBoolean(
                 req.body.active,
                 true
               )
-
             : (
               current.active !==
               false
@@ -2755,7 +3262,7 @@ router.put(
 );
 
 // ============================================================
-// SUPPRESSION INSTRUCTION
+// SUPPRIMER INSTRUCTION
 // ============================================================
 
 router.delete(
@@ -2778,7 +3285,9 @@ router.delete(
             req.params.id
         );
 
-      if (!exists) {
+      if (
+        !exists
+      ) {
         return res
           .status(404)
           .json({
@@ -2796,7 +3305,8 @@ router.delete(
       );
 
       return res.json({
-        success:true
+        success:
+          true
       });
 
     } catch (error) {
@@ -2817,7 +3327,7 @@ router.delete(
 );
 
 // ============================================================
-// IMPORT INSTRUCTIONS
+// IMPORT PLUSIEURS
 // ============================================================
 
 router.post(
@@ -2835,7 +3345,9 @@ router.post(
           req.body?.text
         );
 
-      if (!text) {
+      if (
+        !text
+      ) {
         return res
           .status(400)
           .json({
@@ -2878,13 +3390,11 @@ router.post(
           );
 
         if (
-          fingerprints
-            .has(
-              fingerprint
-            )
+          fingerprints.has(
+            fingerprint
+          )
         ) {
-
-          duplicates += 1;
+          duplicates++;
 
           continue;
         }
@@ -2918,7 +3428,7 @@ router.post(
           fingerprint
         );
 
-        imported += 1;
+        imported++;
       }
 
       saveInstructions(
@@ -2927,7 +3437,8 @@ router.post(
 
       return res.json({
 
-        success:true,
+        success:
+          true,
 
         imported,
 
@@ -2955,7 +3466,7 @@ router.post(
 );
 
 // ============================================================
-// IMPORT BUSINESS-INFO.TXT
+// IMPORT MANUEL BUSINESS-INFO.TXT
 // ============================================================
 
 router.post(
@@ -2972,7 +3483,9 @@ router.post(
         loadLegacyBusinessInfo()
           .trim();
 
-      if (!legacyText) {
+      if (
+        !legacyText
+      ) {
         return res
           .status(404)
           .json({
@@ -3015,13 +3528,11 @@ router.post(
           );
 
         if (
-          fingerprints
-            .has(
-              fingerprint
-            )
+          fingerprints.has(
+            fingerprint
+          )
         ) {
-
-          duplicates += 1;
+          duplicates++;
 
           continue;
         }
@@ -3058,7 +3569,7 @@ router.post(
           fingerprint
         );
 
-        imported += 1;
+        imported++;
       }
 
       saveInstructions(
@@ -3067,7 +3578,8 @@ router.post(
 
       return res.json({
 
-        success:true,
+        success:
+          true,
 
         imported,
 
@@ -3098,12 +3610,13 @@ router.post(
 // DISCUSSION TEST
 // ============================================================
 
-let chatHandler = null;
-let imageChatHandler = null;
+let chatHandler =
+  null;
 
-function setChatHandler(
-  fn
-) {
+let imageChatHandler =
+  null;
+
+function setChatHandler(fn) {
   if (
     typeof fn !==
     'function'
@@ -3113,12 +3626,11 @@ function setChatHandler(
     );
   }
 
-  chatHandler = fn;
+  chatHandler =
+    fn;
 }
 
-function setImageChatHandler(
-  fn
-) {
+function setImageChatHandler(fn) {
   if (
     typeof fn !==
     'function'
@@ -3128,7 +3640,8 @@ function setImageChatHandler(
     );
   }
 
-  imageChatHandler = fn;
+  imageChatHandler =
+    fn;
 }
 
 // ============================================================
@@ -3145,7 +3658,9 @@ router.post(
 
     try {
 
-      if (!chatHandler) {
+      if (
+        !chatHandler
+      ) {
         return res
           .status(503)
           .json({
@@ -3159,7 +3674,9 @@ router.post(
           req.body?.message
         );
 
-      if (!message) {
+      if (
+        !message
+      ) {
         return res
           .status(400)
           .json({
@@ -3211,7 +3728,9 @@ router.post(
 
     try {
 
-      if (!req.file) {
+      if (
+        !req.file
+      ) {
         return res
           .status(400)
           .json({
@@ -3272,8 +3791,7 @@ router.post(
               req.file.mimetype,
 
             originalname:
-              req.file
-                .originalname,
+              req.file.originalname,
 
             size:
               req.file.size
@@ -3313,9 +3831,7 @@ router.post(
 let customizationHandler =
   null;
 
-function setCustomizationHandler(
-  fn
-) {
+function setCustomizationHandler(fn) {
   if (
     typeof fn !==
     'function'
@@ -3329,14 +3845,19 @@ function setCustomizationHandler(
     fn;
 }
 
+// ============================================================
+// WARNINGS PERSONNALISATION
+// ============================================================
+
 function buildCustomizationWarnings(
   product,
   request
 ) {
   const warnings = [];
 
-  if (!product) {
-
+  if (
+    !product
+  ) {
     warnings.push(
       'Image libre : identification, prix et faisabilité à confirmer par un commercial.'
     );
@@ -3458,13 +3979,11 @@ router.post(
 
       const product =
         productId
-
           ? products.find(
               item =>
                 item.id ===
                 productId
             )
-
           : null;
 
       if (
@@ -3546,8 +4065,10 @@ router.post(
       let sourceImageUrl =
         '';
 
-      if (req.file) {
-
+      // IMAGE UPLOADÉE MANUELLEMENT
+      if (
+        req.file
+      ) {
         sourceImage = {
 
           buffer:
@@ -3557,16 +4078,18 @@ router.post(
             req.file.mimetype,
 
           originalname:
-            req.file
-              .originalname ||
+            req.file.originalname ||
             'reference.jpg',
 
           size:
             req.file.size
         };
+      }
 
-      } else if (product) {
-
+      // PHOTO DU PRODUIT
+      else if (
+        product
+      ) {
         const localPath =
           getLocalProductImagePath(
             product
@@ -3615,7 +4138,9 @@ router.post(
           );
       }
 
-      if (!sourceImage) {
+      if (
+        !sourceImage
+      ) {
         return res
           .status(400)
           .json({
@@ -3675,7 +4200,8 @@ router.post(
         });
 
       if (
-        !simulation?.imageBuffer
+        !simulation
+          ?.imageBuffer
       ) {
         throw new Error(
           'Le moteur image n’a retourné aucune simulation.'
@@ -3692,8 +4218,10 @@ router.post(
       let sourceFilename =
         '';
 
-      if (req.file) {
-
+      // SAUVEGARDE SOURCE UPLOADÉE
+      if (
+        req.file
+      ) {
         sourceFilename =
           `custom-source-${Date.now()}-${id}` +
           extensionFromMimeType(
@@ -3742,12 +4270,10 @@ router.post(
           'Image libre',
 
         customerName:
-          request
-            .customerName,
+          request.customerName,
 
         customerPhone:
-          request
-            .customerPhone,
+          request.customerPhone,
 
         request,
 
@@ -3821,7 +4347,7 @@ router.post(
 );
 
 // ============================================================
-// MODIFIER STATUT PERSONNALISATION
+// STATUT PERSONNALISATION
 // ============================================================
 
 router.put(
@@ -3942,7 +4468,9 @@ router.delete(
             req.params.id
         );
 
-      if (!item) {
+      if (
+        !item
+      ) {
         return res
           .status(404)
           .json({
@@ -3986,7 +4514,8 @@ router.delete(
       }
 
       return res.json({
-        success:true
+        success:
+          true
       });
 
     } catch (error) {
@@ -4007,7 +4536,7 @@ router.delete(
 );
 
 // ============================================================
-// ÉTAT STOCKAGE
+// STORAGE STATUS
 // ============================================================
 
 router.get(
@@ -4047,6 +4576,11 @@ router.get(
       instructionsFile:
         fs.existsSync(
           INSTRUCTIONS_PATH
+        ),
+
+      instructionMigrationDone:
+        fs.existsSync(
+          INSTRUCTIONS_MIGRATION_MARKER
         ),
 
       customizationsFile:
@@ -4127,8 +4661,10 @@ router.get(
       customizationCount:
         customizations.length,
 
-      structuredInstructions:
-        structuredInstructionsStoreExists(),
+      instructionMigrationDone:
+        fs.existsSync(
+          INSTRUCTIONS_MIGRATION_MARKER
+        ),
 
       legacyBusinessInfoAvailable:
         Boolean(
