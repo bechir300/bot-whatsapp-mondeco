@@ -205,7 +205,7 @@ body {
 
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
   margin-bottom: 32px;
 }
@@ -1179,6 +1179,272 @@ body {
   transform: translateY(0);
 }
 
+
+/* ============================================================
+   PERSONNALISATION / SIMULATION
+   ============================================================ */
+
+.customization-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.custom-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+
+.custom-card-title {
+  font-family: 'Fraunces', serif;
+  font-size: 19px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.custom-card-desc {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin-bottom: 18px;
+}
+
+.custom-product-preview {
+  display: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #F3F0EA;
+  margin-top: 10px;
+}
+
+.custom-product-preview.visible {
+  display: block;
+}
+
+.custom-product-preview img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  display: block;
+}
+
+.custom-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.capability-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #F0ECE5;
+  color: var(--muted);
+}
+
+.capability-chip.yes {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.custom-upload {
+  display: block;
+  padding: 14px;
+  border: 1.5px dashed var(--border);
+  border-radius: 9px;
+  text-align: center;
+  cursor: pointer;
+  background: #FAF8F4;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.custom-upload:hover {
+  border-color: var(--copper);
+  color: var(--ink);
+}
+
+.custom-result-empty {
+  min-height: 370px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  padding: 30px;
+}
+
+.custom-result-empty-icon {
+  font-size: 46px;
+  margin-bottom: 12px;
+}
+
+.custom-result {
+  display: none;
+}
+
+.custom-result.visible {
+  display: block;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.comparison-item {
+  min-width: 0;
+}
+
+.comparison-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+
+.comparison-image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: #F1EDE6;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  display: block;
+}
+
+.custom-analysis {
+  margin-top: 14px;
+  padding: 13px 14px;
+  background: #F7F3EC;
+  border-radius: 9px;
+  color: #5D554A;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.custom-warning {
+  margin-top: 12px;
+  border: 1px solid #E8CC9E;
+  background: #FFF8E9;
+  color: #765A2B;
+  padding: 12px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.custom-history {
+  margin-top: 20px;
+}
+
+.custom-history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.custom-history-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+.custom-history-images {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 130px;
+  background: #EEEAE3;
+}
+
+.custom-history-images img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  display: block;
+}
+
+.custom-history-body {
+  padding: 14px;
+}
+
+.custom-history-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.custom-history-request {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.custom-history-actions {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin-top: 11px;
+}
+
+.custom-history-actions select {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 11px;
+}
+
+.custom-checkboxes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.custom-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  margin: 0 !important;
+  background: #FAF8F4;
+}
+
+.custom-checkbox input {
+  width: auto !important;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .customization-grid,
+  .comparison-grid,
+  .custom-checkboxes {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ============================================================
    RESPONSIVE
    ============================================================ */
@@ -1263,6 +1529,7 @@ body {
   <div class="nav-item active" data-view="home">🏠 Accueil</div>
   <div class="nav-item" data-view="products">🪑 Produits</div>
   <div class="nav-item" data-view="instructions">📋 Instructions IA</div>
+  <div class="nav-item" data-view="customization">🎨 Personnalisation</div>
   <div class="nav-item" data-view="test">💬 Discussion de test</div>
 
   <div class="sidebar-footer">
@@ -1311,6 +1578,12 @@ body {
       <div class="home-action-title">Liste des produits</div>
       <div class="home-action-desc">Consultez tous les produits déjà enregistrés, puis modifiez ou supprimez ceux de votre choix.</div>
       <div class="home-action-link">Voir la liste →</div>
+    </div>
+
+    <div class="home-action-card" data-goto="customization">
+      <div class="home-action-title">Personnaliser un salon</div>
+      <div class="home-action-desc">Simulez une nouvelle couleur, un tissu, des dimensions ou un changement de coin à partir d'une photo.</div>
+      <div class="home-action-link">Créer une simulation →</div>
     </div>
 
     <div class="home-action-card" data-goto="instructions">
@@ -1436,6 +1709,157 @@ body {
   <div id="instructionsEmpty" class="empty-state" style="display:none;">
     <div class="empty-title">Aucune instruction séparée</div>
     <div>Ajoutez votre première instruction ou importez l'ancien texte.</div>
+  </div>
+</section>
+
+
+<!-- =========================================================
+     PERSONNALISATION
+     ========================================================= -->
+
+<section class="view" id="view-customization">
+  <div class="page-header">
+    <div class="page-title">Personnalisation client</div>
+    <div class="page-desc">
+      Créez une simulation visuelle à partir d'un produit MONDECO ou d'une image libre. La simulation est indicative : prix, dimensions exactes et faisabilité restent à valider par un commercial.
+    </div>
+  </div>
+
+  <div class="customization-grid">
+    <div class="custom-card">
+      <div class="custom-card-title">Nouvelle simulation</div>
+      <div class="custom-card-desc">
+        Sélectionnez un produit du catalogue. Vous pouvez aussi ajouter une autre photo de référence si nécessaire.
+      </div>
+
+      <form id="customizationForm" enctype="multipart/form-data">
+        <div class="field">
+          <label for="customProductId">Produit MONDECO</label>
+          <select id="customProductId">
+            <option value="">— Image libre / aucun produit sélectionné —</option>
+          </select>
+
+          <div class="custom-product-preview" id="customProductPreview">
+            <img id="customProductPreviewImage" alt="Produit sélectionné">
+          </div>
+
+          <div class="custom-capabilities" id="customCapabilities"></div>
+        </div>
+
+        <div class="field">
+          <label>Autre image de référence (facultatif)</label>
+          <label class="custom-upload" for="customReferenceImage">
+            🖼 Choisir une image différente de celle du catalogue
+          </label>
+          <input
+            type="file"
+            id="customReferenceImage"
+            accept="image/jpeg,image/png,image/webp"
+            style="display:none;"
+          >
+          <div class="current-image-note" id="customReferenceName"></div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="customColor">Nouvelle couleur</label>
+            <input id="customColor" type="text" placeholder="Ex : beige clair, taupe, gris">
+          </div>
+
+          <div class="field">
+            <label for="customFabric">Nouveau tissu / matière</label>
+            <input id="customFabric" type="text" placeholder="Ex : bouclé, velours, lin, anti-tache">
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="customDimensions">Dimensions souhaitées</label>
+            <input id="customDimensions" type="text" placeholder="Ex : 300 × 240 cm">
+          </div>
+
+          <div class="field">
+            <label for="customCorner">Coin / orientation</label>
+            <select id="customCorner">
+              <option value="">Ne pas modifier</option>
+              <option value="coin à gauche">Coin à gauche</option>
+              <option value="coin à droite">Coin à droite</option>
+              <option value="orientation inversée par rapport à la photo">Inverser l'orientation actuelle</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="customNotes">Autres modifications</label>
+          <textarea
+            id="customNotes"
+            placeholder="Ex : conserver exactement les pieds et les coutures, retirer le pouf, garder le même décor..."
+          ></textarea>
+        </div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="customCustomerName">Nom client (facultatif)</label>
+            <input id="customCustomerName" type="text" placeholder="Nom du client">
+          </div>
+
+          <div class="field">
+            <label for="customCustomerPhone">Téléphone (facultatif)</label>
+            <input id="customCustomerPhone" type="text" placeholder="216...">
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="generateCustomizationBtn" style="width:100%;">
+          ✨ Générer la simulation
+        </button>
+      </form>
+    </div>
+
+    <div class="custom-card">
+      <div class="custom-card-title">Résultat</div>
+      <div class="custom-card-desc">
+        Comparez la référence avec la simulation. Le visuel ne remplace jamais la validation technique MONDECO.
+      </div>
+
+      <div class="custom-result-empty" id="customResultEmpty">
+        <div class="custom-result-empty-icon">🎨</div>
+        <div>Aucune simulation générée.</div>
+      </div>
+
+      <div class="custom-result" id="customResult">
+        <div class="comparison-grid">
+          <div class="comparison-item">
+            <div class="comparison-label">Référence</div>
+            <img class="comparison-image" id="customResultSource" alt="Image de référence">
+          </div>
+
+          <div class="comparison-item">
+            <div class="comparison-label">Simulation IA</div>
+            <img class="comparison-image" id="customResultImage" alt="Simulation générée">
+          </div>
+        </div>
+
+        <div class="custom-analysis" id="customResultAnalysis"></div>
+
+        <div class="custom-warning" id="customResultWarning">
+          Simulation visuelle non contractuelle. Le prix, les dimensions exactes, la structure, la faisabilité de fabrication et le délai doivent être confirmés par un commercial MONDECO.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="custom-history">
+    <div class="page-header" style="margin-bottom:14px;">
+      <div class="page-title" style="font-size:23px;">Historique des simulations</div>
+      <div class="page-desc">Retrouvez les demandes déjà générées et leur statut commercial.</div>
+    </div>
+
+    <div class="custom-history-grid" id="customHistoryGrid"></div>
+
+    <div class="empty-state" id="customHistoryEmpty" style="display:none;">
+      <div class="empty-title">Aucune simulation</div>
+      <div>Les simulations générées apparaîtront ici.</div>
+    </div>
   </div>
 </section>
 
@@ -1655,6 +2079,34 @@ body {
       <div class="field">
         <label for="productCategoryUrl">Lien de la catégorie</label>
         <input type="url" id="productCategoryUrl" placeholder="https://mondeco.tn/categorie-produit/...">
+      </div>
+
+      <div class="field">
+        <label>Personnalisation autorisée pour ce produit</label>
+        <div class="custom-checkboxes">
+          <label class="custom-checkbox" for="productCustomColor">
+            <input type="checkbox" id="productCustomColor">
+            <span>Couleur</span>
+          </label>
+
+          <label class="custom-checkbox" for="productCustomFabric">
+            <input type="checkbox" id="productCustomFabric">
+            <span>Tissu / matière</span>
+          </label>
+
+          <label class="custom-checkbox" for="productCustomDimensions">
+            <input type="checkbox" id="productCustomDimensions">
+            <span>Dimensions</span>
+          </label>
+
+          <label class="custom-checkbox" for="productCustomCorner">
+            <input type="checkbox" id="productCustomCorner">
+            <span>Coin / orientation</span>
+          </label>
+        </div>
+        <div class="current-image-note">
+          Cochez uniquement les modifications réellement proposées par MONDECO. Une simulation reste soumise à validation commerciale.
+        </div>
       </div>
 
       <div class="field">
@@ -1882,6 +2334,7 @@ async function loadProducts() {
     document.getElementById('productsListCount').textContent = products.length;
 
     renderProductsTable();
+    populateCustomizationProducts();
   } catch (error) {
     console.error('Produits :', error);
   }
@@ -2114,6 +2567,10 @@ function resetProductModal() {
 
   document.getElementById('productAvailability').value = 'in_stock';
   document.getElementById('productActive').checked = true;
+  document.getElementById('productCustomColor').checked = false;
+  document.getElementById('productCustomFabric').checked = false;
+  document.getElementById('productCustomDimensions').checked = false;
+  document.getElementById('productCustomCorner').checked = false;
 }
 
 function openAddProductModal() {
@@ -2199,6 +2656,10 @@ window.editProduct = function(id) {
   document.getElementById('productUrl').value = product.productUrl || '';
   document.getElementById('productCategoryUrl').value = product.categoryUrl || '';
   document.getElementById('productDescription').value = product.description || '';
+  document.getElementById('productCustomColor').checked = product.customizableColor === true;
+  document.getElementById('productCustomFabric').checked = product.customizableFabric === true;
+  document.getElementById('productCustomDimensions').checked = product.customizableDimensions === true;
+  document.getElementById('productCustomCorner').checked = product.customizableCorner === true;
   document.getElementById('productActive').checked = product.active !== false;
   document.getElementById('currentProductImage').value = product.image || '';
 
@@ -2305,6 +2766,10 @@ productForm.addEventListener('submit', async event => {
   formData.append('productUrl', document.getElementById('productUrl').value);
   formData.append('categoryUrl', document.getElementById('productCategoryUrl').value);
   formData.append('description', document.getElementById('productDescription').value);
+  formData.append('customizableColor', document.getElementById('productCustomColor').checked ? 'true' : 'false');
+  formData.append('customizableFabric', document.getElementById('productCustomFabric').checked ? 'true' : 'false');
+  formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked ? 'true' : 'false');
+  formData.append('customizableCorner', document.getElementById('productCustomCorner').checked ? 'true' : 'false');
   formData.append('active', document.getElementById('productActive').checked ? 'true' : 'false');
 
   if (imageFile) {
@@ -2696,6 +3161,357 @@ document.getElementById('importLegacyBtn').addEventListener('click', async () =>
   }
 });
 
+
+/* ============================================================
+   PERSONNALISATION / SIMULATION
+   ============================================================ */
+
+let customizations = [];
+let customReferencePreviewUrl = null;
+
+const customizationForm = document.getElementById('customizationForm');
+const customProductId = document.getElementById('customProductId');
+const customReferenceImage = document.getElementById('customReferenceImage');
+const customReferenceName = document.getElementById('customReferenceName');
+const customProductPreview = document.getElementById('customProductPreview');
+const customProductPreviewImage = document.getElementById('customProductPreviewImage');
+const customCapabilities = document.getElementById('customCapabilities');
+const generateCustomizationBtn = document.getElementById('generateCustomizationBtn');
+
+function populateCustomizationProducts() {
+  const selectedValue = customProductId.value;
+
+  customProductId.innerHTML =
+    '<option value="">— Image libre / aucun produit sélectionné —</option>' +
+    products
+      .filter(product => product.active !== false)
+      .map(
+        product =>
+          `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}${product.category ? ' — ' + escapeHtml(product.category) : ''}</option>`
+      )
+      .join('');
+
+  if (products.some(product => product.id === selectedValue)) {
+    customProductId.value = selectedValue;
+  }
+
+  updateCustomizationProductPreview();
+}
+
+function capabilityChip(label, enabled) {
+  return `<span class="capability-chip ${enabled ? 'yes' : ''}">${enabled ? '✓ ' : ''}${escapeHtml(label)}</span>`;
+}
+
+function updateCustomizationProductPreview() {
+  const product = products.find(item => item.id === customProductId.value);
+
+  if (!product) {
+    customProductPreview.classList.remove('visible');
+    customProductPreviewImage.removeAttribute('src');
+    customCapabilities.innerHTML =
+      '<span class="capability-chip">Image libre : faisabilité à valider</span>';
+    return;
+  }
+
+  if (product.image) {
+    customProductPreviewImage.src = product.image;
+    customProductPreview.classList.add('visible');
+  } else {
+    customProductPreview.classList.remove('visible');
+  }
+
+  customCapabilities.innerHTML = [
+    capabilityChip('Couleur', product.customizableColor === true),
+    capabilityChip('Tissu', product.customizableFabric === true),
+    capabilityChip('Dimensions', product.customizableDimensions === true),
+    capabilityChip('Coin / orientation', product.customizableCorner === true)
+  ].join('');
+}
+
+customProductId.addEventListener('change', updateCustomizationProductPreview);
+
+customReferenceImage.addEventListener('change', () => {
+  const file = customReferenceImage.files[0];
+
+  customReferenceName.textContent =
+    file
+      ? `Image choisie : ${file.name}`
+      : '';
+});
+
+function customizationRequestSummary(item) {
+  const request = item.request || {};
+  const parts = [];
+
+  if (request.color) parts.push(`Couleur : ${request.color}`);
+  if (request.fabric) parts.push(`Tissu : ${request.fabric}`);
+  if (request.dimensions) parts.push(`Dimensions : ${request.dimensions}`);
+  if (request.corner) parts.push(`Coin : ${request.corner}`);
+  if (request.notes) parts.push(request.notes);
+
+  return parts.join(' • ') || 'Personnalisation';
+}
+
+function customizationStatusLabel(status) {
+  const labels = {
+    simulation_generated: 'Simulation générée',
+    awaiting_validation: 'À valider',
+    approved: 'Validée',
+    sent_to_client: 'Envoyée au client',
+    rejected: 'Non faisable / refusée'
+  };
+
+  return labels[status] || status || 'Simulation générée';
+}
+
+async function loadCustomizations() {
+  try {
+    const response = await apiFetch('/admin/api/customizations');
+    const data = await safeJson(response);
+
+    customizations = Array.isArray(data) ? data : [];
+    renderCustomizationHistory();
+  } catch (error) {
+    console.error('Personnalisations :', error);
+  }
+}
+
+function renderCustomizationHistory() {
+  const grid = document.getElementById('customHistoryGrid');
+  const empty = document.getElementById('customHistoryEmpty');
+
+  if (!customizations.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+
+  empty.style.display = 'none';
+
+  grid.innerHTML = customizations.map(item => {
+    const source = item.sourceImage || '';
+    const result = item.resultImage || '';
+
+    return `
+      <div class="custom-history-card">
+        <div class="custom-history-images">
+          ${
+            source
+              ? `<img src="${escapeHtml(source)}" alt="Référence">`
+              : '<div></div>'
+          }
+          ${
+            result
+              ? `<img src="${escapeHtml(result)}" alt="Simulation">`
+              : '<div></div>'
+          }
+        </div>
+
+        <div class="custom-history-body">
+          <div class="custom-history-name">${escapeHtml(item.productName || 'Image libre')}</div>
+          <div class="custom-history-request">${escapeHtml(customizationRequestSummary(item))}</div>
+
+          ${
+            item.customerName || item.customerPhone
+              ? `<div class="custom-history-request">${escapeHtml([item.customerName, item.customerPhone].filter(Boolean).join(' • '))}</div>`
+              : ''
+          }
+
+          <div class="custom-history-actions">
+            <select onchange="updateCustomizationStatus('${item.id}', this.value)">
+              ${[
+                'simulation_generated',
+                'awaiting_validation',
+                'approved',
+                'sent_to_client',
+                'rejected'
+              ].map(
+                status =>
+                  `<option value="${status}" ${item.status === status ? 'selected' : ''}>${escapeHtml(customizationStatusLabel(status))}</option>`
+              ).join('')}
+            </select>
+
+            <button
+              type="button"
+              class="action-btn delete"
+              onclick="deleteCustomization('${item.id}')"
+            >
+              Supprimer
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function showCustomizationResult(item) {
+  const empty = document.getElementById('customResultEmpty');
+  const result = document.getElementById('customResult');
+  const sourceImage = document.getElementById('customResultSource');
+  const resultImage = document.getElementById('customResultImage');
+  const analysis = document.getElementById('customResultAnalysis');
+  const warning = document.getElementById('customResultWarning');
+
+  if (item.sourceImage) {
+    sourceImage.src = item.sourceImage;
+  } else {
+    sourceImage.removeAttribute('src');
+  }
+
+  resultImage.src = item.resultImage || '';
+
+  analysis.textContent =
+    [
+      `Produit : ${item.productName || 'Image libre'}`,
+      customizationRequestSummary(item),
+      item.analysis ? `\nAnalyse IA :\n${item.analysis}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+  const warnings = Array.isArray(item.warnings) ? item.warnings : [];
+
+  warning.textContent =
+    [
+      ...warnings,
+      'Simulation visuelle non contractuelle. Le prix, les dimensions exactes, la structure, la faisabilité de fabrication et le délai doivent être confirmés par un commercial MONDECO.'
+    ].join('\n');
+
+  empty.style.display = 'none';
+  result.classList.add('visible');
+}
+
+customizationForm.addEventListener('submit', async event => {
+  event.preventDefault();
+
+  const productId = customProductId.value;
+  const referenceFile = customReferenceImage.files[0];
+
+  if (!productId && !referenceFile) {
+    alert('Sélectionnez un produit ou ajoutez une image de référence.');
+    return;
+  }
+
+  const color = document.getElementById('customColor').value.trim();
+  const fabric = document.getElementById('customFabric').value.trim();
+  const dimensions = document.getElementById('customDimensions').value.trim();
+  const corner = document.getElementById('customCorner').value.trim();
+  const notes = document.getElementById('customNotes').value.trim();
+
+  if (!color && !fabric && !dimensions && !corner && !notes) {
+    alert('Indiquez au moins une modification à simuler.');
+    return;
+  }
+
+  const formData = new FormData();
+
+  formData.append('productId', productId);
+  formData.append('color', color);
+  formData.append('fabric', fabric);
+  formData.append('dimensions', dimensions);
+  formData.append('corner', corner);
+  formData.append('notes', notes);
+  formData.append(
+    'customerName',
+    document.getElementById('customCustomerName').value
+  );
+  formData.append(
+    'customerPhone',
+    document.getElementById('customCustomerPhone').value
+  );
+
+  if (referenceFile) {
+    formData.append('referenceImage', referenceFile);
+  }
+
+  generateCustomizationBtn.disabled = true;
+  generateCustomizationBtn.textContent = '⏳ Génération en cours...';
+
+  try {
+    const response = await apiFetch(
+      '/admin/api/customizations/generate',
+      {
+        method: 'POST',
+        body: formData
+      }
+    );
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      alert(data.error || 'Impossible de générer la simulation.');
+      return;
+    }
+
+    showCustomizationResult(data);
+    await loadCustomizations();
+
+    showToast('Simulation générée. Validation commerciale requise.');
+  } catch (error) {
+    console.error('Simulation :', error);
+    alert(error.message || 'Impossible de contacter le serveur.');
+  } finally {
+    generateCustomizationBtn.disabled = false;
+    generateCustomizationBtn.textContent = '✨ Générer la simulation';
+  }
+});
+
+window.updateCustomizationStatus = async function(id, status) {
+  try {
+    const response = await apiFetch(
+      '/admin/api/customizations/' + encodeURIComponent(id) + '/status',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status })
+      }
+    );
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      alert(data.error || 'Impossible de modifier le statut.');
+      await loadCustomizations();
+      return;
+    }
+
+    await loadCustomizations();
+    showToast('Statut mis à jour.');
+  } catch (error) {
+    alert('Impossible de contacter le serveur.');
+  }
+};
+
+window.deleteCustomization = async function(id) {
+  if (!confirm('Supprimer cette simulation ?')) {
+    return;
+  }
+
+  try {
+    const response = await apiFetch(
+      '/admin/api/customizations/' + encodeURIComponent(id),
+      {
+        method: 'DELETE'
+      }
+    );
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      alert(data.error || 'Impossible de supprimer la simulation.');
+      return;
+    }
+
+    await loadCustomizations();
+    showToast('Simulation supprimée.');
+  } catch (error) {
+    alert('Impossible de contacter le serveur.');
+  }
+};
+
 /* ============================================================
    STATS
    ============================================================ */
@@ -2995,6 +3811,7 @@ async function initializeAdmin() {
   await Promise.all([
     loadProducts(),
     loadInstructions(),
+    loadCustomizations(),
     loadStats()
   ]);
 }
