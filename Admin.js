@@ -1,16 +1,8 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
-// Fichier : Admin.js
-//
-// Fonctions :
-// - Authentification Admin
-// - Produits + images
-// - Instructions IA persistantes
-// - Migration automatique business-info.txt UNE SEULE FOIS
-// - Railway Volume /data
-// - Discussion de test texte + image
-// - Personnalisation visuelle
-// - Sauvegardes JSON .bak
+// Admin.js
+// Produits + Instructions + Personnalisation + Paramètres
+// Stockage persistant Railway via /data
 // ============================================================
 
 const express = require('express');
@@ -21,188 +13,74 @@ const multer = require('multer');
 
 const router = express.Router();
 
-// ============================================================
-// CONFIGURATION GÉNÉRALE
-// ============================================================
-
 const APP_DIR = __dirname;
-
 const DATA_DIR = (
   process.env.DATA_DIR ||
   process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   APP_DIR
 ).trim();
 
-// ============================================================
-// FICHIERS PERSISTANTS
-// ============================================================
+const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
+const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
+const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
+const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 
-const PRODUCTS_PATH = path.join(
-  DATA_DIR,
-  'products.json'
-);
+const LEGACY_PRODUCTS_PATH = path.join(APP_DIR, 'products.json');
+const LEGACY_INSTRUCTIONS_PATH = path.join(APP_DIR, 'instructions.json');
+const LEGACY_CUSTOMIZATIONS_PATH = path.join(APP_DIR, 'customization-requests.json');
+const LEGACY_UPLOADS_DIR = path.join(APP_DIR, 'uploads');
+const LEGACY_CUSTOMIZATIONS_DIR = path.join(APP_DIR, 'customizations');
+const LEGACY_BUSINESS_INFO_PATH = path.join(APP_DIR, 'business-info.txt');
 
-const INSTRUCTIONS_PATH = path.join(
-  DATA_DIR,
-  'instructions.json'
-);
-
-const CUSTOMIZATIONS_PATH = path.join(
-  DATA_DIR,
-  'customization-requests.json'
-);
-
-const UPLOADS_DIR = path.join(
-  DATA_DIR,
-  'uploads'
-);
-
-const CUSTOMIZATIONS_DIR = path.join(
-  DATA_DIR,
-  'customizations'
-);
-
-// Marqueur très important.
-// Il indique que l'ancien business-info.txt
-// a déjà été migré une fois.
 const INSTRUCTIONS_MIGRATION_MARKER = path.join(
   DATA_DIR,
   '.instructions-migration-done'
 );
 
-// ============================================================
-// ANCIENS FICHIERS DANS /app
-// ============================================================
-
-const LEGACY_PRODUCTS_PATH = path.join(
-  APP_DIR,
-  'products.json'
-);
-
-const LEGACY_INSTRUCTIONS_PATH = path.join(
-  APP_DIR,
-  'instructions.json'
-);
-
-const LEGACY_CUSTOMIZATIONS_PATH = path.join(
-  APP_DIR,
-  'customization-requests.json'
-);
-
-const LEGACY_UPLOADS_DIR = path.join(
-  APP_DIR,
-  'uploads'
-);
-
-const LEGACY_CUSTOMIZATIONS_DIR = path.join(
-  APP_DIR,
-  'customizations'
-);
-
-const LEGACY_BUSINESS_INFO_PATH = path.join(
-  APP_DIR,
-  'business-info.txt'
-);
-
-const ADMIN_HTML_PATH = path.join(
-  APP_DIR,
-  'Admin.html'
-);
-
-// ============================================================
-// MOT DE PASSE ADMIN
-// ============================================================
+const ADMIN_HTML_PATH = path.join(APP_DIR, 'Admin.html');
 
 const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
 
-// ============================================================
-// CRÉATION DES DOSSIERS
-// ============================================================
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
 
-fs.mkdirSync(
-  DATA_DIR,
-  {
-    recursive: true
-  }
-);
-
-fs.mkdirSync(
-  UPLOADS_DIR,
-  {
-    recursive: true
-  }
-);
-
-fs.mkdirSync(
-  CUSTOMIZATIONS_DIR,
-  {
-    recursive: true
-  }
-);
-
-router.use(
-  express.json({
-    limit: '5mb'
-  })
-);
+router.use(express.json({ limit: '5mb' }));
 
 // ============================================================
 // HELPERS
 // ============================================================
 
 function safeString(value) {
-  return String(
-    value ?? ''
-  ).trim();
+  return String(value ?? '').trim();
 }
 
-function parseBoolean(
-  value,
-  defaultValue = false
-) {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ''
-  ) {
+function normalizePhone(value) {
+  return safeString(value).replace(/\D/g, '');
+}
+
+function parseBoolean(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') {
     return defaultValue;
   }
-
-  if (
-    typeof value === 'boolean'
-  ) {
-    return value;
-  }
-
-  return ![
-    'false',
-    '0',
-    'no',
-    'non',
-    'off'
-  ].includes(
-    String(value)
-      .trim()
-      .toLowerCase()
+  if (typeof value === 'boolean') return value;
+  return !['false', '0', 'no', 'non', 'off'].includes(
+    String(value).trim().toLowerCase()
   );
 }
 
 function samePath(a, b) {
-  return (
-    path.resolve(a) ===
-    path.resolve(b)
-  );
+  return path.resolve(a) === path.resolve(b);
 }
 
 function fileExistsWithContent(filePath) {
   try {
-    return (
-      fs.existsSync(filePath) &&
-      fs.statSync(filePath).size > 0
-    );
+    return fs.existsSync(filePath) && fs.statSync(filePath).size > 0;
   } catch {
     return false;
   }
@@ -210,142 +88,78 @@ function fileExistsWithContent(filePath) {
 
 function deleteFileIfExists(filePath) {
   try {
-    if (
-      filePath &&
-      fs.existsSync(filePath)
-    ) {
+    if (filePath && fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
   } catch (error) {
-    console.warn(
-      '⚠️ Suppression fichier impossible :',
-      error.message
-    );
+    console.warn('⚠️ Suppression fichier impossible :', error.message);
   }
 }
 
-// ============================================================
-// ÉCRITURE JSON ATOMIQUE + BACKUP
-// ============================================================
-
-function writeJsonAtomic(
-  filePath,
-  data
-) {
-  const tempPath =
-    `${filePath}.tmp`;
-
-  const backupPath =
-    `${filePath}.bak`;
-
-  fs.mkdirSync(
-    path.dirname(filePath),
-    {
-      recursive: true
-    }
+function storageIsWritable() {
+  const testFile = path.join(
+    DATA_DIR,
+    `.write-test-${process.pid}-${Date.now()}`
   );
 
-  if (
-    fileExistsWithContent(
-      filePath
-    )
-  ) {
+  try {
+    fs.writeFileSync(testFile, 'ok', 'utf8');
+    fs.unlinkSync(testFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tempPath = `${filePath}.tmp`;
+  const backupPath = `${filePath}.bak`;
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  if (fileExistsWithContent(filePath)) {
     try {
-      fs.copyFileSync(
-        filePath,
-        backupPath
-      );
+      fs.copyFileSync(filePath, backupPath);
     } catch (error) {
-      console.warn(
-        '⚠️ Backup JSON impossible :',
-        error.message
-      );
+      console.warn('⚠️ Backup JSON impossible :', error.message);
     }
   }
 
   fs.writeFileSync(
     tempPath,
-    JSON.stringify(
-      data,
-      null,
-      2
-    ),
+    JSON.stringify(data, null, 2),
     'utf8'
   );
 
-  fs.renameSync(
-    tempPath,
-    filePath
-  );
+  fs.renameSync(tempPath, filePath);
 }
 
-// ============================================================
-// LECTURE JSON
-// ============================================================
-
-function readJsonArray(
-  filePath,
-  label
-) {
-  const backupPath =
-    `${filePath}.bak`;
+function readJsonArray(filePath, label) {
+  const backupPath = `${filePath}.bak`;
 
   function read(candidate) {
-    if (
-      !fileExistsWithContent(
-        candidate
-      )
-    ) {
-      return null;
-    }
+    if (!fileExistsWithContent(candidate)) return null;
 
-    const content =
-      fs.readFileSync(
-        candidate,
-        'utf8'
-      );
+    const parsed = JSON.parse(
+      fs.readFileSync(candidate, 'utf8')
+    );
 
-    const parsed =
-      JSON.parse(
-        content
-      );
-
-    return Array.isArray(parsed)
-      ? parsed
-      : [];
+    return Array.isArray(parsed) ? parsed : [];
   }
 
   try {
-    const data =
-      read(filePath);
-
-    return data === null
-      ? []
-      : data;
-
+    const data = read(filePath);
+    return data === null ? [] : data;
   } catch (error) {
-
-    console.error(
-      `❌ Lecture ${label} impossible :`,
-      error.message
-    );
+    console.error(`❌ Lecture ${label} impossible :`, error.message);
 
     try {
-      const backup =
-        read(backupPath);
-
-      if (
-        backup !== null
-      ) {
-        console.warn(
-          `♻️ ${label} restauré depuis backup`
-        );
-
+      const backup = read(backupPath);
+      if (backup !== null) {
+        console.warn(`♻️ ${label} restauré depuis backup`);
         return backup;
       }
-
     } catch (backupError) {
-
       console.error(
         `❌ Backup ${label} invalide :`,
         backupError.message
@@ -356,237 +170,95 @@ function readJsonArray(
   }
 }
 
-// ============================================================
-// TEST ÉCRITURE VOLUME
-// ============================================================
-
-function storageIsWritable() {
-  const testFile = path.join(
-    DATA_DIR,
-    `.write-test-${process.pid}-${Date.now()}`
-  );
-
+function copyFileIfTargetMissing(source, target, label) {
   try {
-    fs.writeFileSync(
-      testFile,
-      'ok',
-      'utf8'
-    );
+    if (samePath(source, target)) return false;
+    if (!fileExistsWithContent(source)) return false;
+    if (fileExistsWithContent(target)) return false;
 
-    fs.unlinkSync(
-      testFile
-    );
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(source, target);
 
+    console.log(`✅ Migration ${label} vers ${target}`);
     return true;
-
-  } catch {
-    return false;
-  }
-}
-
-// ============================================================
-// COPIE FICHIER ANCIEN -> VOLUME
-// ============================================================
-
-function copyFileIfTargetMissing(
-  source,
-  target,
-  label
-) {
-  try {
-    if (
-      samePath(
-        source,
-        target
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      !fileExistsWithContent(
-        source
-      )
-    ) {
-      return false;
-    }
-
-    if (
-      fileExistsWithContent(
-        target
-      )
-    ) {
-      return false;
-    }
-
-    fs.mkdirSync(
-      path.dirname(target),
-      {
-        recursive: true
-      }
-    );
-
-    fs.copyFileSync(
-      source,
-      target
-    );
-
-    console.log(
-      `✅ Migration ${label} vers ${target}`
-    );
-
-    return true;
-
   } catch (error) {
-
-    console.warn(
-      `⚠️ Migration ${label} impossible :`,
-      error.message
-    );
-
+    console.warn(`⚠️ Migration ${label} impossible :`, error.message);
     return false;
   }
 }
 
-// ============================================================
-// COPIE DOSSIER ANCIEN -> VOLUME
-// ============================================================
-
-function copyMissingFiles(
-  sourceDir,
-  targetDir,
-  label
-) {
+function copyMissingFiles(sourceDir, targetDir, label) {
   try {
-    if (
-      samePath(
-        sourceDir,
-        targetDir
-      )
-    ) {
-      return 0;
-    }
+    if (samePath(sourceDir, targetDir)) return 0;
+    if (!fs.existsSync(sourceDir)) return 0;
 
-    if (
-      !fs.existsSync(
-        sourceDir
-      )
-    ) {
-      return 0;
-    }
-
-    fs.mkdirSync(
-      targetDir,
-      {
-        recursive: true
-      }
-    );
+    fs.mkdirSync(targetDir, { recursive: true });
 
     let copied = 0;
+    const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
 
-    const entries =
-      fs.readdirSync(
-        sourceDir,
-        {
-          withFileTypes: true
-        }
-      );
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
 
-    for (
-      const entry
-      of entries
-    ) {
-      if (
-        !entry.isFile()
-      ) {
-        continue;
-      }
+      const source = path.join(sourceDir, entry.name);
+      const target = path.join(targetDir, entry.name);
 
-      const source =
-        path.join(
-          sourceDir,
-          entry.name
-        );
+      if (fs.existsSync(target)) continue;
 
-      const target =
-        path.join(
-          targetDir,
-          entry.name
-        );
-
-      if (
-        fs.existsSync(
-          target
-        )
-      ) {
-        continue;
-      }
-
-      fs.copyFileSync(
-        source,
-        target
-      );
-
-      copied++;
+      fs.copyFileSync(source, target);
+      copied += 1;
     }
 
-    if (
-      copied > 0
-    ) {
-      console.log(
-        `✅ ${copied} fichier(s) ${label} migré(s)`
-      );
+    if (copied > 0) {
+      console.log(`✅ ${copied} fichier(s) ${label} migré(s)`);
     }
 
     return copied;
-
   } catch (error) {
-
-    console.warn(
-      `⚠️ Migration ${label} impossible :`,
-      error.message
-    );
-
+    console.warn(`⚠️ Migration ${label} impossible :`, error.message);
     return 0;
   }
 }
 
+function mimeTypeFromPath(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function extensionFromMimeType(mimetype) {
+  if (mimetype === 'image/png') return '.png';
+  if (mimetype === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
 // ============================================================
-// MIGRATION PRODUITS + IMAGES + PERSONNALISATIONS
+// MIGRATION DONNÉES
 // ============================================================
 
 function migrateLegacyData() {
-  if (
-    samePath(
-      DATA_DIR,
-      APP_DIR
-    )
-  ) {
-    return;
-  }
+  if (samePath(DATA_DIR, APP_DIR)) return;
 
-  // PRODUITS
   copyFileIfTargetMissing(
     LEGACY_PRODUCTS_PATH,
     PRODUCTS_PATH,
     'products.json'
   );
 
-  // PERSONNALISATIONS
   copyFileIfTargetMissing(
     LEGACY_CUSTOMIZATIONS_PATH,
     CUSTOMIZATIONS_PATH,
     'customization-requests.json'
   );
 
-  // PHOTOS PRODUITS
   copyMissingFiles(
     LEGACY_UPLOADS_DIR,
     UPLOADS_DIR,
     'images produits'
   );
 
-  // IMAGES PERSONNALISATIONS
   copyMissingFiles(
     LEGACY_CUSTOMIZATIONS_DIR,
     CUSTOMIZATIONS_DIR,
@@ -595,140 +267,62 @@ function migrateLegacyData() {
 }
 
 // ============================================================
-// PARSER BUSINESS-INFO.TXT
-// ============================================================
-
-function parseInstructionBlocks(text) {
-  return safeString(text)
-    .split(
-      /\n\s*\n+/
-    )
-    .map(
-      block =>
-        block.trim()
-    )
-    .filter(Boolean)
-    .map(
-      (
-        block,
-        index
-      ) => {
-        const lines =
-          block
-            .split('\n')
-            .map(
-              line =>
-                line.trim()
-            )
-            .filter(Boolean);
-
-        const title =
-          lines[0] ||
-          `Instruction ${index + 1}`;
-
-        const content =
-          lines.length > 1
-            ? lines
-                .slice(1)
-                .join('\n')
-            : lines[0];
-
-        return {
-          title,
-          content
-        };
-      }
-    );
-}
-
-// ============================================================
-// BUSINESS INFO
+// INSTRUCTIONS
 // ============================================================
 
 function loadLegacyBusinessInfo() {
   try {
-    if (
-      !fs.existsSync(
-        LEGACY_BUSINESS_INFO_PATH
-      )
-    ) {
-      return '';
-    }
-
-    return fs.readFileSync(
-      LEGACY_BUSINESS_INFO_PATH,
-      'utf8'
-    );
-
+    if (!fs.existsSync(LEGACY_BUSINESS_INFO_PATH)) return '';
+    return fs.readFileSync(LEGACY_BUSINESS_INFO_PATH, 'utf8');
   } catch (error) {
-
-    console.error(
-      '❌ business-info.txt :',
-      error.message
-    );
-
+    console.error('❌ business-info.txt :', error.message);
     return '';
   }
 }
 
-// ============================================================
-// CRÉER INSTRUCTIONS DEPUIS BUSINESS-INFO
-// ============================================================
+function parseInstructionBlocks(text) {
+  return safeString(text)
+    .split(/\n\s*\n+/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .map((block, index) => {
+      const lines = block
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
 
-function createInstructionsFromLegacyBusinessInfo() {
-  const text =
-    loadLegacyBusinessInfo()
-      .trim();
-
-  if (!text) {
-    return [];
-  }
-
-  const parsed =
-    parseInstructionBlocks(
-      text
-    );
-
-  const now =
-    new Date()
-      .toISOString();
-
-  return parsed.map(
-    item => ({
-      id:
-        crypto.randomUUID(),
-
-      title:
-        item.title,
-
-      content:
-        item.content,
-
-      active:
-        true,
-
-      source:
-        'business-info.txt',
-
-      createdAt:
-        now,
-
-      updatedAt:
-        now
-    })
-  );
+      return {
+        title: lines[0] || `Instruction ${index + 1}`,
+        content:
+          lines.length > 1
+            ? lines.slice(1).join('\n')
+            : (lines[0] || '')
+      };
+    });
 }
 
-// ============================================================
-// MARQUEUR MIGRATION INSTRUCTIONS
-// ============================================================
+function createInstructionsFromLegacyBusinessInfo() {
+  const text = loadLegacyBusinessInfo().trim();
+  if (!text) return [];
+
+  const now = new Date().toISOString();
+
+  return parseInstructionBlocks(text).map(item => ({
+    id: crypto.randomUUID(),
+    title: item.title,
+    content: item.content,
+    active: true,
+    source: 'business-info.txt',
+    createdAt: now,
+    updatedAt: now
+  }));
+}
 
 function markInstructionsMigrationDone() {
   try {
     fs.writeFileSync(
       INSTRUCTIONS_MIGRATION_MARKER,
-      new Date()
-        .toISOString(),
+      new Date().toISOString(),
       'utf8'
     );
   } catch (error) {
@@ -739,51 +333,18 @@ function markInstructionsMigrationDone() {
   }
 }
 
-// ============================================================
-// INITIALISATION INSTRUCTIONS PERSISTANTES
-// ============================================================
-
 function initializePersistentInstructions() {
   try {
-
-    // ========================================================
-    // CAS 1 :
-    // instructions.json existe déjà
-    // ========================================================
-
-    if (
-      fs.existsSync(
-        INSTRUCTIONS_PATH
-      )
-    ) {
+    // 1. /data/instructions.json existe déjà
+    if (fs.existsSync(INSTRUCTIONS_PATH)) {
       try {
-        const content =
-          fs.readFileSync(
-            INSTRUCTIONS_PATH,
-            'utf8'
-          );
+        const parsed = JSON.parse(
+          fs.readFileSync(INSTRUCTIONS_PATH, 'utf8') || '[]'
+        );
 
-        const parsed =
-          JSON.parse(
-            content || '[]'
-          );
-
-        if (
-          Array.isArray(
-            parsed
-          )
-        ) {
-
-          // Si instructions existantes > 0,
-          // elles sont considérées comme persistantes.
-          if (
-            parsed.length > 0
-          ) {
-            if (
-              !fs.existsSync(
-                INSTRUCTIONS_MIGRATION_MARKER
-              )
-            ) {
+        if (Array.isArray(parsed)) {
+          if (parsed.length > 0) {
+            if (!fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)) {
               markInstructionsMigrationDone();
             }
 
@@ -794,25 +355,17 @@ function initializePersistentInstructions() {
             return parsed;
           }
 
-          // Si tableau vide ET marqueur existe,
-          // cela signifie que l'utilisateur
-          // a volontairement tout supprimé.
           if (
             parsed.length === 0 &&
-            fs.existsSync(
-              INSTRUCTIONS_MIGRATION_MARKER
-            )
+            fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)
           ) {
             console.log(
               '📋 instructions.json existe et contient 0 instruction.'
             );
-
             return [];
           }
         }
-
       } catch (error) {
-
         console.warn(
           '⚠️ instructions.json invalide :',
           error.message
@@ -820,36 +373,18 @@ function initializePersistentInstructions() {
       }
     }
 
-    // ========================================================
-    // CAS 2 :
-    // ancien instructions.json dans /app
-    // ========================================================
-
+    // 2. Ancien instructions.json dans /app
     if (
-      !samePath(
-        LEGACY_INSTRUCTIONS_PATH,
-        INSTRUCTIONS_PATH
-      ) &&
-      fileExistsWithContent(
-        LEGACY_INSTRUCTIONS_PATH
-      )
+      !samePath(LEGACY_INSTRUCTIONS_PATH, INSTRUCTIONS_PATH) &&
+      fileExistsWithContent(LEGACY_INSTRUCTIONS_PATH)
     ) {
       try {
-        const legacyContent =
-          fs.readFileSync(
-            LEGACY_INSTRUCTIONS_PATH,
-            'utf8'
-          );
-
-        const legacyInstructions =
-          JSON.parse(
-            legacyContent
-          );
+        const legacyInstructions = JSON.parse(
+          fs.readFileSync(LEGACY_INSTRUCTIONS_PATH, 'utf8')
+        );
 
         if (
-          Array.isArray(
-            legacyInstructions
-          ) &&
+          Array.isArray(legacyInstructions) &&
           legacyInstructions.length > 0
         ) {
           writeJsonAtomic(
@@ -865,9 +400,7 @@ function initializePersistentInstructions() {
 
           return legacyInstructions;
         }
-
       } catch (error) {
-
         console.warn(
           '⚠️ Ancien instructions.json invalide :',
           error.message
@@ -875,23 +408,12 @@ function initializePersistentInstructions() {
       }
     }
 
-    // ========================================================
-    // CAS 3 :
-    // Import automatique business-info.txt
-    // UNE SEULE FOIS
-    // ========================================================
-
-    if (
-      !fs.existsSync(
-        INSTRUCTIONS_MIGRATION_MARKER
-      )
-    ) {
+    // 3. Import business-info.txt une seule fois
+    if (!fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)) {
       const imported =
         createInstructionsFromLegacyBusinessInfo();
 
-      if (
-        imported.length > 0
-      ) {
+      if (imported.length > 0) {
         writeJsonAtomic(
           INSTRUCTIONS_PATH,
           imported
@@ -907,26 +429,13 @@ function initializePersistentInstructions() {
       }
     }
 
-    // ========================================================
-    // CAS 4 :
-    // Rien trouvé
-    // ========================================================
-
-    if (
-      !fs.existsSync(
-        INSTRUCTIONS_PATH
-      )
-    ) {
-      writeJsonAtomic(
-        INSTRUCTIONS_PATH,
-        []
-      );
+    // 4. Rien à importer
+    if (!fs.existsSync(INSTRUCTIONS_PATH)) {
+      writeJsonAtomic(INSTRUCTIONS_PATH, []);
     }
 
     return [];
-
   } catch (error) {
-
     console.error(
       '❌ Initialisation instructions persistantes :',
       error
@@ -934,6 +443,33 @@ function initializePersistentInstructions() {
 
     return [];
   }
+}
+
+function loadInstructions() {
+  if (!fs.existsSync(INSTRUCTIONS_PATH)) {
+    return initializePersistentInstructions();
+  }
+
+  return readJsonArray(
+    INSTRUCTIONS_PATH,
+    'instructions.json'
+  );
+}
+
+function saveInstructions(instructions) {
+  writeJsonAtomic(
+    INSTRUCTIONS_PATH,
+    instructions
+  );
+
+  markInstructionsMigrationDone();
+}
+
+function instructionFingerprint(title, content) {
+  return (
+    `${safeString(title).toLowerCase()}::` +
+    safeString(content).toLowerCase()
+  );
 }
 
 // ============================================================
@@ -954,39 +490,26 @@ function saveProducts(products) {
   );
 }
 
-// ============================================================
-// INSTRUCTIONS
-// ============================================================
+function getLocalProductImagePath(product) {
+  if (!product) return null;
 
-function loadInstructions() {
-  // Sécurité :
-  // si le fichier a disparu,
-  // relancer initialisation.
-  if (
-    !fs.existsSync(
-      INSTRUCTIONS_PATH
-    )
-  ) {
-    return initializePersistentInstructions();
+  if (product.imageFilename) {
+    return path.join(
+      UPLOADS_DIR,
+      path.basename(product.imageFilename)
+    );
   }
 
-  return readJsonArray(
-    INSTRUCTIONS_PATH,
-    'instructions.json'
-  );
-}
+  if (
+    safeString(product.image).includes('/admin/uploads/')
+  ) {
+    return path.join(
+      UPLOADS_DIR,
+      path.basename(product.image)
+    );
+  }
 
-function saveInstructions(instructions) {
-  writeJsonAtomic(
-    INSTRUCTIONS_PATH,
-    instructions
-  );
-
-  // Très important :
-  // une fois que l'utilisateur a commencé
-  // à gérer les instructions dans l'Admin,
-  // ne plus réimporter business-info.txt.
-  markInstructionsMigrationDone();
+  return null;
 }
 
 // ============================================================
@@ -1008,23 +531,326 @@ function saveCustomizations(items) {
 }
 
 // ============================================================
-// INITIALISATION STORAGE
+// PARAMÈTRES BOT
+// ============================================================
+
+const DEFAULT_SETTINGS = {
+  aiEnabled: true,
+
+  audience: 'all',
+
+  timezone: 'Africa/Tunis',
+
+  schedule: {
+    mode: 'always',
+
+    outOfHours: 'none',
+
+    absenceMessage:
+      'Merci pour votre message. Notre équipe MONDECO vous répondra dès que possible.',
+
+    weekly: {
+      mon: { enabled: true, start: '08:00', end: '19:00' },
+      tue: { enabled: true, start: '08:00', end: '19:00' },
+      wed: { enabled: true, start: '08:00', end: '19:00' },
+      thu: { enabled: true, start: '08:00', end: '19:00' },
+      fri: { enabled: true, start: '08:00', end: '19:00' },
+      sat: { enabled: true, start: '08:00', end: '19:00' },
+      sun: { enabled: true, start: '09:00', end: '18:00' }
+    }
+  },
+
+  followUp: {
+    enabled: false,
+    delayMinutes: 60,
+    maxFollowUps: 1,
+    message:
+      'Souhaitez-vous que je vous aide à choisir le modèle le plus adapté ? 😊'
+  },
+
+  imageHandling: 'commercial',
+
+  pauseWhenHumanReplies: true,
+
+  humanPauseMinutes: 120,
+
+  teamPhones: []
+};
+
+const ALLOWED_AUDIENCES = new Set([
+  'all',
+  'new',
+  'ads',
+  'team'
+]);
+
+const ALLOWED_OUT_OF_HOURS = new Set([
+  'none',
+  'message',
+  'ai'
+]);
+
+const ALLOWED_IMAGE_HANDLING = new Set([
+  'commercial',
+  'analyze_only',
+  'analyze_reply'
+]);
+
+const DAYS = [
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+  'sun'
+];
+
+function validTime(value, fallback) {
+  const str = safeString(value);
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(str)
+    ? str
+    : fallback;
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+
+  return Math.max(
+    min,
+    Math.min(
+      max,
+      Math.round(number)
+    )
+  );
+}
+
+function normalizeSettings(input = {}) {
+  const source =
+    input &&
+    typeof input === 'object'
+      ? input
+      : {};
+
+  const sourceSchedule =
+    source.schedule &&
+    typeof source.schedule === 'object'
+      ? source.schedule
+      : {};
+
+  const sourceWeekly =
+    sourceSchedule.weekly &&
+    typeof sourceSchedule.weekly === 'object'
+      ? sourceSchedule.weekly
+      : {};
+
+  const weekly = {};
+
+  for (const day of DAYS) {
+    const fallback =
+      DEFAULT_SETTINGS.schedule.weekly[day];
+
+    const current =
+      sourceWeekly[day] &&
+      typeof sourceWeekly[day] === 'object'
+        ? sourceWeekly[day]
+        : {};
+
+    weekly[day] = {
+      enabled: parseBoolean(
+        current.enabled,
+        fallback.enabled
+      ),
+      start: validTime(
+        current.start,
+        fallback.start
+      ),
+      end: validTime(
+        current.end,
+        fallback.end
+      )
+    };
+  }
+
+  const audience =
+    ALLOWED_AUDIENCES.has(source.audience)
+      ? source.audience
+      : DEFAULT_SETTINGS.audience;
+
+  const outOfHours =
+    ALLOWED_OUT_OF_HOURS.has(
+      sourceSchedule.outOfHours
+    )
+      ? sourceSchedule.outOfHours
+      : DEFAULT_SETTINGS.schedule.outOfHours;
+
+  const imageHandling =
+    ALLOWED_IMAGE_HANDLING.has(
+      source.imageHandling
+    )
+      ? source.imageHandling
+      : DEFAULT_SETTINGS.imageHandling;
+
+  const followUp =
+    source.followUp &&
+    typeof source.followUp === 'object'
+      ? source.followUp
+      : {};
+
+  let teamPhones = [];
+
+  if (Array.isArray(source.teamPhones)) {
+    teamPhones = source.teamPhones;
+  } else if (typeof source.teamPhones === 'string') {
+    teamPhones = source.teamPhones.split(/[\n,;]+/);
+  }
+
+  teamPhones = [
+    ...new Set(
+      teamPhones
+        .map(normalizePhone)
+        .filter(Boolean)
+    )
+  ];
+
+  return {
+    aiEnabled: parseBoolean(
+      source.aiEnabled,
+      DEFAULT_SETTINGS.aiEnabled
+    ),
+
+    audience,
+
+    timezone:
+      safeString(source.timezone) ||
+      DEFAULT_SETTINGS.timezone,
+
+    schedule: {
+      mode:
+        sourceSchedule.mode === 'custom'
+          ? 'custom'
+          : 'always',
+
+      outOfHours,
+
+      absenceMessage:
+        safeString(
+          sourceSchedule.absenceMessage
+        ) ||
+        DEFAULT_SETTINGS.schedule.absenceMessage,
+
+      weekly
+    },
+
+    followUp: {
+      enabled: parseBoolean(
+        followUp.enabled,
+        DEFAULT_SETTINGS.followUp.enabled
+      ),
+
+      delayMinutes: clampInteger(
+        followUp.delayMinutes,
+        15,
+        1380,
+        DEFAULT_SETTINGS.followUp.delayMinutes
+      ),
+
+      maxFollowUps: clampInteger(
+        followUp.maxFollowUps,
+        1,
+        3,
+        DEFAULT_SETTINGS.followUp.maxFollowUps
+      ),
+
+      message:
+        safeString(followUp.message) ||
+        DEFAULT_SETTINGS.followUp.message
+    },
+
+    imageHandling,
+
+    pauseWhenHumanReplies: parseBoolean(
+      source.pauseWhenHumanReplies,
+      DEFAULT_SETTINGS.pauseWhenHumanReplies
+    ),
+
+    humanPauseMinutes: clampInteger(
+      source.humanPauseMinutes,
+      15,
+      1440,
+      DEFAULT_SETTINGS.humanPauseMinutes
+    ),
+
+    teamPhones
+  };
+}
+
+function initializeSettings() {
+  if (fs.existsSync(SETTINGS_PATH)) {
+    return;
+  }
+
+  writeJsonAtomic(
+    SETTINGS_PATH,
+    DEFAULT_SETTINGS
+  );
+
+  console.log(
+    `⚙️ Paramètres initialisés : ${SETTINGS_PATH}`
+  );
+}
+
+function getBotSettings() {
+  try {
+    if (!fs.existsSync(SETTINGS_PATH)) {
+      initializeSettings();
+    }
+
+    const parsed = JSON.parse(
+      fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
+    );
+
+    return normalizeSettings(parsed);
+  } catch (error) {
+    console.error(
+      '❌ Lecture settings.json :',
+      error.message
+    );
+
+    return normalizeSettings(DEFAULT_SETTINGS);
+  }
+}
+
+function saveBotSettings(settings) {
+  const normalized =
+    normalizeSettings(settings);
+
+  writeJsonAtomic(
+    SETTINGS_PATH,
+    normalized
+  );
+
+  return normalized;
+}
+
+// ============================================================
+// INITIALISATION
 // ============================================================
 
 migrateLegacyData();
-
 initializePersistentInstructions();
+initializeSettings();
 
 console.log(
   '💾 Stockage MONDECO :',
   {
-    dataDir:
-      DATA_DIR,
-
+    dataDir: DATA_DIR,
     persistentConfigured:
-      DATA_DIR !==
-      APP_DIR,
-
+      DATA_DIR !== APP_DIR,
     writable:
       storageIsWritable()
   }
@@ -1032,8 +858,7 @@ console.log(
 
 if (
   DATA_DIR === APP_DIR &&
-  process.env
-    .RAILWAY_ENVIRONMENT_NAME
+  process.env.RAILWAY_ENVIRONMENT_NAME
 ) {
   console.warn(
     '⚠️ Railway détecté sans stockage persistant. ' +
@@ -1042,107 +867,16 @@ if (
 }
 
 // ============================================================
-// MIME IMAGES
-// ============================================================
-
-function mimeTypeFromPath(filePath) {
-  const ext =
-    path.extname(
-      filePath || ''
-    )
-      .toLowerCase();
-
-  if (
-    ext === '.png'
-  ) {
-    return 'image/png';
-  }
-
-  if (
-    ext === '.webp'
-  ) {
-    return 'image/webp';
-  }
-
-  return 'image/jpeg';
-}
-
-function extensionFromMimeType(mimetype) {
-  if (
-    mimetype ===
-    'image/png'
-  ) {
-    return '.png';
-  }
-
-  if (
-    mimetype ===
-    'image/webp'
-  ) {
-    return '.webp';
-  }
-
-  return '.jpg';
-}
-
-// ============================================================
-// CHEMIN IMAGE PRODUIT
-// ============================================================
-
-function getLocalProductImagePath(product) {
-  if (!product) {
-    return null;
-  }
-
-  if (
-    product.imageFilename
-  ) {
-    return path.join(
-      UPLOADS_DIR,
-      path.basename(
-        product.imageFilename
-      )
-    );
-  }
-
-  if (
-    safeString(
-      product.image
-    ).includes(
-      '/admin/uploads/'
-    )
-  ) {
-    return path.join(
-      UPLOADS_DIR,
-      path.basename(
-        product.image
-      )
-    );
-  }
-
-  return null;
-}
-
-// ============================================================
 // CONTEXTE IA
 // ============================================================
 
 function availabilityLabel(value) {
   const labels = {
-    in_stock:
-      'En stock',
-
-    on_order:
-      'Sur commande',
-
-    out_of_stock:
-      'Rupture',
-
-    clearance:
-      'Déstockage',
-
-    unknown:
-      'À confirmer'
+    in_stock: 'En stock',
+    on_order: 'Sur commande',
+    out_of_stock: 'Rupture',
+    clearance: 'Déstockage',
+    unknown: 'À confirmer'
   };
 
   return (
@@ -1152,254 +886,142 @@ function availabilityLabel(value) {
   );
 }
 
-// ============================================================
-// PRODUIT -> CONTEXTE IA
-// ============================================================
-
 function productToContext(product) {
   const lines = [];
 
   lines.push(
-    `Produit : ${safeString(
-      product.name
-    )}`
+    `Produit : ${safeString(product.name)}`
   );
 
-  if (
-    product.category
-  ) {
+  if (product.category) {
     lines.push(
-      `Catégorie : ${safeString(
-        product.category
-      )}`
+      `Catégorie : ${safeString(product.category)}`
     );
   }
 
-  if (
-    product.price
-  ) {
+  if (product.price) {
     lines.push(
-      `Prix normal : ${safeString(
-        product.price
-      )} TND`
+      `Prix normal : ${safeString(product.price)} TND`
     );
   }
 
-  if (
-    product.promoPrice
-  ) {
+  if (product.promoPrice) {
     lines.push(
-      `Prix promotionnel : ${safeString(
-        product.promoPrice
-      )} TND`
+      `Prix promotionnel : ${safeString(product.promoPrice)} TND`
     );
   }
 
-  if (
-    product.availability
-  ) {
+  if (product.availability) {
     lines.push(
-      `Disponibilité : ${availabilityLabel(
-        product.availability
-      )}`
+      `Disponibilité : ${availabilityLabel(product.availability)}`
     );
   }
 
-  if (
-    product.dimensions
-  ) {
+  if (product.dimensions) {
     lines.push(
-      `Dimensions : ${safeString(
-        product.dimensions
-      )}`
+      `Dimensions : ${safeString(product.dimensions)}`
     );
   }
 
-  if (
-    product.composition
-  ) {
+  if (product.composition) {
     lines.push(
-      `Composition : ${safeString(
-        product.composition
-      )}`
+      `Composition : ${safeString(product.composition)}`
     );
   }
 
-  if (
-    product.colors
-  ) {
+  if (product.colors) {
     lines.push(
-      `Couleurs disponibles : ${safeString(
-        product.colors
-      )}`
+      `Couleurs disponibles : ${safeString(product.colors)}`
     );
   }
 
-  if (
-    product.showrooms
-  ) {
+  if (product.showrooms) {
     lines.push(
-      `Showrooms : ${safeString(
-        product.showrooms
-      )}`
+      `Showrooms : ${safeString(product.showrooms)}`
     );
   }
 
-  if (
-    product.productUrl
-  ) {
+  if (product.productUrl) {
     lines.push(
-      `Lien produit : ${safeString(
-        product.productUrl
-      )}`
+      `Lien produit : ${safeString(product.productUrl)}`
     );
   }
 
-  if (
-    product.categoryUrl
-  ) {
+  if (product.categoryUrl) {
     lines.push(
-      `Lien catégorie : ${safeString(
-        product.categoryUrl
-      )}`
+      `Lien catégorie : ${safeString(product.categoryUrl)}`
     );
   }
 
   const customizations = [];
 
-  if (
-    product.customizableColor ===
-    true
-  ) {
-    customizations.push(
-      'couleur'
-    );
+  if (product.customizableColor === true) {
+    customizations.push('couleur');
   }
 
-  if (
-    product.customizableFabric ===
-    true
-  ) {
-    customizations.push(
-      'tissu'
-    );
+  if (product.customizableFabric === true) {
+    customizations.push('tissu');
   }
 
-  if (
-    product.customizableDimensions ===
-    true
-  ) {
-    customizations.push(
-      'dimensions'
-    );
+  if (product.customizableDimensions === true) {
+    customizations.push('dimensions');
   }
 
-  if (
-    product.customizableCorner ===
-    true
-  ) {
-    customizations.push(
-      'coin/orientation'
-    );
+  if (product.customizableCorner === true) {
+    customizations.push('coin/orientation');
   }
 
-  if (
-    customizations.length
-  ) {
+  if (customizations.length) {
     lines.push(
       `Personnalisation possible : ${customizations.join(', ')}`
     );
   }
 
-  if (
-    product.description
-  ) {
+  if (product.description) {
     lines.push(
-      `Description : ${safeString(
-        product.description
-      )}`
+      `Description : ${safeString(product.description)}`
     );
   }
 
-  return lines.join(
-    '\n'
-  );
+  return lines.join('\n');
 }
-
-// ============================================================
-// BUSINESS CONTEXT
-// ============================================================
 
 function getBusinessContext() {
   const activeInstructions =
     loadInstructions()
-      .filter(
-        item =>
-          item.active !==
-          false
-      );
+      .filter(item => item.active !== false);
 
   const instructionsText =
     activeInstructions
-      .map(
-        (
-          item,
-          index
-        ) => {
-          return (
-            `${index + 1}. ${safeString(
-              item.title
-            )}\n` +
-            safeString(
-              item.content
-            )
-          );
-        }
-      )
-      .join(
-        '\n\n'
-      );
+      .map((item, index) => {
+        return (
+          `${index + 1}. ${safeString(item.title)}\n` +
+          safeString(item.content)
+        );
+      })
+      .join('\n\n');
 
   const activeProducts =
     loadProducts()
-      .filter(
-        product =>
-          product.active !==
-          false
-      );
+      .filter(product => product.active !== false);
 
   const productsText =
     activeProducts
-      .map(
-        (
-          product,
-          index
-        ) => {
-          return (
-            `--- PRODUIT ${index + 1} ---\n` +
-            productToContext(
-              product
-            )
-          );
-        }
-      )
-      .join(
-        '\n\n'
-      );
+      .map((product, index) => {
+        return (
+          `--- PRODUIT ${index + 1} ---\n` +
+          productToContext(product)
+        );
+      })
+      .join('\n\n');
 
   return [
     instructionsText
-      ? (
-        'INSTRUCTIONS MONDECO\n\n' +
-        instructionsText
-      )
+      ? `INSTRUCTIONS MONDECO\n\n${instructionsText}`
       : '',
 
     productsText
-      ? (
-        'CATALOGUE PRODUITS MONDECO\n\n' +
-        productsText
-      )
+      ? `CATALOGUE PRODUITS MONDECO\n\n${productsText}`
       : ''
   ]
     .filter(Boolean)
@@ -1409,226 +1031,114 @@ function getBusinessContext() {
 }
 
 // ============================================================
-// AUTHENTIFICATION ADMIN
+// AUTHENTIFICATION
 // ============================================================
 
-const sessions =
-  new Map();
+const sessions = new Map();
 
 const SESSION_DURATION =
-  24 *
-  60 *
-  60 *
-  1000;
-
-// ============================================================
-// COOKIES
-// ============================================================
+  24 * 60 * 60 * 1000;
 
 function parseCookies(header = '') {
   const cookies = {};
 
-  for (
-    const part
-    of header.split(';')
-  ) {
-    const index =
-      part.indexOf('=');
-
-    if (
-      index === -1
-    ) {
-      continue;
-    }
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index === -1) continue;
 
     const key =
-      part
-        .slice(
-          0,
-          index
-        )
-        .trim();
+      part.slice(0, index).trim();
 
     const value =
-      part
-        .slice(
-          index + 1
-        )
-        .trim();
+      part.slice(index + 1).trim();
 
-    if (!key) {
-      continue;
-    }
+    if (!key) continue;
 
     try {
       cookies[key] =
-        decodeURIComponent(
-          value
-        );
+        decodeURIComponent(value);
     } catch {
-      cookies[key] =
-        value;
+      cookies[key] = value;
     }
   }
 
   return cookies;
 }
 
-// ============================================================
-// NETTOYER SESSIONS
-// ============================================================
-
 function cleanupSessions() {
-  const now =
-    Date.now();
+  const now = Date.now();
 
-  for (
-    const [
-      token,
-      expiresAt
-    ]
-    of sessions.entries()
-  ) {
-    if (
-      expiresAt <= now
-    ) {
-      sessions.delete(
-        token
-      );
+  for (const [token, expiresAt] of sessions.entries()) {
+    if (expiresAt <= now) {
+      sessions.delete(token);
     }
   }
 }
 
-// ============================================================
-// TOKEN SESSION
-// ============================================================
-
 function getSessionToken(req) {
   return (
-    parseCookies(
-      req.headers.cookie ||
-      ''
-    )
+    parseCookies(req.headers.cookie || '')
       .mondeco_admin_session ||
     ''
   );
 }
 
-// ============================================================
-// AUTH
-// ============================================================
-
 function isAuthenticated(req) {
   cleanupSessions();
 
-  const token =
-    getSessionToken(
-      req
-    );
+  const token = getSessionToken(req);
+  if (!token) return false;
 
-  if (!token) {
-    return false;
-  }
+  const expiresAt = sessions.get(token);
 
-  const expiresAt =
-    sessions.get(
-      token
-    );
-
-  if (
-    !expiresAt ||
-    expiresAt <= Date.now()
-  ) {
-    sessions.delete(
-      token
-    );
-
+  if (!expiresAt || expiresAt <= Date.now()) {
+    sessions.delete(token);
     return false;
   }
 
   return true;
 }
 
-function requireAuth(
-  req,
-  res,
-  next
-) {
-  if (
-    isAuthenticated(
-      req
-    )
-  ) {
+function requireAuth(req, res, next) {
+  if (isAuthenticated(req)) {
     return next();
   }
 
-  if (
-    req.path.startsWith(
-      '/api/'
-    )
-  ) {
+  if (req.path.startsWith('/api/')) {
     return res
       .status(401)
       .json({
-        error:
-          'Non authentifié'
+        error: 'Non authentifié'
       });
   }
 
-  return res.redirect(
-    '/admin/login'
-  );
+  return res.redirect('/admin/login');
 }
-
-// ============================================================
-// COOKIE SECURE
-// ============================================================
 
 function secureCookie(req) {
   const forwardedProto =
     safeString(
-      req.headers[
-        'x-forwarded-proto'
-      ]
+      req.headers['x-forwarded-proto']
     );
 
   return (
-    forwardedProto ===
-    'https' ||
+    forwardedProto === 'https' ||
     Boolean(
-      process.env
-        .RAILWAY_ENVIRONMENT_NAME
+      process.env.RAILWAY_ENVIRONMENT_NAME
     )
   );
 }
-
-// ============================================================
-// PAGE LOGIN
-// ============================================================
 
 function renderLoginPage() {
   return `
 <!doctype html>
 <html lang="fr">
-
 <head>
 <meta charset="utf-8">
-
-<meta
-  name="viewport"
-  content="width=device-width,initial-scale=1"
->
-
-<title>
-Mondeco — Administration
-</title>
-
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mondeco — Administration</title>
 <style>
-
-*{
-  box-sizing:border-box;
-}
-
+*{box-sizing:border-box}
 body{
   margin:0;
   font-family:Arial,sans-serif;
@@ -1637,44 +1147,35 @@ body{
   display:flex;
   align-items:center;
   justify-content:center;
-  padding:20px;
+  padding:20px
 }
-
 .card{
   background:#f7f4ef;
   width:100%;
   max-width:400px;
   border-radius:14px;
   padding:38px;
-  box-shadow:0 20px 60px rgba(0,0,0,.3);
+  box-shadow:0 20px 60px rgba(0,0,0,.3)
 }
-
 h1{
   margin:0;
   font-family:Georgia,serif;
-  font-size:30px;
+  font-size:30px
 }
-
-.sub{
-  color:#756d61;
-  margin:5px 0 28px;
-}
-
+.sub{color:#756d61;margin:5px 0 28px}
 label{
   display:block;
   font-size:13px;
   font-weight:700;
-  margin-bottom:7px;
+  margin-bottom:7px
 }
-
 input{
   width:100%;
   padding:12px;
   border:1px solid #ddd5c8;
   border-radius:8px;
-  font-size:15px;
+  font-size:15px
 }
-
 button{
   width:100%;
   padding:12px;
@@ -1685,366 +1186,192 @@ button{
   color:white;
   font-size:15px;
   font-weight:700;
-  cursor:pointer;
+  cursor:pointer
 }
-
 .err{
   display:none;
   color:#b5541f;
   font-size:13px;
-  margin-top:12px;
+  margin-top:12px
 }
-
 </style>
 </head>
-
 <body>
-
 <div class="card">
+  <h1>Mondeco</h1>
+  <div class="sub">Administration du bot WhatsApp</div>
 
-<h1>
-Mondeco
-</h1>
-
-<div class="sub">
-Administration du bot WhatsApp
-</div>
-
-<form id="form">
-
-<label>
-Mot de passe
-</label>
-
-<input
-  id="password"
-  type="password"
-  required
-  autofocus
-  autocomplete="current-password"
->
-
-<button id="btn">
-Se connecter
-</button>
-
-<div
-  id="err"
-  class="err"
-></div>
-
-</form>
-
+  <form id="form">
+    <label>Mot de passe</label>
+    <input
+      id="password"
+      type="password"
+      required
+      autofocus
+      autocomplete="current-password"
+    >
+    <button id="btn">Se connecter</button>
+    <div id="err" class="err"></div>
+  </form>
 </div>
 
 <script>
+const form = document.getElementById('form');
+const btn = document.getElementById('btn');
+const err = document.getElementById('err');
 
-const form =
-  document.getElementById(
-    'form'
-  );
+form.addEventListener('submit', async event => {
+  event.preventDefault();
 
-const btn =
-  document.getElementById(
-    'btn'
-  );
+  err.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Connexion...';
 
-const err =
-  document.getElementById(
-    'err'
-  );
+  try {
+    const response = await fetch('/admin/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        password:
+          document.getElementById('password').value
+      })
+    });
 
-form.addEventListener(
-  'submit',
-  async event => {
+    const data = await response.json();
 
-    event.preventDefault();
-
-    err.style.display =
-      'none';
-
-    btn.disabled =
-      true;
-
-    btn.textContent =
-      'Connexion...';
-
-    try {
-
-      const response =
-        await fetch(
-          '/admin/login',
-          {
-            method:
-              'POST',
-
-            headers:{
-              'Content-Type':
-                'application/json'
-            },
-
-            body:
-              JSON.stringify({
-                password:
-                  document.getElementById(
-                    'password'
-                  ).value
-              })
-          }
-        );
-
-      const data =
-        await response.json();
-
-      if (
-        response.ok &&
-        data.success
-      ) {
-        location.href =
-          '/admin';
-
-        return;
-      }
-
-      err.textContent =
-        data.error ||
-        'Mot de passe incorrect';
-
-      err.style.display =
-        'block';
-
-    } catch {
-
-      err.textContent =
-        'Impossible de contacter le serveur.';
-
-      err.style.display =
-        'block';
-
-    } finally {
-
-      btn.disabled =
-        false;
-
-      btn.textContent =
-        'Se connecter';
+    if (response.ok && data.success) {
+      location.href = '/admin';
+      return;
     }
+
+    err.textContent =
+      data.error ||
+      'Mot de passe incorrect';
+
+    err.style.display = 'block';
+  } catch {
+    err.textContent =
+      'Impossible de contacter le serveur.';
+
+    err.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Se connecter';
   }
-);
-
+});
 </script>
-
 </body>
 </html>
 `;
 }
 
-// ============================================================
-// LOGIN ROUTES
-// ============================================================
+router.get('/login', (req, res) => {
+  if (isAuthenticated(req)) {
+    return res.redirect('/admin');
+  }
 
-router.get(
-  '/login',
-  (
-    req,
-    res
-  ) => {
+  return res
+    .type('html')
+    .send(renderLoginPage());
+});
 
-    if (
-      isAuthenticated(
-        req
-      )
-    ) {
-      return res.redirect(
-        '/admin'
-      );
-    }
+router.post('/login', (req, res) => {
+  const password =
+    safeString(req.body?.password);
 
+  if (!password || password !== ADMIN_PASSWORD) {
     return res
-      .type('html')
-      .send(
-        renderLoginPage()
-      );
+      .status(401)
+      .json({
+        error: 'Mot de passe incorrect.'
+      });
   }
-);
 
-router.post(
-  '/login',
-  (
-    req,
-    res
-  ) => {
+  const token =
+    crypto
+      .randomBytes(32)
+      .toString('hex');
 
-    const password =
-      safeString(
-        req.body?.password
-      );
+  sessions.set(
+    token,
+    Date.now() + SESSION_DURATION
+  );
 
-    if (
-      !password ||
-      password !==
-      ADMIN_PASSWORD
-    ) {
-      return res
-        .status(401)
-        .json({
-          error:
-            'Mot de passe incorrect.'
-        });
-    }
+  const cookieParts = [
+    `mondeco_admin_session=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_DURATION / 1000)}`
+  ];
 
-    const token =
-      crypto
-        .randomBytes(32)
-        .toString('hex');
-
-    sessions.set(
-      token,
-      Date.now() +
-      SESSION_DURATION
-    );
-
-    const cookieParts = [
-      `mondeco_admin_session=${encodeURIComponent(token)}`,
-      'HttpOnly',
-      'SameSite=Lax',
-      'Path=/',
-      `Max-Age=${Math.floor(
-        SESSION_DURATION /
-        1000
-      )}`
-    ];
-
-    if (
-      secureCookie(
-        req
-      )
-    ) {
-      cookieParts.push(
-        'Secure'
-      );
-    }
-
-    res.setHeader(
-      'Set-Cookie',
-      cookieParts.join(
-        '; '
-      )
-    );
-
-    return res.json({
-      success:
-        true
-    });
+  if (secureCookie(req)) {
+    cookieParts.push('Secure');
   }
-);
 
-// ============================================================
-// LOGOUT
-// ============================================================
+  res.setHeader(
+    'Set-Cookie',
+    cookieParts.join('; ')
+  );
 
-router.post(
-  '/logout',
-  (
-    req,
-    res
-  ) => {
+  return res.json({
+    success: true
+  });
+});
 
-    const token =
-      getSessionToken(
-        req
-      );
+router.post('/logout', (req, res) => {
+  const token = getSessionToken(req);
 
-    if (token) {
-      sessions.delete(
-        token
-      );
-    }
-
-    const cookieParts = [
-      'mondeco_admin_session=',
-      'HttpOnly',
-      'SameSite=Lax',
-      'Path=/',
-      'Max-Age=0'
-    ];
-
-    if (
-      secureCookie(
-        req
-      )
-    ) {
-      cookieParts.push(
-        'Secure'
-      );
-    }
-
-    res.setHeader(
-      'Set-Cookie',
-      cookieParts.join(
-        '; '
-      )
-    );
-
-    return res.json({
-      success:
-        true
-    });
+  if (token) {
+    sessions.delete(token);
   }
-);
 
-// ============================================================
-// ADMIN HTML
-// ============================================================
+  const cookieParts = [
+    'mondeco_admin_session=',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    'Max-Age=0'
+  ];
 
-router.get(
-  '/',
-  requireAuth,
-  (
-    req,
-    res
-  ) => {
-
-    if (
-      !fs.existsSync(
-        ADMIN_HTML_PATH
-      )
-    ) {
-      return res
-        .status(500)
-        .send(
-          'Admin.html introuvable.'
-        );
-    }
-
-    return res.sendFile(
-      ADMIN_HTML_PATH
-    );
+  if (secureCookie(req)) {
+    cookieParts.push('Secure');
   }
-);
+
+  res.setHeader(
+    'Set-Cookie',
+    cookieParts.join('; ')
+  );
+
+  return res.json({
+    success: true
+  });
+});
+
+router.get('/', requireAuth, (req, res) => {
+  if (!fs.existsSync(ADMIN_HTML_PATH)) {
+    return res
+      .status(500)
+      .send('Admin.html introuvable.');
+  }
+
+  return res.sendFile(ADMIN_HTML_PATH);
+});
 
 // ============================================================
 // MULTER
 // ============================================================
 
-const ALLOWED_IMAGE_TYPES =
-  new Set([
-    'image/jpeg',
-    'image/png',
-    'image/webp'
-  ]);
+const ALLOWED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp'
+]);
 
-function imageFileFilter(
-  req,
-  file,
-  callback
-) {
-  if (
-    !ALLOWED_IMAGE_TYPES
-      .has(
-        file.mimetype
-      )
-  ) {
+function imageFileFilter(req, file, callback) {
+  if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
     return callback(
       new Error(
         'Format image non accepté. Utilisez JPG, PNG ou WEBP.'
@@ -2052,39 +1379,18 @@ function imageFileFilter(
     );
   }
 
-  return callback(
-    null,
-    true
-  );
+  return callback(null, true);
 }
-
-// ============================================================
-// STOCKAGE IMAGE PRODUIT
-// ============================================================
 
 const productStorage =
   multer.diskStorage({
-
-    destination(
-      req,
-      file,
-      callback
-    ) {
-      callback(
-        null,
-        UPLOADS_DIR
-      );
+    destination(req, file, callback) {
+      callback(null, UPLOADS_DIR);
     },
 
-    filename(
-      req,
-      file,
-      callback
-    ) {
+    filename(req, file, callback) {
       const extension =
-        extensionFromMimeType(
-          file.mimetype
-        );
+        extensionFromMimeType(file.mimetype);
 
       callback(
         null,
@@ -2095,189 +1401,104 @@ const productStorage =
 
 const productUpload =
   multer({
-    storage:
-      productStorage,
+    storage: productStorage,
 
-    limits:{
-      fileSize:
-        8 *
-        1024 *
-        1024
+    limits: {
+      fileSize: 8 * 1024 * 1024
     },
 
-    fileFilter:
-      imageFileFilter
+    fileFilter: imageFileFilter
   });
-
-// ============================================================
-// MEMORY UPLOAD
-// ============================================================
 
 const memoryUpload =
   multer({
-    storage:
-      multer.memoryStorage(),
+    storage: multer.memoryStorage(),
 
-    limits:{
-      fileSize:
-        8 *
-        1024 *
-        1024
+    limits: {
+      fileSize: 8 * 1024 * 1024
     },
 
-    fileFilter:
-      imageFileFilter
+    fileFilter: imageFileFilter
   });
 
-// ============================================================
-// WRAPPER MULTER
-// ============================================================
+function multerSingle(upload, fieldName) {
+  return (req, res, next) => {
+    upload.single(fieldName)(
+      req,
+      res,
+      error => {
+        if (!error) return next();
 
-function multerSingle(
-  upload,
-  fieldName
-) {
-  return (
-    req,
-    res,
-    next
-  ) => {
-
-    upload
-      .single(
-        fieldName
-      )(
-        req,
-        res,
-        error => {
-
-          if (!error) {
-            return next();
-          }
-
-          if (
-            error instanceof
-            multer.MulterError
-          ) {
-            if (
-              error.code ===
-              'LIMIT_FILE_SIZE'
-            ) {
-              return res
-                .status(400)
-                .json({
-                  error:
-                    'Image trop volumineuse. Maximum 8 Mo.'
-                });
-            }
-
+        if (error instanceof multer.MulterError) {
+          if (error.code === 'LIMIT_FILE_SIZE') {
             return res
               .status(400)
               .json({
                 error:
-                  error.message
+                  'Image trop volumineuse. Maximum 8 Mo.'
               });
           }
 
           return res
             .status(400)
             .json({
-              error:
-                error.message ||
-                'Image invalide.'
+              error: error.message
             });
         }
-      );
+
+        return res
+          .status(400)
+          .json({
+            error:
+              error.message ||
+              'Image invalide.'
+          });
+      }
+    );
   };
 }
 
 const uploadProductImage =
-  multerSingle(
-    productUpload,
-    'image'
-  );
+  multerSingle(productUpload, 'image');
 
 const uploadTestImage =
-  multerSingle(
-    memoryUpload,
-    'image'
-  );
+  multerSingle(memoryUpload, 'image');
 
 const uploadCustomizationImage =
-  multerSingle(
-    memoryUpload,
-    'referenceImage'
-  );
+  multerSingle(memoryUpload, 'referenceImage');
 
 // ============================================================
-// SERVIR PHOTOS PRODUITS
+// SERVIR IMAGES
 // ============================================================
 
 router.get(
   '/uploads/:filename',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     const filename =
-      path.basename(
-        req.params.filename ||
-        ''
-      );
+      path.basename(req.params.filename || '');
 
-    if (!filename) {
-      return res.sendStatus(
-        404
-      );
-    }
+    if (!filename) return res.sendStatus(404);
 
     const filePath =
-      path.join(
-        UPLOADS_DIR,
-        filename
-      );
+      path.join(UPLOADS_DIR, filename);
 
-    if (
-      !fs.existsSync(
-        filePath
-      )
-    ) {
-      return res.sendStatus(
-        404
-      );
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
     }
 
-    return res.sendFile(
-      filePath
-    );
+    return res.sendFile(filePath);
   }
 );
-
-// ============================================================
-// SERVIR SIMULATIONS
-// ============================================================
 
 router.get(
   '/customizations/:filename',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     const filename =
-      path.basename(
-        req.params.filename ||
-        ''
-      );
+      path.basename(req.params.filename || '');
 
-    if (!filename) {
-      return res.sendStatus(
-        404
-      );
-    }
+    if (!filename) return res.sendStatus(404);
 
     const filePath =
       path.join(
@@ -2285,72 +1506,41 @@ router.get(
         filename
       );
 
-    if (
-      !fs.existsSync(
-        filePath
-      )
-    ) {
-      return res.sendStatus(
-        404
-      );
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
     }
 
-    return res.sendFile(
-      filePath
-    );
+    return res.sendFile(filePath);
   }
 );
 
 // ============================================================
-// GET PRODUITS
+// API PRODUITS
 // ============================================================
 
 router.get(
   '/api/products',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
-    return res.json(
-      loadProducts()
-    );
+  (req, res) => {
+    return res.json(loadProducts());
   }
 );
-
-// ============================================================
-// AJOUT PRODUIT
-// ============================================================
 
 router.post(
   '/api/products',
   requireAuth,
   uploadProductImage,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const name =
-        safeString(
-          req.body?.name
-        );
+        safeString(req.body?.name);
 
       const category =
-        safeString(
-          req.body?.category
-        );
+        safeString(req.body?.category);
 
       if (!name) {
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
 
         return res
@@ -2362,12 +1552,8 @@ router.post(
       }
 
       if (!category) {
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
 
         return res
@@ -2378,9 +1564,7 @@ router.post(
           });
       }
 
-      if (
-        !req.file
-      ) {
+      if (!req.file) {
         return res
           .status(400)
           .json({
@@ -2390,94 +1574,65 @@ router.post(
       }
 
       const now =
-        new Date()
-          .toISOString();
+        new Date().toISOString();
 
       const product = {
-
-        id:
-          crypto.randomUUID(),
-
+        id: crypto.randomUUID(),
         name,
-
         category,
 
         price:
-          safeString(
-            req.body?.price
-          ),
+          safeString(req.body?.price),
 
         promoPrice:
-          safeString(
-            req.body?.promoPrice
-          ),
+          safeString(req.body?.promoPrice),
 
         availability:
-          safeString(
-            req.body?.availability
-          ) ||
+          safeString(req.body?.availability) ||
           'unknown',
 
         dimensions:
-          safeString(
-            req.body?.dimensions
-          ),
+          safeString(req.body?.dimensions),
 
         composition:
-          safeString(
-            req.body?.composition
-          ),
+          safeString(req.body?.composition),
 
         colors:
-          safeString(
-            req.body?.colors
-          ),
+          safeString(req.body?.colors),
 
         showrooms:
-          safeString(
-            req.body?.showrooms
-          ),
+          safeString(req.body?.showrooms),
 
         productUrl:
-          safeString(
-            req.body?.productUrl
-          ),
+          safeString(req.body?.productUrl),
 
         categoryUrl:
-          safeString(
-            req.body?.categoryUrl
-          ),
+          safeString(req.body?.categoryUrl),
 
         description:
-          safeString(
-            req.body?.description
-          ),
+          safeString(req.body?.description),
 
         customizableColor:
           parseBoolean(
-            req.body
-              ?.customizableColor,
+            req.body?.customizableColor,
             false
           ),
 
         customizableFabric:
           parseBoolean(
-            req.body
-              ?.customizableFabric,
+            req.body?.customizableFabric,
             false
           ),
 
         customizableDimensions:
           parseBoolean(
-            req.body
-              ?.customizableDimensions,
+            req.body?.customizableDimensions,
             false
           ),
 
         customizableCorner:
           parseBoolean(
-            req.body
-              ?.customizableCorner,
+            req.body?.customizableCorner,
             false
           ),
 
@@ -2493,42 +1648,24 @@ router.post(
         imageFilename:
           req.file.filename,
 
-        createdAt:
-          now,
-
-        updatedAt:
-          now
+        createdAt: now,
+        updatedAt: now
       };
 
-      const products =
-        loadProducts();
-
-      products.push(
-        product
-      );
+      const products = loadProducts();
+      products.push(product);
 
       try {
-        saveProducts(
-          products
-        );
-
+        saveProducts(products);
       } catch (error) {
-
-        deleteFileIfExists(
-          req.file.path
-        );
-
+        deleteFileIfExists(req.file.path);
         throw error;
       }
 
       return res
         .status(201)
-        .json(
-          product
-        );
-
+        .json(product);
     } catch (error) {
-
       console.error(
         '❌ Ajout produit :',
         error
@@ -2545,85 +1682,49 @@ router.post(
   }
 );
 
-// ============================================================
-// MODIFIER PRODUIT
-// ============================================================
-
 router.put(
   '/api/products/:id',
   requireAuth,
   uploadProductImage,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
-      const products =
-        loadProducts();
+      const products = loadProducts();
 
       const index =
         products.findIndex(
-          item =>
-            item.id ===
-            req.params.id
+          item => item.id === req.params.id
         );
 
-      if (
-        index === -1
-      ) {
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+      if (index === -1) {
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
 
         return res
           .status(404)
           .json({
-            error:
-              'Produit introuvable.'
+            error: 'Produit introuvable.'
           });
       }
 
-      const current =
-        products[index];
+      const current = products[index];
 
       const oldImagePath =
-        getLocalProductImagePath(
-          current
-        );
+        getLocalProductImagePath(current);
 
       const name =
-        req.body?.name !==
-        undefined
-          ? safeString(
-              req.body.name
-            )
-          : safeString(
-              current.name
-            );
+        req.body?.name !== undefined
+          ? safeString(req.body.name)
+          : safeString(current.name);
 
       const category =
-        req.body?.category !==
-        undefined
-          ? safeString(
-              req.body.category
-            )
-          : safeString(
-              current.category
-            );
+        req.body?.category !== undefined
+          ? safeString(req.body.category)
+          : safeString(current.category);
 
       if (!name) {
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
 
         return res
@@ -2635,12 +1736,8 @@ router.put(
       }
 
       if (!category) {
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
 
         return res
@@ -2651,10 +1748,7 @@ router.put(
           });
       }
 
-      if (
-        !req.file &&
-        !current.image
-      ) {
+      if (!req.file && !current.image) {
         return res
           .status(400)
           .json({
@@ -2664,196 +1758,118 @@ router.put(
       }
 
       const updated = {
-
         ...current,
-
         name,
-
         category,
 
         price:
-          req.body?.price !==
-          undefined
-            ? safeString(
-                req.body.price
-              )
-            : safeString(
-                current.price
-              ),
+          req.body?.price !== undefined
+            ? safeString(req.body.price)
+            : safeString(current.price),
 
         promoPrice:
-          req.body?.promoPrice !==
-          undefined
-            ? safeString(
-                req.body.promoPrice
-              )
-            : safeString(
-                current.promoPrice
-              ),
+          req.body?.promoPrice !== undefined
+            ? safeString(req.body.promoPrice)
+            : safeString(current.promoPrice),
 
         availability:
-          req.body?.availability !==
-          undefined
-            ? safeString(
-                req.body.availability
-              )
+          req.body?.availability !== undefined
+            ? safeString(req.body.availability)
             : (
-              safeString(
-                current.availability
-              ) ||
+              safeString(current.availability) ||
               'unknown'
             ),
 
         dimensions:
-          req.body?.dimensions !==
-          undefined
-            ? safeString(
-                req.body.dimensions
-              )
-            : safeString(
-                current.dimensions
-              ),
+          req.body?.dimensions !== undefined
+            ? safeString(req.body.dimensions)
+            : safeString(current.dimensions),
 
         composition:
-          req.body?.composition !==
-          undefined
-            ? safeString(
-                req.body.composition
-              )
-            : safeString(
-                current.composition
-              ),
+          req.body?.composition !== undefined
+            ? safeString(req.body.composition)
+            : safeString(current.composition),
 
         colors:
-          req.body?.colors !==
-          undefined
-            ? safeString(
-                req.body.colors
-              )
-            : safeString(
-                current.colors
-              ),
+          req.body?.colors !== undefined
+            ? safeString(req.body.colors)
+            : safeString(current.colors),
 
         showrooms:
-          req.body?.showrooms !==
-          undefined
-            ? safeString(
-                req.body.showrooms
-              )
-            : safeString(
-                current.showrooms
-              ),
+          req.body?.showrooms !== undefined
+            ? safeString(req.body.showrooms)
+            : safeString(current.showrooms),
 
         productUrl:
-          req.body?.productUrl !==
-          undefined
-            ? safeString(
-                req.body.productUrl
-              )
-            : safeString(
-                current.productUrl
-              ),
+          req.body?.productUrl !== undefined
+            ? safeString(req.body.productUrl)
+            : safeString(current.productUrl),
 
         categoryUrl:
-          req.body?.categoryUrl !==
-          undefined
-            ? safeString(
-                req.body.categoryUrl
-              )
-            : safeString(
-                current.categoryUrl
-              ),
+          req.body?.categoryUrl !== undefined
+            ? safeString(req.body.categoryUrl)
+            : safeString(current.categoryUrl),
 
         description:
-          req.body?.description !==
-          undefined
-            ? safeString(
-                req.body.description
-              )
-            : safeString(
-                current.description
-              ),
+          req.body?.description !== undefined
+            ? safeString(req.body.description)
+            : safeString(current.description),
 
         customizableColor:
-          req.body
-            ?.customizableColor !==
-          undefined
+          req.body?.customizableColor !== undefined
             ? parseBoolean(
-                req.body
-                  .customizableColor,
+                req.body.customizableColor,
                 false
               )
             : (
-              current
-                .customizableColor ===
-              true
+              current.customizableColor === true
             ),
 
         customizableFabric:
-          req.body
-            ?.customizableFabric !==
-          undefined
+          req.body?.customizableFabric !== undefined
             ? parseBoolean(
-                req.body
-                  .customizableFabric,
+                req.body.customizableFabric,
                 false
               )
             : (
-              current
-                .customizableFabric ===
-              true
+              current.customizableFabric === true
             ),
 
         customizableDimensions:
-          req.body
-            ?.customizableDimensions !==
-          undefined
+          req.body?.customizableDimensions !== undefined
             ? parseBoolean(
-                req.body
-                  .customizableDimensions,
+                req.body.customizableDimensions,
                 false
               )
             : (
-              current
-                .customizableDimensions ===
-              true
+              current.customizableDimensions === true
             ),
 
         customizableCorner:
-          req.body
-            ?.customizableCorner !==
-          undefined
+          req.body?.customizableCorner !== undefined
             ? parseBoolean(
-                req.body
-                  .customizableCorner,
+                req.body.customizableCorner,
                 false
               )
             : (
-              current
-                .customizableCorner ===
-              true
+              current.customizableCorner === true
             ),
 
         active:
-          req.body?.active !==
-          undefined
+          req.body?.active !== undefined
             ? parseBoolean(
                 req.body.active,
                 true
               )
             : (
-              current.active !==
-              false
+              current.active !== false
             ),
 
         updatedAt:
-          new Date()
-            .toISOString()
+          new Date().toISOString()
       };
 
-      if (
-        req.file
-      ) {
+      if (req.file) {
         updated.image =
           `/admin/uploads/${req.file.filename}`;
 
@@ -2861,44 +1877,27 @@ router.put(
           req.file.filename;
       }
 
-      products[index] =
-        updated;
+      products[index] = updated;
 
       try {
-        saveProducts(
-          products
-        );
-
+        saveProducts(products);
       } catch (error) {
-
-        if (
-          req.file
-        ) {
-          deleteFileIfExists(
-            req.file.path
-          );
+        if (req.file) {
+          deleteFileIfExists(req.file.path);
         }
-
         throw error;
       }
 
       if (
         req.file &&
         oldImagePath &&
-        oldImagePath !==
-        req.file.path
+        oldImagePath !== req.file.path
       ) {
-        deleteFileIfExists(
-          oldImagePath
-        );
+        deleteFileIfExists(oldImagePath);
       }
 
-      return res.json(
-        updated
-      );
-
+      return res.json(updated);
     } catch (error) {
-
       console.error(
         '❌ Modification produit :',
         error
@@ -2915,69 +1914,43 @@ router.put(
   }
 );
 
-// ============================================================
-// SUPPRIMER PRODUIT
-// ============================================================
-
 router.delete(
   '/api/products/:id',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
-      const products =
-        loadProducts();
+      const products = loadProducts();
 
       const product =
         products.find(
-          item =>
-            item.id ===
-            req.params.id
+          item => item.id === req.params.id
         );
 
-      if (
-        !product
-      ) {
+      if (!product) {
         return res
           .status(404)
           .json({
-            error:
-              'Produit introuvable.'
+            error: 'Produit introuvable.'
           });
       }
 
       saveProducts(
         products.filter(
-          item =>
-            item.id !==
-            req.params.id
+          item => item.id !== req.params.id
         )
       );
 
       const imagePath =
-        getLocalProductImagePath(
-          product
-        );
+        getLocalProductImagePath(product);
 
-      if (
-        imagePath
-      ) {
-        deleteFileIfExists(
-          imagePath
-        );
+      if (imagePath) {
+        deleteFileIfExists(imagePath);
       }
 
       return res.json({
-        success:
-          true
+        success: true
       });
-
     } catch (error) {
-
       console.error(
         '❌ Suppression produit :',
         error
@@ -2994,64 +1967,29 @@ router.delete(
 );
 
 // ============================================================
-// FINGERPRINT INSTRUCTIONS
-// ============================================================
-
-function instructionFingerprint(
-  title,
-  content
-) {
-  return (
-    `${safeString(title).toLowerCase()}::` +
-    safeString(content).toLowerCase()
-  );
-}
-
-// ============================================================
-// GET INSTRUCTIONS
+// API INSTRUCTIONS
 // ============================================================
 
 router.get(
   '/api/instructions',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
-    return res.json(
-      loadInstructions()
-    );
+  (req, res) => {
+    return res.json(loadInstructions());
   }
 );
-
-// ============================================================
-// AJOUT INSTRUCTION
-// ============================================================
 
 router.post(
   '/api/instructions',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const title =
-        safeString(
-          req.body?.title
-        );
+        safeString(req.body?.title);
 
       const content =
-        safeString(
-          req.body?.content
-        );
+        safeString(req.body?.content);
 
-      if (
-        !title
-      ) {
+      if (!title) {
         return res
           .status(400)
           .json({
@@ -3060,9 +1998,7 @@ router.post(
           });
       }
 
-      if (
-        !content
-      ) {
+      if (!content) {
         return res
           .status(400)
           .json({
@@ -3072,50 +2008,31 @@ router.post(
       }
 
       const now =
-        new Date()
-          .toISOString();
+        new Date().toISOString();
 
       const instruction = {
-
-        id:
-          crypto.randomUUID(),
-
+        id: crypto.randomUUID(),
         title,
-
         content,
-
-        active:
-          parseBoolean(
-            req.body?.active,
-            true
-          ),
-
-        createdAt:
-          now,
-
-        updatedAt:
-          now
+        active: parseBoolean(
+          req.body?.active,
+          true
+        ),
+        createdAt: now,
+        updatedAt: now
       };
 
       const instructions =
         loadInstructions();
 
-      instructions.push(
-        instruction
-      );
+      instructions.push(instruction);
 
-      saveInstructions(
-        instructions
-      );
+      saveInstructions(instructions);
 
       return res
         .status(201)
-        .json(
-          instruction
-        );
-
+        .json(instruction);
     } catch (error) {
-
       console.error(
         '❌ Ajout instruction :',
         error
@@ -3131,33 +2048,20 @@ router.post(
   }
 );
 
-// ============================================================
-// MODIFIER INSTRUCTION
-// ============================================================
-
 router.put(
   '/api/instructions/:id',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const instructions =
         loadInstructions();
 
       const index =
         instructions.findIndex(
-          item =>
-            item.id ===
-            req.params.id
+          item => item.id === req.params.id
         );
 
-      if (
-        index === -1
-      ) {
+      if (index === -1) {
         return res
           .status(404)
           .json({
@@ -3170,28 +2074,16 @@ router.put(
         instructions[index];
 
       const title =
-        req.body?.title !==
-        undefined
-          ? safeString(
-              req.body.title
-            )
-          : safeString(
-              current.title
-            );
+        req.body?.title !== undefined
+          ? safeString(req.body.title)
+          : safeString(current.title);
 
       const content =
-        req.body?.content !==
-        undefined
-          ? safeString(
-              req.body.content
-            )
-          : safeString(
-              current.content
-            );
+        req.body?.content !== undefined
+          ? safeString(req.body.content)
+          : safeString(current.content);
 
-      if (
-        !title
-      ) {
+      if (!title) {
         return res
           .status(400)
           .json({
@@ -3200,9 +2092,7 @@ router.put(
           });
       }
 
-      if (
-        !content
-      ) {
+      if (!content) {
         return res
           .status(400)
           .json({
@@ -3212,40 +2102,30 @@ router.put(
       }
 
       instructions[index] = {
-
         ...current,
-
         title,
-
         content,
 
         active:
-          req.body?.active !==
-          undefined
+          req.body?.active !== undefined
             ? parseBoolean(
                 req.body.active,
                 true
               )
             : (
-              current.active !==
-              false
+              current.active !== false
             ),
 
         updatedAt:
-          new Date()
-            .toISOString()
+          new Date().toISOString()
       };
 
-      saveInstructions(
-        instructions
-      );
+      saveInstructions(instructions);
 
       return res.json(
         instructions[index]
       );
-
     } catch (error) {
-
       console.error(
         '❌ Modification instruction :',
         error
@@ -3261,33 +2141,20 @@ router.put(
   }
 );
 
-// ============================================================
-// SUPPRIMER INSTRUCTION
-// ============================================================
-
 router.delete(
   '/api/instructions/:id',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const instructions =
         loadInstructions();
 
       const exists =
         instructions.some(
-          item =>
-            item.id ===
-            req.params.id
+          item => item.id === req.params.id
         );
 
-      if (
-        !exists
-      ) {
+      if (!exists) {
         return res
           .status(404)
           .json({
@@ -3298,19 +2165,14 @@ router.delete(
 
       saveInstructions(
         instructions.filter(
-          item =>
-            item.id !==
-            req.params.id
+          item => item.id !== req.params.id
         )
       );
 
       return res.json({
-        success:
-          true
+        success: true
       });
-
     } catch (error) {
-
       console.error(
         '❌ Suppression instruction :',
         error
@@ -3326,28 +2188,15 @@ router.delete(
   }
 );
 
-// ============================================================
-// IMPORT PLUSIEURS
-// ============================================================
-
 router.post(
   '/api/instructions/import',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const text =
-        safeString(
-          req.body?.text
-        );
+        safeString(req.body?.text);
 
-      if (
-        !text
-      ) {
+      if (!text) {
         return res
           .status(400)
           .json({
@@ -3357,9 +2206,7 @@ router.post(
       }
 
       const incoming =
-        parseInstructionBlocks(
-          text
-        );
+        parseInstructionBlocks(text);
 
       const instructions =
         loadInstructions();
@@ -3378,78 +2225,43 @@ router.post(
       let imported = 0;
       let duplicates = 0;
 
-      for (
-        const item
-        of incoming
-      ) {
-
+      for (const item of incoming) {
         const fingerprint =
           instructionFingerprint(
             item.title,
             item.content
           );
 
-        if (
-          fingerprints.has(
-            fingerprint
-          )
-        ) {
-          duplicates++;
-
+        if (fingerprints.has(fingerprint)) {
+          duplicates += 1;
           continue;
         }
 
         const now =
-          new Date()
-            .toISOString();
+          new Date().toISOString();
 
         instructions.push({
-
-          id:
-            crypto.randomUUID(),
-
-          title:
-            item.title,
-
-          content:
-            item.content,
-
-          active:
-            true,
-
-          createdAt:
-            now,
-
-          updatedAt:
-            now
+          id: crypto.randomUUID(),
+          title: item.title,
+          content: item.content,
+          active: true,
+          createdAt: now,
+          updatedAt: now
         });
 
-        fingerprints.add(
-          fingerprint
-        );
-
-        imported++;
+        fingerprints.add(fingerprint);
+        imported += 1;
       }
 
-      saveInstructions(
-        instructions
-      );
+      saveInstructions(instructions);
 
       return res.json({
-
-        success:
-          true,
-
+        success: true,
         imported,
-
         duplicates,
-
-        total:
-          instructions.length
+        total: instructions.length
       });
-
     } catch (error) {
-
       console.error(
         '❌ Import instructions :',
         error
@@ -3465,27 +2277,15 @@ router.post(
   }
 );
 
-// ============================================================
-// IMPORT MANUEL BUSINESS-INFO.TXT
-// ============================================================
-
 router.post(
   '/api/instructions/import-legacy',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const legacyText =
-        loadLegacyBusinessInfo()
-          .trim();
+        loadLegacyBusinessInfo().trim();
 
-      if (
-        !legacyText
-      ) {
+      if (!legacyText) {
         return res
           .status(404)
           .json({
@@ -3495,9 +2295,7 @@ router.post(
       }
 
       const incoming =
-        parseInstructionBlocks(
-          legacyText
-        );
+        parseInstructionBlocks(legacyText);
 
       const instructions =
         loadInstructions();
@@ -3516,81 +2314,44 @@ router.post(
       let imported = 0;
       let duplicates = 0;
 
-      for (
-        const item
-        of incoming
-      ) {
-
+      for (const item of incoming) {
         const fingerprint =
           instructionFingerprint(
             item.title,
             item.content
           );
 
-        if (
-          fingerprints.has(
-            fingerprint
-          )
-        ) {
-          duplicates++;
-
+        if (fingerprints.has(fingerprint)) {
+          duplicates += 1;
           continue;
         }
 
         const now =
-          new Date()
-            .toISOString();
+          new Date().toISOString();
 
         instructions.push({
-
-          id:
-            crypto.randomUUID(),
-
-          title:
-            item.title,
-
-          content:
-            item.content,
-
-          active:
-            true,
-
-          source:
-            'business-info.txt',
-
-          createdAt:
-            now,
-
-          updatedAt:
-            now
+          id: crypto.randomUUID(),
+          title: item.title,
+          content: item.content,
+          active: true,
+          source: 'business-info.txt',
+          createdAt: now,
+          updatedAt: now
         });
 
-        fingerprints.add(
-          fingerprint
-        );
-
-        imported++;
+        fingerprints.add(fingerprint);
+        imported += 1;
       }
 
-      saveInstructions(
-        instructions
-      );
+      saveInstructions(instructions);
 
       return res.json({
-
-        success:
-          true,
-
+        success: true,
         imported,
-
         duplicates,
-
-        total:
-          instructions.length
+        total: instructions.length
       });
-
     } catch (error) {
-
       console.error(
         '❌ Import business-info.txt :',
         error
@@ -3607,60 +2368,82 @@ router.post(
 );
 
 // ============================================================
-// DISCUSSION TEST
+// API PARAMÈTRES
 // ============================================================
 
-let chatHandler =
-  null;
+router.get(
+  '/api/settings',
+  requireAuth,
+  (req, res) => {
+    return res.json(
+      getBotSettings()
+    );
+  }
+);
 
-let imageChatHandler =
-  null;
+router.put(
+  '/api/settings',
+  requireAuth,
+  (req, res) => {
+    try {
+      const saved =
+        saveBotSettings(
+          req.body || {}
+        );
+
+      return res.json({
+        success: true,
+        settings: saved
+      });
+    } catch (error) {
+      console.error(
+        '❌ Sauvegarde paramètres :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de sauvegarder les paramètres.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// DISCUSSION DE TEST
+// ============================================================
+
+let chatHandler = null;
+let imageChatHandler = null;
 
 function setChatHandler(fn) {
-  if (
-    typeof fn !==
-    'function'
-  ) {
+  if (typeof fn !== 'function') {
     throw new Error(
       'setChatHandler attend une fonction.'
     );
   }
 
-  chatHandler =
-    fn;
+  chatHandler = fn;
 }
 
 function setImageChatHandler(fn) {
-  if (
-    typeof fn !==
-    'function'
-  ) {
+  if (typeof fn !== 'function') {
     throw new Error(
       'setImageChatHandler attend une fonction.'
     );
   }
 
-  imageChatHandler =
-    fn;
+  imageChatHandler = fn;
 }
-
-// ============================================================
-// TEST TEXTE
-// ============================================================
 
 router.post(
   '/api/test-chat',
   requireAuth,
-  async (
-    req,
-    res
-  ) => {
-
+  async (req, res) => {
     try {
-
-      if (
-        !chatHandler
-      ) {
+      if (!chatHandler) {
         return res
           .status(503)
           .json({
@@ -3670,18 +2453,13 @@ router.post(
       }
 
       const message =
-        safeString(
-          req.body?.message
-        );
+        safeString(req.body?.message);
 
-      if (
-        !message
-      ) {
+      if (!message) {
         return res
           .status(400)
           .json({
-            error:
-              'Message vide.'
+            error: 'Message vide.'
           });
       }
 
@@ -3691,12 +2469,8 @@ router.post(
           message
         );
 
-      return res.json({
-        reply
-      });
-
+      return res.json({ reply });
     } catch (error) {
-
       console.error(
         '❌ Test chat texte :',
         error
@@ -3713,24 +2487,13 @@ router.post(
   }
 );
 
-// ============================================================
-// TEST IMAGE
-// ============================================================
-
 router.post(
   '/api/test-chat-image',
   requireAuth,
   uploadTestImage,
-  async (
-    req,
-    res
-  ) => {
-
+  async (req, res) => {
     try {
-
-      if (
-        !req.file
-      ) {
+      if (!req.file) {
         return res
           .status(400)
           .json({
@@ -3740,34 +2503,23 @@ router.post(
       }
 
       const mode =
-        safeString(
-          req.body?.mode
-        ) ||
+        safeString(req.body?.mode) ||
         'analysis';
 
       const message =
-        safeString(
-          req.body?.message
-        ) ||
+        safeString(req.body?.message) ||
         'Analyse cette image et explique ce que tu vois.';
 
-      if (
-        mode ===
-        'whatsapp'
-      ) {
+      if (mode === 'whatsapp') {
         return res.json({
-
           reply:
             'Simulation WhatsApp : image reçue. Aucune réponse automatique ne serait envoyée au client ; un commercial doit reprendre la conversation.',
-
           action:
             'commercial_required'
         });
       }
 
-      if (
-        !imageChatHandler
-      ) {
+      if (!imageChatHandler) {
         return res
           .status(503)
           .json({
@@ -3778,36 +2530,21 @@ router.post(
 
       const reply =
         await imageChatHandler(
-
           'admin-test-session',
-
           message,
-
           {
-            buffer:
-              req.file.buffer,
-
-            mimetype:
-              req.file.mimetype,
-
-            originalname:
-              req.file.originalname,
-
-            size:
-              req.file.size
+            buffer: req.file.buffer,
+            mimetype: req.file.mimetype,
+            originalname: req.file.originalname,
+            size: req.file.size
           }
         );
 
       return res.json({
-
         reply,
-
-        action:
-          'vision_analysis'
+        action: 'vision_analysis'
       });
-
     } catch (error) {
-
       console.error(
         '❌ Test chat image :',
         error
@@ -3828,36 +2565,22 @@ router.post(
 // PERSONNALISATION
 // ============================================================
 
-let customizationHandler =
-  null;
+let customizationHandler = null;
 
 function setCustomizationHandler(fn) {
-  if (
-    typeof fn !==
-    'function'
-  ) {
+  if (typeof fn !== 'function') {
     throw new Error(
       'setCustomizationHandler attend une fonction.'
     );
   }
 
-  customizationHandler =
-    fn;
+  customizationHandler = fn;
 }
 
-// ============================================================
-// WARNINGS PERSONNALISATION
-// ============================================================
-
-function buildCustomizationWarnings(
-  product,
-  request
-) {
+function buildCustomizationWarnings(product, request) {
   const warnings = [];
 
-  if (
-    !product
-  ) {
+  if (!product) {
     warnings.push(
       'Image libre : identification, prix et faisabilité à confirmer par un commercial.'
     );
@@ -3867,8 +2590,7 @@ function buildCustomizationWarnings(
 
   if (
     request.color &&
-    product.customizableColor !==
-    true
+    product.customizableColor !== true
   ) {
     warnings.push(
       'Le changement de couleur n’est pas confirmé comme option catalogue.'
@@ -3877,8 +2599,7 @@ function buildCustomizationWarnings(
 
   if (
     request.fabric &&
-    product.customizableFabric !==
-    true
+    product.customizableFabric !== true
   ) {
     warnings.push(
       'Le changement de tissu n’est pas confirmé comme option catalogue.'
@@ -3887,8 +2608,7 @@ function buildCustomizationWarnings(
 
   if (
     request.dimensions &&
-    product.customizableDimensions !==
-    true
+    product.customizableDimensions !== true
   ) {
     warnings.push(
       'Le changement de dimensions doit être validé par un commercial.'
@@ -3897,8 +2617,7 @@ function buildCustomizationWarnings(
 
   if (
     request.corner &&
-    product.customizableCorner !==
-    true
+    product.customizableCorner !== true
   ) {
     warnings.push(
       'Le changement de coin/orientation doit être validé par un commercial.'
@@ -3908,59 +2627,29 @@ function buildCustomizationWarnings(
   return warnings;
 }
 
-// ============================================================
-// LISTE PERSONNALISATIONS
-// ============================================================
-
 router.get(
   '/api/customizations',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     const items =
       loadCustomizations()
         .sort(
-          (
-            a,
-            b
-          ) =>
-            new Date(
-              b.createdAt ||
-              0
-            ) -
-            new Date(
-              a.createdAt ||
-              0
-            )
+          (a, b) =>
+            new Date(b.createdAt || 0) -
+            new Date(a.createdAt || 0)
         );
 
-    return res.json(
-      items
-    );
+    return res.json(items);
   }
 );
-
-// ============================================================
-// GÉNÉRER PERSONNALISATION
-// ============================================================
 
 router.post(
   '/api/customizations/generate',
   requireAuth,
   uploadCustomizationImage,
-  async (
-    req,
-    res
-  ) => {
-
+  async (req, res) => {
     try {
-
-      if (
-        !customizationHandler
-      ) {
+      if (!customizationHandler) {
         return res
           .status(503)
           .json({
@@ -3969,27 +2658,19 @@ router.post(
           });
       }
 
-      const products =
-        loadProducts();
+      const products = loadProducts();
 
       const productId =
-        safeString(
-          req.body?.productId
-        );
+        safeString(req.body?.productId);
 
       const product =
         productId
           ? products.find(
-              item =>
-                item.id ===
-                productId
+              item => item.id === productId
             )
           : null;
 
-      if (
-        productId &&
-        !product
-      ) {
+      if (productId && !product) {
         return res
           .status(404)
           .json({
@@ -3999,44 +2680,26 @@ router.post(
       }
 
       const request = {
-
         customerName:
-          safeString(
-            req.body
-              ?.customerName
-          ),
+          safeString(req.body?.customerName),
 
         customerPhone:
-          safeString(
-            req.body
-              ?.customerPhone
-          ),
+          safeString(req.body?.customerPhone),
 
         color:
-          safeString(
-            req.body?.color
-          ),
+          safeString(req.body?.color),
 
         fabric:
-          safeString(
-            req.body?.fabric
-          ),
+          safeString(req.body?.fabric),
 
         dimensions:
-          safeString(
-            req.body
-              ?.dimensions
-          ),
+          safeString(req.body?.dimensions),
 
         corner:
-          safeString(
-            req.body?.corner
-          ),
+          safeString(req.body?.corner),
 
         notes:
-          safeString(
-            req.body?.notes
-          )
+          safeString(req.body?.notes)
       };
 
       const hasModification =
@@ -4048,9 +2711,7 @@ router.post(
           request.notes
         );
 
-      if (
-        !hasModification
-      ) {
+      if (!hasModification) {
         return res
           .status(400)
           .json({
@@ -4059,47 +2720,25 @@ router.post(
           });
       }
 
-      let sourceImage =
-        null;
+      let sourceImage = null;
+      let sourceImageUrl = '';
 
-      let sourceImageUrl =
-        '';
-
-      // IMAGE UPLOADÉE MANUELLEMENT
-      if (
-        req.file
-      ) {
+      if (req.file) {
         sourceImage = {
-
-          buffer:
-            req.file.buffer,
-
-          mimetype:
-            req.file.mimetype,
-
+          buffer: req.file.buffer,
+          mimetype: req.file.mimetype,
           originalname:
             req.file.originalname ||
             'reference.jpg',
-
-          size:
-            req.file.size
+          size: req.file.size
         };
-      }
-
-      // PHOTO DU PRODUIT
-      else if (
-        product
-      ) {
+      } else if (product) {
         const localPath =
-          getLocalProductImagePath(
-            product
-          );
+          getLocalProductImagePath(product);
 
         if (
           !localPath ||
-          !fs.existsSync(
-            localPath
-          )
+          !fs.existsSync(localPath)
         ) {
           return res
             .status(400)
@@ -4110,37 +2749,24 @@ router.post(
         }
 
         sourceImage = {
-
           buffer:
-            fs.readFileSync(
-              localPath
-            ),
+            fs.readFileSync(localPath),
 
           mimetype:
-            mimeTypeFromPath(
-              localPath
-            ),
+            mimeTypeFromPath(localPath),
 
           originalname:
-            path.basename(
-              localPath
-            ),
+            path.basename(localPath),
 
           size:
-            fs.statSync(
-              localPath
-            ).size
+            fs.statSync(localPath).size
         };
 
         sourceImageUrl =
-          safeString(
-            product.image
-          );
+          safeString(product.image);
       }
 
-      if (
-        !sourceImage
-      ) {
+      if (!sourceImage) {
         return res
           .status(400)
           .json({
@@ -4149,18 +2775,10 @@ router.post(
           });
       }
 
-      function outputDimension(
-        value,
-        fallback
-      ) {
-        const number =
-          Number(value);
+      function outputDimension(value, fallback) {
+        const number = Number(value);
 
-        if (
-          !Number.isFinite(
-            number
-          )
-        ) {
+        if (!Number.isFinite(number)) {
           return fallback;
         }
 
@@ -4168,41 +2786,31 @@ router.post(
           256,
           Math.min(
             1920,
-            Math.round(
-              number
-            )
+            Math.round(number)
           )
         );
       }
 
       const simulation =
         await customizationHandler({
-
           product,
-
           request,
-
           sourceImage,
 
           outputWidth:
             outputDimension(
-              req.body
-                ?.outputWidth,
+              req.body?.outputWidth,
               1024
             ),
 
           outputHeight:
             outputDimension(
-              req.body
-                ?.outputHeight,
+              req.body?.outputHeight,
               768
             )
         });
 
-      if (
-        !simulation
-          ?.imageBuffer
-      ) {
+      if (!simulation?.imageBuffer) {
         throw new Error(
           'Le moteur image n’a retourné aucune simulation.'
         );
@@ -4212,16 +2820,11 @@ router.post(
         crypto.randomUUID();
 
       const now =
-        new Date()
-          .toISOString();
+        new Date().toISOString();
 
-      let sourceFilename =
-        '';
+      let sourceFilename = '';
 
-      // SAUVEGARDE SOURCE UPLOADÉE
-      if (
-        req.file
-      ) {
+      if (req.file) {
         sourceFilename =
           `custom-source-${Date.now()}-${id}` +
           extensionFromMimeType(
@@ -4256,17 +2859,13 @@ router.post(
       );
 
       const item = {
-
         id,
 
         productId:
-          product?.id ||
-          '',
+          product?.id || '',
 
         productName:
-          safeString(
-            product?.name
-          ) ||
+          safeString(product?.name) ||
           'Image libre',
 
         customerName:
@@ -4284,9 +2883,7 @@ router.post(
           ),
 
         analysis:
-          safeString(
-            simulation.analysis
-          ),
+          safeString(simulation.analysis),
 
         sourceImage:
           sourceImageUrl,
@@ -4304,32 +2901,18 @@ router.post(
         requiresCommercialValidation:
           true,
 
-        createdAt:
-          now,
-
-        updatedAt:
-          now
+        createdAt: now,
+        updatedAt: now
       };
 
-      const items =
-        loadCustomizations();
-
-      items.push(
-        item
-      );
-
-      saveCustomizations(
-        items
-      );
+      const items = loadCustomizations();
+      items.push(item);
+      saveCustomizations(items);
 
       return res
         .status(201)
-        .json(
-          item
-        );
-
+        .json(item);
     } catch (error) {
-
       console.error(
         '❌ Personnalisation :',
         error
@@ -4346,20 +2929,11 @@ router.post(
   }
 );
 
-// ============================================================
-// STATUT PERSONNALISATION
-// ============================================================
-
 router.put(
   '/api/customizations/:id/status',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const allowed =
         new Set([
           'simulation_generated',
@@ -4370,15 +2944,9 @@ router.put(
         ]);
 
       const status =
-        safeString(
-          req.body?.status
-        );
+        safeString(req.body?.status);
 
-      if (
-        !allowed.has(
-          status
-        )
-      ) {
+      if (!allowed.has(status)) {
         return res
           .status(400)
           .json({
@@ -4392,14 +2960,10 @@ router.put(
 
       const index =
         items.findIndex(
-          item =>
-            item.id ===
-            req.params.id
+          item => item.id === req.params.id
         );
 
-      if (
-        index === -1
-      ) {
+      if (index === -1) {
         return res
           .status(404)
           .json({
@@ -4409,26 +2973,18 @@ router.put(
       }
 
       items[index] = {
-
         ...items[index],
-
         status,
-
         updatedAt:
-          new Date()
-            .toISOString()
+          new Date().toISOString()
       };
 
-      saveCustomizations(
-        items
-      );
+      saveCustomizations(items);
 
       return res.json(
         items[index]
       );
-
     } catch (error) {
-
       console.error(
         '❌ Statut personnalisation :',
         error
@@ -4444,33 +3000,21 @@ router.put(
   }
 );
 
-// ============================================================
-// SUPPRIMER PERSONNALISATION
-// ============================================================
-
 router.delete(
   '/api/customizations/:id',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     try {
-
       const items =
         loadCustomizations();
 
       const item =
         items.find(
           entry =>
-            entry.id ===
-            req.params.id
+            entry.id === req.params.id
         );
 
-      if (
-        !item
-      ) {
+      if (!item) {
         return res
           .status(404)
           .json({
@@ -4482,14 +3026,11 @@ router.delete(
       saveCustomizations(
         items.filter(
           entry =>
-            entry.id !==
-            req.params.id
+            entry.id !== req.params.id
         )
       );
 
-      if (
-        item.resultFilename
-      ) {
+      if (item.resultFilename) {
         deleteFileIfExists(
           path.join(
             CUSTOMIZATIONS_DIR,
@@ -4500,9 +3041,7 @@ router.delete(
         );
       }
 
-      if (
-        item.sourceFilename
-      ) {
+      if (item.sourceFilename) {
         deleteFileIfExists(
           path.join(
             CUSTOMIZATIONS_DIR,
@@ -4514,12 +3053,9 @@ router.delete(
       }
 
       return res.json({
-        success:
-          true
+        success: true
       });
-
     } catch (error) {
-
       console.error(
         '❌ Suppression personnalisation :',
         error
@@ -4536,29 +3072,21 @@ router.delete(
 );
 
 // ============================================================
-// STORAGE STATUS
+// STATUS / STATS
 // ============================================================
 
 router.get(
   '/api/storage-status',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
+  (req, res) => {
     return res.json({
-
-      dataDir:
-        DATA_DIR,
+      dataDir: DATA_DIR,
 
       persistentConfigured:
-        DATA_DIR !==
-        APP_DIR,
+        DATA_DIR !== APP_DIR,
 
       railwayVolumeMountPath:
-        process.env
-          .RAILWAY_VOLUME_MOUNT_PATH ||
+        process.env.RAILWAY_VOLUME_MOUNT_PATH ||
         null,
 
       dataDirEnv:
@@ -4569,14 +3097,13 @@ router.get(
         storageIsWritable(),
 
       productsFile:
-        fs.existsSync(
-          PRODUCTS_PATH
-        ),
+        fs.existsSync(PRODUCTS_PATH),
 
       instructionsFile:
-        fs.existsSync(
-          INSTRUCTIONS_PATH
-        ),
+        fs.existsSync(INSTRUCTIONS_PATH),
+
+      settingsFile:
+        fs.existsSync(SETTINGS_PATH),
 
       instructionMigrationDone:
         fs.existsSync(
@@ -4589,14 +3116,10 @@ router.get(
         ),
 
       uploadsDirectory:
-        fs.existsSync(
-          UPLOADS_DIR
-        ),
+        fs.existsSync(UPLOADS_DIR),
 
       customizationsDirectory:
-        fs.existsSync(
-          CUSTOMIZATIONS_DIR
-        ),
+        fs.existsSync(CUSTOMIZATIONS_DIR),
 
       recommendedRailwayMountPath:
         '/data',
@@ -4607,45 +3130,29 @@ router.get(
   }
 );
 
-// ============================================================
-// STATS
-// ============================================================
-
 router.get(
   '/api/stats',
   requireAuth,
-  (
-    req,
-    res
-  ) => {
-
-    const products =
-      loadProducts();
-
-    const instructions =
-      loadInstructions();
-
-    const customizations =
-      loadCustomizations();
+  (req, res) => {
+    const products = loadProducts();
+    const instructions = loadInstructions();
+    const customizations = loadCustomizations();
+    const settings = getBotSettings();
 
     return res.json({
-
       productCount:
         products.length,
 
       activeProductCount:
         products.filter(
           product =>
-            product.active !==
-            false
+            product.active !== false
         ).length,
 
       productsWithImages:
         products.filter(
           product =>
-            Boolean(
-              product.image
-            )
+            Boolean(product.image)
         ).length,
 
       instructionsCount:
@@ -4654,12 +3161,17 @@ router.get(
       activeInstructionsCount:
         instructions.filter(
           instruction =>
-            instruction.active !==
-            false
+            instruction.active !== false
         ).length,
 
       customizationCount:
         customizations.length,
+
+      aiEnabled:
+        settings.aiEnabled,
+
+      audience:
+        settings.audience,
 
       instructionMigrationDone:
         fs.existsSync(
@@ -4668,19 +3180,13 @@ router.get(
 
       legacyBusinessInfoAvailable:
         Boolean(
-          loadLegacyBusinessInfo()
-            .trim()
+          loadLegacyBusinessInfo().trim()
         ),
 
-      storage:{
-
-        dataDir:
-          DATA_DIR,
-
+      storage: {
+        dataDir: DATA_DIR,
         persistentConfigured:
-          DATA_DIR !==
-          APP_DIR,
-
+          DATA_DIR !== APP_DIR,
         writable:
           storageIsWritable()
       }
@@ -4693,15 +3199,10 @@ router.get(
 // ============================================================
 
 module.exports = {
-
-  adminRouter:
-    router,
-
+  adminRouter: router,
   getBusinessContext,
-
+  getBotSettings,
   setChatHandler,
-
   setImageChatHandler,
-
   setCustomizationHandler
 };
