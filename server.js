@@ -1,6 +1,6 @@
 // Bot WhatsApp + IA via l'API officielle WhatsApp Cloud (Meta) + Groq (IA)
 // Lancer avec : node server.js
-console.log('>>> VERSION TEST 12345 <<<');
+
 require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
@@ -213,6 +213,19 @@ app.get('/debug-env', (req, res) => {
     whatsapp_token_present: !!WHATSAPP_TOKEN,
     phone_number_id_present: !!PHONE_NUMBER_ID
   });
+});
+
+// --- Route de test temporaire pour vérifier Groq sans passer par WhatsApp ---
+// Usage : https://ton-app.up.railway.app/test-ia?message=bonjour
+// À SUPPRIMER une fois les tests terminés.
+app.get('/test-ia', async (req, res) => {
+  try {
+    const userText = req.query.message || 'Bonjour, quels sont vos horaires ?';
+    const reply = await generateReply('test-user', userText);
+    res.json({ success: true, question: userText, reponse_ia: reply });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.listen(PORT, () => {
