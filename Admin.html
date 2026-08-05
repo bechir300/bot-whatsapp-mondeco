@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mondeco — Administration</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root {
+    --ink: #1F1B16;
+    --paper: #F7F4EF;
+    --paper-raised: #FFFFFF;
+    --copper: #B5541F;
+    --copper-dark: #9C4718;
+    --border: #E4DED2;
+    --muted: #7A7266;
+    --sidebar: #1F1B16;
+    --sidebar-hover: #2A241C;
+    --success: #5C7A52;
+    --danger: #B5541F;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    display: flex;
+    min-height: 100vh;
+  }
+
+  /* --- Sidebar --- */
+  .sidebar {
+    width: 240px;
+    background: var(--sidebar);
+    color: #F7F4EF;
+    display: flex;
+    flex-direction: column;
+    padding: 28px 20px;
+    flex-shrink: 0;
+  }
+  .wordmark { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; }
+  .wordmark-sub { font-size: 12px; color: #9C9384; margin-top: 2px; margin-bottom: 36px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 14px; border-radius: 8px; font-size: 14px; font-weight: 500;
+    color: #C9C1B3; cursor: pointer; margin-bottom: 4px; transition: background 0.15s;
+  }
+  .nav-item:hover { background: var(--sidebar-hover); }
+  .nav-item.active { background: var(--copper); color: #fff; }
+  .sidebar-footer { margin-top: auto; }
+  .logout-btn {
+    font-size: 13px; color: #9C9384; cursor: pointer; padding: 8px 14px;
+  }
+  .logout-btn:hover { color: #F7F4EF; }
+
+  /* --- Main --- */
+  .main { flex: 1; padding: 40px 48px; max-width: 980px; }
+  .page-header { margin-bottom: 32px; }
+  .page-title { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
+  .page-desc { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* --- Produits --- */
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 18px; border-radius: 8px; border: none;
+    font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif;
+  }
+  .btn-primary { background: var(--copper); color: #fff; }
+  .btn-primary:hover { background: var(--copper-dark); }
+  .btn-ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--border); }
+  .btn-ghost:hover { background: #EFEAE0; }
+  .btn-danger-text { background: none; border: none; color: var(--danger); font-size: 13px; cursor: pointer; font-weight: 500; }
+
+  .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .product-card {
+    background: var(--paper-raised); border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border); border-left: 4px solid var(--copper);
+    display: flex; flex-direction: column;
+  }
+  .product-card-body { padding: 16px 18px; flex: 1; }
+  .product-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--copper); font-weight: 600; }
+  .product-name { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 600; margin-top: 4px; }
+  .product-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .product-price { font-size: 15px; font-weight: 700; margin-top: 10px; color: var(--ink); }
+  .product-actions { display: flex; gap: 14px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  .product-actions span { font-size: 13px; color: var(--muted); cursor: pointer; font-weight: 500; }
+  .product-actions span:hover { color: var(--ink); }
+
+  .empty-state {
+    text-align: center; padding: 60px 20px; color: var(--muted);
+    border: 1.5px dashed var(--border); border-radius: 12px;
+  }
+  .empty-state .empty-title { font-family: 'Fraunces', serif; font-size: 18px; color: var(--ink); margin-bottom: 6px; }
+
+  /* --- Modal --- */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(31,27,22,0.5);
+    align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--paper-raised); border-radius: 12px; padding: 32px;
+    width: 100%; max-width: 440px; max-height: 88vh; overflow-y: auto;
+  }
+  .modal-title { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 13px; font-weight: 500; color: #4A4438; margin-bottom: 6px; }
+  .field input, .field textarea {
+    width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 7px;
+    font-size: 14px; font-family: 'Inter', sans-serif; color: var(--ink);
+  }
+  .field input:focus, .field textarea:focus { outline: none; border-color: var(--copper); }
+  .field textarea { resize: vertical; min-height: 70px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+  .modal-actions .btn { flex: 1; justify-content: center; }
+
+  /* --- Instructions --- */
+  .instructions-box textarea {
+    width: 100%; min-height: 420px; padding: 20px; border-radius: 10px;
+    border: 1.5px solid var(--border); font-family: 'Inter', sans-serif; font-size: 14px;
+    line-height: 1.6; color: var(--ink); resize: vertical; background: var(--paper-raised);
+  }
+  .instructions-box textarea:focus { outline: none; border-color: var(--copper); }
+  .save-row { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+  .save-status { font-size: 13px; color: var(--success); opacity: 0; transition: opacity 0.3s; }
+  .save-status.visible { opacity: 1; }
+  .hint { font-size: 13px; color: var(--muted); margin-bottom: 14px; line-height: 1.6; }
+
+  /* --- Accueil --- */
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
+  .stat-card {
+    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .stat-value { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
+  .stat-label { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .home-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .home-action-card {
+    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 22px; cursor: pointer; transition: border-color 0.15s;
+  }
+  .home-action-card:hover { border-color: var(--copper); }
+  .home-action-title { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
+  .home-action-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .home-action-link { font-size: 13px; color: var(--copper); font-weight: 600; margin-top: 12px; }
+
+  /* --- Discussion de test --- */
+  .chat-shell {
+    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 12px;
+    display: flex; flex-direction: column; height: 560px; max-width: 480px;
+  }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .chat-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; line-height: 1.6; }
+  .chat-bubble { max-width: 80%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; }
+  .chat-bubble.user { align-self: flex-end; background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
+  .chat-bubble.bot { align-self: flex-start; background: #EFEAE0; color: var(--ink); border-bottom-left-radius: 4px; }
+  .chat-bubble.error { align-self: flex-start; background: #F5DED2; color: var(--danger); border-bottom-left-radius: 4px; }
+  .chat-bubble.typing { align-self: flex-start; background: #EFEAE0; color: var(--muted); font-style: italic; }
+  .chat-input-row { display: flex; gap: 10px; padding: 14px; border-top: 1px solid var(--border); }
+  .chat-input-row input {
+    flex: 1; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 8px;
+    font-size: 14px; font-family: 'Inter', sans-serif;
+  }
+  .chat-input-row input:focus { outline: none; border-color: var(--copper); }
+  .chat-input-row .btn { padding: 10px 20px; }
+</style>
+</head>
+<body>
+
+  <nav class="sidebar">
+    <div class="wordmark">Mondeco</div>
+    <div class="wordmark-sub">Bot WhatsApp</div>
+
+    <div class="nav-item active" data-view="home">🏠 Accueil</div>
+    <div class="nav-item" data-view="products">🪑 Produits</div>
+    <div class="nav-item" data-view="instructions">📋 Instructions IA</div>
+    <div class="nav-item" data-view="test">💬 Discussion de test</div>
+
+    <div class="sidebar-footer">
+      <div class="logout-btn" id="logoutBtn">Se déconnecter</div>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- VUE ACCUEIL -->
+    <section class="view active" id="view-home">
+      <div class="page-header">
+        <div class="page-title">Bonjour 👋</div>
+        <div class="page-desc">Voici l'état de ton assistant WhatsApp Mondeco.</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" id="statProducts">—</div>
+          <div class="stat-label">Produits au catalogue</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statInstructions">—</div>
+          <div class="stat-label">Instructions configurées</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">🟢</div>
+          <div class="stat-label">Bot en ligne</div>
+        </div>
+      </div>
+
+      <div class="home-actions">
+        <div class="home-action-card" data-goto="products">
+          <div class="home-action-title">Ajouter un produit</div>
+          <div class="home-action-desc">Le bot pourra en parler à tes clients immédiatement.</div>
+          <div class="home-action-link">Ouvrir Produits →</div>
+        </div>
+        <div class="home-action-card" data-goto="instructions">
+          <div class="home-action-title">Modifier les instructions</div>
+          <div class="home-action-desc">Horaires, showrooms, livraison, ton à adopter.</div>
+          <div class="home-action-link">Ouvrir Instructions →</div>
+        </div>
+        <div class="home-action-card" data-goto="test">
+          <div class="home-action-title">Tester le bot</div>
+          <div class="home-action-desc">Discute avec ton IA comme si tu étais client.</div>
+          <div class="home-action-link">Ouvrir Discussion de test →</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VUE PRODUITS -->
+    <section class="view" id="view-products">
+      <div class="page-header">
+        <div class="page-title">Catalogue produits</div>
+        <div class="page-desc">Ces produits sont automatiquement inclus dans les réponses du bot.</div>
+      </div>
+      <div class="toolbar">
+        <span></span>
+        <button class="btn btn-primary" id="addProductBtn">+ Ajouter un produit</button>
+      </div>
+      <div id="productGrid" class="product-grid"></div>
+      <div id="emptyState" class="empty-state" style="display:none;">
+        <div class="empty-title">Aucun produit pour l'instant</div>
+        <div>Ajoute ton premier produit pour que le bot puisse en parler à tes clients.</div>
+      </div>
+    </section>
+
+    <!-- VUE INSTRUCTIONS -->
+    <section class="view" id="view-instructions">
+      <div class="page-header">
+        <div class="page-title">Instructions du bot</div>
+        <div class="page-desc">Ce texte guide la façon dont l'IA répond à tes clients.</div>
+      </div>
+      <div class="instructions-box">
+        <div class="hint">
+          Décris ici : les horaires, les adresses des showrooms, la politique de livraison, le ton à adopter, et tout ce que le bot doit savoir en dehors du catalogue produits.
+        </div>
+        <textarea id="instructionsText" placeholder="Ex : Mondeco vend des meubles en Tunisie. Nos showrooms sont ouverts du lundi au samedi, de 9h à 19h..."></textarea>
+        <div class="save-row">
+          <button class="btn btn-primary" id="saveInstructionsBtn">Enregistrer</button>
+          <span class="save-status" id="saveStatus">✓ Enregistré</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- VUE DISCUSSION DE TEST -->
+    <section class="view" id="view-test">
+      <div class="page-header">
+        <div class="page-title">Discussion de test</div>
+        <div class="page-desc">Discute avec ton IA en te mettant à la place d'un(e) client(e). Cette conversation n'est pas envoyée sur WhatsApp.</div>
+      </div>
+      <div class="chat-shell">
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-empty">Écris un message ci-dessous pour commencer, par exemple : « Bonjour, avez-vous des canapés en cuir ? »</div>
+        </div>
+        <form class="chat-input-row" id="chatForm">
+          <input type="text" id="chatInput" placeholder="Écris un message comme le ferait un client..." autocomplete="off">
+          <button type="submit" class="btn btn-primary">Envoyer</button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL PRODUIT -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">Ajouter un produit</div>
+      <form id="productForm">
+        <input type="hidden" id="productId">
+        <div class="field">
+          <label for="productName">Nom du produit *</label>
+          <input type="text" id="productName" required placeholder="Ex : Canapé Milano 3 places">
+        </div>
+        <div class="field">
+          <label for="productCategory">Catégorie</label>
+          <input type="text" id="productCategory" placeholder="Ex : Salon, Chambre, Bureau">
+        </div>
+        <div class="field">
+          <label for="productPrice">Prix (TND)</label>
+          <input type="text" id="productPrice" placeholder="Ex : 1450">
+        </div>
+        <div class="field">
+          <label for="productDescription">Description</label>
+          <textarea id="productDescription" placeholder="Détails utiles pour répondre aux clients : matériaux, dimensions, couleurs disponibles..."></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="cancelModalBtn">Annuler</button>
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script>
+  // --- Navigation ---
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('view-' + item.dataset.view).classList.add('active');
+    });
+  });
+
+  // --- Logout ---
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await fetch('/admin/logout', { method: 'POST' });
+    window.location.href = '/admin/login';
+  });
+
+  // --- Produits ---
+  let products = [];
+
+  async function loadProducts() {
+    const res = await fetch('/admin/api/products');
+    products = await res.json();
+    renderProducts();
+  }
+
+  function renderProducts() {
+    const grid = document.getElementById('productGrid');
+    const empty = document.getElementById('emptyState');
+    if (products.length === 0) {
+      grid.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+    grid.innerHTML = products.map(p => `
+      <div class="product-card">
+        <div class="product-card-body">
+          ${p.category ? `<div class="product-cat">${escapeHtml(p.category)}</div>` : ''}
+          <div class="product-name">${escapeHtml(p.name)}</div>
+          ${p.description ? `<div class="product-desc">${escapeHtml(p.description)}</div>` : ''}
+          ${p.price ? `<div class="product-price">${escapeHtml(p.price)} TND</div>` : ''}
+        </div>
+        <div class="product-actions">
+          <span onclick="editProduct('${p.id}')">Modifier</span>
+          <span class="btn-danger-text" onclick="deleteProduct('${p.id}')">Supprimer</span>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // --- Modal ---
+  const overlay = document.getElementById('modalOverlay');
+  const form = document.getElementById('productForm');
+
+  document.getElementById('addProductBtn').addEventListener('click', () => {
+    document.getElementById('modalTitle').textContent = 'Ajouter un produit';
+    form.reset();
+    document.getElementById('productId').value = '';
+    overlay.classList.add('active');
+  });
+
+  document.getElementById('cancelModalBtn').addEventListener('click', () => {
+    overlay.classList.remove('active');
+  });
+
+  window.editProduct = (id) => {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('modalTitle').textContent = 'Modifier le produit';
+    document.getElementById('productId').value = p.id;
+    document.getElementById('productName').value = p.name;
+    document.getElementById('productCategory').value = p.category || '';
+    document.getElementById('productPrice').value = p.price || '';
+    document.getElementById('productDescription').value = p.description || '';
+    overlay.classList.add('active');
+  };
+
+  window.deleteProduct = async (id) => {
+    if (!confirm('Supprimer ce produit ?')) return;
+    await fetch('/admin/api/products/' + id, { method: 'DELETE' });
+    loadProducts();
+  };
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('productId').value;
+    const payload = {
+      name: document.getElementById('productName').value,
+      category: document.getElementById('productCategory').value,
+      price: document.getElementById('productPrice').value,
+      description: document.getElementById('productDescription').value
+    };
+    if (id) {
+      await fetch('/admin/api/products/' + id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+    } else {
+      await fetch('/admin/api/products', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+    }
+    overlay.classList.remove('active');
+    loadProducts();
+  });
+
+  // --- Instructions ---
+  async function loadInstructions() {
+    const res = await fetch('/admin/api/instructions');
+    const data = await res.json();
+    document.getElementById('instructionsText').value = data.text || '';
+  }
+
+  document.getElementById('saveInstructionsBtn').addEventListener('click', async () => {
+    const text = document.getElementById('instructionsText').value;
+    await fetch('/admin/api/instructions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
+    });
+    const status = document.getElementById('saveStatus');
+    status.classList.add('visible');
+    setTimeout(() => status.classList.remove('visible'), 2000);
+  });
+
+  // --- Navigation depuis les cartes d'accueil ---
+  document.querySelectorAll('.home-action-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const view = card.dataset.goto;
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelector(`.nav-item[data-view="${view}"]`).classList.add('active');
+      document.getElementById('view-' + view).classList.add('active');
+    });
+  });
+
+  // --- Stats (page Accueil) ---
+  async function loadStats() {
+    const res = await fetch('/admin/api/stats');
+    const data = await res.json();
+    document.getElementById('statProducts').textContent = data.productCount;
+    document.getElementById('statInstructions').textContent = data.instructionsConfigured ? '✓' : '—';
+  }
+
+  // --- Discussion de test ---
+  const chatMessages = document.getElementById('chatMessages');
+  const chatForm = document.getElementById('chatForm');
+  const chatInput = document.getElementById('chatInput');
+
+  function addBubble(text, type) {
+    const empty = chatMessages.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble ' + type;
+    bubble.textContent = text;
+    chatMessages.appendChild(bubble);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return bubble;
+  }
+
+  chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const message = chatInput.value.trim();
+    if (!message) return;
+    addBubble(message, 'user');
+    chatInput.value = '';
+    const typingBubble = addBubble('...en train de répondre', 'typing');
+
+    try {
+      const res = await fetch('/admin/api/test-chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message })
+      });
+      const data = await res.json();
+      typingBubble.remove();
+      if (res.ok) {
+        addBubble(data.reply, 'bot');
+      } else {
+        addBubble(data.error || 'Une erreur est survenue.', 'error');
+      }
+    } catch (err) {
+      typingBubble.remove();
+      addBubble('Impossible de contacter le serveur.', 'error');
+    }
+  });
+
+  // --- Init ---
+  loadProducts();
+  loadInstructions();
+  loadStats();
+</script>
+</body>
+</html>
