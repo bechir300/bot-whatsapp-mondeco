@@ -19,11 +19,14 @@ const DATA_DIR = (process.env.DATA_DIR || __dirname).trim();
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const INSTRUCTIONS_JSON_PATH = path.join(DATA_DIR, 'instructions.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
+const CUSTOMIZATION_IMAGES_DIR = path.join(DATA_DIR, 'customizations');
 const LEGACY_BUSINESS_INFO_PATH = path.join(__dirname, 'business-info.txt');
 const ADMIN_HTML_PATH = path.join(__dirname, 'Admin.html');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(CUSTOMIZATION_IMAGES_DIR, { recursive: true });
 
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || 'mondeco2026').trim();
 
@@ -144,6 +147,61 @@ function getLocalImagePath(product) {
   return null;
 }
 
+
+function mimeTypeFromPath(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function extensionFromMimeType(mimetype) {
+  if (mimetype === 'image/png') return '.png';
+  if (mimetype === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
+function loadCustomizations() {
+  try {
+    if (!fs.existsSync(CUSTOMIZATIONS_PATH)) return [];
+
+    const content = fs.readFileSync(CUSTOMIZATIONS_PATH, 'utf8');
+    if (!content.trim()) return [];
+
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('❌ Erreur lecture customization-requests.json :', error);
+    return [];
+  }
+}
+
+function saveCustomizations(items) {
+  const temporaryPath = `${CUSTOMIZATIONS_PATH}.tmp`;
+
+  fs.writeFileSync(
+    temporaryPath,
+    JSON.stringify(items, null, 2),
+    'utf8'
+  );
+
+  fs.renameSync(temporaryPath, CUSTOMIZATIONS_PATH);
+}
+
+function buildCustomizationCapabilities(product) {
+  if (!product) return [];
+
+  const capabilities = [];
+
+  if (product.customizableColor === true) capabilities.push('couleur');
+  if (product.customizableFabric === true) capabilities.push('tissu');
+  if (product.customizableDimensions === true) capabilities.push('dimensions');
+  if (product.customizableCorner === true) capabilities.push('coin/orientation');
+
+  return capabilities;
+}
+
 // ============================================================
 // MULTER - IMAGES PRODUITS
 // ============================================================
@@ -235,6 +293,36 @@ function uploadSingleTestImage(req, res, next) {
 
     return res.status(400).json({
       error: error.message || 'Image de test non valide.'
+    });
+  });
+}
+
+
+// ============================================================
+// MULTER - IMAGE PERSONNALISATION
+// Optionnelle si un produit avec photo est sélectionné.
+// ============================================================
+
+const customizationImageUpload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: imageFilter,
+  limits: {
+    fileSize: 8 * 1024 * 1024
+  }
+});
+
+function uploadSingleCustomizationImage(req, res, next) {
+  customizationImageUpload.single('referenceImage')(req, res, error => {
+    if (!error) return next();
+
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        error: 'L’image de référence dépasse 8 Mo.'
+      });
+    }
+
+    return res.status(400).json({
+      error: error.message || 'Image de personnalisation non valide.'
     });
   });
 }
@@ -469,6 +557,16 @@ function getBusinessContext() {
             parts.push(`Description : ${safeString(product.description)}`);
           }
 
+          const customizationCapabilities = buildCustomizationCapabilities(product);
+
+          if (customizationCapabilities.length) {
+            parts.push(
+              `Personnalisation possible : ${customizationCapabilities.join(', ')}`
+            );
+          } else {
+            parts.push('Personnalisation : non confirmée dans le catalogue');
+          }
+
           return `- ${parts.join(' | ')}`;
         })
         .join('\n');
@@ -569,6 +667,18 @@ router.get('/uploads/:filename', requireAuth, (req, res) => {
   return res.sendFile(imagePath);
 });
 
+
+router.get('/customizations/:filename', requireAuth, (req, res) => {
+  const filename = path.basename(req.params.filename);
+  const imagePath = path.join(CUSTOMIZATION_IMAGES_DIR, filename);
+
+  if (!fs.existsSync(imagePath)) {
+    return res.status(404).send('Simulation introuvable');
+  }
+
+  return res.sendFile(imagePath);
+});
+
 // ============================================================
 // API PRODUITS
 // ============================================================
@@ -619,6 +729,10 @@ router.post(
         productUrl: safeString(req.body?.productUrl),
         categoryUrl: safeString(req.body?.categoryUrl),
         description: safeString(req.body?.description),
+        customizableColor: parseBoolean(req.body?.customizableColor, false),
+        customizableFabric: parseBoolean(req.body?.customizableFabric, false),
+        customizableDimensions: parseBoolean(req.body?.customizableDimensions, false),
+        customizableCorner: parseBoolean(req.body?.customizableCorner, false),
         active: parseBoolean(req.body?.active, true),
         image: `/admin/uploads/${req.file.filename}`,
         imageFilename: req.file.filename,
@@ -732,6 +846,22 @@ router.put(
           req.body?.description !== undefined
             ? safeString(req.body.description)
             : safeString(currentProduct.description),
+        customizableColor:
+          req.body?.customizableColor !== undefined
+            ? parseBoolean(req.body.customizableColor, false)
+            : currentProduct.customizableColor === true,
+        customizableFabric:
+          req.body?.customizableFabric !== undefined
+            ? parseBoolean(req.body.customizableFabric, false)
+            : currentProduct.customizableFabric === true,
+        customizableDimensions:
+          req.body?.customizableDimensions !== undefined
+            ? parseBoolean(req.body.customizableDimensions, false)
+            : currentProduct.customizableDimensions === true,
+        customizableCorner:
+          req.body?.customizableCorner !== undefined
+            ? parseBoolean(req.body.customizableCorner, false)
+            : currentProduct.customizableCorner === true,
         active:
           req.body?.active !== undefined
             ? parseBoolean(req.body.active, true)
@@ -1112,6 +1242,290 @@ router.post(
   }
 );
 
+
+// ============================================================
+// PERSONNALISATION / SIMULATION VISUELLE
+// ============================================================
+
+let customizationHandler = null;
+
+function setCustomizationHandler(fn) {
+  if (typeof fn !== 'function') {
+    throw new Error('setCustomizationHandler attend une fonction.');
+  }
+
+  customizationHandler = fn;
+}
+
+function buildCustomizationWarnings(product, request) {
+  const warnings = [];
+
+  if (!product) {
+    warnings.push(
+      'Produit non lié au catalogue : identification, prix et faisabilité à confirmer.'
+    );
+
+    return warnings;
+  }
+
+  if (request.color && product.customizableColor !== true) {
+    warnings.push('Le changement de couleur n’est pas confirmé comme option catalogue.');
+  }
+
+  if (request.fabric && product.customizableFabric !== true) {
+    warnings.push('Le changement de tissu n’est pas confirmé comme option catalogue.');
+  }
+
+  if (request.dimensions && product.customizableDimensions !== true) {
+    warnings.push('Le changement de dimensions doit être validé par un commercial.');
+  }
+
+  if (request.corner && product.customizableCorner !== true) {
+    warnings.push('Le changement de coin/orientation doit être validé par un commercial.');
+  }
+
+  return warnings;
+}
+
+router.get('/api/customizations', requireAuth, (req, res) => {
+  const items = loadCustomizations().sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+
+  return res.json(items);
+});
+
+router.post(
+  '/api/customizations/generate',
+  requireAuth,
+  uploadSingleCustomizationImage,
+  async (req, res) => {
+    try {
+      if (!customizationHandler) {
+        return res.status(503).json({
+          error: 'Le moteur de simulation visuelle n’est pas encore connecté.'
+        });
+      }
+
+      const products = loadProducts();
+      const productId = safeString(req.body?.productId);
+      const product = productId
+        ? products.find(item => item.id === productId)
+        : null;
+
+      if (productId && !product) {
+        return res.status(404).json({
+          error: 'Produit sélectionné introuvable.'
+        });
+      }
+
+      const request = {
+        customerName: safeString(req.body?.customerName),
+        customerPhone: safeString(req.body?.customerPhone),
+        color: safeString(req.body?.color),
+        fabric: safeString(req.body?.fabric),
+        dimensions: safeString(req.body?.dimensions),
+        corner: safeString(req.body?.corner),
+        notes: safeString(req.body?.notes)
+      };
+
+      const hasModification = Boolean(
+        request.color ||
+        request.fabric ||
+        request.dimensions ||
+        request.corner ||
+        request.notes
+      );
+
+      if (!hasModification) {
+        return res.status(400).json({
+          error: 'Indiquez au moins une modification à simuler.'
+        });
+      }
+
+      let sourceImage = null;
+      let sourceImageUrl = '';
+
+      if (req.file) {
+        sourceImage = {
+          buffer: req.file.buffer,
+          mimetype: req.file.mimetype,
+          originalname: req.file.originalname || 'reference.jpg'
+        };
+      } else if (product) {
+        const localImagePath = getLocalImagePath(product);
+
+        if (!localImagePath || !fs.existsSync(localImagePath)) {
+          return res.status(400).json({
+            error:
+              'La photo du produit est introuvable. Ajoutez une image de référence.'
+          });
+        }
+
+        sourceImage = {
+          buffer: fs.readFileSync(localImagePath),
+          mimetype: mimeTypeFromPath(localImagePath),
+          originalname: path.basename(localImagePath)
+        };
+
+        sourceImageUrl = safeString(product.image);
+      }
+
+      if (!sourceImage) {
+        return res.status(400).json({
+          error:
+            'Sélectionnez un produit avec photo ou ajoutez une image de référence.'
+        });
+      }
+
+      const warnings = buildCustomizationWarnings(product, request);
+
+      const simulation = await customizationHandler({
+        product,
+        request,
+        sourceImage
+      });
+
+      if (!simulation?.imageBuffer) {
+        throw new Error('Le moteur image n’a retourné aucune simulation.');
+      }
+
+      const now = new Date();
+      const id = crypto.randomUUID();
+
+      if (req.file) {
+        const sourceExtension = extensionFromMimeType(sourceImage.mimetype);
+        const sourceFilename = `custom-source-${Date.now()}-${id}${sourceExtension}`;
+        const sourcePath = path.join(CUSTOMIZATION_IMAGES_DIR, sourceFilename);
+
+        fs.writeFileSync(sourcePath, sourceImage.buffer);
+        sourceImageUrl = `/admin/customizations/${sourceFilename}`;
+      }
+
+      const resultExtension = extensionFromMimeType(
+        simulation.mimeType || 'image/jpeg'
+      );
+
+      const resultFilename =
+        `custom-result-${Date.now()}-${id}${resultExtension}`;
+
+      const resultPath =
+        path.join(CUSTOMIZATION_IMAGES_DIR, resultFilename);
+
+      fs.writeFileSync(resultPath, simulation.imageBuffer);
+
+      const item = {
+        id,
+        productId: product?.id || '',
+        productName: safeString(product?.name) || 'Image libre',
+        customerName: request.customerName,
+        customerPhone: request.customerPhone,
+        request,
+        warnings,
+        analysis: safeString(simulation.analysis),
+        sourceImage: sourceImageUrl,
+        resultImage: `/admin/customizations/${resultFilename}`,
+        resultFilename,
+        sourceFilename:
+          req.file && sourceImageUrl
+            ? path.basename(sourceImageUrl)
+            : '',
+        status: 'simulation_generated',
+        requiresCommercialValidation: true,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+      };
+
+      const items = loadCustomizations();
+      items.push(item);
+      saveCustomizations(items);
+
+      return res.status(201).json(item);
+    } catch (error) {
+      console.error('❌ Erreur génération personnalisation :', error);
+
+      return res.status(500).json({
+        error:
+          error.message ||
+          'Impossible de générer la simulation visuelle.'
+      });
+    }
+  }
+);
+
+router.put('/api/customizations/:id/status', requireAuth, (req, res) => {
+  try {
+    const allowedStatuses = [
+      'simulation_generated',
+      'awaiting_validation',
+      'approved',
+      'sent_to_client',
+      'rejected'
+    ];
+
+    const status = safeString(req.body?.status);
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Statut non valide.' });
+    }
+
+    const items = loadCustomizations();
+    const index = items.findIndex(item => item.id === req.params.id);
+
+    if (index === -1) {
+      return res.status(404).json({ error: 'Demande introuvable.' });
+    }
+
+    items[index] = {
+      ...items[index],
+      status,
+      updatedAt: new Date().toISOString()
+    };
+
+    saveCustomizations(items);
+
+    return res.json(items[index]);
+  } catch (error) {
+    console.error('❌ Erreur statut personnalisation :', error);
+    return res.status(500).json({
+      error: 'Impossible de modifier le statut.'
+    });
+  }
+});
+
+router.delete('/api/customizations/:id', requireAuth, (req, res) => {
+  try {
+    const items = loadCustomizations();
+    const item = items.find(entry => entry.id === req.params.id);
+
+    if (!item) {
+      return res.status(404).json({ error: 'Demande introuvable.' });
+    }
+
+    const filtered = items.filter(entry => entry.id !== req.params.id);
+    saveCustomizations(filtered);
+
+    if (item.resultFilename) {
+      deleteFileIfExists(
+        path.join(CUSTOMIZATION_IMAGES_DIR, path.basename(item.resultFilename))
+      );
+    }
+
+    if (item.sourceFilename) {
+      deleteFileIfExists(
+        path.join(CUSTOMIZATION_IMAGES_DIR, path.basename(item.sourceFilename))
+      );
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('❌ Erreur suppression personnalisation :', error);
+    return res.status(500).json({
+      error: 'Impossible de supprimer la demande.'
+    });
+  }
+});
+
 // ============================================================
 // STATS
 // ============================================================
@@ -1124,6 +1538,7 @@ router.get('/api/stats', requireAuth, (req, res) => {
     productCount: products.length,
     activeProductCount: products.filter(product => product.active !== false).length,
     productsWithImages: products.filter(product => Boolean(product.image)).length,
+    customizationCount: loadCustomizations().length,
     instructionsCount: instructions.length,
     activeInstructionsCount: instructions.filter(
       instruction => instruction.active !== false
@@ -1207,5 +1622,6 @@ module.exports = {
   adminRouter: router,
   getBusinessContext,
   setChatHandler,
-  setImageChatHandler
+  setImageChatHandler,
+  setCustomizationHandler
 };
