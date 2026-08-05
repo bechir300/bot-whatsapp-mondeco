@@ -6,8 +6,11 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
+const { adminRouter, getBusinessContext, setChatHandler } = require('./admin');
+
 const app = express();
 app.use(express.json());
+app.use('/admin', adminRouter);
 
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
@@ -73,7 +76,7 @@ async function generateReply(userId, userText) {
     throw new Error('GROQ_API_KEY manquante — impossible d\'appeler Groq. Vérifie les variables Railway.');
   }
 
-  const businessInfo = loadBusinessInfo();
+  const businessInfo = getBusinessContext();
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
   const historyMessages = conversationHistory[userId].slice(-6);
@@ -118,6 +121,9 @@ Réponds directement, sans préambule ni "Voici ma réponse :".`;
 
   return reply;
 }
+
+// Branche generateReply() sur la Discussion de test du panneau admin
+setChatHandler(generateReply);
 
 // --- Envoyer un message via l'API WhatsApp Cloud ---
 async function sendWhatsAppMessage(to, text) {
