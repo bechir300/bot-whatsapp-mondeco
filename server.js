@@ -6,7 +6,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-const { adminRouter, getBusinessContext, setChatHandler } = require('./admin');
+const { adminRouter, getBusinessContext, setChatHandler } = require('./Admin');
 
 const app = express();
 app.use(express.json());
