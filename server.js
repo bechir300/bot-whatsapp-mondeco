@@ -14,7 +14,35 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-console.log('DEBUG clé Groq — longueur:', GROQ_API_KEY?.length, '| début:', GROQ_API_KEY?.substring(0,8), '| fin:', GROQ_API_KEY?.slice(-6));
+
+// --- DIAGNOSTIC RENFORCÉ AU DÉMARRAGE ---
+console.log('========================================');
+console.log('🔍 DIAGNOSTIC VARIABLES D\'ENVIRONNEMENT');
+console.log('========================================');
+console.log('NODE_ENV:', process.env.NODE_ENV || '(non défini)');
+console.log('RAILWAY_ENVIRONMENT:', process.env.RAILWAY_ENVIRONMENT_NAME || '(absent — pas sur Railway ?)');
+console.log('RAILWAY_SERVICE_NAME:', process.env.RAILWAY_SERVICE_NAME || '(absent)');
+console.log('Nombre total de variables env chargées:', Object.keys(process.env).length);
+
+const groqRelatedKeys = Object.keys(process.env).filter(k => k.toUpperCase().includes('GROQ'));
+console.log('Clés contenant "GROQ" trouvées:', groqRelatedKeys.length ? groqRelatedKeys : '(AUCUNE)');
+
+console.log('---');
+console.log('VERIFY_TOKEN      :', VERIFY_TOKEN ? `OK (longueur ${VERIFY_TOKEN.length})` : '❌ MANQUANT');
+console.log('WHATSAPP_TOKEN    :', WHATSAPP_TOKEN ? `OK (longueur ${WHATSAPP_TOKEN.length})` : '❌ MANQUANT');
+console.log('PHONE_NUMBER_ID   :', PHONE_NUMBER_ID ? `OK (${PHONE_NUMBER_ID})` : '❌ MANQUANT');
+console.log('GROQ_API_KEY      :', GROQ_API_KEY ? `OK (longueur ${GROQ_API_KEY.length}, début: ${GROQ_API_KEY.substring(0,8)}, fin: ${GROQ_API_KEY.slice(-6)})` : '❌ MANQUANT');
+console.log('========================================');
+
+if (!GROQ_API_KEY) {
+  console.error('🚨 ARRÊT VOLONTAIRE : GROQ_API_KEY est absente de process.env.');
+  console.error('   → Si RAILWAY_ENVIRONMENT_NAME est absent ci-dessus, ce process ne tourne peut-être pas sur Railway (build local, mauvais service, etc).');
+  console.error('   → Si les autres variables (VERIFY_TOKEN etc) sont OK mais pas GROQ_API_KEY, vérifie qu\'elle est bien attachée au MÊME service et au MÊME environnement dans Railway.');
+  console.error('   → Vérifie aussi qu\'un fichier .env n\'est pas committé dans le repo GitHub et ne vient pas écraser cette valeur.');
+  // On ne fait PAS process.exit(1) ici pour l'instant, pour pouvoir observer /debug-env en HTTP si besoin.
+  // Décommente la ligne suivante une fois le diagnostic terminé, pour empêcher tout démarrage silencieux sans clé :
+  // process.exit(1);
+}
 
 const BUSINESS_INFO_PATH = path.join(__dirname, 'business-info.txt');
 const HISTORY_PATH = path.join(__dirname, 'conversation-log.json');
@@ -41,6 +69,10 @@ const conversationHistory = {};
 
 // --- IA via Groq (compatible format OpenAI) ---
 async function generateReply(userId, userText) {
+  if (!GROQ_API_KEY) {
+    throw new Error('GROQ_API_KEY manquante — impossible d\'appeler Groq. Vérifie les variables Railway.');
+  }
+
   const businessInfo = loadBusinessInfo();
   if (!conversationHistory[userId]) conversationHistory[userId] = [];
 
@@ -163,6 +195,24 @@ app.post('/webhook', async (req, res) => {
 
 app.get('/', (req, res) => {
   res.send('Bot WhatsApp actif. Le webhook est sur /webhook.');
+});
+
+// --- Route de debug temporaire (à SUPPRIMER une fois le problème résolu) ---
+// Permet de vérifier depuis un navigateur si Railway injecte bien la clé,
+// sans jamais exposer la valeur complète de la clé.
+app.get('/debug-env', (req, res) => {
+  res.json({
+    railway_environment: process.env.RAILWAY_ENVIRONMENT_NAME || null,
+    railway_service: process.env.RAILWAY_SERVICE_NAME || null,
+    total_env_vars: Object.keys(process.env).length,
+    groq_related_keys: Object.keys(process.env).filter(k => k.toUpperCase().includes('GROQ')),
+    groq_key_present: !!GROQ_API_KEY,
+    groq_key_length: GROQ_API_KEY ? GROQ_API_KEY.length : null,
+    groq_key_preview: GROQ_API_KEY ? `${GROQ_API_KEY.substring(0,8)}...${GROQ_API_KEY.slice(-6)}` : null,
+    verify_token_present: !!VERIFY_TOKEN,
+    whatsapp_token_present: !!WHATSAPP_TOKEN,
+    phone_number_id_present: !!PHONE_NUMBER_ID
+  });
 });
 
 app.listen(PORT, () => {
