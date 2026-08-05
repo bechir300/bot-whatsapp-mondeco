@@ -379,7 +379,7 @@ body {
 .products-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 820px;
+  min-width: 1080px;
 }
 
 .products-table th {
@@ -461,6 +461,91 @@ body {
 .table-price {
   font-weight: 700;
   white-space: nowrap;
+}
+
+.price-old {
+  color: var(--muted);
+  text-decoration: line-through;
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.price-promo {
+  color: var(--copper);
+  font-weight: 700;
+}
+
+.availability-badge,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.availability-badge.in_stock,
+.status-badge.active {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.availability-badge.made_to_order {
+  background: #EEE9DC;
+  color: #7A6434;
+}
+
+.availability-badge.out_of_stock,
+.availability-badge.unknown,
+.status-badge.inactive {
+  background: #EFECE7;
+  color: var(--muted);
+}
+
+.availability-badge.clearance {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+  color: var(--ink);
+  background: #fff;
+}
+
+.field select:focus {
+  outline: none;
+  border-color: var(--copper);
+}
+
+.product-active-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #FAF8F4;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.product-active-box input {
+  width: auto;
 }
 
 .table-actions {
@@ -863,6 +948,117 @@ body {
   border-color: var(--copper);
 }
 
+
+.chat-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: #FBF9F6;
+  border-radius: 12px 12px 0 0;
+}
+
+.chat-mode-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chat-mode-wrap select {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: #fff;
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+}
+
+.chat-tools-note {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.chat-image-preview-area {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: #FBF9F6;
+}
+
+.chat-image-preview-area.visible {
+  display: flex;
+}
+
+.chat-image-thumb {
+  width: 66px;
+  height: 54px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: #EFEAE2;
+}
+
+.chat-image-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-image-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-image-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.chat-remove-image {
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chat-image-input {
+  display: none;
+}
+
+.chat-image-button {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+}
+
+.chat-text-input {
+  min-width: 0;
+}
+
+.chat-bubble-image {
+  width: 220px;
+  max-width: 100%;
+  border-radius: 10px;
+  display: block;
+  margin-bottom: 7px;
+}
+
+.chat-image-caption {
+  white-space: pre-wrap;
+}
+
 /* ============================================================
    MODAL
    ============================================================ */
@@ -1046,6 +1242,10 @@ body {
     min-width: 100%;
   }
 
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
   .products-toolbar-left,
   .products-toolbar-right {
     width: 100%;
@@ -1188,6 +1388,8 @@ body {
               <th>Produit</th>
               <th>Catégorie</th>
               <th>Prix</th>
+              <th>Disponibilité</th>
+              <th>Statut</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -1245,26 +1447,60 @@ body {
   <div class="page-header">
     <div class="page-title">Discussion de test</div>
     <div class="page-desc">
-      Discutez avec votre IA comme un client. Aucun message n'est envoyé sur WhatsApp.
+      Testez l'agent avec du texte ou une image. L'analyse visuelle est réservée à cette page interne ; les images reçues sur WhatsApp réel restent transférées au commercial.
     </div>
   </div>
 
   <div class="chat-shell">
-    <div class="chat-messages" id="chatMessages">
-      <div class="chat-empty">
-        Écrivez un message pour commencer.<br><br>
-        Exemple : « Bonjour, quel est le prix du salon Infinity ? »
+    <div class="chat-tools">
+      <div class="chat-mode-wrap">
+        <span>Mode image :</span>
+        <select id="testImageMode">
+          <option value="analysis">Analyse IA</option>
+          <option value="whatsapp">Simulation WhatsApp</option>
+        </select>
+      </div>
+
+      <div class="chat-tools-note">
+        Analyse IA = l'agent comprend l'image<br>
+        Simulation WhatsApp = commercial requis
       </div>
     </div>
 
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-empty">
+        Écrivez un message ou ajoutez une image.<br><br>
+        Exemple : « Quel meuble vois-tu sur cette image ? »
+      </div>
+    </div>
+
+    <div class="chat-image-preview-area" id="chatImagePreviewArea">
+      <img class="chat-image-thumb" id="chatImagePreview" alt="Aperçu image de test">
+      <div class="chat-image-info">
+        <div class="chat-image-name" id="chatImageName">Image</div>
+        <div class="chat-image-hint">L'image sera optimisée automatiquement avant l'analyse.</div>
+      </div>
+      <button type="button" class="chat-remove-image" id="removeChatImageBtn">Retirer</button>
+    </div>
+
     <form class="chat-input-row" id="chatForm">
+      <label for="chatImageInput" class="btn btn-ghost chat-image-button" title="Ajouter une image">
+        🖼 Image
+      </label>
       <input
+        class="chat-image-input"
+        type="file"
+        id="chatImageInput"
+        accept="image/jpeg,image/png,image/webp"
+      >
+      <input
+        class="chat-text-input"
         type="text"
         id="chatInput"
         placeholder="Écrivez comme un client..."
         autocomplete="off"
       >
-      <button type="submit" class="btn btn-primary">Envoyer</button>
+      <button type="submit" class="btn btn-primary" id="chatSendBtn">Envoyer</button>
     </form>
   </div>
 </section>
@@ -1333,28 +1569,99 @@ body {
       </div>
 
       <div class="field">
-        <label for="productCategory">Catégorie</label>
+        <label for="productCategory">Catégorie *</label>
         <input
           type="text"
           id="productCategory"
+          list="productCategoryOptions"
+          required
           placeholder="Ex : Salon"
         >
+        <datalist id="productCategoryOptions">
+          <option value="Salon">
+          <option value="Chambre adulte">
+          <option value="Chambre enfant">
+          <option value="Salle à manger">
+          <option value="Lit">
+          <option value="Bureau">
+          <option value="Meuble TV">
+          <option value="Pack mariage">
+          <option value="Meuble d'entrée">
+          <option value="Mobilier de jardin">
+          <option value="Matelas">
+        </datalist>
+      </div>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="productPrice">Prix normal (TND)</label>
+          <input type="text" id="productPrice" placeholder="Ex : 4190">
+        </div>
+
+        <div class="field">
+          <label for="productPromoPrice">Prix promotionnel (TND)</label>
+          <input type="text" id="productPromoPrice" placeholder="Ex : 3790">
+        </div>
+      </div>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="productAvailability">Disponibilité</label>
+          <select id="productAvailability">
+            <option value="in_stock">En stock</option>
+            <option value="made_to_order">Sur commande</option>
+            <option value="out_of_stock">Rupture de stock</option>
+            <option value="clearance">Déstockage</option>
+            <option value="unknown">Non précisée</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Statut IA</label>
+          <label class="product-active-box" for="productActive">
+            <input type="checkbox" id="productActive" checked>
+            <span>Produit actif et utilisable par l'IA</span>
+          </label>
+        </div>
       </div>
 
       <div class="field">
-        <label for="productPrice">Prix (TND)</label>
-        <input
-          type="text"
-          id="productPrice"
-          placeholder="Ex : 4190"
-        >
+        <label for="productDimensions">Dimensions</label>
+        <input type="text" id="productDimensions" placeholder="Ex : 280 × 280 cm">
       </div>
 
       <div class="field">
-        <label for="productDescription">Description</label>
+        <label for="productComposition">Composition</label>
+        <textarea id="productComposition" placeholder="Ex : canapé 3 places + méridienne + pouf..."></textarea>
+      </div>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="productColors">Couleurs disponibles</label>
+          <input type="text" id="productColors" placeholder="Ex : beige, gris, taupe">
+        </div>
+
+        <div class="field">
+          <label for="productShowrooms">Showrooms</label>
+          <input type="text" id="productShowrooms" placeholder="Ex : Soukra, Sfax, Sousse">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="productUrl">Lien du produit</label>
+        <input type="url" id="productUrl" placeholder="https://mondeco.tn/produit/...">
+      </div>
+
+      <div class="field">
+        <label for="productCategoryUrl">Lien de la catégorie</label>
+        <input type="url" id="productCategoryUrl" placeholder="https://mondeco.tn/categorie-produit/...">
+      </div>
+
+      <div class="field">
+        <label for="productDescription">Description / informations complémentaires</label>
         <textarea
           id="productDescription"
-          placeholder="Dimensions, composition, couleurs, disponibilité, détails importants..."
+          placeholder="Détails importants que l'IA peut utiliser pour répondre au client..."
         ></textarea>
       </div>
 
@@ -1592,6 +1899,12 @@ function getFilteredProducts() {
       product.name,
       product.category,
       product.price,
+      product.promoPrice,
+      product.availability,
+      product.dimensions,
+      product.composition,
+      product.colors,
+      product.showrooms,
       product.description
     ]
       .map(value => String(value ?? '').toLowerCase())
@@ -1599,6 +1912,24 @@ function getFilteredProducts() {
 
     return searchable.includes(query);
   });
+}
+
+function availabilityLabel(value) {
+  const labels = {
+    in_stock: 'En stock',
+    made_to_order: 'Sur commande',
+    out_of_stock: 'Rupture',
+    clearance: 'Déstockage',
+    unknown: 'Non précisée'
+  };
+
+  return labels[value] || 'Non précisée';
+}
+
+function availabilityClass(value) {
+  return ['in_stock', 'made_to_order', 'out_of_stock', 'clearance'].includes(value)
+    ? value
+    : 'unknown';
 }
 
 function renderProductsTable() {
@@ -1665,7 +1996,26 @@ function renderProductsTable() {
           }
         </td>
 
-        <td class="table-price">${escapeHtml(formatProductPrice(product.price))}</td>
+        <td class="table-price">
+          ${
+            product.promoPrice
+              ? `<div class="price-old">${escapeHtml(formatProductPrice(product.price))}</div>
+                 <div class="price-promo">${escapeHtml(formatProductPrice(product.promoPrice))}</div>`
+              : escapeHtml(formatProductPrice(product.price))
+          }
+        </td>
+
+        <td>
+          <span class="availability-badge ${availabilityClass(product.availability)}">
+            ${escapeHtml(availabilityLabel(product.availability))}
+          </span>
+        </td>
+
+        <td>
+          <span class="status-badge ${product.active !== false ? 'active' : 'inactive'}">
+            ${product.active !== false ? 'Actif' : 'Inactif'}
+          </span>
+        </td>
 
         <td>
           <div class="table-actions">
@@ -1761,6 +2111,9 @@ function resetProductModal() {
   productImagePreview.removeAttribute('src');
 
   imagePreviewLabel.textContent = 'Nouvelle photo';
+
+  document.getElementById('productAvailability').value = 'in_stock';
+  document.getElementById('productActive').checked = true;
 }
 
 function openAddProductModal() {
@@ -1837,7 +2190,16 @@ window.editProduct = function(id) {
   document.getElementById('productName').value = product.name || '';
   document.getElementById('productCategory').value = product.category || '';
   document.getElementById('productPrice').value = product.price || '';
+  document.getElementById('productPromoPrice').value = product.promoPrice || '';
+  document.getElementById('productAvailability').value = product.availability || 'unknown';
+  document.getElementById('productDimensions').value = product.dimensions || '';
+  document.getElementById('productComposition').value = product.composition || '';
+  document.getElementById('productColors').value = product.colors || '';
+  document.getElementById('productShowrooms').value = product.showrooms || '';
+  document.getElementById('productUrl').value = product.productUrl || '';
+  document.getElementById('productCategoryUrl').value = product.categoryUrl || '';
   document.getElementById('productDescription').value = product.description || '';
+  document.getElementById('productActive').checked = product.active !== false;
   document.getElementById('currentProductImage').value = product.image || '';
 
   if (product.image) {
@@ -1922,12 +2284,28 @@ productForm.addEventListener('submit', async event => {
     return;
   }
 
+  const category = document.getElementById('productCategory').value.trim();
+
+  if (!category) {
+    alert('La catégorie est obligatoire.');
+    return;
+  }
+
   const formData = new FormData();
 
   formData.append('name', name);
-  formData.append('category', document.getElementById('productCategory').value);
+  formData.append('category', category);
   formData.append('price', document.getElementById('productPrice').value);
+  formData.append('promoPrice', document.getElementById('productPromoPrice').value);
+  formData.append('availability', document.getElementById('productAvailability').value);
+  formData.append('dimensions', document.getElementById('productDimensions').value);
+  formData.append('composition', document.getElementById('productComposition').value);
+  formData.append('colors', document.getElementById('productColors').value);
+  formData.append('showrooms', document.getElementById('productShowrooms').value);
+  formData.append('productUrl', document.getElementById('productUrl').value);
+  formData.append('categoryUrl', document.getElementById('productCategoryUrl').value);
   formData.append('description', document.getElementById('productDescription').value);
+  formData.append('active', document.getElementById('productActive').checked ? 'true' : 'false');
 
   if (imageFile) {
     formData.append('image', imageFile);
@@ -2338,19 +2716,25 @@ async function loadStats() {
 }
 
 /* ============================================================
-   CHAT TEST
+   CHAT TEST - TEXTE + IMAGE
    ============================================================ */
 
 const chatMessages = document.getElementById('chatMessages');
 const chatForm = document.getElementById('chatForm');
 const chatInput = document.getElementById('chatInput');
+const chatImageInput = document.getElementById('chatImageInput');
+const chatImageMode = document.getElementById('testImageMode');
+const chatImagePreviewArea = document.getElementById('chatImagePreviewArea');
+const chatImagePreview = document.getElementById('chatImagePreview');
+const chatImageName = document.getElementById('chatImageName');
+const chatSendBtn = document.getElementById('chatSendBtn');
+
+let selectedChatImage = null;
+let selectedChatImagePreviewUrl = null;
 
 function addBubble(text, type) {
   const empty = chatMessages.querySelector('.chat-empty');
-
-  if (empty) {
-    empty.remove();
-  }
+  if (empty) empty.remove();
 
   const bubble = document.createElement('div');
   bubble.className = 'chat-bubble ' + type;
@@ -2362,35 +2746,200 @@ function addBubble(text, type) {
   return bubble;
 }
 
+function addImageBubble(imageUrl, text = '') {
+  const empty = chatMessages.querySelector('.chat-empty');
+  if (empty) empty.remove();
+
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble user';
+
+  const image = document.createElement('img');
+  image.className = 'chat-bubble-image';
+  image.src = imageUrl;
+  image.alt = 'Image de test';
+  bubble.appendChild(image);
+
+  if (text) {
+    const caption = document.createElement('div');
+    caption.className = 'chat-image-caption';
+    caption.textContent = text;
+    bubble.appendChild(caption);
+  }
+
+  chatMessages.appendChild(bubble);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function clearChatImageSelection() {
+  selectedChatImage = null;
+  chatImageInput.value = '';
+  chatImagePreviewArea.classList.remove('visible');
+  chatImagePreview.removeAttribute('src');
+  chatImageName.textContent = 'Image';
+
+  if (selectedChatImagePreviewUrl) {
+    URL.revokeObjectURL(selectedChatImagePreviewUrl);
+    selectedChatImagePreviewUrl = null;
+  }
+}
+
+chatImageInput.addEventListener('change', () => {
+  const file = chatImageInput.files[0];
+  if (!file) return;
+
+  const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+
+  if (!allowed.includes(file.type)) {
+    alert('Format non accepté. Utilisez JPG, PNG ou WEBP.');
+    clearChatImageSelection();
+    return;
+  }
+
+  selectedChatImage = file;
+
+  if (selectedChatImagePreviewUrl) {
+    URL.revokeObjectURL(selectedChatImagePreviewUrl);
+  }
+
+  selectedChatImagePreviewUrl = URL.createObjectURL(file);
+  chatImagePreview.src = selectedChatImagePreviewUrl;
+  chatImageName.textContent = file.name;
+  chatImagePreviewArea.classList.add('visible');
+});
+
+document.getElementById('removeChatImageBtn').addEventListener('click', () => {
+  clearChatImageSelection();
+});
+
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Impossible de lire cette image.'));
+    };
+
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      blob => {
+        if (blob) resolve(blob);
+        else reject(new Error('Impossible de compresser l’image.'));
+      },
+      'image/jpeg',
+      quality
+    );
+  });
+}
+
+async function prepareImageForVision(file) {
+  // Les images Base64 ont une limite plus stricte côté API vision.
+  // On normalise donc automatiquement l'image avant l'envoi.
+  const image = await loadImageElement(file);
+
+  let maxDimension = 1600;
+  let quality = 0.82;
+
+  const createCompressed = async () => {
+    const scale = Math.min(
+      1,
+      maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
+    );
+
+    const width = Math.max(1, Math.round(image.naturalWidth * scale));
+    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0, width, height);
+
+    return canvasToBlob(canvas, quality);
+  };
+
+  let blob = await createCompressed();
+
+  if (blob.size > 2 * 1024 * 1024) {
+    maxDimension = 1200;
+    quality = 0.72;
+    blob = await createCompressed();
+  }
+
+  if (blob.size > 2.5 * 1024 * 1024) {
+    throw new Error('L’image reste trop lourde après compression. Choisissez une image plus légère.');
+  }
+
+  return new File([blob], 'mondeco-test-image.jpg', {
+    type: 'image/jpeg'
+  });
+}
+
 chatForm.addEventListener('submit', async event => {
   event.preventDefault();
 
   const message = chatInput.value.trim();
+  const imageFile = selectedChatImage;
 
-  if (!message) {
+  if (!message && !imageFile) {
     return;
   }
 
-  addBubble(message, 'user');
+  if (imageFile) {
+    addImageBubble(URL.createObjectURL(imageFile), message);
+  } else {
+    addBubble(message, 'user');
+  }
+
   chatInput.value = '';
 
   const typingBubble = addBubble(
-    '... en train de répondre',
+    imageFile ? '... analyse de l’image en cours' : '... en train de répondre',
     'typing'
   );
 
+  chatSendBtn.disabled = true;
+
   try {
-    const response = await apiFetch('/admin/api/test-chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ message })
-    });
+    let response;
+
+    if (imageFile) {
+      const preparedImage = await prepareImageForVision(imageFile);
+      const formData = new FormData();
+
+      formData.append('image', preparedImage);
+      formData.append('message', message);
+      formData.append('mode', chatImageMode.value);
+
+      response = await apiFetch('/admin/api/test-chat-image', {
+        method: 'POST',
+        body: formData
+      });
+    } else {
+      response = await apiFetch('/admin/api/test-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message })
+      });
+    }
 
     const data = await safeJson(response);
 
-    typingBubble.remove();
+    if (typingBubble.isConnected) typingBubble.remove();
 
     if (response.ok) {
       addBubble(data.reply || '', 'bot');
@@ -2398,11 +2947,13 @@ chatForm.addEventListener('submit', async event => {
       addBubble(data.error || 'Une erreur est survenue.', 'error');
     }
   } catch (error) {
-    if (typingBubble.isConnected) {
-      typingBubble.remove();
-    }
+    console.error('Discussion test :', error);
 
-    addBubble('Impossible de contacter le serveur.', 'error');
+    if (typingBubble.isConnected) typingBubble.remove();
+    addBubble(error.message || 'Impossible de contacter le serveur.', 'error');
+  } finally {
+    chatSendBtn.disabled = false;
+    clearChatImageSelection();
   }
 });
 
