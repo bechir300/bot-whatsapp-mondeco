@@ -5,7 +5,7 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-// redeploy
+
 const app = express();
 app.use(express.json());
 
@@ -14,6 +14,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+console.log('DEBUG clé Groq — longueur:', GROQ_API_KEY?.length, '| début:', GROQ_API_KEY?.substring(0,8), '| fin:', GROQ_API_KEY?.slice(-6));
 
 const BUSINESS_INFO_PATH = path.join(__dirname, 'business-info.txt');
 const HISTORY_PATH = path.join(__dirname, 'conversation-log.json');
