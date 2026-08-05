@@ -1,514 +1,3508 @@
 <!DOCTYPE html>
+
 <html lang="fr">
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mondeco — Administration</title>
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
+>
+
+<title>
+  Mondeco — Administration
+</title>
+
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
-  :root {
-    --ink: #1F1B16;
-    --paper: #F7F4EF;
-    --paper-raised: #FFFFFF;
-    --copper: #B5541F;
-    --copper-dark: #9C4718;
-    --border: #E4DED2;
-    --muted: #7A7266;
-    --sidebar: #1F1B16;
-    --sidebar-hover: #2A241C;
-    --success: #5C7A52;
-    --danger: #B5541F;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --ink: #1F1B16;
+  --paper: #F7F4EF;
+  --paper-raised: #FFFFFF;
+  --copper: #B5541F;
+  --copper-dark: #9C4718;
+  --border: #E4DED2;
+  --muted: #7A7266;
+  --sidebar: #1F1B16;
+  --sidebar-hover: #2A241C;
+  --success: #5C7A52;
+  --success-bg: #E9F2E6;
+  --danger: #B5541F;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    'Inter',
+    sans-serif;
+
+  background:
+    var(--paper);
+
+  color:
+    var(--ink);
+
+  display:
+    flex;
+
+  min-height:
+    100vh;
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+
+.sidebar {
+  width:
+    240px;
+
+  background:
+    var(--sidebar);
+
+  color:
+    #F7F4EF;
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  padding:
+    28px 20px;
+
+  flex-shrink:
+    0;
+}
+
+.wordmark {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    22px;
+
+  font-weight:
+    600;
+}
+
+.wordmark-sub {
+  font-size:
+    12px;
+
+  color:
+    #9C9384;
+
+  margin-top:
+    2px;
+
+  margin-bottom:
+    36px;
+}
+
+.nav-item {
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  gap:
+    10px;
+
+  padding:
+    11px 14px;
+
+  border-radius:
+    8px;
+
+  font-size:
+    14px;
+
+  font-weight:
+    500;
+
+  color:
+    #C9C1B3;
+
+  cursor:
+    pointer;
+
+  margin-bottom:
+    4px;
+
+  transition:
+    background 0.15s;
+}
+
+.nav-item:hover {
+  background:
+    var(--sidebar-hover);
+}
+
+.nav-item.active {
+  background:
+    var(--copper);
+
+  color:
+    #fff;
+}
+
+.sidebar-footer {
+  margin-top:
+    auto;
+}
+
+.logout-btn {
+  font-size:
+    13px;
+
+  color:
+    #9C9384;
+
+  cursor:
+    pointer;
+
+  padding:
+    8px 14px;
+}
+
+.logout-btn:hover {
+  color:
+    #F7F4EF;
+}
+
+/* ============================================================
+   MAIN
+   ============================================================ */
+
+.main {
+  flex:
+    1;
+
+  padding:
+    40px 48px;
+
+  max-width:
+    1150px;
+
+  width:
+    100%;
+}
+
+.page-header {
+  margin-bottom:
+    32px;
+}
+
+.page-title {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    30px;
+
+  font-weight:
+    600;
+}
+
+.page-desc {
+  color:
+    var(--muted);
+
+  font-size:
+    14px;
+
+  margin-top:
+    6px;
+
+  line-height:
+    1.5;
+}
+
+.view {
+  display:
+    none;
+}
+
+.view.active {
+  display:
+    block;
+}
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+.btn {
+  display:
+    inline-flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  gap:
+    6px;
+
+  padding:
+    10px 18px;
+
+  border-radius:
+    8px;
+
+  border:
+    none;
+
+  font-size:
+    14px;
+
+  font-weight:
+    600;
+
+  cursor:
+    pointer;
+
+  font-family:
+    'Inter',
+    sans-serif;
+}
+
+.btn:disabled {
+  opacity:
+    .55;
+
+  cursor:
+    not-allowed;
+}
+
+.btn-primary {
+  background:
+    var(--copper);
+
+  color:
+    #fff;
+}
+
+.btn-primary:hover {
+  background:
+    var(--copper-dark);
+}
+
+.btn-ghost {
+  background:
+    transparent;
+
+  color:
+    var(--ink);
+
+  border:
+    1.5px solid
+    var(--border);
+}
+
+.btn-ghost:hover {
+  background:
+    #EFEAE0;
+}
+
+.btn-danger-text {
+  background:
+    none;
+
+  border:
+    none;
+
+  color:
+    var(--danger);
+
+  font-size:
+    13px;
+
+  cursor:
+    pointer;
+
+  font-weight:
+    500;
+}
+
+/* ============================================================
+   ACCUEIL
+   ============================================================ */
+
+.stats-row {
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(3, 1fr);
+
+  gap:
+    16px;
+
+  margin-bottom:
+    32px;
+}
+
+.stat-card {
+  background:
+    var(--paper-raised);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    10px;
+
+  padding:
+    20px 22px;
+}
+
+.stat-value {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    30px;
+
+  font-weight:
+    600;
+}
+
+.stat-label {
+  font-size:
+    13px;
+
+  color:
+    var(--muted);
+
+  margin-top:
+    4px;
+}
+
+.home-actions {
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(3, 1fr);
+
+  gap:
+    16px;
+}
+
+.home-action-card {
+  background:
+    var(--paper-raised);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    10px;
+
+  padding:
+    20px 22px;
+
+  cursor:
+    pointer;
+
+  transition:
+    border-color 0.15s;
+}
+
+.home-action-card:hover {
+  border-color:
+    var(--copper);
+}
+
+.home-action-title {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    16px;
+
+  font-weight:
+    600;
+}
+
+.home-action-desc {
+  font-size:
+    13px;
+
+  color:
+    var(--muted);
+
+  margin-top:
+    6px;
+
+  line-height:
+    1.5;
+}
+
+.home-action-link {
+  font-size:
+    13px;
+
+  color:
+    var(--copper);
+
+  font-weight:
+    600;
+
+  margin-top:
+    12px;
+}
+
+/* ============================================================
+   PRODUITS
+   ============================================================ */
+
+.toolbar {
+  display:
+    flex;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    center;
+
+  margin-bottom:
+    20px;
+}
+
+.product-grid {
+  display:
+    grid;
+
+  grid-template-columns:
+    repeat(
+      auto-fill,
+      minmax(260px, 1fr)
+    );
+
+  gap:
+    16px;
+}
+
+.product-card {
+  background:
+    var(--paper-raised);
+
+  border-radius:
+    10px;
+
+  overflow:
+    hidden;
+
+  border:
+    1px solid
+    var(--border);
+
+  border-left:
+    4px solid
+    var(--copper);
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+}
+
+.product-card-body {
+  padding:
+    16px 18px;
+
+  flex:
+    1;
+}
+
+.product-cat {
+  font-size:
+    11px;
+
+  text-transform:
+    uppercase;
+
+  letter-spacing:
+    0.05em;
+
+  color:
+    var(--copper);
+
+  font-weight:
+    600;
+}
+
+.product-name {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    18px;
+
+  font-weight:
+    600;
+
+  margin-top:
+    4px;
+}
+
+.product-desc {
+  font-size:
+    13px;
+
+  color:
+    var(--muted);
+
+  margin-top:
+    6px;
+
+  line-height:
+    1.5;
+}
+
+.product-price {
+  font-size:
+    15px;
+
+  font-weight:
+    700;
+
+  margin-top:
+    10px;
+}
+
+.product-actions {
+  display:
+    flex;
+
+  gap:
+    14px;
+
+  padding:
+    12px 18px;
+
+  border-top:
+    1px solid
+    var(--border);
+}
+
+.product-actions span {
+  font-size:
+    13px;
+
+  color:
+    var(--muted);
+
+  cursor:
+    pointer;
+
+  font-weight:
+    500;
+}
+
+.product-actions span:hover {
+  color:
+    var(--ink);
+}
+
+/* ============================================================
+   EMPTY
+   ============================================================ */
+
+.empty-state {
+  text-align:
+    center;
+
+  padding:
+    60px 20px;
+
+  color:
+    var(--muted);
+
+  border:
+    1.5px dashed
+    var(--border);
+
+  border-radius:
+    12px;
+}
+
+.empty-title {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    18px;
+
+  color:
+    var(--ink);
+
+  margin-bottom:
+    6px;
+}
+
+/* ============================================================
+   INSTRUCTIONS
+   ============================================================ */
+
+.instructions-header {
+  display:
+    flex;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    flex-start;
+
+  gap:
+    20px;
+}
+
+.instructions-buttons {
+  display:
+    flex;
+
+  flex-wrap:
+    wrap;
+
+  gap:
+    8px;
+
+  justify-content:
+    flex-end;
+}
+
+.instruction-summary {
+  background:
+    var(--paper-raised);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    10px;
+
+  padding:
+    14px 18px;
+
+  margin-bottom:
+    16px;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  flex-wrap:
+    wrap;
+
+  gap:
+    10px;
+
+  font-size:
+    13px;
+
+  color:
+    var(--muted);
+}
+
+.instruction-summary strong {
+  color:
+    var(--success);
+}
+
+.instructions-list {
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    10px;
+}
+
+.instruction-card {
+  background:
+    var(--paper-raised);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    10px;
+
+  padding:
+    16px 18px;
+
+  display:
+    flex;
+
+  align-items:
+    flex-start;
+
+  gap:
+    14px;
+
+  transition:
+    .15s;
+}
+
+.instruction-card:hover {
+  border-color:
+    #C9C0B2;
+
+  box-shadow:
+    0 3px 12px
+    rgba(0,0,0,.04);
+}
+
+.instruction-status {
+  width:
+    34px;
+
+  height:
+    34px;
+
+  flex-shrink:
+    0;
+
+  border-radius:
+    8px;
+
+  display:
+    flex;
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  font-weight:
+    700;
+}
+
+.instruction-status.active {
+  background:
+    var(--success-bg);
+
+  color:
+    var(--success);
+}
+
+.instruction-status.inactive {
+  background:
+    #EFECE7;
+
+  color:
+    var(--muted);
+}
+
+.instruction-body {
+  flex:
+    1;
+
+  min-width:
+    0;
+}
+
+.instruction-title {
+  font-size:
+    14px;
+
+  font-weight:
+    600;
+
+  line-height:
+    1.45;
+}
+
+.instruction-preview {
+  color:
+    var(--muted);
+
+  font-size:
+    13px;
+
+  line-height:
+    1.55;
+
+  margin-top:
+    5px;
+
+  display:
+    -webkit-box;
+
+  -webkit-line-clamp:
+    2;
+
+  -webkit-box-orient:
+    vertical;
+
+  overflow:
+    hidden;
+}
+
+.instruction-meta {
+  margin-top:
+    8px;
+
+  font-size:
+    11px;
+
+  color:
+    #A49B8D;
+}
+
+.instruction-actions {
+  display:
+    flex;
+
+  flex-wrap:
+    wrap;
+
+  gap:
+    4px;
+
+  justify-content:
+    flex-end;
+}
+
+.instruction-action {
+  border:
+    none;
+
+  background:
+    transparent;
+
+  cursor:
+    pointer;
+
+  font-size:
+    12px;
+
+  padding:
+    7px 8px;
+
+  border-radius:
+    6px;
+
+  color:
+    var(--muted);
+}
+
+.instruction-action:hover {
+  background:
+    #F3EFE8;
+
+  color:
+    var(--ink);
+}
+
+.instruction-action.delete:hover {
+  color:
+    var(--danger);
+}
+
+/* ============================================================
+   CHAT
+   ============================================================ */
+
+.chat-shell {
+  background:
+    var(--paper-raised);
+
+  border:
+    1px solid
+    var(--border);
+
+  border-radius:
+    12px;
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  height:
+    560px;
+
+  max-width:
+    520px;
+}
+
+.chat-messages {
+  flex:
+    1;
+
+  overflow-y:
+    auto;
+
+  padding:
+    20px;
+
+  display:
+    flex;
+
+  flex-direction:
+    column;
+
+  gap:
+    12px;
+}
+
+.chat-empty {
+  color:
+    var(--muted);
+
+  font-size:
+    13px;
+
+  text-align:
+    center;
+
+  margin-top:
+    40px;
+
+  line-height:
+    1.6;
+}
+
+.chat-bubble {
+  max-width:
+    82%;
+
+  padding:
+    10px 14px;
+
+  border-radius:
+    14px;
+
+  font-size:
+    14px;
+
+  line-height:
+    1.5;
+}
+
+.chat-bubble.user {
+  align-self:
+    flex-end;
+
+  background:
+    var(--ink);
+
+  color:
+    #fff;
+
+  border-bottom-right-radius:
+    4px;
+}
+
+.chat-bubble.bot {
+  align-self:
+    flex-start;
+
+  background:
+    #EFEAE0;
+
+  color:
+    var(--ink);
+
+  border-bottom-left-radius:
+    4px;
+}
+
+.chat-bubble.error {
+  align-self:
+    flex-start;
+
+  background:
+    #F5DED2;
+
+  color:
+    var(--danger);
+}
+
+.chat-bubble.typing {
+  align-self:
+    flex-start;
+
+  background:
+    #EFEAE0;
+
+  color:
+    var(--muted);
+
+  font-style:
+    italic;
+}
+
+.chat-input-row {
+  display:
+    flex;
+
+  gap:
+    10px;
+
+  padding:
+    14px;
+
+  border-top:
+    1px solid
+    var(--border);
+}
+
+.chat-input-row input {
+  flex:
+    1;
+
+  padding:
+    10px 14px;
+
+  border:
+    1.5px solid
+    var(--border);
+
+  border-radius:
+    8px;
+
+  font-size:
+    14px;
+}
+
+.chat-input-row input:focus {
+  outline:
+    none;
+
+  border-color:
+    var(--copper);
+}
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+
+.modal-overlay {
+  display:
+    none;
+
+  position:
+    fixed;
+
+  inset:
+    0;
+
+  background:
+    rgba(31,27,22,.5);
+
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  z-index:
+    100;
+
+  padding:
+    20px;
+}
+
+.modal-overlay.active {
+  display:
+    flex;
+}
+
+.modal {
+  background:
+    var(--paper-raised);
+
+  border-radius:
+    12px;
+
+  padding:
+    32px;
+
+  width:
+    100%;
+
+  max-width:
+    500px;
+
+  max-height:
+    88vh;
+
+  overflow-y:
+    auto;
+}
+
+.modal.large {
+  max-width:
+    680px;
+}
+
+.modal-title {
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    21px;
+
+  font-weight:
+    600;
+
+  margin-bottom:
+    20px;
+}
+
+.modal-desc {
+  font-size:
+    13px;
+
+  line-height:
+    1.6;
+
+  color:
+    var(--muted);
+
+  margin-top:
+    -10px;
+
+  margin-bottom:
+    20px;
+}
+
+.field {
+  margin-bottom:
+    16px;
+}
+
+.field label {
+  display:
+    block;
+
+  font-size:
+    13px;
+
+  font-weight:
+    500;
+
+  color:
+    #4A4438;
+
+  margin-bottom:
+    6px;
+}
+
+.field input,
+.field textarea {
+  width:
+    100%;
+
+  padding:
+    10px 12px;
+
+  border:
+    1.5px solid
+    var(--border);
+
+  border-radius:
+    7px;
+
+  font-size:
+    14px;
+
+  font-family:
+    'Inter',
+    sans-serif;
+
+  color:
+    var(--ink);
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline:
+    none;
+
+  border-color:
+    var(--copper);
+}
+
+.field textarea {
+  resize:
+    vertical;
+
+  min-height:
+    90px;
+}
+
+.modal-actions {
+  display:
+    flex;
+
+  gap:
+    10px;
+
+  margin-top:
+    24px;
+}
+
+.modal-actions .btn {
+  flex:
+    1;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (
+  max-width: 850px
+) {
+
   body {
-    font-family: 'Inter', sans-serif;
-    background: var(--paper);
-    color: var(--ink);
-    display: flex;
-    min-height: 100vh;
+    display:
+      block;
   }
 
-  /* --- Sidebar --- */
   .sidebar {
-    width: 240px;
-    background: var(--sidebar);
-    color: #F7F4EF;
-    display: flex;
-    flex-direction: column;
-    padding: 28px 20px;
-    flex-shrink: 0;
-  }
-  .wordmark { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; }
-  .wordmark-sub { font-size: 12px; color: #9C9384; margin-top: 2px; margin-bottom: 36px; }
-  .nav-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 11px 14px; border-radius: 8px; font-size: 14px; font-weight: 500;
-    color: #C9C1B3; cursor: pointer; margin-bottom: 4px; transition: background 0.15s;
-  }
-  .nav-item:hover { background: var(--sidebar-hover); }
-  .nav-item.active { background: var(--copper); color: #fff; }
-  .sidebar-footer { margin-top: auto; }
-  .logout-btn {
-    font-size: 13px; color: #9C9384; cursor: pointer; padding: 8px 14px;
-  }
-  .logout-btn:hover { color: #F7F4EF; }
+    width:
+      100%;
 
-  /* --- Main --- */
-  .main { flex: 1; padding: 40px 48px; max-width: 980px; }
-  .page-header { margin-bottom: 32px; }
-  .page-title { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
-  .page-desc { color: var(--muted); font-size: 14px; margin-top: 6px; }
+    padding:
+      18px;
 
-  .view { display: none; }
-  .view.active { display: block; }
+    flex-direction:
+      row;
 
-  /* --- Produits --- */
-  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 10px 18px; border-radius: 8px; border: none;
-    font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif;
-  }
-  .btn-primary { background: var(--copper); color: #fff; }
-  .btn-primary:hover { background: var(--copper-dark); }
-  .btn-ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--border); }
-  .btn-ghost:hover { background: #EFEAE0; }
-  .btn-danger-text { background: none; border: none; color: var(--danger); font-size: 13px; cursor: pointer; font-weight: 500; }
+    flex-wrap:
+      wrap;
 
-  .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-  .product-card {
-    background: var(--paper-raised); border-radius: 10px; overflow: hidden;
-    border: 1px solid var(--border); border-left: 4px solid var(--copper);
-    display: flex; flex-direction: column;
+    gap:
+      5px;
   }
-  .product-card-body { padding: 16px 18px; flex: 1; }
-  .product-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--copper); font-weight: 600; }
-  .product-name { font-family: 'Fraunces', serif; font-size: 18px; font-weight: 600; margin-top: 4px; }
-  .product-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
-  .product-price { font-size: 15px; font-weight: 700; margin-top: 10px; color: var(--ink); }
-  .product-actions { display: flex; gap: 14px; padding: 12px 18px; border-top: 1px solid var(--border); }
-  .product-actions span { font-size: 13px; color: var(--muted); cursor: pointer; font-weight: 500; }
-  .product-actions span:hover { color: var(--ink); }
 
-  .empty-state {
-    text-align: center; padding: 60px 20px; color: var(--muted);
-    border: 1.5px dashed var(--border); border-radius: 12px;
+  .wordmark {
+    width:
+      100%;
   }
-  .empty-state .empty-title { font-family: 'Fraunces', serif; font-size: 18px; color: var(--ink); margin-bottom: 6px; }
 
-  /* --- Modal --- */
-  .modal-overlay {
-    display: none; position: fixed; inset: 0; background: rgba(31,27,22,0.5);
-    align-items: center; justify-content: center; z-index: 100;
-  }
-  .modal-overlay.active { display: flex; }
-  .modal {
-    background: var(--paper-raised); border-radius: 12px; padding: 32px;
-    width: 100%; max-width: 440px; max-height: 88vh; overflow-y: auto;
-  }
-  .modal-title { font-family: 'Fraunces', serif; font-size: 20px; font-weight: 600; margin-bottom: 20px; }
-  .field { margin-bottom: 16px; }
-  .field label { display: block; font-size: 13px; font-weight: 500; color: #4A4438; margin-bottom: 6px; }
-  .field input, .field textarea {
-    width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 7px;
-    font-size: 14px; font-family: 'Inter', sans-serif; color: var(--ink);
-  }
-  .field input:focus, .field textarea:focus { outline: none; border-color: var(--copper); }
-  .field textarea { resize: vertical; min-height: 70px; }
-  .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
-  .modal-actions .btn { flex: 1; justify-content: center; }
+  .wordmark-sub {
+    width:
+      100%;
 
-  /* --- Instructions --- */
-  .instructions-box textarea {
-    width: 100%; min-height: 420px; padding: 20px; border-radius: 10px;
-    border: 1.5px solid var(--border); font-family: 'Inter', sans-serif; font-size: 14px;
-    line-height: 1.6; color: var(--ink); resize: vertical; background: var(--paper-raised);
+    margin-bottom:
+      10px;
   }
-  .instructions-box textarea:focus { outline: none; border-color: var(--copper); }
-  .save-row { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
-  .save-status { font-size: 13px; color: var(--success); opacity: 0; transition: opacity 0.3s; }
-  .save-status.visible { opacity: 1; }
-  .hint { font-size: 13px; color: var(--muted); margin-bottom: 14px; line-height: 1.6; }
 
-  /* --- Accueil --- */
-  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
-  .stat-card {
-    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 10px;
-    padding: 20px 22px;
+  .sidebar-footer {
+    margin-top:
+      0;
   }
-  .stat-value { font-family: 'Fraunces', serif; font-size: 30px; font-weight: 600; }
-  .stat-label { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
-  .home-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .home-action-card {
-    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 10px;
-    padding: 20px 22px; cursor: pointer; transition: border-color 0.15s;
+  .main {
+    padding:
+      25px 18px;
   }
-  .home-action-card:hover { border-color: var(--copper); }
-  .home-action-title { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 600; }
-  .home-action-desc { font-size: 13px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
-  .home-action-link { font-size: 13px; color: var(--copper); font-weight: 600; margin-top: 12px; }
 
-  /* --- Discussion de test --- */
-  .chat-shell {
-    background: var(--paper-raised); border: 1px solid var(--border); border-radius: 12px;
-    display: flex; flex-direction: column; height: 560px; max-width: 480px;
+  .stats-row,
+  .home-actions {
+    grid-template-columns:
+      1fr;
   }
-  .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .chat-empty { color: var(--muted); font-size: 13px; text-align: center; margin-top: 40px; line-height: 1.6; }
-  .chat-bubble { max-width: 80%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; }
-  .chat-bubble.user { align-self: flex-end; background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
-  .chat-bubble.bot { align-self: flex-start; background: #EFEAE0; color: var(--ink); border-bottom-left-radius: 4px; }
-  .chat-bubble.error { align-self: flex-start; background: #F5DED2; color: var(--danger); border-bottom-left-radius: 4px; }
-  .chat-bubble.typing { align-self: flex-start; background: #EFEAE0; color: var(--muted); font-style: italic; }
-  .chat-input-row { display: flex; gap: 10px; padding: 14px; border-top: 1px solid var(--border); }
-  .chat-input-row input {
-    flex: 1; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 8px;
-    font-size: 14px; font-family: 'Inter', sans-serif;
+
+  .instructions-header {
+    flex-direction:
+      column;
   }
-  .chat-input-row input:focus { outline: none; border-color: var(--copper); }
-  .chat-input-row .btn { padding: 10px 20px; }
+
+  .instructions-buttons {
+    justify-content:
+      flex-start;
+  }
+
+  .instruction-card {
+    flex-wrap:
+      wrap;
+  }
+
+  .instruction-actions {
+    width:
+      100%;
+
+    justify-content:
+      flex-start;
+
+    padding-left:
+      48px;
+  }
+
+}
+
 </style>
+
 </head>
+
 <body>
 
-  <nav class="sidebar">
-    <div class="wordmark">Mondeco</div>
-    <div class="wordmark-sub">Bot WhatsApp</div>
+<!-- =========================================================
+     SIDEBAR
+     ========================================================= -->
 
-    <div class="nav-item active" data-view="home">🏠 Accueil</div>
-    <div class="nav-item" data-view="products">🪑 Produits</div>
-    <div class="nav-item" data-view="instructions">📋 Instructions IA</div>
-    <div class="nav-item" data-view="test">💬 Discussion de test</div>
+<nav class="sidebar">
 
-    <div class="sidebar-footer">
-      <div class="logout-btn" id="logoutBtn">Se déconnecter</div>
-    </div>
-  </nav>
-
-  <main class="main">
-
-    <!-- VUE ACCUEIL -->
-    <section class="view active" id="view-home">
-      <div class="page-header">
-        <div class="page-title">Bonjour 👋</div>
-        <div class="page-desc">Voici l'état de ton assistant WhatsApp Mondeco.</div>
-      </div>
-
-      <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-value" id="statProducts">—</div>
-          <div class="stat-label">Produits au catalogue</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="statInstructions">—</div>
-          <div class="stat-label">Instructions configurées</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">🟢</div>
-          <div class="stat-label">Bot en ligne</div>
-        </div>
-      </div>
-
-      <div class="home-actions">
-        <div class="home-action-card" data-goto="products">
-          <div class="home-action-title">Ajouter un produit</div>
-          <div class="home-action-desc">Le bot pourra en parler à tes clients immédiatement.</div>
-          <div class="home-action-link">Ouvrir Produits →</div>
-        </div>
-        <div class="home-action-card" data-goto="instructions">
-          <div class="home-action-title">Modifier les instructions</div>
-          <div class="home-action-desc">Horaires, showrooms, livraison, ton à adopter.</div>
-          <div class="home-action-link">Ouvrir Instructions →</div>
-        </div>
-        <div class="home-action-card" data-goto="test">
-          <div class="home-action-title">Tester le bot</div>
-          <div class="home-action-desc">Discute avec ton IA comme si tu étais client.</div>
-          <div class="home-action-link">Ouvrir Discussion de test →</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- VUE PRODUITS -->
-    <section class="view" id="view-products">
-      <div class="page-header">
-        <div class="page-title">Catalogue produits</div>
-        <div class="page-desc">Ces produits sont automatiquement inclus dans les réponses du bot.</div>
-      </div>
-      <div class="toolbar">
-        <span></span>
-        <button class="btn btn-primary" id="addProductBtn">+ Ajouter un produit</button>
-      </div>
-      <div id="productGrid" class="product-grid"></div>
-      <div id="emptyState" class="empty-state" style="display:none;">
-        <div class="empty-title">Aucun produit pour l'instant</div>
-        <div>Ajoute ton premier produit pour que le bot puisse en parler à tes clients.</div>
-      </div>
-    </section>
-
-    <!-- VUE INSTRUCTIONS -->
-    <section class="view" id="view-instructions">
-      <div class="page-header">
-        <div class="page-title">Instructions du bot</div>
-        <div class="page-desc">Ce texte guide la façon dont l'IA répond à tes clients.</div>
-      </div>
-      <div class="instructions-box">
-        <div class="hint">
-          Décris ici : les horaires, les adresses des showrooms, la politique de livraison, le ton à adopter, et tout ce que le bot doit savoir en dehors du catalogue produits.
-        </div>
-        <textarea id="instructionsText" placeholder="Ex : Mondeco vend des meubles en Tunisie. Nos showrooms sont ouverts du lundi au samedi, de 9h à 19h..."></textarea>
-        <div class="save-row">
-          <button class="btn btn-primary" id="saveInstructionsBtn">Enregistrer</button>
-          <span class="save-status" id="saveStatus">✓ Enregistré</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- VUE DISCUSSION DE TEST -->
-    <section class="view" id="view-test">
-      <div class="page-header">
-        <div class="page-title">Discussion de test</div>
-        <div class="page-desc">Discute avec ton IA en te mettant à la place d'un(e) client(e). Cette conversation n'est pas envoyée sur WhatsApp.</div>
-      </div>
-      <div class="chat-shell">
-        <div class="chat-messages" id="chatMessages">
-          <div class="chat-empty">Écris un message ci-dessous pour commencer, par exemple : « Bonjour, avez-vous des canapés en cuir ? »</div>
-        </div>
-        <form class="chat-input-row" id="chatForm">
-          <input type="text" id="chatInput" placeholder="Écris un message comme le ferait un client..." autocomplete="off">
-          <button type="submit" class="btn btn-primary">Envoyer</button>
-        </form>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- MODAL PRODUIT -->
-  <div class="modal-overlay" id="modalOverlay">
-    <div class="modal">
-      <div class="modal-title" id="modalTitle">Ajouter un produit</div>
-      <form id="productForm">
-        <input type="hidden" id="productId">
-        <div class="field">
-          <label for="productName">Nom du produit *</label>
-          <input type="text" id="productName" required placeholder="Ex : Canapé Milano 3 places">
-        </div>
-        <div class="field">
-          <label for="productCategory">Catégorie</label>
-          <input type="text" id="productCategory" placeholder="Ex : Salon, Chambre, Bureau">
-        </div>
-        <div class="field">
-          <label for="productPrice">Prix (TND)</label>
-          <input type="text" id="productPrice" placeholder="Ex : 1450">
-        </div>
-        <div class="field">
-          <label for="productDescription">Description</label>
-          <textarea id="productDescription" placeholder="Détails utiles pour répondre aux clients : matériaux, dimensions, couleurs disponibles..."></textarea>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" id="cancelModalBtn">Annuler</button>
-          <button type="submit" class="btn btn-primary">Enregistrer</button>
-        </div>
-      </form>
-    </div>
+  <div class="wordmark">
+    Mondeco
   </div>
 
+  <div class="wordmark-sub">
+    Bot WhatsApp
+  </div>
+
+  <div
+    class="nav-item active"
+    data-view="home"
+  >
+    🏠 Accueil
+  </div>
+
+  <div
+    class="nav-item"
+    data-view="products"
+  >
+    🪑 Produits
+  </div>
+
+  <div
+    class="nav-item"
+    data-view="instructions"
+  >
+    📋 Instructions IA
+  </div>
+
+  <div
+    class="nav-item"
+    data-view="test"
+  >
+    💬 Discussion de test
+  </div>
+
+  <div class="sidebar-footer">
+
+    <div
+      class="logout-btn"
+      id="logoutBtn"
+    >
+      Se déconnecter
+    </div>
+
+  </div>
+
+</nav>
+
+<!-- =========================================================
+     MAIN
+     ========================================================= -->
+
+<main class="main">
+
+<!-- =========================================================
+     ACCUEIL
+     ========================================================= -->
+
+<section
+  class="view active"
+  id="view-home"
+>
+
+  <div class="page-header">
+
+    <div class="page-title">
+      Bonjour 👋
+    </div>
+
+    <div class="page-desc">
+      Voici l'état de votre assistant WhatsApp Mondeco.
+    </div>
+
+  </div>
+
+  <div class="stats-row">
+
+    <div class="stat-card">
+
+      <div
+        class="stat-value"
+        id="statProducts"
+      >
+        —
+      </div>
+
+      <div class="stat-label">
+        Produits au catalogue
+      </div>
+
+    </div>
+
+    <div class="stat-card">
+
+      <div
+        class="stat-value"
+        id="statInstructions"
+      >
+        —
+      </div>
+
+      <div class="stat-label">
+        Instructions actives
+      </div>
+
+    </div>
+
+    <div class="stat-card">
+
+      <div class="stat-value">
+        🟢
+      </div>
+
+      <div class="stat-label">
+        Bot en ligne
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="home-actions">
+
+    <div
+      class="home-action-card"
+      data-goto="products"
+    >
+
+      <div class="home-action-title">
+        Ajouter un produit
+      </div>
+
+      <div class="home-action-desc">
+        Ajoutez les produits et prix que l'IA peut utiliser.
+      </div>
+
+      <div class="home-action-link">
+        Ouvrir Produits →
+      </div>
+
+    </div>
+
+    <div
+      class="home-action-card"
+      data-goto="instructions"
+    >
+
+      <div class="home-action-title">
+        Gérer les instructions
+      </div>
+
+      <div class="home-action-desc">
+        Créez des règles séparées comme dans Meta Business Agent.
+      </div>
+
+      <div class="home-action-link">
+        Ouvrir Instructions →
+      </div>
+
+    </div>
+
+    <div
+      class="home-action-card"
+      data-goto="test"
+    >
+
+      <div class="home-action-title">
+        Tester le bot
+      </div>
+
+      <div class="home-action-desc">
+        Testez les nouvelles règles avant WhatsApp.
+      </div>
+
+      <div class="home-action-link">
+        Ouvrir Discussion de test →
+      </div>
+
+    </div>
+
+  </div>
+
+</section>
+
+<!-- =========================================================
+     PRODUITS
+     ========================================================= -->
+
+<section
+  class="view"
+  id="view-products"
+>
+
+  <div class="page-header">
+
+    <div class="page-title">
+      Catalogue produits
+    </div>
+
+    <div class="page-desc">
+      Ces produits sont automatiquement inclus dans le contexte de l'IA.
+    </div>
+
+  </div>
+
+  <div class="toolbar">
+
+    <span></span>
+
+    <button
+      class="btn btn-primary"
+      id="addProductBtn"
+    >
+      + Ajouter un produit
+    </button>
+
+  </div>
+
+  <div
+    id="productGrid"
+    class="product-grid"
+  ></div>
+
+  <div
+    id="emptyState"
+    class="empty-state"
+    style="display:none;"
+  >
+
+    <div class="empty-title">
+      Aucun produit
+    </div>
+
+    <div>
+      Ajoutez votre premier produit.
+    </div>
+
+  </div>
+
+</section>
+
+<!-- =========================================================
+     INSTRUCTIONS
+     ========================================================= -->
+
+<section
+  class="view"
+  id="view-instructions"
+>
+
+  <div
+    class="page-header instructions-header"
+  >
+
+    <div>
+
+      <div class="page-title">
+        Instructions du bot
+      </div>
+
+      <div class="page-desc">
+        Chaque règle est indépendante. Seules les instructions actives sont envoyées à l'IA.
+      </div>
+
+    </div>
+
+    <div class="instructions-buttons">
+
+      <button
+        class="btn btn-ghost"
+        id="importLegacyBtn"
+      >
+        Importer ancien texte
+      </button>
+
+      <button
+        class="btn btn-ghost"
+        id="importInstructionsBtn"
+      >
+        Importer plusieurs
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="addInstructionBtn"
+      >
+        + Ajouter une instruction
+      </button>
+
+    </div>
+
+  </div>
+
+  <div class="instruction-summary">
+
+    <strong
+      id="activeInstructionCount"
+    >
+      0 instruction active
+    </strong>
+
+    <span>
+      •
+    </span>
+
+    <span
+      id="totalInstructionCount"
+    >
+      0 au total
+    </span>
+
+  </div>
+
+  <div
+    id="instructionsList"
+    class="instructions-list"
+  ></div>
+
+  <div
+    id="instructionsEmpty"
+    class="empty-state"
+    style="display:none;"
+  >
+
+    <div class="empty-title">
+      Aucune instruction séparée
+    </div>
+
+    <div>
+      Cliquez sur « Ajouter une instruction » ou importez votre ancien business-info.txt.
+    </div>
+
+  </div>
+
+</section>
+
+<!-- =========================================================
+     TEST
+     ========================================================= -->
+
+<section
+  class="view"
+  id="view-test"
+>
+
+  <div class="page-header">
+
+    <div class="page-title">
+      Discussion de test
+    </div>
+
+    <div class="page-desc">
+      Discutez avec votre IA comme un client. Aucun message n'est envoyé sur WhatsApp.
+    </div>
+
+  </div>
+
+  <div class="chat-shell">
+
+    <div
+      class="chat-messages"
+      id="chatMessages"
+    >
+
+      <div class="chat-empty">
+        Écrivez un message pour commencer.<br><br>
+        Exemple : « Bonjour, quel est le prix du salon Infinity ? »
+      </div>
+
+    </div>
+
+    <form
+      class="chat-input-row"
+      id="chatForm"
+    >
+
+      <input
+        type="text"
+        id="chatInput"
+        placeholder="Écrivez comme un client..."
+        autocomplete="off"
+      >
+
+      <button
+        type="submit"
+        class="btn btn-primary"
+      >
+        Envoyer
+      </button>
+
+    </form>
+
+  </div>
+
+</section>
+
+</main>
+
+<!-- =========================================================
+     MODAL PRODUIT
+     ========================================================= -->
+
+<div
+  class="modal-overlay"
+  id="modalOverlay"
+>
+
+  <div class="modal">
+
+    <div
+      class="modal-title"
+      id="modalTitle"
+    >
+      Ajouter un produit
+    </div>
+
+    <form id="productForm">
+
+      <input
+        type="hidden"
+        id="productId"
+      >
+
+      <div class="field">
+
+        <label for="productName">
+          Nom du produit *
+        </label>
+
+        <input
+          type="text"
+          id="productName"
+          required
+          placeholder="Ex : Salon Infinity"
+        >
+
+      </div>
+
+      <div class="field">
+
+        <label for="productCategory">
+          Catégorie
+        </label>
+
+        <input
+          type="text"
+          id="productCategory"
+          placeholder="Ex : Salon"
+        >
+
+      </div>
+
+      <div class="field">
+
+        <label for="productPrice">
+          Prix (TND)
+        </label>
+
+        <input
+          type="text"
+          id="productPrice"
+          placeholder="Ex : 4190"
+        >
+
+      </div>
+
+      <div class="field">
+
+        <label for="productDescription">
+          Description
+        </label>
+
+        <textarea
+          id="productDescription"
+          placeholder="Dimensions, composition, couleurs, détails..."
+        ></textarea>
+
+      </div>
+
+      <div class="modal-actions">
+
+        <button
+          type="button"
+          class="btn btn-ghost"
+          id="cancelModalBtn"
+        >
+          Annuler
+        </button>
+
+        <button
+          type="submit"
+          class="btn btn-primary"
+        >
+          Enregistrer
+        </button>
+
+      </div>
+
+    </form>
+
+  </div>
+
+</div>
+
+<!-- =========================================================
+     MODAL INSTRUCTION
+     ========================================================= -->
+
+<div
+  class="modal-overlay"
+  id="instructionModalOverlay"
+>
+
+  <div class="modal large">
+
+    <div
+      class="modal-title"
+      id="instructionModalTitle"
+    >
+      Ajouter une instruction
+    </div>
+
+    <form id="instructionForm">
+
+      <input
+        type="hidden"
+        id="instructionId"
+      >
+
+      <div class="field">
+
+        <label for="instructionTitle">
+          Titre *
+        </label>
+
+        <input
+          type="text"
+          id="instructionTitle"
+          required
+          placeholder="Ex : Ne jamais inventer un prix"
+        >
+
+      </div>
+
+      <div class="field">
+
+        <label for="instructionContent">
+          Instruction complète *
+        </label>
+
+        <textarea
+          id="instructionContent"
+          required
+          style="min-height:230px;"
+          placeholder="Expliquez précisément ce que l'IA doit faire..."
+        ></textarea>
+
+      </div>
+
+      <div class="field">
+
+        <label
+          style="
+            display:flex;
+            align-items:center;
+            gap:10px;
+            cursor:pointer;
+          "
+        >
+
+          <input
+            type="checkbox"
+            id="instructionActive"
+            checked
+            style="width:auto;"
+          >
+
+          Instruction active
+
+        </label>
+
+      </div>
+
+      <div class="modal-actions">
+
+        <button
+          type="button"
+          class="btn btn-ghost"
+          id="cancelInstructionBtn"
+        >
+          Annuler
+        </button>
+
+        <button
+          type="submit"
+          class="btn btn-primary"
+        >
+          Enregistrer
+        </button>
+
+      </div>
+
+    </form>
+
+  </div>
+
+</div>
+
+<!-- =========================================================
+     MODAL IMPORT
+     ========================================================= -->
+
+<div
+  class="modal-overlay"
+  id="importInstructionsOverlay"
+>
+
+  <div class="modal large">
+
+    <div class="modal-title">
+      Importer plusieurs instructions
+    </div>
+
+    <div class="modal-desc">
+      Séparez chaque instruction par une ligne vide.
+      La première ligne de chaque bloc devient le titre.
+    </div>
+
+    <div class="field">
+
+      <label for="bulkInstructionsText">
+        Instructions
+      </label>
+
+      <textarea
+        id="bulkInstructionsText"
+        style="min-height:350px;"
+        placeholder="Ne jamais inventer un prix
+Utiliser uniquement les prix présents dans le catalogue MONDECO.
+
+Gestion des images
+Lorsqu'un client envoie une photo ou une capture d'écran, ne pas répondre automatiquement.
+
+Qualification client
+Demander progressivement la ville, les dimensions et le délai d'achat."
+      ></textarea>
+
+    </div>
+
+    <div class="modal-actions">
+
+      <button
+        type="button"
+        class="btn btn-ghost"
+        id="cancelImportInstructionsBtn"
+      >
+        Annuler
+      </button>
+
+      <button
+        type="button"
+        class="btn btn-primary"
+        id="confirmImportInstructionsBtn"
+      >
+        Importer
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
 <script>
-  // --- Navigation ---
-  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-    item.addEventListener('click', () => {
-      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      item.classList.add('active');
-      document.getElementById('view-' + item.dataset.view).classList.add('active');
-    });
-  });
 
-  // --- Logout ---
-  document.getElementById('logoutBtn').addEventListener('click', async () => {
-    await fetch('/admin/logout', { method: 'POST' });
-    window.location.href = '/admin/login';
-  });
+// ============================================================
+// FETCH AVEC GESTION SESSION
+// ============================================================
 
-  // --- Produits ---
-  let products = [];
+async function apiFetch(
+  url,
+  options = {}
+) {
+  const response =
+    await fetch(
+      url,
+      options
+    );
 
-  async function loadProducts() {
-    const res = await fetch('/admin/api/products');
-    products = await res.json();
-    renderProducts();
+  if (
+    response.status === 401
+  ) {
+    window.location.href =
+      '/admin/login';
+
+    throw new Error(
+      'Session expirée'
+    );
   }
 
-  function renderProducts() {
-    const grid = document.getElementById('productGrid');
-    const empty = document.getElementById('emptyState');
-    if (products.length === 0) {
-      grid.style.display = 'none';
-      empty.style.display = 'block';
+  return response;
+}
+
+// ============================================================
+// ESCAPE HTML
+// ============================================================
+
+function escapeHtml(value) {
+  const div =
+    document.createElement(
+      'div'
+    );
+
+  div.textContent =
+    String(value ?? '');
+
+  return div.innerHTML;
+}
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+
+function openView(viewName) {
+  document
+    .querySelectorAll(
+      '.nav-item[data-view]'
+    )
+    .forEach(item =>
+      item.classList.remove(
+        'active'
+      )
+    );
+
+  document
+    .querySelectorAll(
+      '.view'
+    )
+    .forEach(view =>
+      view.classList.remove(
+        'active'
+      )
+    );
+
+  const nav =
+    document.querySelector(
+      `.nav-item[data-view="${viewName}"]`
+    );
+
+  const view =
+    document.getElementById(
+      'view-' + viewName
+    );
+
+  if (nav) {
+    nav.classList.add(
+      'active'
+    );
+  }
+
+  if (view) {
+    view.classList.add(
+      'active'
+    );
+  }
+}
+
+document
+  .querySelectorAll(
+    '.nav-item[data-view]'
+  )
+  .forEach(item => {
+
+    item.addEventListener(
+      'click',
+      () => {
+        openView(
+          item.dataset.view
+        );
+      }
+    );
+
+  });
+
+document
+  .querySelectorAll(
+    '.home-action-card'
+  )
+  .forEach(card => {
+
+    card.addEventListener(
+      'click',
+      () => {
+        openView(
+          card.dataset.goto
+        );
+      }
+    );
+
+  });
+
+// ============================================================
+// LOGOUT
+// ============================================================
+
+document
+  .getElementById(
+    'logoutBtn'
+  )
+  .addEventListener(
+    'click',
+    async () => {
+
+      await fetch(
+        '/admin/logout',
+        {
+          method: 'POST'
+        }
+      );
+
+      window.location.href =
+        '/admin/login';
+
+    }
+  );
+
+// ============================================================
+// PRODUITS
+// ============================================================
+
+let products = [];
+
+async function loadProducts() {
+  try {
+    const response =
+      await apiFetch(
+        '/admin/api/products'
+      );
+
+    products =
+      await response.json();
+
+    if (!Array.isArray(products)) {
+      products = [];
+    }
+
+    renderProducts();
+
+  } catch (error) {
+    console.error(
+      'Produits :',
+      error
+    );
+  }
+}
+
+function renderProducts() {
+  const grid =
+    document.getElementById(
+      'productGrid'
+    );
+
+  const empty =
+    document.getElementById(
+      'emptyState'
+    );
+
+  if (
+    products.length === 0
+  ) {
+    grid.innerHTML = '';
+
+    grid.style.display =
+      'none';
+
+    empty.style.display =
+      'block';
+
+    return;
+  }
+
+  grid.style.display =
+    'grid';
+
+  empty.style.display =
+    'none';
+
+  grid.innerHTML =
+    products
+      .map(product => `
+        <div class="product-card">
+
+          <div class="product-card-body">
+
+            ${
+              product.category
+                ? `
+                  <div class="product-cat">
+                    ${escapeHtml(product.category)}
+                  </div>
+                `
+                : ''
+            }
+
+            <div class="product-name">
+              ${escapeHtml(product.name)}
+            </div>
+
+            ${
+              product.description
+                ? `
+                  <div class="product-desc">
+                    ${escapeHtml(product.description)}
+                  </div>
+                `
+                : ''
+            }
+
+            ${
+              product.price
+                ? `
+                  <div class="product-price">
+                    ${escapeHtml(product.price)} TND
+                  </div>
+                `
+                : ''
+            }
+
+          </div>
+
+          <div class="product-actions">
+
+            <span
+              onclick="editProduct('${product.id}')"
+            >
+              Modifier
+            </span>
+
+            <span
+              onclick="deleteProduct('${product.id}')"
+            >
+              Supprimer
+            </span>
+
+          </div>
+
+        </div>
+      `)
+      .join('');
+}
+
+// ============================================================
+// MODAL PRODUIT
+// ============================================================
+
+const productOverlay =
+  document.getElementById(
+    'modalOverlay'
+  );
+
+const productForm =
+  document.getElementById(
+    'productForm'
+  );
+
+document
+  .getElementById(
+    'addProductBtn'
+  )
+  .addEventListener(
+    'click',
+    () => {
+
+      document
+        .getElementById(
+          'modalTitle'
+        )
+        .textContent =
+          'Ajouter un produit';
+
+      productForm.reset();
+
+      document
+        .getElementById(
+          'productId'
+        )
+        .value = '';
+
+      productOverlay
+        .classList
+        .add('active');
+    }
+  );
+
+document
+  .getElementById(
+    'cancelModalBtn'
+  )
+  .addEventListener(
+    'click',
+    () => {
+      productOverlay
+        .classList
+        .remove('active');
+    }
+  );
+
+window.editProduct =
+  function(id) {
+
+    const product =
+      products.find(
+        item =>
+          item.id === id
+      );
+
+    if (!product) {
       return;
     }
-    grid.style.display = 'grid';
-    empty.style.display = 'none';
-    grid.innerHTML = products.map(p => `
-      <div class="product-card">
-        <div class="product-card-body">
-          ${p.category ? `<div class="product-cat">${escapeHtml(p.category)}</div>` : ''}
-          <div class="product-name">${escapeHtml(p.name)}</div>
-          ${p.description ? `<div class="product-desc">${escapeHtml(p.description)}</div>` : ''}
-          ${p.price ? `<div class="product-price">${escapeHtml(p.price)} TND</div>` : ''}
-        </div>
-        <div class="product-actions">
-          <span onclick="editProduct('${p.id}')">Modifier</span>
-          <span class="btn-danger-text" onclick="deleteProduct('${p.id}')">Supprimer</span>
-        </div>
-      </div>
-    `).join('');
-  }
 
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
+    document
+      .getElementById(
+        'modalTitle'
+      )
+      .textContent =
+        'Modifier le produit';
 
-  // --- Modal ---
-  const overlay = document.getElementById('modalOverlay');
-  const form = document.getElementById('productForm');
+    document
+      .getElementById(
+        'productId'
+      )
+      .value =
+        product.id;
 
-  document.getElementById('addProductBtn').addEventListener('click', () => {
-    document.getElementById('modalTitle').textContent = 'Ajouter un produit';
-    form.reset();
-    document.getElementById('productId').value = '';
-    overlay.classList.add('active');
-  });
+    document
+      .getElementById(
+        'productName'
+      )
+      .value =
+        product.name || '';
 
-  document.getElementById('cancelModalBtn').addEventListener('click', () => {
-    overlay.classList.remove('active');
-  });
+    document
+      .getElementById(
+        'productCategory'
+      )
+      .value =
+        product.category || '';
 
-  window.editProduct = (id) => {
-    const p = products.find(x => x.id === id);
-    if (!p) return;
-    document.getElementById('modalTitle').textContent = 'Modifier le produit';
-    document.getElementById('productId').value = p.id;
-    document.getElementById('productName').value = p.name;
-    document.getElementById('productCategory').value = p.category || '';
-    document.getElementById('productPrice').value = p.price || '';
-    document.getElementById('productDescription').value = p.description || '';
-    overlay.classList.add('active');
+    document
+      .getElementById(
+        'productPrice'
+      )
+      .value =
+        product.price || '';
+
+    document
+      .getElementById(
+        'productDescription'
+      )
+      .value =
+        product.description || '';
+
+    productOverlay
+      .classList
+      .add('active');
   };
 
-  window.deleteProduct = async (id) => {
-    if (!confirm('Supprimer ce produit ?')) return;
-    await fetch('/admin/api/products/' + id, { method: 'DELETE' });
-    loadProducts();
-  };
+window.deleteProduct =
+  async function(id) {
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const id = document.getElementById('productId').value;
-    const payload = {
-      name: document.getElementById('productName').value,
-      category: document.getElementById('productCategory').value,
-      price: document.getElementById('productPrice').value,
-      description: document.getElementById('productDescription').value
-    };
-    if (id) {
-      await fetch('/admin/api/products/' + id, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
-    } else {
-      await fetch('/admin/api/products', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
+    if (
+      !confirm(
+        'Supprimer ce produit ?'
+      )
+    ) {
+      return;
     }
-    overlay.classList.remove('active');
-    loadProducts();
-  });
 
-  // --- Instructions ---
-  async function loadInstructions() {
-    const res = await fetch('/admin/api/instructions');
-    const data = await res.json();
-    document.getElementById('instructionsText').value = data.text || '';
-  }
+    const response =
+      await apiFetch(
+        '/admin/api/products/' +
+          id,
+        {
+          method:
+            'DELETE'
+        }
+      );
 
-  document.getElementById('saveInstructionsBtn').addEventListener('click', async () => {
-    const text = document.getElementById('instructionsText').value;
-    await fetch('/admin/api/instructions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text })
-    });
-    const status = document.getElementById('saveStatus');
-    status.classList.add('visible');
-    setTimeout(() => status.classList.remove('visible'), 2000);
-  });
+    if (!response.ok) {
+      alert(
+        'Impossible de supprimer le produit.'
+      );
 
-  // --- Navigation depuis les cartes d'accueil ---
-  document.querySelectorAll('.home-action-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const view = card.dataset.goto;
-      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      document.querySelector(`.nav-item[data-view="${view}"]`).classList.add('active');
-      document.getElementById('view-' + view).classList.add('active');
-    });
-  });
+      return;
+    }
 
-  // --- Stats (page Accueil) ---
-  async function loadStats() {
-    const res = await fetch('/admin/api/stats');
-    const data = await res.json();
-    document.getElementById('statProducts').textContent = data.productCount;
-    document.getElementById('statInstructions').textContent = data.instructionsConfigured ? '✓' : '—';
-  }
+    await loadProducts();
+    await loadStats();
+  };
 
-  // --- Discussion de test ---
-  const chatMessages = document.getElementById('chatMessages');
-  const chatForm = document.getElementById('chatForm');
-  const chatInput = document.getElementById('chatInput');
+productForm
+  .addEventListener(
+    'submit',
+    async event => {
 
-  function addBubble(text, type) {
-    const empty = chatMessages.querySelector('.chat-empty');
-    if (empty) empty.remove();
-    const bubble = document.createElement('div');
-    bubble.className = 'chat-bubble ' + type;
-    bubble.textContent = text;
-    chatMessages.appendChild(bubble);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-    return bubble;
-  }
+      event.preventDefault();
 
-  chatForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const message = chatInput.value.trim();
-    if (!message) return;
-    addBubble(message, 'user');
-    chatInput.value = '';
-    const typingBubble = addBubble('...en train de répondre', 'typing');
+      const id =
+        document
+          .getElementById(
+            'productId'
+          )
+          .value;
 
-    try {
-      const res = await fetch('/admin/api/test-chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
-      });
-      const data = await res.json();
-      typingBubble.remove();
-      if (res.ok) {
-        addBubble(data.reply, 'bot');
-      } else {
-        addBubble(data.error || 'Une erreur est survenue.', 'error');
+      const payload = {
+
+        name:
+          document
+            .getElementById(
+              'productName'
+            )
+            .value,
+
+        category:
+          document
+            .getElementById(
+              'productCategory'
+            )
+            .value,
+
+        price:
+          document
+            .getElementById(
+              'productPrice'
+            )
+            .value,
+
+        description:
+          document
+            .getElementById(
+              'productDescription'
+            )
+            .value
+      };
+
+      const url =
+        id
+          ? '/admin/api/products/' +
+            id
+          : '/admin/api/products';
+
+      const method =
+        id
+          ? 'PUT'
+          : 'POST';
+
+      const response =
+        await apiFetch(
+          url,
+          {
+            method,
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify(
+                payload
+              )
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        alert(
+          data.error ||
+          'Erreur pendant la sauvegarde.'
+        );
+
+        return;
       }
-    } catch (err) {
-      typingBubble.remove();
-      addBubble('Impossible de contacter le serveur.', 'error');
+
+      productOverlay
+        .classList
+        .remove('active');
+
+      await loadProducts();
+      await loadStats();
     }
+  );
+
+// ============================================================
+// INSTRUCTIONS
+// ============================================================
+
+let instructions = [];
+
+async function loadInstructions() {
+  try {
+    const response =
+      await apiFetch(
+        '/admin/api/instructions'
+      );
+
+    instructions =
+      await response.json();
+
+    if (
+      !Array.isArray(
+        instructions
+      )
+    ) {
+      instructions = [];
+    }
+
+    renderInstructions();
+
+  } catch (error) {
+    console.error(
+      'Instructions :',
+      error
+    );
+  }
+}
+
+function renderInstructions() {
+  const list =
+    document.getElementById(
+      'instructionsList'
+    );
+
+  const empty =
+    document.getElementById(
+      'instructionsEmpty'
+    );
+
+  const activeCountElement =
+    document.getElementById(
+      'activeInstructionCount'
+    );
+
+  const totalCountElement =
+    document.getElementById(
+      'totalInstructionCount'
+    );
+
+  const activeCount =
+    instructions.filter(
+      instruction =>
+        instruction.active !== false
+    ).length;
+
+  activeCountElement.textContent =
+    `${activeCount} ${
+      activeCount > 1
+        ? 'instructions actives'
+        : 'instruction active'
+    }`;
+
+  totalCountElement.textContent =
+    `${instructions.length} au total`;
+
+  if (
+    instructions.length === 0
+  ) {
+    list.innerHTML = '';
+
+    empty.style.display =
+      'block';
+
+    return;
+  }
+
+  empty.style.display =
+    'none';
+
+  list.innerHTML =
+    instructions
+      .map(instruction => {
+
+        const active =
+          instruction.active !== false;
+
+        return `
+          <div class="instruction-card">
+
+            <div
+              class="
+                instruction-status
+                ${
+                  active
+                    ? 'active'
+                    : 'inactive'
+                }
+              "
+            >
+              ${
+                active
+                  ? '✓'
+                  : '—'
+              }
+            </div>
+
+            <div class="instruction-body">
+
+              <div class="instruction-title">
+                ${escapeHtml(instruction.title)}
+              </div>
+
+              <div class="instruction-preview">
+                ${escapeHtml(instruction.content)}
+              </div>
+
+              <div class="instruction-meta">
+                ${
+                  active
+                    ? 'Instruction active'
+                    : 'Instruction désactivée'
+                }
+              </div>
+
+            </div>
+
+            <div class="instruction-actions">
+
+              <button
+                class="instruction-action"
+                onclick="toggleInstruction('${instruction.id}')"
+              >
+                ${
+                  active
+                    ? 'Désactiver'
+                    : 'Activer'
+                }
+              </button>
+
+              <button
+                class="instruction-action"
+                onclick="editInstruction('${instruction.id}')"
+              >
+                Modifier
+              </button>
+
+              <button
+                class="instruction-action delete"
+                onclick="deleteInstruction('${instruction.id}')"
+              >
+                Supprimer
+              </button>
+
+            </div>
+
+          </div>
+        `;
+      })
+      .join('');
+}
+
+// ============================================================
+// MODAL INSTRUCTION
+// ============================================================
+
+const instructionOverlay =
+  document.getElementById(
+    'instructionModalOverlay'
+  );
+
+const instructionForm =
+  document.getElementById(
+    'instructionForm'
+  );
+
+document
+  .getElementById(
+    'addInstructionBtn'
+  )
+  .addEventListener(
+    'click',
+    () => {
+
+      instructionForm.reset();
+
+      document
+        .getElementById(
+          'instructionModalTitle'
+        )
+        .textContent =
+          'Ajouter une instruction';
+
+      document
+        .getElementById(
+          'instructionId'
+        )
+        .value = '';
+
+      document
+        .getElementById(
+          'instructionActive'
+        )
+        .checked =
+          true;
+
+      instructionOverlay
+        .classList
+        .add('active');
+    }
+  );
+
+document
+  .getElementById(
+    'cancelInstructionBtn'
+  )
+  .addEventListener(
+    'click',
+    () => {
+
+      instructionOverlay
+        .classList
+        .remove('active');
+    }
+  );
+
+window.editInstruction =
+  function(id) {
+
+    const instruction =
+      instructions.find(
+        item =>
+          item.id === id
+      );
+
+    if (!instruction) {
+      return;
+    }
+
+    document
+      .getElementById(
+        'instructionModalTitle'
+      )
+      .textContent =
+        'Modifier l’instruction';
+
+    document
+      .getElementById(
+        'instructionId'
+      )
+      .value =
+        instruction.id;
+
+    document
+      .getElementById(
+        'instructionTitle'
+      )
+      .value =
+        instruction.title || '';
+
+    document
+      .getElementById(
+        'instructionContent'
+      )
+      .value =
+        instruction.content || '';
+
+    document
+      .getElementById(
+        'instructionActive'
+      )
+      .checked =
+        instruction.active !== false;
+
+    instructionOverlay
+      .classList
+      .add('active');
+  };
+
+instructionForm
+  .addEventListener(
+    'submit',
+    async event => {
+
+      event.preventDefault();
+
+      const id =
+        document
+          .getElementById(
+            'instructionId'
+          )
+          .value;
+
+      const payload = {
+
+        title:
+          document
+            .getElementById(
+              'instructionTitle'
+            )
+            .value,
+
+        content:
+          document
+            .getElementById(
+              'instructionContent'
+            )
+            .value,
+
+        active:
+          document
+            .getElementById(
+              'instructionActive'
+            )
+            .checked
+      };
+
+      const url =
+        id
+          ? '/admin/api/instructions/' +
+            id
+          : '/admin/api/instructions';
+
+      const method =
+        id
+          ? 'PUT'
+          : 'POST';
+
+      const response =
+        await apiFetch(
+          url,
+          {
+            method,
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify(
+                payload
+              )
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        alert(
+          data.error ||
+          'Erreur pendant la sauvegarde.'
+        );
+
+        return;
+      }
+
+      instructionOverlay
+        .classList
+        .remove('active');
+
+      await loadInstructions();
+      await loadStats();
+    }
+  );
+
+// ============================================================
+// ACTIVER / DÉSACTIVER
+// ============================================================
+
+window.toggleInstruction =
+  async function(id) {
+
+    const instruction =
+      instructions.find(
+        item =>
+          item.id === id
+      );
+
+    if (!instruction) {
+      return;
+    }
+
+    const response =
+      await apiFetch(
+        '/admin/api/instructions/' +
+          id,
+        {
+          method:
+            'PUT',
+
+          headers: {
+            'Content-Type':
+              'application/json'
+          },
+
+          body:
+            JSON.stringify({
+              active:
+                !(
+                  instruction.active !==
+                  false
+                )
+            })
+        }
+      );
+
+    if (!response.ok) {
+      alert(
+        'Impossible de modifier l’instruction.'
+      );
+
+      return;
+    }
+
+    await loadInstructions();
+    await loadStats();
+  };
+
+// ============================================================
+// SUPPRIMER INSTRUCTION
+// ============================================================
+
+window.deleteInstruction =
+  async function(id) {
+
+    const instruction =
+      instructions.find(
+        item =>
+          item.id === id
+      );
+
+    if (!instruction) {
+      return;
+    }
+
+    if (
+      !confirm(
+        `Supprimer l’instruction « ${instruction.title} » ?`
+      )
+    ) {
+      return;
+    }
+
+    const response =
+      await apiFetch(
+        '/admin/api/instructions/' +
+          id,
+        {
+          method:
+            'DELETE'
+        }
+      );
+
+    if (!response.ok) {
+      alert(
+        'Impossible de supprimer l’instruction.'
+      );
+
+      return;
+    }
+
+    await loadInstructions();
+    await loadStats();
+  };
+
+// ============================================================
+// IMPORT MANUEL
+// ============================================================
+
+const importOverlay =
+  document.getElementById(
+    'importInstructionsOverlay'
+  );
+
+const importButton =
+  document.getElementById(
+    'importInstructionsBtn'
+  );
+
+const cancelImportButton =
+  document.getElementById(
+    'cancelImportInstructionsBtn'
+  );
+
+const confirmImportButton =
+  document.getElementById(
+    'confirmImportInstructionsBtn'
+  );
+
+importButton.addEventListener(
+  'click',
+  () => {
+
+    document
+      .getElementById(
+        'bulkInstructionsText'
+      )
+      .value = '';
+
+    importOverlay
+      .classList
+      .add('active');
+  }
+);
+
+cancelImportButton
+  .addEventListener(
+    'click',
+    () => {
+
+      importOverlay
+        .classList
+        .remove('active');
+    }
+  );
+
+confirmImportButton
+  .addEventListener(
+    'click',
+    async () => {
+
+      const text =
+        document
+          .getElementById(
+            'bulkInstructionsText'
+          )
+          .value
+          .trim();
+
+      if (!text) {
+        alert(
+          'Collez au moins une instruction.'
+        );
+
+        return;
+      }
+
+      confirmImportButton.disabled =
+        true;
+
+      confirmImportButton.textContent =
+        'Importation...';
+
+      try {
+
+        const response =
+          await apiFetch(
+            '/admin/api/instructions/import',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json'
+              },
+
+              body:
+                JSON.stringify({
+                  text
+                })
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          alert(
+            data.error ||
+            'Erreur pendant l’import.'
+          );
+
+          return;
+        }
+
+        importOverlay
+          .classList
+          .remove('active');
+
+        await loadInstructions();
+        await loadStats();
+
+        alert(
+          `${data.imported} instruction(s) importée(s).` +
+          (
+            data.duplicates
+              ? ` ${data.duplicates} doublon(s) ignoré(s).`
+              : ''
+          )
+        );
+
+      } finally {
+
+        confirmImportButton.disabled =
+          false;
+
+        confirmImportButton.textContent =
+          'Importer';
+      }
+
+    }
+  );
+
+// ============================================================
+// IMPORTER BUSINESS-INFO.TXT
+// ============================================================
+
+document
+  .getElementById(
+    'importLegacyBtn'
+  )
+  .addEventListener(
+    'click',
+    async () => {
+
+      const confirmed =
+        confirm(
+          'Importer le contenu actuel de business-info.txt en instructions séparées ? Les doublons seront ignorés.'
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+
+        const response =
+          await apiFetch(
+            '/admin/api/instructions/import-legacy',
+            {
+              method:
+                'POST'
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (!response.ok) {
+          alert(
+            data.error ||
+            'Import impossible.'
+          );
+
+          return;
+        }
+
+        await loadInstructions();
+        await loadStats();
+
+        alert(
+          `${data.imported} instruction(s) importée(s).` +
+          (
+            data.duplicates
+              ? ` ${data.duplicates} doublon(s) ignoré(s).`
+              : ''
+          )
+        );
+
+      } catch (error) {
+
+        alert(
+          'Impossible d’importer business-info.txt.'
+        );
+      }
+
+    }
+  );
+
+// ============================================================
+// STATS
+// ============================================================
+
+async function loadStats() {
+  try {
+
+    const response =
+      await apiFetch(
+        '/admin/api/stats'
+      );
+
+    const data =
+      await response.json();
+
+    document
+      .getElementById(
+        'statProducts'
+      )
+      .textContent =
+        data.productCount ?? 0;
+
+    document
+      .getElementById(
+        'statInstructions'
+      )
+      .textContent =
+        data.activeInstructionsCount ??
+        0;
+
+  } catch (error) {
+    console.error(
+      'Stats :',
+      error
+    );
+  }
+}
+
+// ============================================================
+// CHAT TEST
+// ============================================================
+
+const chatMessages =
+  document.getElementById(
+    'chatMessages'
+  );
+
+const chatForm =
+  document.getElementById(
+    'chatForm'
+  );
+
+const chatInput =
+  document.getElementById(
+    'chatInput'
+  );
+
+function addBubble(
+  text,
+  type
+) {
+  const empty =
+    chatMessages.querySelector(
+      '.chat-empty'
+    );
+
+  if (empty) {
+    empty.remove();
+  }
+
+  const bubble =
+    document.createElement(
+      'div'
+    );
+
+  bubble.className =
+    'chat-bubble ' +
+    type;
+
+  bubble.textContent =
+    text;
+
+  chatMessages.appendChild(
+    bubble
+  );
+
+  chatMessages.scrollTop =
+    chatMessages.scrollHeight;
+
+  return bubble;
+}
+
+chatForm
+  .addEventListener(
+    'submit',
+    async event => {
+
+      event.preventDefault();
+
+      const message =
+        chatInput.value.trim();
+
+      if (!message) {
+        return;
+      }
+
+      addBubble(
+        message,
+        'user'
+      );
+
+      chatInput.value = '';
+
+      const typingBubble =
+        addBubble(
+          '... en train de répondre',
+          'typing'
+        );
+
+      try {
+
+        const response =
+          await apiFetch(
+            '/admin/api/test-chat',
+            {
+              method:
+                'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json'
+              },
+
+              body:
+                JSON.stringify({
+                  message
+                })
+            }
+          );
+
+        const data =
+          await response.json();
+
+        typingBubble.remove();
+
+        if (response.ok) {
+          addBubble(
+            data.reply,
+            'bot'
+          );
+        } else {
+          addBubble(
+            data.error ||
+              'Une erreur est survenue.',
+            'error'
+          );
+        }
+
+      } catch (error) {
+
+        if (
+          typingBubble.isConnected
+        ) {
+          typingBubble.remove();
+        }
+
+        addBubble(
+          'Impossible de contacter le serveur.',
+          'error'
+        );
+      }
+
+    }
+  );
+
+// ============================================================
+// FERMER MODALS EN CLIQUANT SUR LE FOND
+// ============================================================
+
+document
+  .querySelectorAll(
+    '.modal-overlay'
+  )
+  .forEach(overlay => {
+
+    overlay.addEventListener(
+      'click',
+      event => {
+
+        if (
+          event.target ===
+          overlay
+        ) {
+          overlay.classList.remove(
+            'active'
+          );
+        }
+
+      }
+    );
+
   });
 
-  // --- Init ---
-  loadProducts();
-  loadInstructions();
-  loadStats();
+// ============================================================
+// ESC
+// ============================================================
+
+document.addEventListener(
+  'keydown',
+  event => {
+
+    if (
+      event.key === 'Escape'
+    ) {
+      document
+        .querySelectorAll(
+          '.modal-overlay.active'
+        )
+        .forEach(
+          overlay =>
+            overlay.classList.remove(
+              'active'
+            )
+        );
+    }
+
+  }
+);
+
+// ============================================================
+// INITIALISATION
+// ============================================================
+
+async function initializeAdmin() {
+  await Promise.all([
+    loadProducts(),
+    loadInstructions(),
+    loadStats()
+  ]);
+}
+
+initializeAdmin();
+
 </script>
+
 </body>
+
 </html>
