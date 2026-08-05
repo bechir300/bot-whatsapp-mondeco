@@ -1,2647 +1,1862 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mondeco — Administration</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mondeco — Bot WhatsApp</title>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
-
-:root {
-  --ink: #1F1B16;
-  --paper: #F7F4EF;
-  --paper-raised: #FFFFFF;
-  --copper: #B5541F;
-  --copper-dark: #9C4718;
-  --border: #E4DED2;
-  --muted: #7A7266;
-  --sidebar: #1F1B16;
-  --sidebar-hover: #2A241C;
-  --success: #5C7A52;
-  --success-bg: #E9F2E6;
-  --danger: #B5541F;
-  --danger-bg: #F8E7DF;
-  --shadow: 0 8px 28px rgba(31, 27, 22, 0.08);
+:root{
+  --bg:#f7f3ed;
+  --panel:#ffffff;
+  --sidebar:#1f1a15;
+  --sidebar-soft:#2c251f;
+  --text:#211b16;
+  --muted:#786e63;
+  --line:#e7ded4;
+  --accent:#be551b;
+  --accent-dark:#994214;
+  --green:#2c8c52;
+  --red:#b43d36;
+  --yellow:#b9851a;
+  --shadow:0 10px 30px rgba(43,31,20,.08);
+  --radius:14px;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+*{
+  box-sizing:border-box;
 }
 
-body {
-  font-family: 'Inter', sans-serif;
-  background: var(--paper);
-  color: var(--ink);
-  display: flex;
-  min-height: 100vh;
+body{
+  margin:0;
+  font-family:Arial,Helvetica,sans-serif;
+  background:var(--bg);
+  color:var(--text);
 }
 
-/* ============================================================
-   SIDEBAR
-   ============================================================ */
-
-.sidebar {
-  width: 240px;
-  background: var(--sidebar);
-  color: #F7F4EF;
-  display: flex;
-  flex-direction: column;
-  padding: 28px 20px;
-  flex-shrink: 0;
-  min-height: 100vh;
-  position: sticky;
-  top: 0;
-}
-
-.wordmark {
-  font-family: 'Fraunces', serif;
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.wordmark-sub {
-  font-size: 12px;
-  color: #9C9384;
-  margin-top: 2px;
-  margin-bottom: 36px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #C9C1B3;
-  cursor: pointer;
-  margin-bottom: 4px;
-  transition: 0.15s;
-  user-select: none;
-}
-
-.nav-item:hover {
-  background: var(--sidebar-hover);
-}
-
-.nav-item.active {
-  background: var(--copper);
-  color: #fff;
-}
-
-.sidebar-footer {
-  margin-top: auto;
-}
-
-.logout-btn {
-  font-size: 13px;
-  color: #9C9384;
-  cursor: pointer;
-  padding: 8px 14px;
-}
-
-.logout-btn:hover {
-  color: #F7F4EF;
-}
-
-/* ============================================================
-   MAIN
-   ============================================================ */
-
-.main {
-  flex: 1;
-  padding: 40px 48px;
-  width: 100%;
-  min-width: 0;
-}
-
-.content-width {
-  width: 100%;
-  max-width: 1220px;
-}
-
-.page-header {
-  margin-bottom: 28px;
-}
-
-.page-title {
-  font-family: 'Fraunces', serif;
-  font-size: 30px;
-  font-weight: 600;
-}
-
-.page-desc {
-  color: var(--muted);
-  font-size: 14px;
-  margin-top: 6px;
-  line-height: 1.55;
-}
-
-.view {
-  display: none;
-}
-
-.view.active {
-  display: block;
-}
-
-/* ============================================================
-   BUTTONS
-   ============================================================ */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 18px;
-  min-height: 40px;
-  border-radius: 8px;
-  border: none;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: 'Inter', sans-serif;
-  transition: 0.15s;
-}
-
-.btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--copper);
-  color: #fff;
-}
-
-.btn-primary:hover {
-  background: var(--copper-dark);
-}
-
-.btn-ghost {
-  background: var(--paper-raised);
-  color: var(--ink);
-  border: 1.5px solid var(--border);
-}
-
-.btn-ghost:hover {
-  border-color: #CBC2B5;
-  background: #F2EEE7;
-}
-
-.btn-danger {
-  background: var(--danger);
-  color: #fff;
-}
-
-/* ============================================================
-   ACCUEIL
-   ============================================================ */
-
-.stats-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  margin-bottom: 32px;
-}
-
-.stat-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 22px;
-}
-
-.stat-value {
-  font-family: 'Fraunces', serif;
-  font-size: 30px;
-  font-weight: 600;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-.home-actions {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-
-.home-action-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 22px;
-  cursor: pointer;
-  transition: 0.15s;
-}
-
-.home-action-card:hover {
-  border-color: var(--copper);
-  transform: translateY(-1px);
-}
-
-.home-action-title {
-  font-family: 'Fraunces', serif;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.home-action-desc {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 6px;
-  line-height: 1.5;
-}
-
-.home-action-link {
-  font-size: 13px;
-  color: var(--copper);
-  font-weight: 600;
-  margin-top: 12px;
-}
-
-/* ============================================================
-   PRODUITS
-   ============================================================ */
-
-.products-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-
-.products-toolbar-left,
-.products-toolbar-right {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.list-counter {
-  display: inline-flex;
-  min-width: 24px;
-  height: 22px;
-  padding: 0 7px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  font-size: 11px;
-  background: #EEE8DE;
-  color: var(--ink);
-}
-
-.products-list-panel {
-  display: none;
-}
-
-.products-list-panel.visible {
-  display: block;
-}
-
-.list-panel {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
-}
-
-.list-panel-header {
-  padding: 18px 20px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.list-panel-title {
-  font-family: 'Fraunces', serif;
-  font-size: 19px;
-  font-weight: 600;
-}
-
-.list-panel-subtitle {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.search-wrap {
-  min-width: 300px;
-  position: relative;
-}
-
-.search-wrap input {
-  width: 100%;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px 10px 36px;
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: var(--ink);
-  background: #fff;
-}
-
-.search-wrap input:focus {
-  outline: none;
-  border-color: var(--copper);
-}
-
-.search-icon {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: 13px;
-  color: var(--muted);
-  pointer-events: none;
-}
-
-.table-scroll {
-  width: 100%;
-  overflow-x: auto;
+button,input,textarea,select{
+  font:inherit;
 }
 
-.products-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 1080px;
+button{
+  cursor:pointer;
 }
 
-.products-table th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  font-weight: 700;
-  background: #FBF9F6;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+.hidden{
+  display:none !important;
 }
 
-.products-table td {
-  padding: 12px 16px;
-  border-bottom: 1px solid #EEE9E1;
-  vertical-align: middle;
-  font-size: 13px;
+.app{
+  min-height:100vh;
+  display:grid;
+  grid-template-columns:270px 1fr;
 }
 
-.products-table tr:last-child td {
-  border-bottom: none;
+.sidebar{
+  background:var(--sidebar);
+  color:#fff;
+  padding:28px 18px;
+  position:sticky;
+  top:0;
+  height:100vh;
 }
 
-.products-table tbody tr:hover {
-  background: #FCFAF7;
+.brand{
+  padding:0 8px 28px;
 }
 
-.table-product-photo {
-  width: 72px;
-  height: 54px;
-  border-radius: 8px;
-  object-fit: cover;
-  display: block;
-  background: #EFEAE2;
-  border: 1px solid var(--border);
+.brand h1{
+  font-family:Georgia,serif;
+  font-size:29px;
+  margin:0;
 }
 
-.table-photo-placeholder {
-  width: 72px;
-  height: 54px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #EFEAE2;
-  color: var(--muted);
-  font-size: 10px;
-  border: 1px solid var(--border);
+.brand p{
+  color:#c7b9aa;
+  margin:4px 0 0;
+  font-size:14px;
 }
 
-.table-product-name {
-  font-weight: 700;
-  font-size: 14px;
+.nav{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
 }
 
-.table-product-description {
-  color: var(--muted);
-  margin-top: 4px;
-  max-width: 380px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.nav button{
+  border:0;
+  background:transparent;
+  color:#eee4d9;
+  border-radius:10px;
+  text-align:left;
+  padding:13px 14px;
+  font-weight:700;
+  font-size:15px;
 }
 
-.category-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: #F1ECE4;
-  color: #5B5348;
-  font-size: 11px;
-  font-weight: 600;
+.nav button:hover{
+  background:var(--sidebar-soft);
 }
 
-.table-price {
-  font-weight: 700;
-  white-space: nowrap;
+.nav button.active{
+  background:var(--accent);
+  color:#fff;
 }
 
-.price-old {
-  color: var(--muted);
-  text-decoration: line-through;
-  font-size: 11px;
-  font-weight: 500;
-  margin-bottom: 2px;
+.sidebar-footer{
+  position:absolute;
+  left:18px;
+  right:18px;
+  bottom:22px;
 }
 
-.price-promo {
-  color: var(--copper);
-  font-weight: 700;
+.logout-btn{
+  width:100%;
+  background:transparent;
+  border:1px solid #5e5145;
+  color:#ddd1c5;
+  padding:11px;
+  border-radius:9px;
 }
 
-.availability-badge,
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 27px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
+.main{
+  padding:42px 56px 70px;
+  min-width:0;
 }
 
-.availability-badge.in_stock,
-.status-badge.active {
-  background: var(--success-bg);
-  color: var(--success);
+.page{
+  display:none;
 }
 
-.availability-badge.made_to_order {
-  background: #EEE9DC;
-  color: #7A6434;
+.page.active{
+  display:block;
 }
 
-.availability-badge.out_of_stock,
-.availability-badge.unknown,
-.status-badge.inactive {
-  background: #EFECE7;
-  color: var(--muted);
+.page-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:20px;
+  margin-bottom:24px;
 }
 
-.availability-badge.clearance {
-  background: var(--danger-bg);
-  color: var(--danger);
+.page-title{
+  margin:0;
+  font-family:Georgia,serif;
+  font-size:39px;
+  line-height:1.1;
 }
 
-.field-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+.page-subtitle{
+  color:var(--muted);
+  margin:8px 0 0;
+  font-size:16px;
 }
 
-.field select {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1.5px solid var(--border);
-  border-radius: 7px;
-  font-size: 14px;
-  font-family: 'Inter', sans-serif;
-  color: var(--ink);
-  background: #fff;
+.actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
 }
 
-.field select:focus {
-  outline: none;
-  border-color: var(--copper);
+.btn{
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--text);
+  border-radius:10px;
+  padding:11px 15px;
+  font-weight:700;
 }
 
-.product-active-box {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  background: #FAF8F4;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.btn:hover{
+  background:#faf7f3;
 }
 
-.product-active-box input {
-  width: auto;
+.btn.primary{
+  background:var(--accent);
+  color:#fff;
+  border-color:var(--accent);
 }
 
-.table-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
+.btn.primary:hover{
+  background:var(--accent-dark);
 }
 
-.action-btn {
-  border: 1px solid var(--border);
-  background: #fff;
-  color: var(--ink);
-  padding: 7px 10px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+.btn.danger{
+  color:#fff;
+  border-color:var(--red);
+  background:var(--red);
 }
 
-.action-btn:hover {
-  border-color: var(--copper);
+.btn.small{
+  padding:8px 10px;
+  font-size:13px;
 }
 
-.action-btn.delete {
-  color: var(--danger);
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:20px;
 }
 
-.action-btn.delete:hover {
-  background: var(--danger-bg);
-  border-color: #E6C1B1;
+.card + .card{
+  margin-top:16px;
 }
 
-.list-empty {
-  text-align: center;
-  padding: 48px 20px;
-  color: var(--muted);
-  font-size: 13px;
+.grid{
+  display:grid;
+  gap:16px;
 }
 
-.list-empty-title {
-  color: var(--ink);
-  font-family: 'Fraunces', serif;
-  font-size: 18px;
-  margin-bottom: 6px;
+.grid-2{
+  grid-template-columns:repeat(2,minmax(0,1fr));
 }
 
-.add-product-intro {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 28px;
-  text-align: center;
+.grid-3{
+  grid-template-columns:repeat(3,minmax(0,1fr));
 }
 
-.add-product-intro-icon {
-  font-size: 42px;
-  margin-bottom: 12px;
+.stat{
+  padding:20px;
 }
 
-.add-product-intro-title {
-  font-family: 'Fraunces', serif;
-  font-size: 22px;
-  font-weight: 600;
+.stat-label{
+  color:var(--muted);
+  font-size:13px;
+  font-weight:700;
 }
 
-.add-product-intro-desc {
-  max-width: 560px;
-  margin: 8px auto 18px;
-  color: var(--muted);
-  line-height: 1.6;
-  font-size: 13px;
+.stat-value{
+  font-family:Georgia,serif;
+  font-size:34px;
+  margin-top:8px;
 }
 
-/* ============================================================
-   IMAGE UPLOAD
-   ============================================================ */
-
-.image-upload-zone {
-  width: 100%;
-  border: 1.5px dashed var(--border);
-  border-radius: 10px;
-  background: #FAF8F4;
-  padding: 18px;
-  text-align: center;
-  cursor: pointer;
-  transition: 0.15s;
-}
-
-.image-upload-zone:hover {
-  border-color: var(--copper);
-  background: #FCF8F4;
-}
-
-.image-upload-icon {
-  font-size: 30px;
-  margin-bottom: 7px;
-}
-
-.image-upload-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.image-upload-hint {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 5px;
-  line-height: 1.5;
-}
-
-.image-file-input {
-  display: none;
-}
-
-.product-image-preview-container {
-  margin-top: 14px;
-  display: none;
-}
-
-.product-image-preview-container.visible {
-  display: block;
-}
-
-.product-image-preview-box {
-  position: relative;
-  width: 100%;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: #F3F0EA;
-}
-
-.product-image-preview {
-  display: block;
-  width: 100%;
-  height: 280px;
-  object-fit: contain;
-}
-
-.image-preview-label {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  background: rgba(31, 27, 22, 0.82);
-  color: #fff;
-  font-size: 11px;
-  padding: 6px 9px;
-  border-radius: 6px;
-}
-
-.image-required {
-  color: var(--danger);
-}
-
-.current-image-note {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 8px;
-  line-height: 1.5;
-}
-
-/* ============================================================
-   EMPTY STATE
-   ============================================================ */
-
-.empty-state {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--muted);
-  border: 1.5px dashed var(--border);
-  border-radius: 12px;
-}
-
-.empty-title {
-  font-family: 'Fraunces', serif;
-  font-size: 18px;
-  color: var(--ink);
-  margin-bottom: 6px;
-}
-
-/* ============================================================
-   INSTRUCTIONS
-   ============================================================ */
-
-.instructions-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 20px;
-}
-
-.instructions-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.instruction-summary {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 18px;
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.instruction-summary strong {
-  color: var(--success);
-}
-
-.instructions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.instruction-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 16px 18px;
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  transition: 0.15s;
-}
-
-.instruction-card:hover {
-  border-color: #C9C0B2;
-  box-shadow: 0 3px 12px rgba(0,0,0,.04);
-}
-
-.instruction-status {
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-}
-
-.instruction-status.active {
-  background: var(--success-bg);
-  color: var(--success);
-}
-
-.instruction-status.inactive {
-  background: #EFECE7;
-  color: var(--muted);
-}
-
-.instruction-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.instruction-title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.45;
-}
-
-.instruction-preview {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
-  margin-top: 5px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.instruction-meta {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #A49B8D;
-}
-
-.instruction-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  justify-content: flex-end;
-}
-
-.instruction-action {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 7px 8px;
-  border-radius: 6px;
-  color: var(--muted);
-}
-
-.instruction-action:hover {
-  background: #F3EFE8;
-  color: var(--ink);
-}
-
-.instruction-action.delete:hover {
-  color: var(--danger);
-}
-
-/* ============================================================
-   CHAT
-   ============================================================ */
-
-.chat-shell {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  height: 560px;
-  max-width: 560px;
-}
-
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:6px 10px;
+  border-radius:999px;
+  font-size:13px;
+  font-weight:700;
+  background:#eef4ef;
+  color:var(--green);
 }
 
-.chat-empty {
-  color: var(--muted);
-  font-size: 13px;
-  text-align: center;
-  margin-top: 40px;
-  line-height: 1.6;
+.status-pill.off{
+  background:#f8ecea;
+  color:var(--red);
 }
 
-.chat-bubble {
-  max-width: 82%;
-  padding: 10px 14px;
-  border-radius: 14px;
-  font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+.toolbar{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  margin-bottom:16px;
 }
 
-.chat-bubble.user {
-  align-self: flex-end;
-  background: var(--ink);
-  color: #fff;
-  border-bottom-right-radius: 4px;
+.search{
+  flex:1;
+  min-width:230px;
+  max-width:440px;
 }
 
-.chat-bubble.bot {
-  align-self: flex-start;
-  background: #EFEAE0;
-  color: var(--ink);
-  border-bottom-left-radius: 4px;
+input,
+textarea,
+select{
+  width:100%;
+  border:1px solid #dcd2c7;
+  border-radius:9px;
+  padding:11px 12px;
+  background:#fff;
+  color:var(--text);
 }
 
-.chat-bubble.error {
-  align-self: flex-start;
-  background: #F5DED2;
-  color: var(--danger);
+textarea{
+  min-height:110px;
+  resize:vertical;
 }
 
-.chat-bubble.typing {
-  align-self: flex-start;
-  background: #EFEAE0;
-  color: var(--muted);
-  font-style: italic;
+label{
+  display:block;
+  font-weight:700;
+  font-size:13px;
+  margin-bottom:7px;
 }
 
-.chat-input-row {
-  display: flex;
-  gap: 10px;
-  padding: 14px;
-  border-top: 1px solid var(--border);
+.field{
+  margin-bottom:14px;
 }
 
-.chat-input-row input {
-  flex: 1;
-  padding: 10px 14px;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
-  font-size: 14px;
-  font-family: 'Inter', sans-serif;
+.help{
+  color:var(--muted);
+  font-size:12px;
+  margin-top:5px;
+  line-height:1.45;
 }
 
-.chat-input-row input:focus {
-  outline: none;
-  border-color: var(--copper);
+.table-wrap{
+  overflow-x:auto;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#fff;
 }
 
-
-.chat-tools {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  background: #FBF9F6;
-  border-radius: 12px 12px 0 0;
-}
-
-.chat-mode-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.chat-mode-wrap select {
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 7px 9px;
-  background: #fff;
-  color: var(--ink);
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-}
-
-.chat-tools-note {
-  font-size: 11px;
-  color: var(--muted);
-  text-align: right;
-}
-
-.chat-image-preview-area {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border);
-  background: #FBF9F6;
-}
-
-.chat-image-preview-area.visible {
-  display: flex;
-}
-
-.chat-image-thumb {
-  width: 66px;
-  height: 54px;
-  border-radius: 8px;
-  object-fit: cover;
-  border: 1px solid var(--border);
-  background: #EFEAE2;
-}
-
-.chat-image-info {
-  min-width: 0;
-  flex: 1;
+table{
+  width:100%;
+  border-collapse:collapse;
+  min-width:760px;
 }
 
-.chat-image-name {
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+th,
+td{
+  padding:13px 14px;
+  border-bottom:1px solid #eee6dd;
+  text-align:left;
+  vertical-align:middle;
 }
 
-.chat-image-hint {
-  color: var(--muted);
-  font-size: 11px;
-  margin-top: 3px;
+th{
+  background:#faf7f3;
+  font-size:12px;
+  text-transform:uppercase;
+  color:#6f655b;
+  letter-spacing:.04em;
 }
 
-.chat-remove-image {
-  border: none;
-  background: transparent;
-  color: var(--danger);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+tr:last-child td{
+  border-bottom:0;
 }
 
-.chat-image-input {
-  display: none;
+.product-thumb{
+  width:76px;
+  height:58px;
+  border-radius:9px;
+  object-fit:cover;
+  border:1px solid var(--line);
+  background:#f3eee8;
 }
 
-.chat-image-button {
-  flex: 0 0 auto;
-  padding: 10px 12px;
+.empty{
+  border:1px dashed #dfd4c8;
+  border-radius:14px;
+  padding:55px 20px;
+  text-align:center;
+  color:var(--muted);
 }
 
-.chat-text-input {
-  min-width: 0;
+.empty strong{
+  display:block;
+  color:var(--text);
+  font-family:Georgia,serif;
+  font-size:22px;
+  margin-bottom:8px;
 }
 
-.chat-bubble-image {
-  width: 220px;
-  max-width: 100%;
-  border-radius: 10px;
-  display: block;
-  margin-bottom: 7px;
+.instruction-card{
+  display:flex;
+  gap:16px;
+  justify-content:space-between;
+  align-items:flex-start;
 }
 
-.chat-image-caption {
-  white-space: pre-wrap;
+.instruction-card.inactive{
+  opacity:.55;
 }
 
-/* ============================================================
-   MODAL
-   ============================================================ */
-
-.modal-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  background: rgba(31,27,22,.5);
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 20px;
+.instruction-title{
+  font-weight:800;
+  margin-bottom:8px;
 }
 
-.modal-overlay.active {
-  display: flex;
+.instruction-content{
+  white-space:pre-wrap;
+  color:#51483f;
+  line-height:1.55;
 }
 
-.modal {
-  background: var(--paper-raised);
-  border-radius: 12px;
-  padding: 32px;
-  width: 100%;
-  max-width: 500px;
-  max-height: 90vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 70px rgba(31, 27, 22, 0.22);
+.instruction-actions{
+  flex:0 0 auto;
+  display:flex;
+  gap:7px;
 }
 
-.modal.large {
-  max-width: 680px;
+.setting-section{
+  margin-bottom:18px;
 }
 
-.modal-title {
-  font-family: 'Fraunces', serif;
-  font-size: 21px;
-  font-weight: 600;
-  margin-bottom: 20px;
+.setting-title{
+  font-family:Georgia,serif;
+  font-size:23px;
+  margin:0 0 6px;
 }
 
-.modal-desc {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--muted);
-  margin-top: -10px;
-  margin-bottom: 20px;
+.setting-sub{
+  color:var(--muted);
+  margin:0 0 15px;
+  font-size:14px;
 }
 
-.field {
-  margin-bottom: 16px;
+.setting-option{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  padding:13px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  margin-bottom:8px;
 }
 
-.field label {
-  display: block;
-  font-size: 13px;
-  font-weight: 500;
-  color: #4A4438;
-  margin-bottom: 6px;
+.setting-option input[type="radio"],
+.setting-option input[type="checkbox"]{
+  width:auto;
+  margin-top:3px;
 }
 
-.field input,
-.field textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1.5px solid var(--border);
-  border-radius: 7px;
-  font-size: 14px;
-  font-family: 'Inter', sans-serif;
-  color: var(--ink);
+.setting-option strong{
+  display:block;
+  margin-bottom:3px;
 }
 
-.field input:focus,
-.field textarea:focus {
-  outline: none;
-  border-color: var(--copper);
+.setting-option span{
+  color:var(--muted);
+  font-size:13px;
 }
 
-.field textarea {
-  resize: vertical;
-  min-height: 90px;
+.switch-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
 }
 
-.modal-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 24px;
+.switch{
+  position:relative;
+  width:46px;
+  height:26px;
+  flex:0 0 auto;
 }
 
-.modal-actions .btn {
-  flex: 1;
+.switch input{
+  opacity:0;
+  width:0;
+  height:0;
 }
 
-/* ============================================================
-   TOAST
-   ============================================================ */
-
-.toast {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 300;
-  background: var(--ink);
-  color: #fff;
-  border-radius: 9px;
-  padding: 12px 16px;
-  font-size: 13px;
-  box-shadow: 0 12px 36px rgba(0,0,0,.18);
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(8px);
-  transition: .2s;
-  max-width: 360px;
+.slider{
+  position:absolute;
+  inset:0;
+  background:#ccc;
+  border-radius:999px;
+  transition:.2s;
 }
 
-.toast.visible {
-  opacity: 1;
-  transform: translateY(0);
+.slider:before{
+  content:"";
+  position:absolute;
+  width:20px;
+  height:20px;
+  left:3px;
+  top:3px;
+  background:#fff;
+  border-radius:50%;
+  transition:.2s;
+  box-shadow:0 1px 5px rgba(0,0,0,.2);
 }
-
 
-/* ============================================================
-   PERSONNALISATION / SIMULATION
-   ============================================================ */
-
-.customization-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
+.switch input:checked + .slider{
+  background:#1686bd;
 }
 
-.custom-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 22px;
-  box-shadow: var(--shadow);
+.switch input:checked + .slider:before{
+  transform:translateX(20px);
 }
 
-.custom-card-title {
-  font-family: 'Fraunces', serif;
-  font-size: 19px;
-  font-weight: 600;
-  margin-bottom: 5px;
+.week-row{
+  display:grid;
+  grid-template-columns:110px 70px 1fr 1fr;
+  gap:10px;
+  align-items:center;
+  margin-bottom:9px;
 }
 
-.custom-card-desc {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
-  margin-bottom: 18px;
+.week-row input[type="checkbox"]{
+  width:auto;
 }
 
-.custom-product-preview {
-  display: none;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: #F3F0EA;
-  margin-top: 10px;
+.preview{
+  width:100%;
+  max-height:300px;
+  object-fit:contain;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:#f4efe9;
 }
 
-.custom-product-preview.visible {
-  display: block;
+.chat-box{
+  height:400px;
+  overflow-y:auto;
+  background:#f5efe8;
+  border:1px solid var(--line);
+  border-radius:13px;
+  padding:15px;
 }
 
-.custom-product-preview img {
-  width: 100%;
-  max-height: 280px;
-  object-fit: contain;
-  display: block;
+.msg{
+  max-width:78%;
+  padding:11px 13px;
+  border-radius:14px;
+  margin:8px 0;
+  white-space:pre-wrap;
+  line-height:1.45;
 }
 
-.custom-capabilities {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+.msg.user{
+  margin-left:auto;
+  background:#1e5c46;
+  color:#fff;
 }
 
-.capability-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 27px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  background: #F0ECE5;
-  color: var(--muted);
+.msg.bot{
+  margin-right:auto;
+  background:#fff;
+  border:1px solid var(--line);
 }
 
-.capability-chip.yes {
-  background: var(--success-bg);
-  color: var(--success);
+.chat-controls{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  margin-top:12px;
 }
 
-.custom-upload {
-  display: block;
-  padding: 14px;
-  border: 1.5px dashed var(--border);
-  border-radius: 9px;
-  text-align: center;
-  cursor: pointer;
-  background: #FAF8F4;
-  font-size: 13px;
-  color: var(--muted);
+.modal-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(23,18,14,.58);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:22px;
+  z-index:100;
 }
 
-.custom-upload:hover {
-  border-color: var(--copper);
-  color: var(--ink);
+.modal-backdrop.open{
+  display:flex;
 }
 
-.custom-result-empty {
-  min-height: 370px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-  color: var(--muted);
-  padding: 30px;
+.modal{
+  width:100%;
+  max-width:760px;
+  max-height:92vh;
+  overflow-y:auto;
+  background:#fff;
+  border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
 }
 
-.custom-result-empty-icon {
-  font-size: 46px;
-  margin-bottom: 12px;
+.modal-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  padding:20px 22px;
+  border-bottom:1px solid var(--line);
 }
 
-.custom-result {
-  display: none;
+.modal-header h3{
+  margin:0;
+  font-family:Georgia,serif;
+  font-size:25px;
 }
 
-.custom-result.visible {
-  display: block;
+.modal-body{
+  padding:22px;
 }
 
-.comparison-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+.modal-footer{
+  padding:16px 22px 22px;
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
 }
 
-.comparison-item {
-  min-width: 0;
+.close{
+  border:0;
+  background:transparent;
+  font-size:26px;
+  color:#756d63;
 }
 
-.comparison-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  font-weight: 700;
-  color: var(--muted);
-  margin-bottom: 7px;
+.checkbox-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
 }
 
-.comparison-image {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: contain;
-  background: #F1EDE6;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  display: block;
+.checkbox-line{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:9px;
 }
 
-.custom-analysis {
-  margin-top: 14px;
-  padding: 13px 14px;
-  background: #F7F3EC;
-  border-radius: 9px;
-  color: #5D554A;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+.checkbox-line input{
+  width:auto;
 }
 
-.custom-warning {
-  margin-top: 12px;
-  border: 1px solid #E8CC9E;
-  background: #FFF8E9;
-  color: #765A2B;
-  padding: 12px 14px;
-  border-radius: 9px;
-  font-size: 12px;
-  line-height: 1.55;
+.notice{
+  border-radius:10px;
+  padding:12px 14px;
+  font-size:13px;
+  line-height:1.45;
 }
 
-.custom-history {
-  margin-top: 20px;
+.notice.info{
+  background:#edf5f8;
+  color:#315d6e;
 }
 
-.custom-history-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 12px;
+.notice.warning{
+  background:#fbf2df;
+  color:#7f5d12;
 }
 
-.custom-history-card {
-  background: var(--paper-raised);
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  overflow: hidden;
+.notice.success{
+  background:#edf6ef;
+  color:#2d7147;
 }
 
-.custom-history-images {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  height: 130px;
-  background: #EEEAE3;
+.custom-result{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+  margin-top:16px;
 }
 
-.custom-history-images img {
-  width: 100%;
-  height: 130px;
-  object-fit: cover;
-  display: block;
+.custom-result figure{
+  margin:0;
 }
 
-.custom-history-body {
-  padding: 14px;
+.custom-result img{
+  width:100%;
+  border-radius:12px;
+  border:1px solid var(--line);
 }
 
-.custom-history-name {
-  font-weight: 700;
-  font-size: 14px;
+.custom-result figcaption{
+  margin-top:7px;
+  font-weight:700;
+  font-size:13px;
 }
 
-.custom-history-request {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
+@media(max-width:1000px){
+  .app{
+    grid-template-columns:1fr;
+  }
 
-.custom-history-actions {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  margin-top: 11px;
-}
+  .sidebar{
+    position:static;
+    height:auto;
+  }
 
-.custom-history-actions select {
-  flex: 1;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: #fff;
-  font-size: 11px;
-}
+  .sidebar-footer{
+    position:static;
+    margin-top:20px;
+  }
 
-.custom-checkboxes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
-}
+  .nav{
+    flex-direction:row;
+    flex-wrap:wrap;
+  }
 
-.custom-checkbox {
-  display: flex !important;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  cursor: pointer;
-  margin: 0 !important;
-  background: #FAF8F4;
-}
+  .main{
+    padding:28px 20px 60px;
+  }
 
-.custom-checkbox input {
-  width: auto !important;
-  margin: 0;
-}
+  .grid-2,
+  .grid-3{
+    grid-template-columns:1fr;
+  }
 
-@media (max-width: 900px) {
-  .customization-grid,
-  .comparison-grid,
-  .custom-checkboxes {
-    grid-template-columns: 1fr;
+  .custom-result{
+    grid-template-columns:1fr;
   }
 }
 
-/* ============================================================
-   RESPONSIVE
-   ============================================================ */
-
-@media (max-width: 900px) {
-  body {
-    display: block;
+@media(max-width:650px){
+  .page-header{
+    flex-direction:column;
   }
 
-  .sidebar {
-    width: 100%;
-    min-height: auto;
-    position: static;
-    padding: 18px;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 5px;
+  .actions{
+    justify-content:flex-start;
   }
 
-  .wordmark,
-  .wordmark-sub {
-    width: 100%;
+  .week-row{
+    grid-template-columns:1fr 55px;
   }
 
-  .wordmark-sub {
-    margin-bottom: 10px;
+  .week-row .time-input{
+    grid-column:span 1;
   }
 
-  .sidebar-footer {
-    margin-top: 0;
-  }
-
-  .main {
-    padding: 25px 18px;
-  }
-
-  .stats-row,
-  .home-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .instructions-header {
-    flex-direction: column;
-  }
-
-  .instructions-buttons {
-    justify-content: flex-start;
-  }
-
-  .instruction-card {
-    flex-wrap: wrap;
-  }
-
-  .instruction-actions {
-    width: 100%;
-    justify-content: flex-start;
-    padding-left: 48px;
-  }
-
-  .search-wrap {
-    min-width: 100%;
-  }
-
-  .field-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .products-toolbar-left,
-  .products-toolbar-right {
-    width: 100%;
+  .checkbox-grid{
+    grid-template-columns:1fr;
   }
 }
 </style>
 </head>
 
 <body>
+<div class="app">
 
-<nav class="sidebar">
-  <div class="wordmark">Mondeco</div>
-  <div class="wordmark-sub">Bot WhatsApp</div>
-
-  <div class="nav-item active" data-view="home">🏠 Accueil</div>
-  <div class="nav-item" data-view="products">🪑 Produits</div>
-  <div class="nav-item" data-view="instructions">📋 Instructions IA</div>
-  <div class="nav-item" data-view="customization">🎨 Personnalisation</div>
-  <div class="nav-item" data-view="test">💬 Discussion de test</div>
-
-  <div class="sidebar-footer">
-    <div class="logout-btn" id="logoutBtn">Se déconnecter</div>
-  </div>
-</nav>
-
-<main class="main">
-<div class="content-width">
-
-<!-- =========================================================
-     ACCUEIL
-     ========================================================= -->
-
-<section class="view active" id="view-home">
-  <div class="page-header">
-    <div class="page-title">Bonjour 👋</div>
-    <div class="page-desc">Voici l'état de votre assistant WhatsApp Mondeco.</div>
-  </div>
-
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-value" id="statProducts">—</div>
-      <div class="stat-label">Produits au catalogue</div>
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>Mondeco</h1>
+      <p>Bot WhatsApp</p>
     </div>
 
-    <div class="stat-card">
-      <div class="stat-value" id="statInstructions">—</div>
-      <div class="stat-label">Instructions actives</div>
-    </div>
+    <nav class="nav">
+      <button class="active" data-page="home">🏠 Accueil</button>
+      <button data-page="products">🪑 Produits</button>
+      <button data-page="instructions">📋 Instructions IA</button>
+      <button data-page="customization">🎨 Personnalisation</button>
+      <button data-page="test">💬 Discussion de test</button>
+      <button data-page="settings">⚙️ Paramètres</button>
+    </nav>
 
-    <div class="stat-card">
-      <div class="stat-value">🟢</div>
-      <div class="stat-label">Bot en ligne</div>
-    </div>
-  </div>
-
-  <div class="home-actions">
-    <div class="home-action-card" data-goto="products" data-product-action="add">
-      <div class="home-action-title">Ajouter un produit</div>
-      <div class="home-action-desc">Ajoutez un produit avec sa photo, son prix et ses informations.</div>
-      <div class="home-action-link">Ajouter un produit →</div>
-    </div>
-
-    <div class="home-action-card" data-goto="products" data-product-action="list">
-      <div class="home-action-title">Liste des produits</div>
-      <div class="home-action-desc">Consultez tous les produits déjà enregistrés, puis modifiez ou supprimez ceux de votre choix.</div>
-      <div class="home-action-link">Voir la liste →</div>
-    </div>
-
-    <div class="home-action-card" data-goto="customization">
-      <div class="home-action-title">Personnaliser un salon</div>
-      <div class="home-action-desc">Simulez une nouvelle couleur, un tissu, des dimensions ou un changement de coin à partir d'une photo.</div>
-      <div class="home-action-link">Créer une simulation →</div>
-    </div>
-
-    <div class="home-action-card" data-goto="instructions">
-      <div class="home-action-title">Gérer les instructions</div>
-      <div class="home-action-desc">Ajoutez, modifiez ou désactivez les règles utilisées par l'IA.</div>
-      <div class="home-action-link">Ouvrir Instructions →</div>
-    </div>
-  </div>
-</section>
-
-<!-- =========================================================
-     PRODUITS
-     ========================================================= -->
-
-<section class="view" id="view-products">
-  <div class="page-header">
-    <div class="page-title">Catalogue produits</div>
-    <div class="page-desc">
-      Ajoutez vos produits avec une photo obligatoire. La liste permet ensuite de modifier ou supprimer chaque produit.
-    </div>
-  </div>
-
-  <div class="products-toolbar">
-    <div class="products-toolbar-left">
-      <button class="btn btn-primary" id="addProductBtn">
-        + Ajouter un produit
-      </button>
-
-      <button class="btn btn-ghost" id="showProductsListBtn">
-        📋 Liste des produits
-        <span class="list-counter" id="productsListCount">0</span>
+    <div class="sidebar-footer">
+      <button class="logout-btn" id="logoutBtn">
+        Se déconnecter
       </button>
     </div>
+  </aside>
 
-    <div class="products-toolbar-right">
-      <button class="btn btn-ghost" id="refreshProductsBtn">
-        ↻ Actualiser
-      </button>
-    </div>
-  </div>
+  <main class="main">
 
-  <div class="add-product-intro" id="productsIntro">
-    <div class="add-product-intro-icon">🪑</div>
-    <div class="add-product-intro-title">Gestion du catalogue MONDECO</div>
-    <div class="add-product-intro-desc">
-      Utilisez « Ajouter un produit » pour créer une nouvelle fiche. Utilisez « Liste des produits » pour retrouver les produits déjà enregistrés, rechercher un modèle, le modifier ou le supprimer.
-    </div>
-    <button class="btn btn-primary" id="introAddProductBtn">+ Ajouter un produit</button>
-  </div>
+    <!-- ================================================== -->
+    <!-- ACCUEIL -->
+    <!-- ================================================== -->
 
-  <div class="products-list-panel" id="productsListPanel">
-    <div class="list-panel">
-      <div class="list-panel-header">
+    <section id="page-home" class="page active">
+      <div class="page-header">
         <div>
-          <div class="list-panel-title">Produits enregistrés</div>
-          <div class="list-panel-subtitle" id="productsResultLabel">0 produit</div>
+          <h2 class="page-title">Accueil</h2>
+          <p class="page-subtitle">
+            Vue d'ensemble de votre agent WhatsApp MONDECO.
+          </p>
         </div>
 
-        <div class="search-wrap">
-          <span class="search-icon">🔎</span>
-          <input
-            type="search"
-            id="productSearchInput"
-            placeholder="Rechercher un produit ou une catégorie..."
-            autocomplete="off"
-          >
+        <div>
+          <span id="homeAiBadge" class="status-pill">
+            IA activée
+          </span>
         </div>
       </div>
 
-      <div class="table-scroll" id="productsTableWrap">
-        <table class="products-table">
-          <thead>
-            <tr>
-              <th>Photo</th>
-              <th>Produit</th>
-              <th>Catégorie</th>
-              <th>Prix</th>
-              <th>Disponibilité</th>
-              <th>Statut</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="productsTableBody"></tbody>
-        </table>
+      <div class="grid grid-3">
+        <div class="card stat">
+          <div class="stat-label">PRODUITS</div>
+          <div class="stat-value" id="statProducts">0</div>
+        </div>
+
+        <div class="card stat">
+          <div class="stat-label">INSTRUCTIONS ACTIVES</div>
+          <div class="stat-value" id="statInstructions">0</div>
+        </div>
+
+        <div class="card stat">
+          <div class="stat-label">SIMULATIONS</div>
+          <div class="stat-value" id="statCustomizations">0</div>
+        </div>
       </div>
 
-      <div class="list-empty" id="productsListEmpty" style="display:none;">
-        <div class="list-empty-title">Aucun produit trouvé</div>
-        <div id="productsListEmptyText">Ajoutez votre premier produit au catalogue.</div>
-      </div>
-    </div>
-  </div>
-</section>
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin-top:0">État du bot</h3>
 
-<!-- =========================================================
-     INSTRUCTIONS
-     ========================================================= -->
-
-<section class="view" id="view-instructions">
-  <div class="page-header instructions-header">
-    <div>
-      <div class="page-title">Instructions du bot</div>
-      <div class="page-desc">
-        Chaque instruction est indépendante. Seules les instructions actives sont envoyées à l'IA.
-      </div>
-    </div>
-
-    <div class="instructions-buttons">
-      <button class="btn btn-ghost" id="importLegacyBtn">Importer ancien texte</button>
-      <button class="btn btn-ghost" id="importInstructionsBtn">Importer plusieurs</button>
-      <button class="btn btn-primary" id="addInstructionBtn">+ Ajouter une instruction</button>
-    </div>
-  </div>
-
-  <div class="instruction-summary">
-    <strong id="activeInstructionCount">0 instruction active</strong>
-    <span>•</span>
-    <span id="totalInstructionCount">0 au total</span>
-  </div>
-
-  <div id="instructionsList" class="instructions-list"></div>
-
-  <div id="instructionsEmpty" class="empty-state" style="display:none;">
-    <div class="empty-title">Aucune instruction séparée</div>
-    <div>Ajoutez votre première instruction ou importez l'ancien texte.</div>
-  </div>
-</section>
-
-
-<!-- =========================================================
-     PERSONNALISATION
-     ========================================================= -->
-
-<section class="view" id="view-customization">
-  <div class="page-header">
-    <div class="page-title">Personnalisation client</div>
-    <div class="page-desc">
-      Créez une simulation visuelle à partir d'un produit MONDECO ou d'une image libre. La simulation est indicative : prix, dimensions exactes et faisabilité restent à valider par un commercial.
-    </div>
-  </div>
-
-  <div class="customization-grid">
-    <div class="custom-card">
-      <div class="custom-card-title">Nouvelle simulation</div>
-      <div class="custom-card-desc">
-        Sélectionnez un produit du catalogue. Vous pouvez aussi ajouter une autre photo de référence. L’image est automatiquement préparée pour la simulation IA.
-      </div>
-
-      <form id="customizationForm" enctype="multipart/form-data">
-        <div class="field">
-          <label for="customProductId">Produit MONDECO</label>
-          <select id="customProductId">
-            <option value="">— Image libre / aucun produit sélectionné —</option>
-          </select>
-
-          <div class="custom-product-preview" id="customProductPreview">
-            <img id="customProductPreviewImage" alt="Produit sélectionné">
+        <div class="grid grid-2">
+          <div>
+            <div class="stat-label">Audience</div>
+            <div id="homeAudience" style="margin-top:5px;font-weight:700">
+              Tout le monde
+            </div>
           </div>
 
-          <div class="custom-capabilities" id="customCapabilities"></div>
+          <div>
+            <div class="stat-label">Disponibilité</div>
+            <div id="homeSchedule" style="margin-top:5px;font-weight:700">
+              Toujours disponible
+            </div>
+          </div>
+
+          <div>
+            <div class="stat-label">Relance</div>
+            <div id="homeFollowUp" style="margin-top:5px;font-weight:700">
+              Désactivée
+            </div>
+          </div>
+
+          <div>
+            <div class="stat-label">Images clients</div>
+            <div id="homeImages" style="margin-top:5px;font-weight:700">
+              Commercial
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="notice success" id="storageNotice">
+          Vérification du stockage...
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- PRODUITS -->
+    <!-- ================================================== -->
+
+    <section id="page-products" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Produits</h2>
+          <p class="page-subtitle">
+            Gérez le catalogue utilisé par votre agent.
+          </p>
         </div>
 
-        <div class="field">
-          <label>Autre image de référence (facultatif)</label>
-          <label class="custom-upload" for="customReferenceImage">
-            🖼 Choisir une image différente de celle du catalogue
-          </label>
-          <input
-            type="file"
-            id="customReferenceImage"
-            accept="image/jpeg,image/png,image/webp"
-            style="display:none;"
-          >
-          <div class="current-image-note" id="customReferenceName"></div>
+        <div class="actions">
+          <button class="btn" id="refreshProductsBtn">↻ Actualiser</button>
+          <button class="btn primary" id="addProductBtn">
+            + Ajouter un produit
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <input
+          id="productSearch"
+          class="search"
+          type="search"
+          placeholder="Rechercher un produit ou une catégorie..."
+        >
+
+        <strong id="productCountLabel">0 produit</strong>
+      </div>
+
+      <div id="productTableContainer"></div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- INSTRUCTIONS -->
+    <!-- ================================================== -->
+
+    <section id="page-instructions" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Instructions du bot</h2>
+          <p class="page-subtitle">
+            Chaque instruction est indépendante. Seules les instructions actives sont envoyées à l'IA.
+          </p>
         </div>
 
-        <div class="field-grid">
+        <div class="actions">
+          <button class="btn" id="importLegacyBtn">
+            Importer ancien texte
+          </button>
+
+          <button class="btn" id="importManyBtn">
+            Importer plusieurs
+          </button>
+
+          <button class="btn primary" id="addInstructionBtn">
+            + Ajouter une instruction
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong id="instructionCountLabel">0 instruction active</strong>
+      </div>
+
+      <div id="instructionList" style="margin-top:16px"></div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- PERSONNALISATION -->
+    <!-- ================================================== -->
+
+    <section id="page-customization" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Personnalisation client</h2>
+          <p class="page-subtitle">
+            Générez une simulation visuelle à partir d'un produit ou d'une photo.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <form id="customizationForm">
+            <div class="field">
+              <label>Produit MONDECO</label>
+              <select id="customProductId" name="productId">
+                <option value="">Image libre / autre</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Image de référence (optionnelle si produit avec photo)</label>
+              <input
+                id="customReferenceImage"
+                name="referenceImage"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+              >
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label>Couleur</label>
+                <input id="customColor" name="color" placeholder="Ex. beige clair">
+              </div>
+
+              <div class="field">
+                <label>Tissu / matière</label>
+                <input id="customFabric" name="fabric" placeholder="Ex. bouclé">
+              </div>
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label>Dimensions souhaitées</label>
+                <input id="customDimensions" name="dimensions" placeholder="Ex. 300 × 240 cm">
+              </div>
+
+              <div class="field">
+                <label>Coin / orientation</label>
+                <select id="customCorner" name="corner">
+                  <option value="">Ne pas modifier</option>
+                  <option value="Coin à gauche">Coin à gauche</option>
+                  <option value="Coin à droite">Coin à droite</option>
+                  <option value="Inverser l'orientation actuelle">Inverser l'orientation actuelle</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Autres modifications</label>
+              <textarea
+                id="customNotes"
+                name="notes"
+                placeholder="Ex. garder exactement les pieds et les coutures..."
+              ></textarea>
+            </div>
+
+            <div class="notice warning">
+              Simulation visuelle non contractuelle. Prix, dimensions exactes, structure, faisabilité et délai doivent être confirmés par un commercial MONDECO.
+            </div>
+
+            <button
+              class="btn primary"
+              id="generateCustomizationBtn"
+              type="submit"
+              style="margin-top:14px"
+            >
+              ✨ Générer la simulation
+            </button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Résultat</h3>
+          <div id="customizationResult" class="empty">
+            <strong>Aucune simulation</strong>
+            Choisissez un produit ou une image puis lancez une simulation.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="toolbar">
+          <h3 style="margin:0">Historique</h3>
+          <button class="btn small" id="refreshCustomizationsBtn">
+            ↻ Actualiser
+          </button>
+        </div>
+
+        <div id="customizationHistory"></div>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- TEST -->
+    <!-- ================================================== -->
+
+    <section id="page-test" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Discussion de test</h2>
+          <p class="page-subtitle">
+            Testez l'agent avant d'utiliser les réponses sur WhatsApp.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="chatBox" class="chat-box"></div>
+
+        <div class="grid grid-2" style="margin-top:14px">
           <div class="field">
-            <label for="customColor">Nouvelle couleur</label>
-            <input id="customColor" type="text" placeholder="Ex : beige clair, taupe, gris">
+            <label>Image optionnelle</label>
+            <input
+              id="testImage"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+            >
           </div>
 
           <div class="field">
-            <label for="customFabric">Nouveau tissu / matière</label>
-            <input id="customFabric" type="text" placeholder="Ex : bouclé, velours, lin, anti-tache">
-          </div>
-        </div>
-
-        <div class="field-grid">
-          <div class="field">
-            <label for="customDimensions">Dimensions souhaitées</label>
-            <input id="customDimensions" type="text" placeholder="Ex : 300 × 240 cm">
-          </div>
-
-          <div class="field">
-            <label for="customCorner">Coin / orientation</label>
-            <select id="customCorner">
-              <option value="">Ne pas modifier</option>
-              <option value="coin à gauche">Coin à gauche</option>
-              <option value="coin à droite">Coin à droite</option>
-              <option value="orientation inversée par rapport à la photo">Inverser l'orientation actuelle</option>
+            <label>Mode image</label>
+            <select id="testImageMode">
+              <option value="analysis">Analyse IA</option>
+              <option value="whatsapp">Simulation comportement WhatsApp</option>
             </select>
           </div>
         </div>
 
-        <div class="field">
-          <label for="customNotes">Autres modifications</label>
+        <div class="chat-controls">
           <textarea
-            id="customNotes"
-            placeholder="Ex : conserver exactement les pieds et les coutures, retirer le pouf, garder le même décor..."
+            id="testMessage"
+            rows="2"
+            placeholder="Écrivez un message..."
           ></textarea>
-        </div>
 
-        <div class="field-grid">
-          <div class="field">
-            <label for="customCustomerName">Nom client (facultatif)</label>
-            <input id="customCustomerName" type="text" placeholder="Nom du client">
-          </div>
-
-          <div class="field">
-            <label for="customCustomerPhone">Téléphone (facultatif)</label>
-            <input id="customCustomerPhone" type="text" placeholder="216...">
-          </div>
-        </div>
-
-        <button type="submit" class="btn btn-primary" id="generateCustomizationBtn" style="width:100%;">
-          ✨ Générer la simulation
-        </button>
-      </form>
-    </div>
-
-    <div class="custom-card">
-      <div class="custom-card-title">Résultat</div>
-      <div class="custom-card-desc">
-        Comparez la référence avec la simulation. Le visuel ne remplace jamais la validation technique MONDECO.
-      </div>
-
-      <div class="custom-result-empty" id="customResultEmpty">
-        <div class="custom-result-empty-icon">🎨</div>
-        <div>Aucune simulation générée.</div>
-      </div>
-
-      <div class="custom-result" id="customResult">
-        <div class="comparison-grid">
-          <div class="comparison-item">
-            <div class="comparison-label">Référence</div>
-            <img class="comparison-image" id="customResultSource" alt="Image de référence">
-          </div>
-
-          <div class="comparison-item">
-            <div class="comparison-label">Simulation IA</div>
-            <img class="comparison-image" id="customResultImage" alt="Simulation générée">
-          </div>
-        </div>
-
-        <div class="custom-analysis" id="customResultAnalysis"></div>
-
-        <div class="custom-warning" id="customResultWarning">
-          Simulation visuelle non contractuelle. Le prix, les dimensions exactes, la structure, la faisabilité de fabrication et le délai doivent être confirmés par un commercial MONDECO.
+          <button class="btn primary" id="sendTestBtn">
+            Envoyer
+          </button>
         </div>
       </div>
-    </div>
-  </div>
+    </section>
 
-  <div class="custom-history">
-    <div class="page-header" style="margin-bottom:14px;">
-      <div class="page-title" style="font-size:23px;">Historique des simulations</div>
-      <div class="page-desc">Retrouvez les demandes déjà générées et leur statut commercial.</div>
-    </div>
+    <!-- ================================================== -->
+    <!-- PARAMÈTRES -->
+    <!-- ================================================== -->
 
-    <div class="custom-history-grid" id="customHistoryGrid"></div>
+    <section id="page-settings" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Paramètres</h2>
+          <p class="page-subtitle">
+            Contrôlez quand et à qui votre agent WhatsApp répond.
+          </p>
+        </div>
 
-    <div class="empty-state" id="customHistoryEmpty" style="display:none;">
-      <div class="empty-title">Aucune simulation</div>
-      <div>Les simulations générées apparaîtront ici.</div>
-    </div>
-  </div>
-</section>
-
-<!-- =========================================================
-     TEST
-     ========================================================= -->
-
-<section class="view" id="view-test">
-  <div class="page-header">
-    <div class="page-title">Discussion de test</div>
-    <div class="page-desc">
-      Testez l'agent avec du texte ou une image. L'analyse visuelle est réservée à cette page interne ; les images reçues sur WhatsApp réel restent transférées au commercial.
-    </div>
-  </div>
-
-  <div class="chat-shell">
-    <div class="chat-tools">
-      <div class="chat-mode-wrap">
-        <span>Mode image :</span>
-        <select id="testImageMode">
-          <option value="analysis">Analyse IA</option>
-          <option value="whatsapp">Simulation WhatsApp</option>
-        </select>
+        <div class="actions">
+          <button class="btn primary" id="saveSettingsBtn">
+            Enregistrer les paramètres
+          </button>
+        </div>
       </div>
 
-      <div class="chat-tools-note">
-        Analyse IA = l'agent comprend l'image<br>
-        Simulation WhatsApp = commercial requis
-      </div>
-    </div>
+      <div class="grid grid-2">
 
-    <div class="chat-messages" id="chatMessages">
-      <div class="chat-empty">
-        Écrivez un message ou ajoutez une image.<br><br>
-        Exemple : « Quel meuble vois-tu sur cette image ? »
-      </div>
-    </div>
+        <div>
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">Intelligence artificielle</h3>
+                <p class="setting-sub">
+                  Désactivez instantanément les réponses automatiques sans arrêter le webhook.
+                </p>
+              </div>
 
-    <div class="chat-image-preview-area" id="chatImagePreviewArea">
-      <img class="chat-image-thumb" id="chatImagePreview" alt="Aperçu image de test">
-      <div class="chat-image-info">
-        <div class="chat-image-name" id="chatImageName">Image</div>
-        <div class="chat-image-hint">L'image sera optimisée automatiquement avant l'analyse.</div>
-      </div>
-      <button type="button" class="chat-remove-image" id="removeChatImageBtn">Retirer</button>
-    </div>
-
-    <form class="chat-input-row" id="chatForm">
-      <label for="chatImageInput" class="btn btn-ghost chat-image-button" title="Ajouter une image">
-        🖼 Image
-      </label>
-      <input
-        class="chat-image-input"
-        type="file"
-        id="chatImageInput"
-        accept="image/jpeg,image/png,image/webp"
-      >
-      <input
-        class="chat-text-input"
-        type="text"
-        id="chatInput"
-        placeholder="Écrivez comme un client..."
-        autocomplete="off"
-      >
-      <button type="submit" class="btn btn-primary" id="chatSendBtn">Envoyer</button>
-    </form>
-  </div>
-</section>
-
-</div>
-</main>
-
-<!-- =========================================================
-     MODAL PRODUIT
-     ========================================================= -->
-
-<div class="modal-overlay" id="productModalOverlay">
-  <div class="modal large">
-    <div class="modal-title" id="productModalTitle">Ajouter un produit</div>
-
-    <form id="productForm" enctype="multipart/form-data">
-      <input type="hidden" id="productId">
-      <input type="hidden" id="currentProductImage">
-
-      <div class="field">
-        <label for="productName">Nom du produit *</label>
-        <input
-          type="text"
-          id="productName"
-          required
-          placeholder="Ex : Salon Infinity"
-        >
-      </div>
-
-      <div class="field">
-        <label>
-          Photo du produit
-          <span class="image-required" id="productImageRequiredStar">*</span>
-        </label>
-
-        <label for="productImage" class="image-upload-zone">
-          <div class="image-upload-icon">🖼️</div>
-          <div class="image-upload-title">Choisir une photo</div>
-          <div class="image-upload-hint" id="imageUploadHint">
-            Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo
+              <label class="switch">
+                <input id="settingAiEnabled" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
-        </label>
 
-        <input
-          class="image-file-input"
-          type="file"
-          id="productImage"
-          name="image"
-          accept="image/jpeg,image/png,image/webp"
-        >
+          <div class="card setting-section">
+            <h3 class="setting-title">Audience</h3>
+            <p class="setting-sub">
+              Choisissez les conversations auxquelles l'IA peut répondre.
+            </p>
 
-        <div class="product-image-preview-container" id="productImagePreviewContainer">
-          <div class="product-image-preview-box">
-            <img
-              class="product-image-preview"
-              id="productImagePreview"
-              alt="Aperçu du produit"
-            >
-            <div class="image-preview-label" id="imagePreviewLabel">Nouvelle photo</div>
+            <label class="setting-option">
+              <input type="radio" name="audience" value="all">
+              <div>
+                <strong>Tout le monde</strong>
+                <span>L'IA répond à toutes les discussions autorisées.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="new">
+              <div>
+                <strong>Nouveaux clients uniquement</strong>
+                <span>L'IA répond uniquement au premier message d'un nouveau numéro.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="ads">
+              <div>
+                <strong>Clients venant des publicités Meta</strong>
+                <span>L'IA répond lorsque le webhook contient une référence Click-to-WhatsApp Ads.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="team">
+              <div>
+                <strong>Équipe MONDECO uniquement</strong>
+                <span>Mode test réservé aux numéros renseignés ci-dessous.</span>
+              </div>
+            </label>
+
+            <div class="field" style="margin-top:14px">
+              <label>Numéros équipe autorisés</label>
+              <textarea
+                id="settingTeamPhones"
+                placeholder="+216XXXXXXXX&#10;+216XXXXXXXX"
+              ></textarea>
+              <div class="help">
+                Un numéro par ligne. Utilisé uniquement si l'audience « Équipe MONDECO » est sélectionnée.
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <h3 class="setting-title">Images reçues sur WhatsApp</h3>
+            <p class="setting-sub">
+              Définissez la réaction de l'agent lorsqu'un client envoie une photo.
+            </p>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="commercial">
+              <div>
+                <strong>Transférer au commercial</strong>
+                <span>Aucune réponse IA automatique.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="analyze_only">
+              <div>
+                <strong>Analyser sans répondre</strong>
+                <span>L'IA analyse l'image en interne mais ne répond pas au client.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="analyze_reply">
+              <div>
+                <strong>Analyser et répondre automatiquement</strong>
+                <span>À utiliser seulement après validation de la fiabilité de la vision.</span>
+              </div>
+            </label>
+          </div>
+
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">Intervention commerciale</h3>
+                <p class="setting-sub">
+                  Suspendre temporairement l'IA lorsqu'un message humain est détecté via un événement de coexistence.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingPauseHuman" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="field" style="margin-top:14px">
+              <label>Durée de pause</label>
+              <select id="settingHumanPauseMinutes">
+                <option value="30">30 minutes</option>
+                <option value="60">1 heure</option>
+                <option value="120">2 heures</option>
+                <option value="240">4 heures</option>
+                <option value="480">8 heures</option>
+                <option value="1440">24 heures</option>
+              </select>
+            </div>
+
+            <div class="notice info">
+              Pour une détection automatique des réponses commerciales en coexistence, Meta doit également envoyer le champ webhook correspondant aux messages sortants de l'application WhatsApp Business.
+            </div>
           </div>
         </div>
 
-        <div class="current-image-note" id="currentImageNote" style="display:none;">
-          La photo actuelle sera conservée si vous ne choisissez pas une nouvelle image.
+        <div>
+          <div class="card setting-section">
+            <h3 class="setting-title">Calendrier</h3>
+            <p class="setting-sub">
+              Choisissez les heures durant lesquelles l'IA peut répondre.
+            </p>
+
+            <div class="field">
+              <label>Disponibilité</label>
+              <select id="settingScheduleMode">
+                <option value="always">Toujours disponible</option>
+                <option value="custom">Horaires personnalisés</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Fuseau horaire</label>
+              <input id="settingTimezone" value="Africa/Tunis">
+            </div>
+
+            <div id="weeklyScheduleBox">
+              <div id="weeklyRows"></div>
+
+              <div class="field" style="margin-top:14px">
+                <label>En dehors des horaires</label>
+                <select id="settingOutOfHours">
+                  <option value="none">Ne rien répondre</option>
+                  <option value="message">Envoyer un message d'absence</option>
+                  <option value="ai">Continuer avec l'IA</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>Message d'absence</label>
+                <textarea id="settingAbsenceMessage"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">À suivre</h3>
+                <p class="setting-sub">
+                  Relancer automatiquement un client qui ne répond plus.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingFollowUpEnabled" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div id="followUpBox" style="margin-top:14px">
+              <div class="grid grid-2">
+                <div class="field">
+                  <label>Délai</label>
+                  <select id="settingFollowUpDelay">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 heure</option>
+                    <option value="120">2 heures</option>
+                    <option value="240">4 heures</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label>Maximum</label>
+                  <select id="settingFollowUpMax">
+                    <option value="1">1 relance</option>
+                    <option value="2">2 relances</option>
+                    <option value="3">3 relances</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Message de relance</label>
+                <textarea id="settingFollowUpMessage"></textarea>
+              </div>
+
+              <div class="notice warning">
+                Pour rester dans une conversation client normale, gardez un délai de relance court. Les messages envoyés hors des fenêtres autorisées par WhatsApp peuvent nécessiter un modèle approuvé.
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <h3 class="setting-title">Résumé actuel</h3>
+            <div id="settingsSummary" class="notice info">
+              Chargement...
+            </div>
+          </div>
         </div>
+
       </div>
+    </section>
 
-      <div class="field">
-        <label for="productCategory">Catégorie *</label>
-        <input
-          type="text"
-          id="productCategory"
-          list="productCategoryOptions"
-          required
-          placeholder="Ex : Salon"
-        >
-        <datalist id="productCategoryOptions">
-          <option value="Salon">
-          <option value="Chambre adulte">
-          <option value="Chambre enfant">
-          <option value="Salle à manger">
-          <option value="Lit">
-          <option value="Bureau">
-          <option value="Meuble TV">
-          <option value="Pack mariage">
-          <option value="Meuble d'entrée">
-          <option value="Mobilier de jardin">
-          <option value="Matelas">
-        </datalist>
-      </div>
-
-      <div class="field-grid">
-        <div class="field">
-          <label for="productPrice">Prix normal (TND)</label>
-          <input type="text" id="productPrice" placeholder="Ex : 4190">
-        </div>
-
-        <div class="field">
-          <label for="productPromoPrice">Prix promotionnel (TND)</label>
-          <input type="text" id="productPromoPrice" placeholder="Ex : 3790">
-        </div>
-      </div>
-
-      <div class="field-grid">
-        <div class="field">
-          <label for="productAvailability">Disponibilité</label>
-          <select id="productAvailability">
-            <option value="in_stock">En stock</option>
-            <option value="made_to_order">Sur commande</option>
-            <option value="out_of_stock">Rupture de stock</option>
-            <option value="clearance">Déstockage</option>
-            <option value="unknown">Non précisée</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label>Statut IA</label>
-          <label class="product-active-box" for="productActive">
-            <input type="checkbox" id="productActive" checked>
-            <span>Produit actif et utilisable par l'IA</span>
-          </label>
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="productDimensions">Dimensions</label>
-        <input type="text" id="productDimensions" placeholder="Ex : 280 × 280 cm">
-      </div>
-
-      <div class="field">
-        <label for="productComposition">Composition</label>
-        <textarea id="productComposition" placeholder="Ex : canapé 3 places + méridienne + pouf..."></textarea>
-      </div>
-
-      <div class="field-grid">
-        <div class="field">
-          <label for="productColors">Couleurs disponibles</label>
-          <input type="text" id="productColors" placeholder="Ex : beige, gris, taupe">
-        </div>
-
-        <div class="field">
-          <label for="productShowrooms">Showrooms</label>
-          <input type="text" id="productShowrooms" placeholder="Ex : Soukra, Sfax, Sousse">
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="productUrl">Lien du produit</label>
-        <input type="url" id="productUrl" placeholder="https://mondeco.tn/produit/...">
-      </div>
-
-      <div class="field">
-        <label for="productCategoryUrl">Lien de la catégorie</label>
-        <input type="url" id="productCategoryUrl" placeholder="https://mondeco.tn/categorie-produit/...">
-      </div>
-
-      <div class="field">
-        <label>Personnalisation autorisée pour ce produit</label>
-        <div class="custom-checkboxes">
-          <label class="custom-checkbox" for="productCustomColor">
-            <input type="checkbox" id="productCustomColor">
-            <span>Couleur</span>
-          </label>
-
-          <label class="custom-checkbox" for="productCustomFabric">
-            <input type="checkbox" id="productCustomFabric">
-            <span>Tissu / matière</span>
-          </label>
-
-          <label class="custom-checkbox" for="productCustomDimensions">
-            <input type="checkbox" id="productCustomDimensions">
-            <span>Dimensions</span>
-          </label>
-
-          <label class="custom-checkbox" for="productCustomCorner">
-            <input type="checkbox" id="productCustomCorner">
-            <span>Coin / orientation</span>
-          </label>
-        </div>
-        <div class="current-image-note">
-          Cochez uniquement les modifications réellement proposées par MONDECO. Une simulation reste soumise à validation commerciale.
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="productDescription">Description / informations complémentaires</label>
-        <textarea
-          id="productDescription"
-          placeholder="Détails importants que l'IA peut utiliser pour répondre au client..."
-        ></textarea>
-      </div>
-
-      <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" id="cancelProductBtn">Annuler</button>
-        <button type="submit" class="btn btn-primary" id="saveProductBtn">Enregistrer</button>
-      </div>
-    </form>
-  </div>
+  </main>
 </div>
 
-<!-- =========================================================
-     MODAL INSTRUCTION
-     ========================================================= -->
+<!-- ======================================================== -->
+<!-- MODAL PRODUIT -->
+<!-- ======================================================== -->
 
-<div class="modal-overlay" id="instructionModalOverlay">
-  <div class="modal large">
-    <div class="modal-title" id="instructionModalTitle">Ajouter une instruction</div>
+<div class="modal-backdrop" id="productModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="productModalTitle">Ajouter un produit</h3>
+      <button class="close" data-close="productModal">×</button>
+    </div>
+
+    <form id="productForm">
+      <div class="modal-body">
+        <input type="hidden" id="productId">
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Nom du produit *</label>
+            <input id="productName" name="name" required>
+          </div>
+
+          <div class="field">
+            <label>Catégorie *</label>
+            <input id="productCategory" name="category" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Photo *</label>
+          <input
+            id="productImage"
+            name="image"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+          >
+          <div class="help">
+            JPG, PNG ou WEBP. Maximum 8 Mo.
+          </div>
+          <img id="productImagePreview" class="preview hidden" alt="Aperçu">
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Prix normal</label>
+            <input id="productPrice" name="price" placeholder="Ex. 4190">
+          </div>
+
+          <div class="field">
+            <label>Prix promotionnel</label>
+            <input id="productPromoPrice" name="promoPrice" placeholder="Ex. 3890">
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Disponibilité</label>
+            <select id="productAvailability" name="availability">
+              <option value="unknown">À confirmer</option>
+              <option value="in_stock">En stock</option>
+              <option value="on_order">Sur commande</option>
+              <option value="out_of_stock">Rupture</option>
+              <option value="clearance">Déstockage</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Dimensions</label>
+            <input id="productDimensions" name="dimensions">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Composition</label>
+          <textarea id="productComposition" name="composition"></textarea>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Couleurs disponibles</label>
+            <input id="productColors" name="colors">
+          </div>
+
+          <div class="field">
+            <label>Showrooms</label>
+            <input id="productShowrooms" name="showrooms">
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Lien produit</label>
+            <input id="productUrl" name="productUrl" type="url">
+          </div>
+
+          <div class="field">
+            <label>Lien catégorie</label>
+            <input id="productCategoryUrl" name="categoryUrl" type="url">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Description</label>
+          <textarea id="productDescription" name="description"></textarea>
+        </div>
+
+        <div class="field">
+          <label>Personnalisation autorisée</label>
+
+          <div class="checkbox-grid">
+            <label class="checkbox-line">
+              <input id="productCustomColor" type="checkbox">
+              Couleur
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomFabric" type="checkbox">
+              Tissu
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomDimensions" type="checkbox">
+              Dimensions
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomCorner" type="checkbox">
+              Coin / orientation
+            </label>
+          </div>
+        </div>
+
+        <label class="checkbox-line">
+          <input id="productActive" type="checkbox" checked>
+          Produit actif et disponible pour l'IA
+        </label>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close="productModal">Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL INSTRUCTION -->
+<!-- ======================================================== -->
+
+<div class="modal-backdrop" id="instructionModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="instructionModalTitle">Ajouter une instruction</h3>
+      <button class="close" data-close="instructionModal">×</button>
+    </div>
 
     <form id="instructionForm">
-      <input type="hidden" id="instructionId">
+      <div class="modal-body">
+        <input type="hidden" id="instructionId">
 
-      <div class="field">
-        <label for="instructionTitle">Titre *</label>
-        <input
-          type="text"
-          id="instructionTitle"
-          required
-          placeholder="Ex : Ne jamais inventer un prix"
-        >
-      </div>
+        <div class="field">
+          <label>Titre *</label>
+          <input id="instructionTitle" required>
+        </div>
 
-      <div class="field">
-        <label for="instructionContent">Instruction complète *</label>
-        <textarea
-          id="instructionContent"
-          required
-          style="min-height:230px;"
-          placeholder="Expliquez précisément ce que l'IA doit faire..."
-        ></textarea>
-      </div>
+        <div class="field">
+          <label>Instruction *</label>
+          <textarea id="instructionContent" required></textarea>
+        </div>
 
-      <div class="field">
-        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
-          <input
-            type="checkbox"
-            id="instructionActive"
-            checked
-            style="width:auto;"
-          >
+        <label class="checkbox-line">
+          <input id="instructionActive" type="checkbox" checked>
           Instruction active
         </label>
       </div>
 
-      <div class="modal-actions">
-        <button type="button" class="btn btn-ghost" id="cancelInstructionBtn">Annuler</button>
-        <button type="submit" class="btn btn-primary">Enregistrer</button>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close="instructionModal">Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- =========================================================
-     MODAL IMPORT INSTRUCTIONS
-     ========================================================= -->
+<!-- ======================================================== -->
+<!-- MODAL IMPORT -->
+<!-- ======================================================== -->
 
-<div class="modal-overlay" id="importInstructionsOverlay">
-  <div class="modal large">
-    <div class="modal-title">Importer plusieurs instructions</div>
-
-    <div class="modal-desc">
-      Séparez chaque instruction par une ligne vide. La première ligne de chaque bloc devient le titre.
+<div class="modal-backdrop" id="importModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Importer plusieurs instructions</h3>
+      <button class="close" data-close="importModal">×</button>
     </div>
 
-    <div class="field">
-      <label for="bulkInstructionsText">Instructions</label>
-      <textarea
-        id="bulkInstructionsText"
-        style="min-height:350px;"
-        placeholder="Ne jamais inventer un prix
-Utiliser uniquement les prix présents dans le catalogue MONDECO.
+    <div class="modal-body">
+      <div class="notice info">
+        Séparez les instructions par une ligne vide. La première ligne de chaque bloc devient le titre.
+      </div>
 
-Gestion des images
-Lorsqu'un client envoie une photo ou une capture d'écran, ne pas répondre automatiquement.
-
-Qualification client
-Demander progressivement la ville, les dimensions et le délai d'achat."
-      ></textarea>
+      <div class="field" style="margin-top:14px">
+        <textarea
+          id="importText"
+          style="min-height:300px"
+          placeholder="Titre 1&#10;Contenu de l'instruction...&#10;&#10;Titre 2&#10;Autre instruction..."
+        ></textarea>
+      </div>
     </div>
 
-    <div class="modal-actions">
-      <button type="button" class="btn btn-ghost" id="cancelImportInstructionsBtn">Annuler</button>
-      <button type="button" class="btn btn-primary" id="confirmImportInstructionsBtn">Importer</button>
+    <div class="modal-footer">
+      <button class="btn" data-close="importModal">Annuler</button>
+      <button class="btn primary" id="confirmImportBtn">Importer</button>
     </div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
-
 <script>
-/* ============================================================
-   API
-   ============================================================ */
+const API = '/admin/api';
 
-async function apiFetch(url, options = {}) {
-  const response = await fetch(url, options);
+let products = [];
+let instructions = [];
+let customizations = [];
+let settings = null;
+let productPreviewObjectUrl = null;
 
-  if (response.status === 401) {
-    window.location.href = '/admin/login';
-    throw new Error('Session expirée');
-  }
+const pages = [...document.querySelectorAll('.page')];
+const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
 
-  return response;
+function escapeHtml(value){
+  return String(value ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#039;");
 }
 
-async function safeJson(response) {
-  try {
-    return await response.json();
-  } catch {
-    return {};
-  }
-}
-
-/* ============================================================
-   HELPERS
-   ============================================================ */
-
-function escapeHtml(value) {
-  const div = document.createElement('div');
-  div.textContent = String(value ?? '');
-  return div.innerHTML;
-}
-
-function showToast(message) {
-  const toast = document.getElementById('toast');
-  toast.textContent = message;
-  toast.classList.add('visible');
-
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => {
-    toast.classList.remove('visible');
-  }, 2600);
-}
-
-function formatProductPrice(price) {
-  const value = String(price ?? '').trim();
-  return value ? `${value} TND` : '—';
-}
-
-/* ============================================================
-   NAVIGATION
-   ============================================================ */
-
-function openView(viewName) {
-  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-    item.classList.remove('active');
+function showPage(name){
+  pages.forEach(page => {
+    page.classList.toggle(
+      'active',
+      page.id === `page-${name}`
+    );
   });
 
-  document.querySelectorAll('.view').forEach(view => {
-    view.classList.remove('active');
+  navButtons.forEach(btn => {
+    btn.classList.toggle(
+      'active',
+      btn.dataset.page === name
+    );
   });
 
-  const nav = document.querySelector(`.nav-item[data-view="${viewName}"]`);
-  const view = document.getElementById('view-' + viewName);
-
-  if (nav) nav.classList.add('active');
-  if (view) view.classList.add('active');
+  if(name === 'home') refreshHome();
+  if(name === 'products') loadProducts();
+  if(name === 'instructions') loadInstructions();
+  if(name === 'customization'){
+    loadProducts().then(loadCustomizations);
+  }
+  if(name === 'settings') loadSettings();
 }
 
-document.querySelectorAll('.nav-item[data-view]').forEach(item => {
-  item.addEventListener('click', () => {
-    openView(item.dataset.view);
+navButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    showPage(btn.dataset.page);
   });
 });
 
-document.querySelectorAll('.home-action-card').forEach(card => {
-  card.addEventListener('click', () => {
-    const destination = card.dataset.goto;
-    openView(destination);
+async function apiFetch(url, options = {}){
+  const response = await fetch(url, options);
 
-    if (destination === 'products') {
-      const action = card.dataset.productAction;
+  if(response.status === 401){
+    location.href = '/admin/login';
+    throw new Error('Session expirée.');
+  }
 
-      if (action === 'add') {
-        openAddProductModal();
-      }
+  let data = null;
 
-      if (action === 'list') {
-        showProductsList();
-      }
+  try{
+    data = await response.json();
+  }catch{
+    data = {};
+  }
+
+  if(!response.ok){
+    throw new Error(
+      data?.error ||
+      `Erreur HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function refreshHome(){
+  try{
+    const [stats, storage, currentSettings] = await Promise.all([
+      apiFetch(`${API}/stats`),
+      apiFetch(`${API}/storage-status`),
+      apiFetch(`${API}/settings`)
+    ]);
+
+    document.getElementById('statProducts').textContent =
+      stats.activeProductCount ?? stats.productCount ?? 0;
+
+    document.getElementById('statInstructions').textContent =
+      stats.activeInstructionsCount ?? 0;
+
+    document.getElementById('statCustomizations').textContent =
+      stats.customizationCount ?? 0;
+
+    const badge = document.getElementById('homeAiBadge');
+
+    badge.textContent =
+      currentSettings.aiEnabled
+        ? 'IA activée'
+        : 'IA désactivée';
+
+    badge.classList.toggle(
+      'off',
+      !currentSettings.aiEnabled
+    );
+
+    const audienceLabels = {
+      all:'Tout le monde',
+      new:'Nouveaux clients',
+      ads:'Publicités Meta',
+      team:'Équipe MONDECO'
+    };
+
+    document.getElementById('homeAudience').textContent =
+      audienceLabels[currentSettings.audience] || currentSettings.audience;
+
+    document.getElementById('homeSchedule').textContent =
+      currentSettings.schedule?.mode === 'custom'
+        ? 'Horaires personnalisés'
+        : 'Toujours disponible';
+
+    document.getElementById('homeFollowUp').textContent =
+      currentSettings.followUp?.enabled
+        ? `Après ${currentSettings.followUp.delayMinutes} min`
+        : 'Désactivée';
+
+    const imageLabels = {
+      commercial:'Commercial',
+      analyze_only:'Analyse interne',
+      analyze_reply:'Analyse + réponse'
+    };
+
+    document.getElementById('homeImages').textContent =
+      imageLabels[currentSettings.imageHandling] || currentSettings.imageHandling;
+
+    const storageNotice = document.getElementById('storageNotice');
+
+    if(storage.persistentConfigured && storage.writable){
+      storageNotice.className = 'notice success';
+      storageNotice.textContent =
+        `Stockage persistant actif : ${storage.dataDir}`;
+    }else{
+      storageNotice.className = 'notice warning';
+      storageNotice.textContent =
+        'Stockage persistant non configuré. Montez un Volume Railway sur /data et utilisez DATA_DIR=/data.';
+    }
+  }catch(error){
+    console.error(error);
+  }
+}
+
+// ============================================================
+// MODALS
+// ============================================================
+
+function openModal(id){
+  document.getElementById(id).classList.add('open');
+}
+
+function closeModal(id){
+  document.getElementById(id).classList.remove('open');
+
+  if(id === 'productModal'){
+    resetProductForm();
+  }
+
+  if(id === 'instructionModal'){
+    resetInstructionForm();
+  }
+}
+
+document.querySelectorAll('[data-close]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    closeModal(btn.dataset.close);
+  });
+});
+
+document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+  backdrop.addEventListener('click', event => {
+    if(event.target === backdrop){
+      closeModal(backdrop.id);
     }
   });
 });
 
-/* ============================================================
-   LOGOUT
-   ============================================================ */
+// ============================================================
+// PRODUITS
+// ============================================================
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
-  await fetch('/admin/logout', { method: 'POST' });
-  window.location.href = '/admin/login';
-});
-
-/* ============================================================
-   PRODUITS
-   ============================================================ */
-
-let products = [];
-let productSearch = '';
-
-async function loadProducts() {
-  try {
-    const response = await apiFetch('/admin/api/products');
-    const data = await safeJson(response);
-
-    products = Array.isArray(data) ? data : [];
-
-    document.getElementById('productsListCount').textContent = products.length;
-
-    renderProductsTable();
-    populateCustomizationProducts();
-  } catch (error) {
-    console.error('Produits :', error);
-  }
+async function loadProducts(){
+  products = await apiFetch(`${API}/products`);
+  renderProducts();
+  populateProductSelect();
 }
 
-function getFilteredProducts() {
-  const query = productSearch.trim().toLowerCase();
+function renderProducts(){
+  const term =
+    document.getElementById('productSearch')
+      .value
+      .trim()
+      .toLowerCase();
 
-  if (!query) {
-    return products;
-  }
+  const filtered = products.filter(product => {
+    const haystack =
+      `${product.name || ''} ${product.category || ''}`.toLowerCase();
 
-  return products.filter(product => {
-    const searchable = [
-      product.name,
-      product.category,
-      product.price,
-      product.promoPrice,
-      product.availability,
-      product.dimensions,
-      product.composition,
-      product.colors,
-      product.showrooms,
-      product.description
-    ]
-      .map(value => String(value ?? '').toLowerCase())
-      .join(' ');
-
-    return searchable.includes(query);
+    return !term || haystack.includes(term);
   });
+
+  document.getElementById('productCountLabel').textContent =
+    `${products.length} produit${products.length > 1 ? 's' : ''}`;
+
+  const container =
+    document.getElementById('productTableContainer');
+
+  if(!filtered.length){
+    container.innerHTML = `
+      <div class="empty">
+        <strong>Aucun produit</strong>
+        Ajoutez votre premier produit ou modifiez votre recherche.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Photo</th>
+            <th>Produit</th>
+            <th>Catégorie</th>
+            <th>Prix</th>
+            <th>Disponibilité</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.map(product => `
+            <tr>
+              <td>
+                ${product.image
+                  ? `<img class="product-thumb" src="${escapeHtml(product.image)}" alt="">`
+                  : '—'}
+              </td>
+              <td>
+                <strong>${escapeHtml(product.name)}</strong>
+              </td>
+              <td>${escapeHtml(product.category || '—')}</td>
+              <td>
+                ${product.promoPrice
+                  ? `<strong>${escapeHtml(product.promoPrice)} TND</strong><br><span style="color:#8b8177;text-decoration:line-through">${escapeHtml(product.price || '')} TND</span>`
+                  : product.price
+                    ? `${escapeHtml(product.price)} TND`
+                    : '—'}
+              </td>
+              <td>${escapeHtml(availabilityLabel(product.availability))}</td>
+              <td>
+                ${product.active !== false
+                  ? '<span class="status-pill">Actif</span>'
+                  : '<span class="status-pill off">Inactif</span>'}
+              </td>
+              <td>
+                <button class="btn small" onclick="editProduct('${product.id}')">Modifier</button>
+                <button class="btn small danger" onclick="deleteProduct('${product.id}')">Supprimer</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-function availabilityLabel(value) {
+function availabilityLabel(value){
   const labels = {
-    in_stock: 'En stock',
-    made_to_order: 'Sur commande',
-    out_of_stock: 'Rupture',
-    clearance: 'Déstockage',
-    unknown: 'Non précisée'
+    in_stock:'En stock',
+    on_order:'Sur commande',
+    out_of_stock:'Rupture',
+    clearance:'Déstockage',
+    unknown:'À confirmer'
   };
 
-  return labels[value] || 'Non précisée';
+  return labels[value] || value || 'À confirmer';
 }
 
-function availabilityClass(value) {
-  return ['in_stock', 'made_to_order', 'out_of_stock', 'clearance'].includes(value)
-    ? value
-    : 'unknown';
-}
-
-function renderProductsTable() {
-  const body = document.getElementById('productsTableBody');
-  const tableWrap = document.getElementById('productsTableWrap');
-  const empty = document.getElementById('productsListEmpty');
-  const emptyText = document.getElementById('productsListEmptyText');
-  const resultLabel = document.getElementById('productsResultLabel');
-
-  const filtered = getFilteredProducts();
-
-  resultLabel.textContent =
-    filtered.length === 1
-      ? '1 produit affiché'
-      : `${filtered.length} produits affichés`;
-
-  if (filtered.length === 0) {
-    body.innerHTML = '';
-    tableWrap.style.display = 'none';
-    empty.style.display = 'block';
-
-    emptyText.textContent = products.length === 0
-      ? 'Ajoutez votre premier produit au catalogue.'
-      : 'Aucun produit ne correspond à votre recherche.';
-
-    return;
-  }
-
-  tableWrap.style.display = 'block';
-  empty.style.display = 'none';
-
-  body.innerHTML = filtered.map(product => {
-    const imageCell = product.image
-      ? `
-        <img
-          class="table-product-photo"
-          src="${escapeHtml(product.image)}"
-          alt="${escapeHtml(product.name)}"
-          loading="lazy"
-          onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
-        >
-        <div class="table-photo-placeholder" style="display:none;">Image indisponible</div>
-      `
-      : `<div class="table-photo-placeholder">Sans photo</div>`;
-
-    return `
-      <tr>
-        <td>${imageCell}</td>
-
-        <td>
-          <div class="table-product-name">${escapeHtml(product.name || '')}</div>
-          ${
-            product.description
-              ? `<div class="table-product-description">${escapeHtml(product.description)}</div>`
-              : ''
-          }
-        </td>
-
-        <td>
-          ${
-            product.category
-              ? `<span class="category-pill">${escapeHtml(product.category)}</span>`
-              : '—'
-          }
-        </td>
-
-        <td class="table-price">
-          ${
-            product.promoPrice
-              ? `<div class="price-old">${escapeHtml(formatProductPrice(product.price))}</div>
-                 <div class="price-promo">${escapeHtml(formatProductPrice(product.promoPrice))}</div>`
-              : escapeHtml(formatProductPrice(product.price))
-          }
-        </td>
-
-        <td>
-          <span class="availability-badge ${availabilityClass(product.availability)}">
-            ${escapeHtml(availabilityLabel(product.availability))}
-          </span>
-        </td>
-
-        <td>
-          <span class="status-badge ${product.active !== false ? 'active' : 'inactive'}">
-            ${product.active !== false ? 'Actif' : 'Inactif'}
-          </span>
-        </td>
-
-        <td>
-          <div class="table-actions">
-            <button
-              type="button"
-              class="action-btn"
-              onclick="editProduct('${product.id}')"
-            >
-              Modifier
-            </button>
-
-            <button
-              type="button"
-              class="action-btn delete"
-              onclick="deleteProduct('${product.id}')"
-            >
-              Supprimer
-            </button>
-          </div>
-        </td>
-      </tr>
-    `;
-  }).join('');
-}
-
-function showProductsList() {
-  document.getElementById('productsIntro').style.display = 'none';
-  document.getElementById('productsListPanel').classList.add('visible');
-  renderProductsTable();
-
-  setTimeout(() => {
-    document.getElementById('productSearchInput').focus();
-  }, 50);
-}
-
-document.getElementById('showProductsListBtn').addEventListener('click', () => {
-  showProductsList();
-});
-
-document.getElementById('refreshProductsBtn').addEventListener('click', async () => {
-  await loadProducts();
-  showProductsList();
-  showToast('Liste des produits actualisée.');
-});
-
-document.getElementById('productSearchInput').addEventListener('input', event => {
-  productSearch = event.target.value;
-  renderProductsTable();
-});
-
-/* ============================================================
-   MODAL PRODUIT
-   ============================================================ */
-
-const productOverlay = document.getElementById('productModalOverlay');
-const productForm = document.getElementById('productForm');
-const productImageInput = document.getElementById('productImage');
-const productImagePreview = document.getElementById('productImagePreview');
-const productImagePreviewContainer = document.getElementById('productImagePreviewContainer');
-const currentImageNote = document.getElementById('currentImageNote');
-const imagePreviewLabel = document.getElementById('imagePreviewLabel');
-const imageUploadHint = document.getElementById('imageUploadHint');
-const imageRequiredStar = document.getElementById('productImageRequiredStar');
-const saveProductBtn = document.getElementById('saveProductBtn');
-
-let temporaryPreviewUrl = null;
-
-function clearTemporaryPreview() {
-  if (temporaryPreviewUrl) {
-    URL.revokeObjectURL(temporaryPreviewUrl);
-    temporaryPreviewUrl = null;
-  }
-}
-
-function resetProductModal() {
-  clearTemporaryPreview();
-
-  productForm.reset();
-
+function resetProductForm(){
+  document.getElementById('productForm').reset();
   document.getElementById('productId').value = '';
-  document.getElementById('currentProductImage').value = '';
-
-  productImageInput.value = '';
-  productImageInput.required = true;
-
-  currentImageNote.style.display = 'none';
-  imageRequiredStar.style.display = 'inline';
-
-  imageUploadHint.textContent =
-    'Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo';
-
-  productImagePreviewContainer.classList.remove('visible');
-  productImagePreview.removeAttribute('src');
-
-  imagePreviewLabel.textContent = 'Nouvelle photo';
-
-  document.getElementById('productAvailability').value = 'in_stock';
   document.getElementById('productActive').checked = true;
-  document.getElementById('productCustomColor').checked = false;
-  document.getElementById('productCustomFabric').checked = false;
-  document.getElementById('productCustomDimensions').checked = false;
-  document.getElementById('productCustomCorner').checked = false;
+  document.getElementById('productAvailability').value = 'unknown';
+  document.getElementById('productModalTitle').textContent = 'Ajouter un produit';
+  document.getElementById('productImage').required = true;
+
+  const preview = document.getElementById('productImagePreview');
+
+  if(productPreviewObjectUrl){
+    URL.revokeObjectURL(productPreviewObjectUrl);
+    productPreviewObjectUrl = null;
+  }
+
+  preview.src = '';
+  preview.classList.add('hidden');
 }
 
-function openAddProductModal() {
-  resetProductModal();
-
-  document.getElementById('productModalTitle').textContent =
-    'Ajouter un produit';
-
-  productOverlay.classList.add('active');
-
-  setTimeout(() => {
-    document.getElementById('productName').focus();
-  }, 50);
-}
-
-document.getElementById('addProductBtn').addEventListener('click', openAddProductModal);
-document.getElementById('introAddProductBtn').addEventListener('click', openAddProductModal);
-
-document.getElementById('cancelProductBtn').addEventListener('click', () => {
-  productOverlay.classList.remove('active');
-  resetProductModal();
+document.getElementById('addProductBtn').addEventListener('click', () => {
+  resetProductForm();
+  openModal('productModal');
 });
 
-productImageInput.addEventListener('change', () => {
-  const file = productImageInput.files[0];
+document.getElementById('refreshProductsBtn').addEventListener('click', loadProducts);
+document.getElementById('productSearch').addEventListener('input', renderProducts);
 
-  if (!file) {
+document.getElementById('productImage').addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  const preview = document.getElementById('productImagePreview');
+
+  if(!file){
+    preview.classList.add('hidden');
     return;
   }
 
-  const allowedTypes = [
-    'image/jpeg',
-    'image/png',
-    'image/webp'
-  ];
-
-  if (!allowedTypes.includes(file.type)) {
-    alert('Format non accepté. Utilisez JPG, PNG ou WEBP.');
-    productImageInput.value = '';
-    return;
+  if(productPreviewObjectUrl){
+    URL.revokeObjectURL(productPreviewObjectUrl);
   }
 
-  const maxSize = 8 * 1024 * 1024;
-
-  if (file.size > maxSize) {
-    alert('La photo dépasse 8 Mo.');
-    productImageInput.value = '';
-    return;
-  }
-
-  clearTemporaryPreview();
-
-  temporaryPreviewUrl = URL.createObjectURL(file);
-
-  productImagePreview.src = temporaryPreviewUrl;
-  imagePreviewLabel.textContent = 'Nouvelle photo';
-  productImagePreviewContainer.classList.add('visible');
+  productPreviewObjectUrl = URL.createObjectURL(file);
+  preview.src = productPreviewObjectUrl;
+  preview.classList.remove('hidden');
 });
 
-window.editProduct = function(id) {
+window.editProduct = function(id){
   const product = products.find(item => item.id === id);
+  if(!product) return;
 
-  if (!product) {
-    alert('Produit introuvable.');
-    return;
-  }
-
-  resetProductModal();
-
-  document.getElementById('productModalTitle').textContent =
-    'Modifier le produit';
+  resetProductForm();
 
   document.getElementById('productId').value = product.id;
   document.getElementById('productName').value = product.name || '';
@@ -2661,101 +1876,46 @@ window.editProduct = function(id) {
   document.getElementById('productCustomDimensions').checked = product.customizableDimensions === true;
   document.getElementById('productCustomCorner').checked = product.customizableCorner === true;
   document.getElementById('productActive').checked = product.active !== false;
-  document.getElementById('currentProductImage').value = product.image || '';
+  document.getElementById('productModalTitle').textContent = `Modifier ${product.name}`;
+  document.getElementById('productImage').required = !product.image;
 
-  if (product.image) {
-    productImageInput.required = false;
-    imageRequiredStar.style.display = 'none';
-    currentImageNote.style.display = 'block';
-
-    imageUploadHint.textContent =
-      'Choisissez une nouvelle photo uniquement si vous souhaitez remplacer la photo actuelle.';
-
-    productImagePreview.src = product.image;
-    imagePreviewLabel.textContent = 'Photo actuelle';
-    productImagePreviewContainer.classList.add('visible');
-  } else {
-    productImageInput.required = true;
-    imageRequiredStar.style.display = 'inline';
-    currentImageNote.style.display = 'none';
-
-    imageUploadHint.textContent =
-      'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.';
+  if(product.image){
+    const preview = document.getElementById('productImagePreview');
+    preview.src = product.image;
+    preview.classList.remove('hidden');
   }
 
-  productOverlay.classList.add('active');
+  openModal('productModal');
 };
 
-window.deleteProduct = async function(id) {
+window.deleteProduct = async function(id){
   const product = products.find(item => item.id === id);
+  if(!product) return;
 
-  if (!product) {
-    alert('Produit introuvable.');
+  if(!confirm(`Supprimer le produit « ${product.name} » ?`)){
     return;
   }
 
-  const confirmed = confirm(
-    `Supprimer « ${product.name} » ?\n\nCette action supprimera également sa photo enregistrée.`
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    const response = await apiFetch(
-      '/admin/api/products/' + encodeURIComponent(id),
-      { method: 'DELETE' }
-    );
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Impossible de supprimer le produit.');
-      return;
-    }
+  try{
+    await apiFetch(`${API}/products/${id}`, {
+      method:'DELETE'
+    });
 
     await loadProducts();
-    await loadStats();
-    showProductsList();
-
-    showToast(`Produit « ${product.name} » supprimé.`);
-  } catch (error) {
-    console.error('Suppression produit :', error);
-    alert('Impossible de contacter le serveur.');
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
   }
 };
 
-productForm.addEventListener('submit', async event => {
+document.getElementById('productForm').addEventListener('submit', async event => {
   event.preventDefault();
 
   const id = document.getElementById('productId').value;
-  const currentImage = document.getElementById('currentProductImage').value;
-  const imageFile = productImageInput.files[0];
-
-  if (!imageFile && !currentImage) {
-    alert('La photo du produit est obligatoire.');
-    return;
-  }
-
-  const name = document.getElementById('productName').value.trim();
-
-  if (!name) {
-    alert('Le nom du produit est obligatoire.');
-    return;
-  }
-
-  const category = document.getElementById('productCategory').value.trim();
-
-  if (!category) {
-    alert('La catégorie est obligatoire.');
-    return;
-  }
-
   const formData = new FormData();
 
-  formData.append('name', name);
-  formData.append('category', category);
+  formData.append('name', document.getElementById('productName').value);
+  formData.append('category', document.getElementById('productCategory').value);
   formData.append('price', document.getElementById('productPrice').value);
   formData.append('promoPrice', document.getElementById('productPromoPrice').value);
   formData.append('availability', document.getElementById('productAvailability').value);
@@ -2766,202 +1926,197 @@ productForm.addEventListener('submit', async event => {
   formData.append('productUrl', document.getElementById('productUrl').value);
   formData.append('categoryUrl', document.getElementById('productCategoryUrl').value);
   formData.append('description', document.getElementById('productDescription').value);
-  formData.append('customizableColor', document.getElementById('productCustomColor').checked ? 'true' : 'false');
-  formData.append('customizableFabric', document.getElementById('productCustomFabric').checked ? 'true' : 'false');
-  formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked ? 'true' : 'false');
-  formData.append('customizableCorner', document.getElementById('productCustomCorner').checked ? 'true' : 'false');
-  formData.append('active', document.getElementById('productActive').checked ? 'true' : 'false');
+  formData.append('customizableColor', document.getElementById('productCustomColor').checked);
+  formData.append('customizableFabric', document.getElementById('productCustomFabric').checked);
+  formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked);
+  formData.append('customizableCorner', document.getElementById('productCustomCorner').checked);
+  formData.append('active', document.getElementById('productActive').checked);
 
-  if (imageFile) {
-    formData.append('image', imageFile);
+  const image = document.getElementById('productImage').files?.[0];
+
+  if(image){
+    formData.append('image', image);
   }
 
-  saveProductBtn.disabled = true;
-  saveProductBtn.textContent = 'Enregistrement...';
-
-  try {
-    const url = id
-      ? '/admin/api/products/' + encodeURIComponent(id)
-      : '/admin/api/products';
-
-    const method = id ? 'PUT' : 'POST';
-
-    const response = await apiFetch(url, {
-      method,
-      body: formData
-    });
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Impossible d’enregistrer le produit.');
-      return;
-    }
-
-    productOverlay.classList.remove('active');
-    resetProductModal();
-
-    await loadProducts();
-    await loadStats();
-
-    showProductsList();
-
-    showToast(
+  try{
+    await apiFetch(
       id
-        ? 'Produit modifié avec succès.'
-        : 'Produit ajouté avec succès.'
+        ? `${API}/products/${id}`
+        : `${API}/products`,
+      {
+        method: id ? 'PUT' : 'POST',
+        body: formData
+      }
     );
-  } catch (error) {
-    console.error('Sauvegarde produit :', error);
-    alert('Impossible de contacter le serveur.');
-  } finally {
-    saveProductBtn.disabled = false;
-    saveProductBtn.textContent = 'Enregistrer';
+
+    closeModal('productModal');
+    await loadProducts();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
   }
 });
 
-/* ============================================================
-   INSTRUCTIONS
-   ============================================================ */
+function populateProductSelect(){
+  const select = document.getElementById('customProductId');
+  if(!select) return;
 
-let instructions = [];
+  const current = select.value;
 
-async function loadInstructions() {
-  try {
-    const response = await apiFetch('/admin/api/instructions');
-    const data = await safeJson(response);
+  select.innerHTML = `
+    <option value="">Image libre / autre</option>
+    ${products
+      .filter(product => product.active !== false)
+      .map(product => `
+        <option value="${escapeHtml(product.id)}">
+          ${escapeHtml(product.name)}
+        </option>
+      `)
+      .join('')}
+  `;
 
-    instructions = Array.isArray(data) ? data : [];
-
-    renderInstructions();
-  } catch (error) {
-    console.error('Instructions :', error);
+  if(products.some(product => product.id === current)){
+    select.value = current;
   }
 }
 
-function renderInstructions() {
-  const list = document.getElementById('instructionsList');
-  const empty = document.getElementById('instructionsEmpty');
-  const activeCountElement = document.getElementById('activeInstructionCount');
-  const totalCountElement = document.getElementById('totalInstructionCount');
+// ============================================================
+// INSTRUCTIONS
+// ============================================================
 
-  const activeCount = instructions.filter(
-    instruction => instruction.active !== false
-  ).length;
+async function loadInstructions(){
+  instructions = await apiFetch(`${API}/instructions`);
+  renderInstructions();
+}
 
-  activeCountElement.textContent =
-    `${activeCount} ${activeCount > 1 ? 'instructions actives' : 'instruction active'}`;
+function renderInstructions(){
+  const activeCount =
+    instructions.filter(item => item.active !== false).length;
 
-  totalCountElement.textContent =
-    `${instructions.length} au total`;
+  document.getElementById('instructionCountLabel').textContent =
+    `${activeCount} instruction${activeCount > 1 ? 's' : ''} active${activeCount > 1 ? 's' : ''} • ${instructions.length} au total`;
 
-  if (instructions.length === 0) {
-    list.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
+  const list = document.getElementById('instructionList');
 
-  empty.style.display = 'none';
-
-  list.innerHTML = instructions.map(instruction => {
-    const active = instruction.active !== false;
-
-    return `
-      <div class="instruction-card">
-        <div class="instruction-status ${active ? 'active' : 'inactive'}">
-          ${active ? '✓' : '—'}
-        </div>
-
-        <div class="instruction-body">
-          <div class="instruction-title">
-            ${escapeHtml(instruction.title)}
-          </div>
-
-          <div class="instruction-preview">
-            ${escapeHtml(instruction.content)}
-          </div>
-
-          <div class="instruction-meta">
-            ${active ? 'Instruction active' : 'Instruction désactivée'}
-          </div>
-        </div>
-
-        <div class="instruction-actions">
-          <button
-            type="button"
-            class="instruction-action"
-            onclick="toggleInstruction('${instruction.id}')"
-          >
-            ${active ? 'Désactiver' : 'Activer'}
-          </button>
-
-          <button
-            type="button"
-            class="instruction-action"
-            onclick="editInstruction('${instruction.id}')"
-          >
-            Modifier
-          </button>
-
-          <button
-            type="button"
-            class="instruction-action delete"
-            onclick="deleteInstruction('${instruction.id}')"
-          >
-            Supprimer
-          </button>
-        </div>
+  if(!instructions.length){
+    list.innerHTML = `
+      <div class="empty">
+        <strong>Aucune instruction séparée</strong>
+        Ajoutez votre première instruction ou importez l'ancien texte.
       </div>
     `;
-  }).join('');
-}
-
-/* ============================================================
-   MODAL INSTRUCTION
-   ============================================================ */
-
-const instructionOverlay = document.getElementById('instructionModalOverlay');
-const instructionForm = document.getElementById('instructionForm');
-
-document.getElementById('addInstructionBtn').addEventListener('click', () => {
-  instructionForm.reset();
-
-  document.getElementById('instructionModalTitle').textContent =
-    'Ajouter une instruction';
-
-  document.getElementById('instructionId').value = '';
-  document.getElementById('instructionActive').checked = true;
-
-  instructionOverlay.classList.add('active');
-
-  setTimeout(() => {
-    document.getElementById('instructionTitle').focus();
-  }, 50);
-});
-
-document.getElementById('cancelInstructionBtn').addEventListener('click', () => {
-  instructionOverlay.classList.remove('active');
-});
-
-window.editInstruction = function(id) {
-  const instruction = instructions.find(item => item.id === id);
-
-  if (!instruction) {
     return;
   }
 
-  document.getElementById('instructionModalTitle').textContent =
-    'Modifier l’instruction';
+  list.innerHTML = instructions.map(item => `
+    <div class="card instruction-card ${item.active === false ? 'inactive' : ''}">
+      <div>
+        <div class="instruction-title">
+          ${escapeHtml(item.title)}
+          ${item.active !== false
+            ? '<span class="status-pill" style="margin-left:8px">Active</span>'
+            : '<span class="status-pill off" style="margin-left:8px">Inactive</span>'}
+        </div>
 
-  document.getElementById('instructionId').value = instruction.id;
-  document.getElementById('instructionTitle').value = instruction.title || '';
-  document.getElementById('instructionContent').value = instruction.content || '';
-  document.getElementById('instructionActive').checked = instruction.active !== false;
+        <div class="instruction-content">${escapeHtml(item.content)}</div>
+      </div>
 
-  instructionOverlay.classList.add('active');
+      <div class="instruction-actions">
+        <button
+          class="btn small"
+          onclick="toggleInstruction('${item.id}')"
+        >
+          ${item.active !== false ? 'Désactiver' : 'Activer'}
+        </button>
+
+        <button
+          class="btn small"
+          onclick="editInstruction('${item.id}')"
+        >
+          Modifier
+        </button>
+
+        <button
+          class="btn small danger"
+          onclick="deleteInstruction('${item.id}')"
+        >
+          Supprimer
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function resetInstructionForm(){
+  document.getElementById('instructionForm').reset();
+  document.getElementById('instructionId').value = '';
+  document.getElementById('instructionActive').checked = true;
+  document.getElementById('instructionModalTitle').textContent = 'Ajouter une instruction';
+}
+
+document.getElementById('addInstructionBtn').addEventListener('click', () => {
+  resetInstructionForm();
+  openModal('instructionModal');
+});
+
+window.editInstruction = function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
+
+  resetInstructionForm();
+
+  document.getElementById('instructionId').value = item.id;
+  document.getElementById('instructionTitle').value = item.title || '';
+  document.getElementById('instructionContent').value = item.content || '';
+  document.getElementById('instructionActive').checked = item.active !== false;
+  document.getElementById('instructionModalTitle').textContent = 'Modifier l’instruction';
+
+  openModal('instructionModal');
 };
 
-instructionForm.addEventListener('submit', async event => {
+window.toggleInstruction = async function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
+
+  try{
+    await apiFetch(`${API}/instructions/${id}`, {
+      method:'PUT',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        active: !(item.active !== false)
+      })
+    });
+
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.deleteInstruction = async function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
+
+  if(!confirm(`Supprimer l'instruction « ${item.title} » ?`)){
+    return;
+  }
+
+  try{
+    await apiFetch(`${API}/instructions/${id}`, {
+      method:'DELETE'
+    });
+
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+document.getElementById('instructionForm').addEventListener('submit', async event => {
   event.preventDefault();
 
   const id = document.getElementById('instructionId').value;
@@ -2972,945 +2127,645 @@ instructionForm.addEventListener('submit', async event => {
     active: document.getElementById('instructionActive').checked
   };
 
-  const url = id
-    ? '/admin/api/instructions/' + encodeURIComponent(id)
-    : '/admin/api/instructions';
-
-  const method = id ? 'PUT' : 'POST';
-
-  const response = await apiFetch(url, {
-    method,
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await safeJson(response);
-
-  if (!response.ok) {
-    alert(data.error || 'Erreur pendant la sauvegarde.');
-    return;
-  }
-
-  instructionOverlay.classList.remove('active');
-
-  await loadInstructions();
-  await loadStats();
-
-  showToast(id ? 'Instruction modifiée.' : 'Instruction ajoutée.');
-});
-
-window.toggleInstruction = async function(id) {
-  const instruction = instructions.find(item => item.id === id);
-
-  if (!instruction) {
-    return;
-  }
-
-  const activeNow = instruction.active !== false;
-
-  const response = await apiFetch(
-    '/admin/api/instructions/' + encodeURIComponent(id),
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        active: !activeNow
-      })
-    }
-  );
-
-  const data = await safeJson(response);
-
-  if (!response.ok) {
-    alert(data.error || 'Impossible de modifier l’instruction.');
-    return;
-  }
-
-  await loadInstructions();
-  await loadStats();
-};
-
-window.deleteInstruction = async function(id) {
-  const instruction = instructions.find(item => item.id === id);
-
-  if (!instruction) {
-    return;
-  }
-
-  if (!confirm(`Supprimer l’instruction « ${instruction.title} » ?`)) {
-    return;
-  }
-
-  const response = await apiFetch(
-    '/admin/api/instructions/' + encodeURIComponent(id),
-    {
-      method: 'DELETE'
-    }
-  );
-
-  const data = await safeJson(response);
-
-  if (!response.ok) {
-    alert(data.error || 'Impossible de supprimer l’instruction.');
-    return;
-  }
-
-  await loadInstructions();
-  await loadStats();
-
-  showToast('Instruction supprimée.');
-};
-
-/* ============================================================
-   IMPORT MANUEL INSTRUCTIONS
-   ============================================================ */
-
-const importOverlay = document.getElementById('importInstructionsOverlay');
-const confirmImportButton = document.getElementById('confirmImportInstructionsBtn');
-
-document.getElementById('importInstructionsBtn').addEventListener('click', () => {
-  document.getElementById('bulkInstructionsText').value = '';
-  importOverlay.classList.add('active');
-});
-
-document.getElementById('cancelImportInstructionsBtn').addEventListener('click', () => {
-  importOverlay.classList.remove('active');
-});
-
-confirmImportButton.addEventListener('click', async () => {
-  const text = document.getElementById('bulkInstructionsText').value.trim();
-
-  if (!text) {
-    alert('Collez au moins une instruction.');
-    return;
-  }
-
-  confirmImportButton.disabled = true;
-  confirmImportButton.textContent = 'Importation...';
-
-  try {
-    const response = await apiFetch('/admin/api/instructions/import', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ text })
-    });
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Erreur pendant l’import.');
-      return;
-    }
-
-    importOverlay.classList.remove('active');
-
-    await loadInstructions();
-    await loadStats();
-
-    showToast(
-      `${data.imported || 0} instruction(s) importée(s).`
-    );
-  } catch (error) {
-    alert('Impossible de contacter le serveur.');
-  } finally {
-    confirmImportButton.disabled = false;
-    confirmImportButton.textContent = 'Importer';
-  }
-});
-
-/* ============================================================
-   IMPORT BUSINESS-INFO.TXT
-   ============================================================ */
-
-document.getElementById('importLegacyBtn').addEventListener('click', async () => {
-  const confirmed = confirm(
-    'Importer le contenu actuel de business-info.txt en instructions séparées ? Les doublons seront ignorés.'
-  );
-
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    const response = await apiFetch(
-      '/admin/api/instructions/import-legacy',
+  try{
+    await apiFetch(
+      id
+        ? `${API}/instructions/${id}`
+        : `${API}/instructions`,
       {
-        method: 'POST'
+        method: id ? 'PUT' : 'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify(payload)
       }
     );
 
-    const data = await safeJson(response);
+    closeModal('instructionModal');
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+});
 
-    if (!response.ok) {
-      alert(data.error || 'Import impossible.');
-      return;
-    }
+document.getElementById('importLegacyBtn').addEventListener('click', async () => {
+  if(!confirm('Importer les blocs de business-info.txt qui ne sont pas encore présents ?')){
+    return;
+  }
+
+  try{
+    const data = await apiFetch(`${API}/instructions/import-legacy`, {
+      method:'POST'
+    });
+
+    alert(
+      `${data.imported} instruction(s) importée(s), ${data.duplicates} doublon(s).`
+    );
 
     await loadInstructions();
-    await loadStats();
-
-    showToast(`${data.imported || 0} instruction(s) importée(s).`);
-  } catch (error) {
-    alert('Impossible d’importer business-info.txt.');
+  }catch(error){
+    alert(error.message);
   }
 });
 
-
-/* ============================================================
-   PERSONNALISATION / SIMULATION
-   ============================================================ */
-
-let customizations = [];
-let customReferencePreviewUrl = null;
-
-const customizationForm = document.getElementById('customizationForm');
-const customProductId = document.getElementById('customProductId');
-const customReferenceImage = document.getElementById('customReferenceImage');
-const customReferenceName = document.getElementById('customReferenceName');
-const customProductPreview = document.getElementById('customProductPreview');
-const customProductPreviewImage = document.getElementById('customProductPreviewImage');
-const customCapabilities = document.getElementById('customCapabilities');
-const generateCustomizationBtn = document.getElementById('generateCustomizationBtn');
-
-function populateCustomizationProducts() {
-  const selectedValue = customProductId.value;
-
-  customProductId.innerHTML =
-    '<option value="">— Image libre / aucun produit sélectionné —</option>' +
-    products
-      .filter(product => product.active !== false)
-      .map(
-        product =>
-          `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}${product.category ? ' — ' + escapeHtml(product.category) : ''}</option>`
-      )
-      .join('');
-
-  if (products.some(product => product.id === selectedValue)) {
-    customProductId.value = selectedValue;
-  }
-
-  updateCustomizationProductPreview();
-}
-
-function capabilityChip(label, enabled) {
-  return `<span class="capability-chip ${enabled ? 'yes' : ''}">${enabled ? '✓ ' : ''}${escapeHtml(label)}</span>`;
-}
-
-function updateCustomizationProductPreview() {
-  const product = products.find(item => item.id === customProductId.value);
-
-  if (!product) {
-    customProductPreview.classList.remove('visible');
-    customProductPreviewImage.removeAttribute('src');
-    customCapabilities.innerHTML =
-      '<span class="capability-chip">Image libre : faisabilité à valider</span>';
-    return;
-  }
-
-  if (product.image) {
-    customProductPreviewImage.src = product.image;
-    customProductPreview.classList.add('visible');
-  } else {
-    customProductPreview.classList.remove('visible');
-  }
-
-  customCapabilities.innerHTML = [
-    capabilityChip('Couleur', product.customizableColor === true),
-    capabilityChip('Tissu', product.customizableFabric === true),
-    capabilityChip('Dimensions', product.customizableDimensions === true),
-    capabilityChip('Coin / orientation', product.customizableCorner === true)
-  ].join('');
-}
-
-customProductId.addEventListener('change', updateCustomizationProductPreview);
-
-customReferenceImage.addEventListener('change', () => {
-  const file = customReferenceImage.files[0];
-
-  customReferenceName.textContent =
-    file
-      ? `Image choisie : ${file.name}`
-      : '';
+document.getElementById('importManyBtn').addEventListener('click', () => {
+  document.getElementById('importText').value = '';
+  openModal('importModal');
 });
 
-function customizationRequestSummary(item) {
-  const request = item.request || {};
-  const parts = [];
+document.getElementById('confirmImportBtn').addEventListener('click', async () => {
+  const text = document.getElementById('importText').value;
 
-  if (request.color) parts.push(`Couleur : ${request.color}`);
-  if (request.fabric) parts.push(`Tissu : ${request.fabric}`);
-  if (request.dimensions) parts.push(`Dimensions : ${request.dimensions}`);
-  if (request.corner) parts.push(`Coin : ${request.corner}`);
-  if (request.notes) parts.push(request.notes);
+  try{
+    const data = await apiFetch(`${API}/instructions/import`, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({text})
+    });
 
-  return parts.join(' • ') || 'Personnalisation';
-}
+    closeModal('importModal');
 
-function customizationStatusLabel(status) {
-  const labels = {
-    simulation_generated: 'Simulation générée',
-    awaiting_validation: 'À valider',
-    approved: 'Validée',
-    sent_to_client: 'Envoyée au client',
-    rejected: 'Non faisable / refusée'
-  };
+    alert(
+      `${data.imported} instruction(s) importée(s), ${data.duplicates} doublon(s).`
+    );
 
-  return labels[status] || status || 'Simulation générée';
-}
-
-async function loadCustomizations() {
-  try {
-    const response = await apiFetch('/admin/api/customizations');
-    const data = await safeJson(response);
-
-    customizations = Array.isArray(data) ? data : [];
-    renderCustomizationHistory();
-  } catch (error) {
-    console.error('Personnalisations :', error);
+    await loadInstructions();
+  }catch(error){
+    alert(error.message);
   }
+});
+
+// ============================================================
+// PERSONNALISATION
+// ============================================================
+
+async function loadCustomizations(){
+  customizations = await apiFetch(`${API}/customizations`);
+  renderCustomizations();
 }
 
-function renderCustomizationHistory() {
-  const grid = document.getElementById('customHistoryGrid');
-  const empty = document.getElementById('customHistoryEmpty');
+function renderCustomizations(){
+  const container = document.getElementById('customizationHistory');
 
-  if (!customizations.length) {
-    grid.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
-
-  empty.style.display = 'none';
-
-  grid.innerHTML = customizations.map(item => {
-    const source = item.sourceImage || '';
-    const result = item.resultImage || '';
-
-    return `
-      <div class="custom-history-card">
-        <div class="custom-history-images">
-          ${
-            source
-              ? `<img src="${escapeHtml(source)}" alt="Référence">`
-              : '<div></div>'
-          }
-          ${
-            result
-              ? `<img src="${escapeHtml(result)}" alt="Simulation">`
-              : '<div></div>'
-          }
-        </div>
-
-        <div class="custom-history-body">
-          <div class="custom-history-name">${escapeHtml(item.productName || 'Image libre')}</div>
-          <div class="custom-history-request">${escapeHtml(customizationRequestSummary(item))}</div>
-
-          ${
-            item.customerName || item.customerPhone
-              ? `<div class="custom-history-request">${escapeHtml([item.customerName, item.customerPhone].filter(Boolean).join(' • '))}</div>`
-              : ''
-          }
-
-          <div class="custom-history-actions">
-            <select onchange="updateCustomizationStatus('${item.id}', this.value)">
-              ${[
-                'simulation_generated',
-                'awaiting_validation',
-                'approved',
-                'sent_to_client',
-                'rejected'
-              ].map(
-                status =>
-                  `<option value="${status}" ${item.status === status ? 'selected' : ''}>${escapeHtml(customizationStatusLabel(status))}</option>`
-              ).join('')}
-            </select>
-
-            <button
-              type="button"
-              class="action-btn delete"
-              onclick="deleteCustomization('${item.id}')"
-            >
-              Supprimer
-            </button>
-          </div>
-        </div>
+  if(!customizations.length){
+    container.innerHTML = `
+      <div class="empty">
+        <strong>Aucune simulation enregistrée</strong>
+        Les simulations générées apparaîtront ici.
       </div>
     `;
-  }).join('');
-}
-
-function showCustomizationResult(item) {
-  const empty = document.getElementById('customResultEmpty');
-  const result = document.getElementById('customResult');
-  const sourceImage = document.getElementById('customResultSource');
-  const resultImage = document.getElementById('customResultImage');
-  const analysis = document.getElementById('customResultAnalysis');
-  const warning = document.getElementById('customResultWarning');
-
-  if (item.sourceImage) {
-    sourceImage.src = item.sourceImage;
-  } else {
-    sourceImage.removeAttribute('src');
+    return;
   }
 
-  resultImage.src = item.resultImage || '';
-
-  analysis.textContent =
-    [
-      `Produit : ${item.productName || 'Image libre'}`,
-      customizationRequestSummary(item),
-      item.analysis ? `\nAnalyse IA :\n${item.analysis}` : ''
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-  const warnings = Array.isArray(item.warnings) ? item.warnings : [];
-
-  warning.textContent =
-    [
-      ...warnings,
-      'Simulation visuelle non contractuelle. Le prix, les dimensions exactes, la structure, la faisabilité de fabrication et le délai doivent être confirmés par un commercial MONDECO.'
-    ].join('\n');
-
-  empty.style.display = 'none';
-  result.classList.add('visible');
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Produit</th>
+            <th>Demande</th>
+            <th>Statut</th>
+            <th>Date</th>
+            <th>Résultat</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${customizations.map(item => `
+            <tr>
+              <td><strong>${escapeHtml(item.productName || 'Image libre')}</strong></td>
+              <td>
+                ${[
+                  item.request?.color,
+                  item.request?.fabric,
+                  item.request?.dimensions,
+                  item.request?.corner
+                ].filter(Boolean).map(escapeHtml).join(' • ') || '—'}
+              </td>
+              <td>${escapeHtml(customStatusLabel(item.status))}</td>
+              <td>${escapeHtml(formatDate(item.createdAt))}</td>
+              <td>
+                ${item.resultImage
+                  ? `<a href="${escapeHtml(item.resultImage)}" target="_blank">Voir</a>`
+                  : '—'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-async function prepareImageForCloudflare(file) {
-  const image = await loadImageElement(file);
+function customStatusLabel(status){
+  const map = {
+    simulation_generated:'Simulation générée',
+    awaiting_validation:'À valider',
+    approved:'Validée',
+    sent_to_client:'Envoyée au client',
+    rejected:'Non faisable / refusée'
+  };
 
-  // FLUX.2 sur Workers AI demande des images de référence
-  // strictement plus petites que 512 × 512 px.
-  const maxInputDimension = 500;
-  const inputScale = Math.min(
+  return map[status] || status || '—';
+}
+
+function formatDate(value){
+  if(!value) return '—';
+
+  try{
+    return new Date(value).toLocaleString('fr-FR');
+  }catch{
+    return value;
+  }
+}
+
+document.getElementById('refreshCustomizationsBtn').addEventListener('click', loadCustomizations);
+
+async function resizeReferenceImage(sourceBlob, filename = 'reference.jpg'){
+  const bitmap = await createImageBitmap(sourceBlob);
+
+  const max = 500;
+  const scale = Math.min(
     1,
-    maxInputDimension / Math.max(image.naturalWidth, image.naturalHeight)
+    max / bitmap.width,
+    max / bitmap.height
   );
 
-  const inputWidth = Math.max(
-    1,
-    Math.round(image.naturalWidth * inputScale)
-  );
-
-  const inputHeight = Math.max(
-    1,
-    Math.round(image.naturalHeight * inputScale)
-  );
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
 
   const canvas = document.createElement('canvas');
-  canvas.width = inputWidth;
-  canvas.height = inputHeight;
+  canvas.width = width;
+  canvas.height = height;
 
-  const context = canvas.getContext('2d');
-  context.drawImage(image, 0, 0, inputWidth, inputHeight);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
 
-  const blob = await canvasToBlob(canvas, 0.9);
-
-  // On demande une sortie jusqu’à 1024 px en conservant
-  // au mieux le ratio de la photo originale.
-  const maxOutputDimension = 1024;
-  const outputScale =
-    maxOutputDimension / Math.max(image.naturalWidth, image.naturalHeight);
-
-  const round16 = value => Math.max(
-    256,
-    Math.min(1920, Math.round(value / 16) * 16)
-  );
-
-  const outputWidth = round16(image.naturalWidth * outputScale);
-  const outputHeight = round16(image.naturalHeight * outputScale);
-
-  return {
-    file: new File([blob], 'mondeco-cloudflare-reference.jpg', {
-      type: 'image/jpeg'
-    }),
-    outputWidth,
-    outputHeight
-  };
-}
-
-async function getCustomizationReferenceFile(productId, selectedFile) {
-  if (selectedFile) {
-    return selectedFile;
-  }
-
-  const product = products.find(item => item.id === productId);
-
-  if (!product?.image) {
-    throw new Error(
-      'Le produit sélectionné ne possède pas de photo. Ajoutez une image de référence.'
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      result => result ? resolve(result) : reject(new Error('Compression image impossible.')),
+      'image/jpeg',
+      .9
     );
-  }
-
-  const response = await apiFetch(product.image);
-
-  if (!response.ok) {
-    throw new Error(
-      'Impossible de charger la photo du produit sélectionné.'
-    );
-  }
-
-  const blob = await response.blob();
+  });
 
   return new File(
     [blob],
-    'mondeco-product-reference.jpg',
-    { type: blob.type || 'image/jpeg' }
+    filename.replace(/\.[^.]+$/, '') + '-ai.jpg',
+    {type:'image/jpeg'}
   );
 }
 
-customizationForm.addEventListener('submit', async event => {
+document.getElementById('customizationForm').addEventListener('submit', async event => {
   event.preventDefault();
 
-  const productId = customProductId.value;
-  const referenceFile = customReferenceImage.files[0];
+  const button = document.getElementById('generateCustomizationBtn');
+  const oldText = button.textContent;
 
-  if (!productId && !referenceFile) {
-    alert('Sélectionnez un produit ou ajoutez une image de référence.');
-    return;
-  }
+  button.disabled = true;
+  button.textContent = 'Génération...';
 
-  const color = document.getElementById('customColor').value.trim();
-  const fabric = document.getElementById('customFabric').value.trim();
-  const dimensions = document.getElementById('customDimensions').value.trim();
-  const corner = document.getElementById('customCorner').value.trim();
-  const notes = document.getElementById('customNotes').value.trim();
+  try{
+    const formData = new FormData();
 
-  if (!color && !fabric && !dimensions && !corner && !notes) {
-    alert('Indiquez au moins une modification à simuler.');
-    return;
-  }
+    const selectedProductId = document.getElementById('customProductId').value;
 
-  const formData = new FormData();
+    formData.append('productId', selectedProductId);
+    formData.append('color', document.getElementById('customColor').value);
+    formData.append('fabric', document.getElementById('customFabric').value);
+    formData.append('dimensions', document.getElementById('customDimensions').value);
+    formData.append('corner', document.getElementById('customCorner').value);
+    formData.append('notes', document.getElementById('customNotes').value);
 
-  formData.append('productId', productId);
-  formData.append('color', color);
-  formData.append('fabric', fabric);
-  formData.append('dimensions', dimensions);
-  formData.append('corner', corner);
-  formData.append('notes', notes);
-  formData.append(
-    'customerName',
-    document.getElementById('customCustomerName').value
-  );
-  formData.append(
-    'customerPhone',
-    document.getElementById('customCustomerPhone').value
-  );
+    const uploadedFile = document.getElementById('customReferenceImage').files?.[0];
 
-  generateCustomizationBtn.disabled = true;
-  generateCustomizationBtn.textContent = '⏳ Préparation de l’image...';
+    let referenceFile = null;
 
-  try {
-    const rawReferenceFile = await getCustomizationReferenceFile(
-      productId,
-      referenceFile
-    );
+    if(uploadedFile){
+      referenceFile = await resizeReferenceImage(
+        uploadedFile,
+        uploadedFile.name
+      );
+    }else if(selectedProductId){
+      const product = products.find(item => item.id === selectedProductId);
 
-    const prepared = await prepareImageForCloudflare(
-      rawReferenceFile
-    );
+      if(product?.image){
+        const response = await fetch(product.image);
 
-    formData.append('referenceImage', prepared.file);
-    formData.append('outputWidth', String(prepared.outputWidth));
-    formData.append('outputHeight', String(prepared.outputHeight));
+        if(!response.ok){
+          throw new Error('Impossible de charger la photo du produit.');
+        }
 
-    generateCustomizationBtn.textContent = '⏳ Génération en cours...';
+        const blob = await response.blob();
 
-    const response = await apiFetch(
-      '/admin/api/customizations/generate',
-      {
-        method: 'POST',
-        body: formData
+        referenceFile = await resizeReferenceImage(
+          blob,
+          `${product.name || 'produit'}.jpg`
+        );
       }
-    );
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Impossible de générer la simulation.');
-      return;
     }
 
-    showCustomizationResult(data);
-    await loadCustomizations();
+    if(referenceFile){
+      formData.append('referenceImage', referenceFile);
+    }
 
-    showToast('Simulation générée. Validation commerciale requise.');
-  } catch (error) {
-    console.error('Simulation :', error);
-    alert(error.message || 'Impossible de contacter le serveur.');
-  } finally {
-    generateCustomizationBtn.disabled = false;
-    generateCustomizationBtn.textContent = '✨ Générer la simulation';
+    const item = await apiFetch(`${API}/customizations/generate`, {
+      method:'POST',
+      body:formData
+    });
+
+    const result = document.getElementById('customizationResult');
+
+    result.className = '';
+
+    result.innerHTML = `
+      <div class="custom-result">
+        <figure>
+          ${item.sourceImage
+            ? `<img src="${escapeHtml(item.sourceImage)}" alt="Référence">`
+            : '<div class="empty">Référence catalogue</div>'}
+          <figcaption>Référence</figcaption>
+        </figure>
+
+        <figure>
+          <img src="${escapeHtml(item.resultImage)}" alt="Simulation">
+          <figcaption>Simulation IA</figcaption>
+        </figure>
+      </div>
+
+      ${item.analysis
+        ? `<div class="notice info" style="margin-top:14px">${escapeHtml(item.analysis)}</div>`
+        : ''}
+
+      ${(item.warnings || []).length
+        ? `<div class="notice warning" style="margin-top:10px">${item.warnings.map(escapeHtml).join('<br>')}</div>`
+        : ''}
+    `;
+
+    await loadCustomizations();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }finally{
+    button.disabled = false;
+    button.textContent = oldText;
   }
 });
 
-window.updateCustomizationStatus = async function(id, status) {
-  try {
-    const response = await apiFetch(
-      '/admin/api/customizations/' + encodeURIComponent(id) + '/status',
-      {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
+// ============================================================
+// DISCUSSION TEST
+// ============================================================
+
+function addChatMessage(role, text){
+  const box = document.getElementById('chatBox');
+
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+document.getElementById('sendTestBtn').addEventListener('click', async () => {
+  const message = document.getElementById('testMessage').value.trim();
+  const image = document.getElementById('testImage').files?.[0];
+  const mode = document.getElementById('testImageMode').value;
+
+  if(!message && !image){
+    return;
+  }
+
+  addChatMessage('user', message || '[Image envoyée]');
+
+  const button = document.getElementById('sendTestBtn');
+  button.disabled = true;
+  button.textContent = '...';
+
+  try{
+    let data;
+
+    if(image){
+      const formData = new FormData();
+      formData.append('image', image);
+      formData.append('message', message);
+      formData.append('mode', mode);
+
+      data = await apiFetch(`${API}/test-chat-image`, {
+        method:'POST',
+        body:formData
+      });
+    }else{
+      data = await apiFetch(`${API}/test-chat`, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
         },
-        body: JSON.stringify({ status })
-      }
-    );
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Impossible de modifier le statut.');
-      await loadCustomizations();
-      return;
+        body:JSON.stringify({message})
+      });
     }
 
-    await loadCustomizations();
-    showToast('Statut mis à jour.');
-  } catch (error) {
-    alert('Impossible de contacter le serveur.');
+    addChatMessage('bot', data.reply || 'Réponse vide.');
+    document.getElementById('testMessage').value = '';
+    document.getElementById('testImage').value = '';
+  }catch(error){
+    addChatMessage('bot', `Erreur : ${error.message}`);
+  }finally{
+    button.disabled = false;
+    button.textContent = 'Envoyer';
   }
-};
-
-window.deleteCustomization = async function(id) {
-  if (!confirm('Supprimer cette simulation ?')) {
-    return;
-  }
-
-  try {
-    const response = await apiFetch(
-      '/admin/api/customizations/' + encodeURIComponent(id),
-      {
-        method: 'DELETE'
-      }
-    );
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-      alert(data.error || 'Impossible de supprimer la simulation.');
-      return;
-    }
-
-    await loadCustomizations();
-    showToast('Simulation supprimée.');
-  } catch (error) {
-    alert('Impossible de contacter le serveur.');
-  }
-};
-
-/* ============================================================
-   STATS
-   ============================================================ */
-
-async function loadStats() {
-  try {
-    const response = await apiFetch('/admin/api/stats');
-    const data = await safeJson(response);
-
-    document.getElementById('statProducts').textContent =
-      data.productCount ?? products.length ?? 0;
-
-    document.getElementById('statInstructions').textContent =
-      data.activeInstructionsCount ?? 0;
-  } catch (error) {
-    console.error('Stats :', error);
-  }
-}
-
-/* ============================================================
-   CHAT TEST - TEXTE + IMAGE
-   ============================================================ */
-
-const chatMessages = document.getElementById('chatMessages');
-const chatForm = document.getElementById('chatForm');
-const chatInput = document.getElementById('chatInput');
-const chatImageInput = document.getElementById('chatImageInput');
-const chatImageMode = document.getElementById('testImageMode');
-const chatImagePreviewArea = document.getElementById('chatImagePreviewArea');
-const chatImagePreview = document.getElementById('chatImagePreview');
-const chatImageName = document.getElementById('chatImageName');
-const chatSendBtn = document.getElementById('chatSendBtn');
-
-let selectedChatImage = null;
-let selectedChatImagePreviewUrl = null;
-
-function addBubble(text, type) {
-  const empty = chatMessages.querySelector('.chat-empty');
-  if (empty) empty.remove();
-
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble ' + type;
-  bubble.textContent = text;
-
-  chatMessages.appendChild(bubble);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-
-  return bubble;
-}
-
-function addImageBubble(imageUrl, text = '') {
-  const empty = chatMessages.querySelector('.chat-empty');
-  if (empty) empty.remove();
-
-  const bubble = document.createElement('div');
-  bubble.className = 'chat-bubble user';
-
-  const image = document.createElement('img');
-  image.className = 'chat-bubble-image';
-  image.src = imageUrl;
-  image.alt = 'Image de test';
-  bubble.appendChild(image);
-
-  if (text) {
-    const caption = document.createElement('div');
-    caption.className = 'chat-image-caption';
-    caption.textContent = text;
-    bubble.appendChild(caption);
-  }
-
-  chatMessages.appendChild(bubble);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-function clearChatImageSelection() {
-  selectedChatImage = null;
-  chatImageInput.value = '';
-  chatImagePreviewArea.classList.remove('visible');
-  chatImagePreview.removeAttribute('src');
-  chatImageName.textContent = 'Image';
-
-  if (selectedChatImagePreviewUrl) {
-    URL.revokeObjectURL(selectedChatImagePreviewUrl);
-    selectedChatImagePreviewUrl = null;
-  }
-}
-
-chatImageInput.addEventListener('change', () => {
-  const file = chatImageInput.files[0];
-  if (!file) return;
-
-  const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-
-  if (!allowed.includes(file.type)) {
-    alert('Format non accepté. Utilisez JPG, PNG ou WEBP.');
-    clearChatImageSelection();
-    return;
-  }
-
-  selectedChatImage = file;
-
-  if (selectedChatImagePreviewUrl) {
-    URL.revokeObjectURL(selectedChatImagePreviewUrl);
-  }
-
-  selectedChatImagePreviewUrl = URL.createObjectURL(file);
-  chatImagePreview.src = selectedChatImagePreviewUrl;
-  chatImageName.textContent = file.name;
-  chatImagePreviewArea.classList.add('visible');
 });
 
-document.getElementById('removeChatImageBtn').addEventListener('click', () => {
-  clearChatImageSelection();
-});
+// ============================================================
+// PARAMÈTRES
+// ============================================================
 
-function loadImageElement(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const image = new Image();
+const dayMeta = [
+  ['mon','Lundi'],
+  ['tue','Mardi'],
+  ['wed','Mercredi'],
+  ['thu','Jeudi'],
+  ['fri','Vendredi'],
+  ['sat','Samedi'],
+  ['sun','Dimanche']
+];
 
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(image);
-    };
+function buildWeeklyRows(){
+  const container = document.getElementById('weeklyRows');
 
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Impossible de lire cette image.'));
-    };
+  container.innerHTML = dayMeta.map(([key,label]) => `
+    <div class="week-row">
+      <strong>${label}</strong>
 
-    image.src = url;
-  });
+      <label style="margin:0;display:flex;align-items:center;gap:6px">
+        <input
+          type="checkbox"
+          id="week-${key}-enabled"
+        >
+        ON
+      </label>
+
+      <input
+        class="time-input"
+        type="time"
+        id="week-${key}-start"
+      >
+
+      <input
+        class="time-input"
+        type="time"
+        id="week-${key}-end"
+      >
+    </div>
+  `).join('');
 }
 
-function canvasToBlob(canvas, quality) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      blob => {
-        if (blob) resolve(blob);
-        else reject(new Error('Impossible de compresser l’image.'));
-      },
-      'image/jpeg',
-      quality
+buildWeeklyRows();
+
+async function loadSettings(){
+  settings = await apiFetch(`${API}/settings`);
+
+  document.getElementById('settingAiEnabled').checked =
+    settings.aiEnabled === true;
+
+  const audience =
+    document.querySelector(
+      `input[name="audience"][value="${settings.audience}"]`
     );
-  });
+
+  if(audience) audience.checked = true;
+
+  document.getElementById('settingTeamPhones').value =
+    (settings.teamPhones || []).join('\n');
+
+  document.getElementById('settingScheduleMode').value =
+    settings.schedule?.mode || 'always';
+
+  document.getElementById('settingTimezone').value =
+    settings.timezone || 'Africa/Tunis';
+
+  document.getElementById('settingOutOfHours').value =
+    settings.schedule?.outOfHours || 'none';
+
+  document.getElementById('settingAbsenceMessage').value =
+    settings.schedule?.absenceMessage || '';
+
+  for(const [key] of dayMeta){
+    const day =
+      settings.schedule?.weekly?.[key] || {};
+
+    document.getElementById(`week-${key}-enabled`).checked =
+      day.enabled !== false;
+
+    document.getElementById(`week-${key}-start`).value =
+      day.start || '08:00';
+
+    document.getElementById(`week-${key}-end`).value =
+      day.end || '19:00';
+  }
+
+  document.getElementById('settingFollowUpEnabled').checked =
+    settings.followUp?.enabled === true;
+
+  document.getElementById('settingFollowUpDelay').value =
+    String(settings.followUp?.delayMinutes || 60);
+
+  document.getElementById('settingFollowUpMax').value =
+    String(settings.followUp?.maxFollowUps || 1);
+
+  document.getElementById('settingFollowUpMessage').value =
+    settings.followUp?.message || '';
+
+  const imageHandling =
+    document.querySelector(
+      `input[name="imageHandling"][value="${settings.imageHandling}"]`
+    );
+
+  if(imageHandling) imageHandling.checked = true;
+
+  document.getElementById('settingPauseHuman').checked =
+    settings.pauseWhenHumanReplies === true;
+
+  document.getElementById('settingHumanPauseMinutes').value =
+    String(settings.humanPauseMinutes || 120);
+
+  updateSettingsVisibility();
+  renderSettingsSummary();
 }
 
-async function prepareImageForVision(file) {
-  // Les images Base64 ont une limite plus stricte côté API vision.
-  // On normalise donc automatiquement l'image avant l'envoi.
-  const image = await loadImageElement(file);
+function updateSettingsVisibility(){
+  const custom =
+    document.getElementById('settingScheduleMode').value === 'custom';
 
-  let maxDimension = 1600;
-  let quality = 0.82;
+  document.getElementById('weeklyScheduleBox').classList.toggle(
+    'hidden',
+    !custom
+  );
 
-  const createCompressed = async () => {
-    const scale = Math.min(
-      1,
-      maxDimension / Math.max(image.naturalWidth, image.naturalHeight)
-    );
+  document.getElementById('followUpBox').classList.toggle(
+    'hidden',
+    !document.getElementById('settingFollowUpEnabled').checked
+  );
+}
 
-    const width = Math.max(1, Math.round(image.naturalWidth * scale));
-    const height = Math.max(1, Math.round(image.naturalHeight * scale));
+document.getElementById('settingScheduleMode').addEventListener('change', updateSettingsVisibility);
+document.getElementById('settingFollowUpEnabled').addEventListener('change', updateSettingsVisibility);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+function collectSettings(){
+  const weekly = {};
 
-    const context = canvas.getContext('2d');
-    context.drawImage(image, 0, 0, width, height);
+  for(const [key] of dayMeta){
+    weekly[key] = {
+      enabled:
+        document.getElementById(`week-${key}-enabled`).checked,
 
-    return canvasToBlob(canvas, quality);
+      start:
+        document.getElementById(`week-${key}-start`).value || '08:00',
+
+      end:
+        document.getElementById(`week-${key}-end`).value || '19:00'
+    };
+  }
+
+  return {
+    aiEnabled:
+      document.getElementById('settingAiEnabled').checked,
+
+    audience:
+      document.querySelector('input[name="audience"]:checked')?.value || 'all',
+
+    timezone:
+      document.getElementById('settingTimezone').value.trim() || 'Africa/Tunis',
+
+    schedule:{
+      mode:
+        document.getElementById('settingScheduleMode').value,
+
+      outOfHours:
+        document.getElementById('settingOutOfHours').value,
+
+      absenceMessage:
+        document.getElementById('settingAbsenceMessage').value,
+
+      weekly
+    },
+
+    followUp:{
+      enabled:
+        document.getElementById('settingFollowUpEnabled').checked,
+
+      delayMinutes:
+        Number(document.getElementById('settingFollowUpDelay').value),
+
+      maxFollowUps:
+        Number(document.getElementById('settingFollowUpMax').value),
+
+      message:
+        document.getElementById('settingFollowUpMessage').value
+    },
+
+    imageHandling:
+      document.querySelector('input[name="imageHandling"]:checked')?.value || 'commercial',
+
+    pauseWhenHumanReplies:
+      document.getElementById('settingPauseHuman').checked,
+
+    humanPauseMinutes:
+      Number(document.getElementById('settingHumanPauseMinutes').value),
+
+    teamPhones:
+      document.getElementById('settingTeamPhones').value
+  };
+}
+
+function renderSettingsSummary(){
+  if(!settings) return;
+
+  const audienceLabels = {
+    all:'Tout le monde',
+    new:'Nouveaux clients uniquement',
+    ads:'Clients venant des publicités Meta',
+    team:'Équipe MONDECO uniquement'
   };
 
-  let blob = await createCompressed();
+  const imageLabels = {
+    commercial:'Transfert commercial',
+    analyze_only:'Analyse interne sans réponse',
+    analyze_reply:'Analyse + réponse automatique'
+  };
 
-  if (blob.size > 2 * 1024 * 1024) {
-    maxDimension = 1200;
-    quality = 0.72;
-    blob = await createCompressed();
-  }
+  const lines = [
+    `IA : ${settings.aiEnabled ? 'Activée' : 'Désactivée'}`,
+    `Audience : ${audienceLabels[settings.audience] || settings.audience}`,
+    `Calendrier : ${settings.schedule?.mode === 'custom' ? 'Horaires personnalisés' : 'Toujours disponible'}`,
+    `Relance : ${settings.followUp?.enabled ? `Après ${settings.followUp.delayMinutes} min` : 'Désactivée'}`,
+    `Images : ${imageLabels[settings.imageHandling] || settings.imageHandling}`,
+    `Pause commerciale : ${settings.pauseWhenHumanReplies ? `${settings.humanPauseMinutes} min` : 'Désactivée'}`
+  ];
 
-  if (blob.size > 2.5 * 1024 * 1024) {
-    throw new Error('L’image reste trop lourde après compression. Choisissez une image plus légère.');
-  }
-
-  return new File([blob], 'mondeco-test-image.jpg', {
-    type: 'image/jpeg'
-  });
+  document.getElementById('settingsSummary').innerHTML =
+    lines.map(escapeHtml).join('<br>');
 }
 
-chatForm.addEventListener('submit', async event => {
-  event.preventDefault();
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  const button = document.getElementById('saveSettingsBtn');
+  const old = button.textContent;
 
-  const message = chatInput.value.trim();
-  const imageFile = selectedChatImage;
+  button.disabled = true;
+  button.textContent = 'Enregistrement...';
 
-  if (!message && !imageFile) {
-    return;
-  }
+  try{
+    const data = await apiFetch(`${API}/settings`, {
+      method:'PUT',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify(
+        collectSettings()
+      )
+    });
 
-  if (imageFile) {
-    addImageBubble(URL.createObjectURL(imageFile), message);
-  } else {
-    addBubble(message, 'user');
-  }
+    settings = data.settings;
+    renderSettingsSummary();
+    await refreshHome();
 
-  chatInput.value = '';
-
-  const typingBubble = addBubble(
-    imageFile ? '... analyse de l’image en cours' : '... en train de répondre',
-    'typing'
-  );
-
-  chatSendBtn.disabled = true;
-
-  try {
-    let response;
-
-    if (imageFile) {
-      const preparedImage = await prepareImageForVision(imageFile);
-      const formData = new FormData();
-
-      formData.append('image', preparedImage);
-      formData.append('message', message);
-      formData.append('mode', chatImageMode.value);
-
-      response = await apiFetch('/admin/api/test-chat-image', {
-        method: 'POST',
-        body: formData
-      });
-    } else {
-      response = await apiFetch('/admin/api/test-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ message })
-      });
-    }
-
-    const data = await safeJson(response);
-
-    if (typingBubble.isConnected) typingBubble.remove();
-
-    if (response.ok) {
-      addBubble(data.reply || '', 'bot');
-    } else {
-      addBubble(data.error || 'Une erreur est survenue.', 'error');
-    }
-  } catch (error) {
-    console.error('Discussion test :', error);
-
-    if (typingBubble.isConnected) typingBubble.remove();
-    addBubble(error.message || 'Impossible de contacter le serveur.', 'error');
-  } finally {
-    chatSendBtn.disabled = false;
-    clearChatImageSelection();
+    alert('Paramètres enregistrés.');
+  }catch(error){
+    alert(error.message);
+  }finally{
+    button.disabled = false;
+    button.textContent = old;
   }
 });
 
-/* ============================================================
-   MODALS
-   ============================================================ */
+// ============================================================
+// LOGOUT / INIT
+// ============================================================
 
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', event => {
-    if (event.target !== overlay) {
-      return;
-    }
-
-    overlay.classList.remove('active');
-
-    if (overlay === productOverlay) {
-      resetProductModal();
-    }
-  });
-});
-
-document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape') {
-    return;
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  try{
+    await fetch('/admin/logout', {
+      method:'POST'
+    });
+  }finally{
+    location.href = '/admin/login';
   }
-
-  document.querySelectorAll('.modal-overlay.active').forEach(overlay => {
-    overlay.classList.remove('active');
-  });
-
-  resetProductModal();
 });
 
-/* ============================================================
-   INITIALISATION
-   ============================================================ */
-
-async function initializeAdmin() {
-  await Promise.all([
-    loadProducts(),
-    loadInstructions(),
-    loadCustomizations(),
-    loadStats()
-  ]);
-}
-
-initializeAdmin();
+(async function init(){
+  try{
+    await Promise.all([
+      loadProducts(),
+      loadInstructions(),
+      refreshHome()
+    ]);
+  }catch(error){
+    console.error(error);
+  }
+})();
 </script>
 
 </body>
