@@ -2,14 +2,19 @@
 // MONDECO - PANNEAU D'ADMINISTRATION
 // Fichier : Admin.js
 //
-// Gère :
-// - Authentification
+// Fonctionnalités :
+// - Authentification admin
 // - Catalogue produits
+// - Upload obligatoire d'une image produit
+// - Modification / suppression produits
 // - Instructions IA séparées
-// - Import ancien business-info.txt
-// - Import plusieurs instructions
+// - Import instructions
+// - Import business-info.txt
 // - Discussion de test
 // - Statistiques
+//
+// Dépendances :
+// npm install express multer
 //
 // Dans server.js :
 //
@@ -26,50 +31,106 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const multer = require('multer');
 
 const router = express.Router();
 
 // ============================================================
-// CONFIGURATION
+// CONFIGURATION GÉNÉRALE
 // ============================================================
 
-const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_DIR =
+  (process.env.DATA_DIR || __dirname).trim();
 
-const PRODUCTS_PATH = path.join(
-  DATA_DIR,
-  'products.json'
-);
+const PRODUCTS_PATH =
+  path.join(
+    DATA_DIR,
+    'products.json'
+  );
 
-const INSTRUCTIONS_JSON_PATH = path.join(
-  DATA_DIR,
-  'instructions.json'
-);
+const INSTRUCTIONS_JSON_PATH =
+  path.join(
+    DATA_DIR,
+    'instructions.json'
+  );
 
-// Ancien fichier utilisé avant les instructions séparées
-const LEGACY_BUSINESS_INFO_PATH = path.join(
-  __dirname,
-  'business-info.txt'
-);
+const UPLOADS_DIR =
+  path.join(
+    DATA_DIR,
+    'uploads'
+  );
 
-// Admin.html est directement à la racine du projet
-const ADMIN_HTML_PATH = path.join(
-  __dirname,
-  'Admin.html'
-);
+// Ancien fichier MONDECO
+const LEGACY_BUSINESS_INFO_PATH =
+  path.join(
+    __dirname,
+    'business-info.txt'
+  );
+
+// Admin.html reste dans le dossier principal
+const ADMIN_HTML_PATH =
+  path.join(
+    __dirname,
+    'Admin.html'
+  );
+
+// ============================================================
+// INITIALISER DOSSIERS
+// ============================================================
+
+try {
+
+  fs.mkdirSync(
+    DATA_DIR,
+    {
+      recursive: true
+    }
+  );
+
+  fs.mkdirSync(
+    UPLOADS_DIR,
+    {
+      recursive: true
+    }
+  );
+
+  console.log(
+    '✅ DATA_DIR Admin :',
+    DATA_DIR
+  );
+
+  console.log(
+    '✅ UPLOADS_DIR :',
+    UPLOADS_DIR
+  );
+
+} catch (error) {
+
+  console.error(
+    '❌ Impossible de créer les dossiers Admin :',
+    error
+  );
+}
 
 // ============================================================
 // MOT DE PASSE ADMIN
 // ============================================================
-
-// Si ADMIN_PASSWORD est défini dans Railway,
-// sa valeur sera utilisée.
 //
-// Sinon : mondeco2026
+// Si ADMIN_PASSWORD existe dans Railway,
+// il est utilisé.
+//
+// Sinon :
+// mondeco2026
+// ============================================================
 
 const ADMIN_PASSWORD =
-  (process.env.ADMIN_PASSWORD || 'mondeco2026').trim();
+  (
+    process.env.ADMIN_PASSWORD ||
+    'mondeco2026'
+  ).trim();
 
 if (!process.env.ADMIN_PASSWORD) {
+
   console.warn(
     '⚠️ ADMIN_PASSWORD non défini dans Railway.'
   );
@@ -80,7 +141,13 @@ if (!process.env.ADMIN_PASSWORD) {
 }
 
 // ============================================================
-// BODY JSON
+// EXPRESS JSON
+// ============================================================
+//
+// Fonctionne pour les instructions.
+//
+// Multer prendra automatiquement en charge
+// multipart/form-data pour les produits.
 // ============================================================
 
 router.use(
@@ -90,10 +157,11 @@ router.use(
 );
 
 // ============================================================
-// SESSIONS
+// SESSIONS ADMIN
 // ============================================================
 
-const validSessions = new Map();
+const validSessions =
+  new Map();
 
 const SESSION_DURATION =
   24 * 60 * 60 * 1000;
@@ -102,53 +170,84 @@ const SESSION_DURATION =
 // COOKIES
 // ============================================================
 
-function parseCookies(header = '') {
+function parseCookies(
+  header = ''
+) {
+
   const cookies = {};
 
-  header.split(';').forEach(pair => {
-    const index = pair.indexOf('=');
+  header
+    .split(';')
+    .forEach(pair => {
 
-    if (index === -1) {
-      return;
-    }
+      const index =
+        pair.indexOf('=');
 
-    const key = pair
-      .slice(0, index)
-      .trim();
+      if (index === -1) {
+        return;
+      }
 
-    const rawValue = pair
-      .slice(index + 1)
-      .trim();
+      const key =
+        pair
+          .slice(0, index)
+          .trim();
 
-    try {
-      cookies[key] =
-        decodeURIComponent(rawValue);
-    } catch {
-      cookies[key] = rawValue;
-    }
-  });
+      const rawValue =
+        pair
+          .slice(index + 1)
+          .trim();
+
+      try {
+
+        cookies[key] =
+          decodeURIComponent(
+            rawValue
+          );
+
+      } catch {
+
+        cookies[key] =
+          rawValue;
+      }
+
+    });
 
   return cookies;
 }
 
 // ============================================================
-// SESSIONS
+// NETTOYAGE SESSIONS
 // ============================================================
 
 function cleanExpiredSessions() {
-  const now = Date.now();
+
+  const now =
+    Date.now();
 
   for (
     const [token, expiresAt]
     of validSessions.entries()
   ) {
-    if (expiresAt <= now) {
-      validSessions.delete(token);
+
+    if (
+      expiresAt <= now
+    ) {
+
+      validSessions.delete(
+        token
+      );
     }
   }
 }
 
-function isValidSession(token) {
+// ============================================================
+// VÉRIFIER SESSION
+// ============================================================
+
+function isValidSession(
+  token
+) {
+
   if (!token) {
     return false;
   }
@@ -156,69 +255,411 @@ function isValidSession(token) {
   cleanExpiredSessions();
 
   const expiresAt =
-    validSessions.get(token);
+    validSessions.get(
+      token
+    );
 
   if (!expiresAt) {
     return false;
   }
 
-  if (expiresAt <= Date.now()) {
-    validSessions.delete(token);
+  if (
+    expiresAt <= Date.now()
+  ) {
+
+    validSessions.delete(
+      token
+    );
+
     return false;
   }
 
   return true;
 }
 
-function requireAuth(req, res, next) {
-  const cookies = parseCookies(
-    req.headers.cookie || ''
-  );
+// ============================================================
+// AUTH MIDDLEWARE
+// ============================================================
+
+function requireAuth(
+  req,
+  res,
+  next
+) {
+
+  const cookies =
+    parseCookies(
+      req.headers.cookie || ''
+    );
 
   const token =
-    cookies.mondeco_admin_session;
+    cookies
+      .mondeco_admin_session;
 
-  if (isValidSession(token)) {
+  if (
+    isValidSession(
+      token
+    )
+  ) {
+
     return next();
   }
 
-  if (req.path.startsWith('/api/')) {
+  // API
+  if (
+    req.path.startsWith(
+      '/api/'
+    )
+  ) {
+
     return res
       .status(401)
       .json({
-        error: 'Non authentifié'
+        error:
+          'Non authentifié'
       });
   }
 
-  return res.redirect('/admin/login');
+  // HTML
+  return res.redirect(
+    '/admin/login'
+  );
 }
 
 // ============================================================
-// PRODUITS
+// MULTER - UPLOAD IMAGES
+// ============================================================
+
+const imageStorage =
+  multer.diskStorage({
+
+    destination:
+      (
+        req,
+        file,
+        callback
+      ) => {
+
+        callback(
+          null,
+          UPLOADS_DIR
+        );
+      },
+
+    filename:
+      (
+        req,
+        file,
+        callback
+      ) => {
+
+        let extension =
+          path
+            .extname(
+              file.originalname
+            )
+            .toLowerCase();
+
+        // Sécurité supplémentaire
+        if (
+          ![
+            '.jpg',
+            '.jpeg',
+            '.png',
+            '.webp'
+          ].includes(
+            extension
+          )
+        ) {
+
+          switch (
+            file.mimetype
+          ) {
+
+            case 'image/jpeg':
+              extension =
+                '.jpg';
+              break;
+
+            case 'image/png':
+              extension =
+                '.png';
+              break;
+
+            case 'image/webp':
+              extension =
+                '.webp';
+              break;
+
+            default:
+              extension =
+                '';
+          }
+        }
+
+        const filename =
+          `product-${Date.now()}-${crypto.randomUUID()}${extension}`;
+
+        callback(
+          null,
+          filename
+        );
+      }
+  });
+
+// ============================================================
+// FILTRE IMAGE
+// ============================================================
+
+function productImageFilter(
+  req,
+  file,
+  callback
+) {
+
+  const allowedTypes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp'
+  ];
+
+  if (
+    !allowedTypes.includes(
+      file.mimetype
+    )
+  ) {
+
+    return callback(
+      new Error(
+        'Format image non accepté. Utilisez JPG, PNG ou WEBP.'
+      ),
+      false
+    );
+  }
+
+  callback(
+    null,
+    true
+  );
+}
+
+const productImageUpload =
+  multer({
+
+    storage:
+      imageStorage,
+
+    fileFilter:
+      productImageFilter,
+
+    limits: {
+
+      // Maximum 8 Mo
+      fileSize:
+        8 * 1024 * 1024
+    }
+  });
+
+// ============================================================
+// WRAPPER MULTER
+// ============================================================
+//
+// Permet d'avoir de vrais messages d'erreur JSON
+// au lieu d'une erreur Express générique.
+// ============================================================
+
+function uploadSingleProductImage(
+  req,
+  res,
+  next
+) {
+
+  productImageUpload
+    .single('image')(
+      req,
+      res,
+      error => {
+
+        if (!error) {
+
+          return next();
+        }
+
+        console.error(
+          '❌ Erreur upload image :',
+          error.message
+        );
+
+        if (
+          error instanceof
+          multer.MulterError
+        ) {
+
+          if (
+            error.code ===
+            'LIMIT_FILE_SIZE'
+          ) {
+
+            return res
+              .status(400)
+              .json({
+                error:
+                  'La photo dépasse la taille maximale de 8 Mo.'
+              });
+          }
+
+          return res
+            .status(400)
+            .json({
+              error:
+                `Erreur upload : ${error.message}`
+            });
+        }
+
+        return res
+          .status(400)
+          .json({
+            error:
+              error.message ||
+              'Image non valide.'
+          });
+      }
+    );
+}
+
+// ============================================================
+// SUPPRIMER UN FICHIER SANS FAIRE CRASHER LE SERVEUR
+// ============================================================
+
+function deleteFileIfExists(
+  filePath
+) {
+
+  try {
+
+    if (
+      filePath &&
+      fs.existsSync(
+        filePath
+      )
+    ) {
+
+      fs.unlinkSync(
+        filePath
+      );
+    }
+
+  } catch (error) {
+
+    console.warn(
+      '⚠️ Impossible de supprimer le fichier :',
+      error.message
+    );
+  }
+}
+
+// ============================================================
+// RETROUVER LE FICHIER LOCAL DEPUIS product.image
+// ============================================================
+
+function getLocalImagePath(
+  product
+) {
+
+  if (!product) {
+    return null;
+  }
+
+  // Nouvelle structure
+  if (
+    product.imageFilename
+  ) {
+
+    return path.join(
+      UPLOADS_DIR,
+      path.basename(
+        product.imageFilename
+      )
+    );
+  }
+
+  // Compatibilité avec image = /admin/uploads/xxx.jpg
+  if (
+    product.image &&
+    String(product.image)
+      .includes(
+        '/admin/uploads/'
+      )
+  ) {
+
+    const filename =
+      path.basename(
+        String(
+          product.image
+        )
+      );
+
+    return path.join(
+      UPLOADS_DIR,
+      filename
+    );
+  }
+
+  return null;
+}
+
+// ============================================================
+// PRODUITS - LECTURE
 // ============================================================
 
 function loadProducts() {
+
   try {
-    if (!fs.existsSync(PRODUCTS_PATH)) {
+
+    if (
+      !fs.existsSync(
+        PRODUCTS_PATH
+      )
+    ) {
+
       return [];
     }
 
-    const content = fs.readFileSync(
-      PRODUCTS_PATH,
-      'utf8'
-    );
+    const content =
+      fs.readFileSync(
+        PRODUCTS_PATH,
+        'utf8'
+      );
 
-    if (!content.trim()) {
+    if (
+      !content.trim()
+    ) {
+
       return [];
     }
 
-    const data = JSON.parse(content);
+    const parsed =
+      JSON.parse(
+        content
+      );
 
-    return Array.isArray(data)
-      ? data
-      : [];
+    if (
+      !Array.isArray(
+        parsed
+      )
+    ) {
+
+      console.warn(
+        '⚠️ products.json ne contient pas un tableau.'
+      );
+
+      return [];
+    }
+
+    return parsed;
 
   } catch (error) {
+
     console.error(
       '❌ Erreur lecture products.json :',
       error
@@ -228,69 +669,109 @@ function loadProducts() {
   }
 }
 
-function saveProducts(products) {
-  fs.mkdirSync(
-    DATA_DIR,
-    {
-      recursive: true
-    }
-  );
+// ============================================================
+// PRODUITS - SAUVEGARDE
+// ============================================================
 
-  const tempPath =
-    `${PRODUCTS_PATH}.tmp`;
+function saveProducts(
+  products
+) {
 
-  fs.writeFileSync(
-    tempPath,
-    JSON.stringify(
-      products,
-      null,
-      2
-    ),
-    'utf8'
-  );
+  try {
 
-  fs.renameSync(
-    tempPath,
-    PRODUCTS_PATH
-  );
+    fs.mkdirSync(
+      DATA_DIR,
+      {
+        recursive: true
+      }
+    );
+
+    const temporaryPath =
+      `${PRODUCTS_PATH}.tmp`;
+
+    fs.writeFileSync(
+      temporaryPath,
+      JSON.stringify(
+        products,
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+    fs.renameSync(
+      temporaryPath,
+      PRODUCTS_PATH
+    );
+
+  } catch (error) {
+
+    console.error(
+      '❌ Erreur sauvegarde products.json :',
+      error
+    );
+
+    throw new Error(
+      'Impossible de sauvegarder le catalogue.'
+    );
+  }
 }
 
 // ============================================================
-// INSTRUCTIONS STRUCTURÉES
+// INSTRUCTIONS
 // ============================================================
 
 function structuredInstructionsStoreExists() {
+
   return fs.existsSync(
     INSTRUCTIONS_JSON_PATH
   );
 }
 
 function loadInstructions() {
+
   try {
+
     if (
       !fs.existsSync(
         INSTRUCTIONS_JSON_PATH
       )
     ) {
+
       return [];
     }
 
-    const content = fs.readFileSync(
-      INSTRUCTIONS_JSON_PATH,
-      'utf8'
-    );
+    const content =
+      fs.readFileSync(
+        INSTRUCTIONS_JSON_PATH,
+        'utf8'
+      );
 
-    if (!content.trim()) {
+    if (
+      !content.trim()
+    ) {
+
       return [];
     }
 
-    const data = JSON.parse(content);
+    const parsed =
+      JSON.parse(
+        content
+      );
 
-    return Array.isArray(data)
-      ? data
-      : [];
+    if (
+      !Array.isArray(
+        parsed
+      )
+    ) {
+
+      return [];
+    }
+
+    return parsed;
 
   } catch (error) {
+
     console.error(
       '❌ Erreur lecture instructions.json :',
       error
@@ -300,31 +781,52 @@ function loadInstructions() {
   }
 }
 
-function saveInstructions(instructions) {
-  fs.mkdirSync(
-    DATA_DIR,
-    {
-      recursive: true
-    }
-  );
+// ============================================================
+// SAUVEGARDE INSTRUCTIONS
+// ============================================================
 
-  const tempPath =
-    `${INSTRUCTIONS_JSON_PATH}.tmp`;
+function saveInstructions(
+  instructions
+) {
 
-  fs.writeFileSync(
-    tempPath,
-    JSON.stringify(
-      instructions,
-      null,
-      2
-    ),
-    'utf8'
-  );
+  try {
 
-  fs.renameSync(
-    tempPath,
-    INSTRUCTIONS_JSON_PATH
-  );
+    fs.mkdirSync(
+      DATA_DIR,
+      {
+        recursive: true
+      }
+    );
+
+    const temporaryPath =
+      `${INSTRUCTIONS_JSON_PATH}.tmp`;
+
+    fs.writeFileSync(
+      temporaryPath,
+      JSON.stringify(
+        instructions,
+        null,
+        2
+      ),
+      'utf8'
+    );
+
+    fs.renameSync(
+      temporaryPath,
+      INSTRUCTIONS_JSON_PATH
+    );
+
+  } catch (error) {
+
+    console.error(
+      '❌ Erreur sauvegarde instructions.json :',
+      error
+    );
+
+    throw new Error(
+      'Impossible de sauvegarder les instructions.'
+    );
+  }
 }
 
 // ============================================================
@@ -332,12 +834,15 @@ function saveInstructions(instructions) {
 // ============================================================
 
 function loadLegacyBusinessInfo() {
+
   try {
+
     if (
       !fs.existsSync(
         LEGACY_BUSINESS_INFO_PATH
       )
     ) {
+
       return '';
     }
 
@@ -347,6 +852,7 @@ function loadLegacyBusinessInfo() {
     );
 
   } catch (error) {
+
     console.error(
       '❌ Erreur lecture business-info.txt :',
       error
@@ -357,11 +863,17 @@ function loadLegacyBusinessInfo() {
 }
 
 // ============================================================
-// NETTOYAGE TITRE INSTRUCTION
+// PARSER ANCIENNES INSTRUCTIONS
 // ============================================================
 
-function cleanInstructionTitle(text) {
-  return String(text || '')
+function cleanInstructionTitle(
+  text
+) {
+
+  return String(
+    text ||
+    ''
+  )
     .replace(
       /^[\s\-–—•*#\d.)]+/,
       ''
@@ -369,33 +881,61 @@ function cleanInstructionTitle(text) {
     .trim();
 }
 
-// ============================================================
-// TRANSFORMER UN TEXTE EN PLUSIEURS INSTRUCTIONS
-// ============================================================
+function parseInstructionBlocks(
+  text
+) {
 
-function parseInstructionBlocks(text) {
-  const normalized = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .trim();
+  const normalized =
+    String(
+      text ||
+      ''
+    )
+      .replace(
+        /\r\n/g,
+        '\n'
+      )
+      .replace(
+        /\r/g,
+        '\n'
+      )
+      .trim();
 
   if (!normalized) {
+
     return [];
   }
 
-  const blocks = normalized
-    .split(/\n\s*\n+/)
-    .map(block => block.trim())
-    .filter(Boolean);
+  const blocks =
+    normalized
+      .split(
+        /\n\s*\n+/
+      )
+      .map(
+        block =>
+          block.trim()
+      )
+      .filter(
+        Boolean
+      );
 
   return blocks
     .map(block => {
-      const lines = block
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
 
-      if (lines.length === 0) {
+      const lines =
+        block
+          .split('\n')
+          .map(
+            line =>
+              line.trim()
+          )
+          .filter(
+            Boolean
+          );
+
+      if (
+        lines.length === 0
+      ) {
+
         return null;
       }
 
@@ -404,41 +944,65 @@ function parseInstructionBlocks(text) {
           lines[0]
         );
 
-      let content = lines
-        .slice(1)
-        .join('\n')
-        .trim();
+      let content =
+        lines
+          .slice(1)
+          .join('\n')
+          .trim();
 
-      // Si le bloc ne contient qu'une seule ligne
+      // Une seule ligne
       if (!content) {
+
         const colonIndex =
-          title.indexOf(':');
+          title.indexOf(
+            ':'
+          );
 
         if (
           colonIndex > 5 &&
           colonIndex < 100
         ) {
-          content = title
-            .slice(colonIndex + 1)
-            .trim();
 
-          title = title
-            .slice(0, colonIndex)
-            .trim();
+          content =
+            title
+              .slice(
+                colonIndex + 1
+              )
+              .trim();
+
+          title =
+            title
+              .slice(
+                0,
+                colonIndex
+              )
+              .trim();
+
         } else {
-          content = title;
+
+          content =
+            title;
         }
       }
 
       if (!title) {
+
         title =
-          content.slice(0, 80);
+          content.slice(
+            0,
+            80
+          );
       }
 
-      // Limite uniquement le titre visuel
-      if (title.length > 120) {
+      if (
+        title.length > 120
+      ) {
+
         title =
-          title.slice(0, 117) +
+          title.slice(
+            0,
+            117
+          ) +
           '...';
       }
 
@@ -446,50 +1010,57 @@ function parseInstructionBlocks(text) {
         title,
         content
       };
+
     })
-    .filter(Boolean);
+    .filter(
+      Boolean
+    );
 }
 
 // ============================================================
-// EMPÊCHER LES DOUBLONS À L'IMPORT
+// FINGERPRINT INSTRUCTIONS
 // ============================================================
 
 function instructionFingerprint(
   title,
   content
 ) {
+
   return crypto
-    .createHash('sha256')
+    .createHash(
+      'sha256'
+    )
     .update(
       `${String(title).trim().toLowerCase()}|${String(content).trim().toLowerCase()}`
     )
-    .digest('hex');
+    .digest(
+      'hex'
+    );
 }
 
 // ============================================================
-// CONTEXTE ENVOYÉ À GROQ
+// CONTEXTE BUSINESS POUR GROQ
 // ============================================================
 
 function getBusinessContext() {
+
   const products =
     loadProducts();
 
   const instructions =
     loadInstructions();
 
-  let instructionsBlock = '';
+  let instructionsBlock =
+    '';
 
-  // ----------------------------------------------------------
-  // Si instructions.json existe :
-  // utiliser UNIQUEMENT les instructions actives.
-  //
-  // Cela permet de désactiver une règle sans qu'elle revienne
-  // depuis business-info.txt.
-  // ----------------------------------------------------------
+  // ==========================================================
+  // NOUVELLES INSTRUCTIONS
+  // ==========================================================
 
   if (
     structuredInstructionsStoreExists()
   ) {
+
     const activeInstructions =
       instructions.filter(
         instruction =>
@@ -499,63 +1070,84 @@ function getBusinessContext() {
     if (
       activeInstructions.length > 0
     ) {
+
       instructionsBlock =
         'INSTRUCTIONS OBLIGATOIRES MONDECO :\n\n' +
 
         activeInstructions
           .map(
-            (instruction, index) =>
+            (
+              instruction,
+              index
+            ) =>
               `${index + 1}. ${instruction.title}\n${instruction.content}`
           )
-          .join('\n\n');
+          .join(
+            '\n\n'
+          );
     }
 
   } else {
 
-    // --------------------------------------------------------
-    // Compatibilité ancienne version
-    // --------------------------------------------------------
+    // ========================================================
+    // ANCIEN SYSTÈME
+    // ========================================================
 
     const legacy =
       loadLegacyBusinessInfo();
 
-    if (legacy.trim()) {
+    if (
+      legacy.trim()
+    ) {
+
       instructionsBlock =
         legacy.trim();
     }
   }
 
   // ==========================================================
-  // PRODUITS
+  // CATALOGUE PRODUITS
   // ==========================================================
 
-  let productsBlock = '';
+  let productsBlock =
+    '';
 
-  if (products.length > 0) {
+  if (
+    products.length > 0
+  ) {
+
     productsBlock =
       '\n\nCATALOGUE PRODUITS MONDECO :\n' +
 
       products
         .map(product => {
+
           const name =
             String(
-              product.name || ''
+              product.name ||
+              ''
             ).trim();
 
           const category =
             String(
-              product.category || ''
+              product.category ||
+              ''
             ).trim();
 
           const price =
-            product.price !== undefined &&
-            product.price !== null
-              ? String(product.price).trim()
+            product.price !==
+              undefined &&
+            product.price !==
+              null
+              ? String(
+                  product.price
+                ).trim()
               : '';
 
           const description =
             String(
-              product.description || ''
+              product.description ||
+              ''
             ).trim();
 
           const categoryText =
@@ -579,33 +1171,46 @@ function getBusinessContext() {
             priceText +
             descriptionText
           );
+
         })
-        .join('\n');
+        .join(
+          '\n'
+        );
   }
 
   return (
-    `${instructionsBlock}` +
-    `${productsBlock}`
+    instructionsBlock +
+    productsBlock
   ).trim();
 }
 
 // ============================================================
-// LOGIN
+// PAGE LOGIN
 // ============================================================
 
 router.get(
   '/login',
-  (req, res) => {
-    const cookies = parseCookies(
-      req.headers.cookie || ''
-    );
+  (
+    req,
+    res
+  ) => {
+
+    const cookies =
+      parseCookies(
+        req.headers.cookie ||
+        ''
+      );
 
     if (
       isValidSession(
-        cookies.mondeco_admin_session
+        cookies
+          .mondeco_admin_session
       )
     ) {
-      return res.redirect('/admin');
+
+      return res.redirect(
+        '/admin'
+      );
     }
 
     return res
@@ -617,22 +1222,37 @@ router.get(
   }
 );
 
+// ============================================================
+// LOGIN
+// ============================================================
+
 router.post(
   '/login',
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const password =
         String(
-          req.body?.password || ''
+          req.body
+            ?.password ||
+          ''
         );
 
       if (
-        password !== ADMIN_PASSWORD
+        password !==
+        ADMIN_PASSWORD
       ) {
+
         return res
           .status(401)
           .json({
-            success: false,
+            success:
+              false,
+
             error:
               'Mot de passe incorrect'
           });
@@ -640,13 +1260,17 @@ router.post(
 
       const token =
         crypto
-          .randomBytes(32)
-          .toString('hex');
+          .randomBytes(
+            32
+          )
+          .toString(
+            'hex'
+          );
 
       validSessions.set(
         token,
         Date.now() +
-          SESSION_DURATION
+        SESSION_DURATION
       );
 
       const isProduction =
@@ -664,8 +1288,12 @@ router.post(
         `Max-Age=86400; ` +
         `SameSite=Lax`;
 
-      if (isProduction) {
-        cookie += '; Secure';
+      if (
+        isProduction
+      ) {
+
+        cookie +=
+          '; Secure';
       }
 
       res.setHeader(
@@ -678,10 +1306,12 @@ router.post(
       );
 
       return res.json({
-        success: true
+        success:
+          true
       });
 
     } catch (error) {
+
       console.error(
         '❌ Erreur connexion admin :',
         error
@@ -690,7 +1320,9 @@ router.post(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             'Erreur serveur'
         });
@@ -704,16 +1336,26 @@ router.post(
 
 router.post(
   '/logout',
-  (req, res) => {
-    const cookies = parseCookies(
-      req.headers.cookie || ''
-    );
+  (
+    req,
+    res
+  ) => {
+
+    const cookies =
+      parseCookies(
+        req.headers.cookie ||
+        ''
+      );
 
     const token =
-      cookies.mondeco_admin_session;
+      cookies
+        .mondeco_admin_session;
 
     if (token) {
-      validSessions.delete(token);
+
+      validSessions.delete(
+        token
+      );
     }
 
     let cookie =
@@ -729,7 +1371,9 @@ router.post(
       process.env
         .RAILWAY_ENVIRONMENT_NAME
     ) {
-      cookie += '; Secure';
+
+      cookie +=
+        '; Secure';
     }
 
     res.setHeader(
@@ -738,24 +1382,30 @@ router.post(
     );
 
     return res.json({
-      success: true
+      success:
+        true
     });
   }
 );
 
 // ============================================================
-// DASHBOARD
+// DASHBOARD ADMIN
 // ============================================================
 
 router.get(
   '/',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     if (
       !fs.existsSync(
         ADMIN_HTML_PATH
       )
     ) {
+
       console.error(
         '❌ Admin.html introuvable :',
         ADMIN_HTML_PATH
@@ -775,43 +1425,137 @@ router.get(
 );
 
 // ============================================================
-// API PRODUITS
+// SERVIR LES IMAGES PRODUITS
+// ============================================================
+//
+// Exemple :
+// /admin/uploads/product-xxxxx.jpg
 // ============================================================
 
-// Liste
+router.get(
+  '/uploads/:filename',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    const filename =
+      path.basename(
+        req.params.filename
+      );
+
+    const imagePath =
+      path.join(
+        UPLOADS_DIR,
+        filename
+      );
+
+    if (
+      !fs.existsSync(
+        imagePath
+      )
+    ) {
+
+      return res
+        .status(404)
+        .send(
+          'Image introuvable'
+        );
+    }
+
+    return res.sendFile(
+      imagePath
+    );
+  }
+);
+
+// ============================================================
+// API PRODUITS - LISTE
+// ============================================================
+
 router.get(
   '/api/products',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     return res.json(
       loadProducts()
     );
   }
 );
 
-// Ajouter
+// ============================================================
+// API PRODUITS - AJOUT
+//
+// IMAGE OBLIGATOIRE
+// ============================================================
+
 router.post(
   '/api/products',
   requireAuth,
-  (req, res) => {
+  uploadSingleProductImage,
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const {
         name,
         description,
         price,
-        category,
-        image
-      } = req.body || {};
+        category
+      } =
+        req.body ||
+        {};
 
       const cleanName =
-        String(name || '').trim();
+        String(
+          name ||
+          ''
+        ).trim();
+
+      // ======================================================
+      // NOM OBLIGATOIRE
+      // ======================================================
 
       if (!cleanName) {
+
+        if (
+          req.file
+        ) {
+
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
         return res
           .status(400)
           .json({
             error:
-              'Le nom du produit est requis'
+              'Le nom du produit est obligatoire.'
+          });
+      }
+
+      // ======================================================
+      // IMAGE OBLIGATOIRE
+      // ======================================================
+
+      if (
+        !req.file
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'La photo du produit est obligatoire.'
           });
       }
 
@@ -819,9 +1563,11 @@ router.post(
         loadProducts();
 
       const now =
-        new Date().toISOString();
+        new Date()
+          .toISOString();
 
       const product = {
+
         id:
           crypto.randomUUID(),
 
@@ -830,24 +1576,33 @@ router.post(
 
         description:
           String(
-            description || ''
+            description ||
+            ''
           ).trim(),
 
         price:
-          price !== undefined &&
-          price !== null
-            ? String(price).trim()
+          price !==
+            undefined &&
+          price !==
+            null
+            ? String(
+                price
+              ).trim()
             : '',
 
         category:
           String(
-            category || ''
+            category ||
+            ''
           ).trim(),
 
+        // URL utilisée par Admin.html
         image:
-          String(
-            image || ''
-          ).trim(),
+          `/admin/uploads/${req.file.filename}`,
+
+        // Nom fichier utile pour suppression
+        imageFilename:
+          req.file.filename,
 
         createdAt:
           now,
@@ -856,19 +1611,43 @@ router.post(
           now
       };
 
-      products.push(
-        product
+      try {
+
+        products.push(
+          product
+        );
+
+        saveProducts(
+          products
+        );
+
+      } catch (error) {
+
+        // Si sauvegarde JSON échoue,
+        // supprimer l'image créée.
+        deleteFileIfExists(
+          req.file.path
+        );
+
+        throw error;
+      }
+
+      console.log(
+        `✅ Produit ajouté : ${product.name}`
       );
 
-      saveProducts(
-        products
+      console.log(
+        `🖼️ Image : ${product.imageFilename}`
       );
 
-      return res.json(
-        product
-      );
+      return res
+        .status(201)
+        .json(
+          product
+        );
 
     } catch (error) {
+
       console.error(
         '❌ Erreur ajout produit :',
         error
@@ -878,18 +1657,40 @@ router.post(
         .status(500)
         .json({
           error:
-            'Impossible d’ajouter le produit'
+            error.message ||
+            'Impossible d’ajouter le produit.'
         });
     }
   }
 );
 
-// Modifier
+// ============================================================
+// API PRODUITS - MODIFICATION
+//
+// Nouvelle image FACULTATIVE si l'ancienne existe.
+//
+// Si une nouvelle image est choisie :
+// - sauvegarder nouvelle image
+// - remplacer ancienne URL
+// - supprimer ancien fichier
+// ============================================================
+
 router.put(
   '/api/products/:id',
   requireAuth,
-  (req, res) => {
+  uploadSingleProductImage,
+  (
+    req,
+    res
+  ) => {
+
+    let newUploadedFilePath =
+      req.file
+        ?.path ||
+      null;
+
     try {
+
       const products =
         loadProducts();
 
@@ -900,79 +1701,220 @@ router.put(
             req.params.id
         );
 
-      if (index === -1) {
+      if (
+        index === -1
+      ) {
+
+        if (
+          newUploadedFilePath
+        ) {
+
+          deleteFileIfExists(
+            newUploadedFilePath
+          );
+        }
+
         return res
           .status(404)
           .json({
             error:
-              'Produit introuvable'
+              'Produit introuvable.'
           });
       }
+
+      const currentProduct =
+        products[index];
 
       const {
         name,
         description,
         price,
-        category,
-        image
-      } = req.body || {};
+        category
+      } =
+        req.body ||
+        {};
+
+      // ======================================================
+      // NOM
+      // ======================================================
 
       if (
-        name !== undefined &&
-        !String(name).trim()
+        name !==
+          undefined &&
+        !String(
+          name
+        ).trim()
       ) {
+
+        if (
+          newUploadedFilePath
+        ) {
+
+          deleteFileIfExists(
+            newUploadedFilePath
+          );
+        }
+
         return res
           .status(400)
           .json({
             error:
-              'Le nom du produit ne peut pas être vide'
+              'Le nom du produit ne peut pas être vide.'
           });
       }
 
-      products[index] = {
-        ...products[index],
+      // ======================================================
+      // SI ANCIEN PRODUIT SANS IMAGE
+      // UNE IMAGE DEVIENT OBLIGATOIRE
+      // ======================================================
+
+      if (
+        !currentProduct.image &&
+        !req.file
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.'
+          });
+      }
+
+      const oldImagePath =
+        getLocalImagePath(
+          currentProduct
+        );
+
+      let newImage =
+        currentProduct.image ||
+        '';
+
+      let newImageFilename =
+        currentProduct
+          .imageFilename ||
+        '';
+
+      // ======================================================
+      // NOUVELLE IMAGE
+      // ======================================================
+
+      if (
+        req.file
+      ) {
+
+        newImage =
+          `/admin/uploads/${req.file.filename}`;
+
+        newImageFilename =
+          req.file.filename;
+      }
+
+      const updatedProduct = {
+
+        ...currentProduct,
 
         name:
           name !== undefined
-            ? String(name).trim()
-            : products[index].name,
+            ? String(
+                name
+              ).trim()
+            : currentProduct.name,
 
         description:
-          description !== undefined
-            ? String(description).trim()
-            : products[index]
+          description !==
+            undefined
+            ? String(
+                description
+              ).trim()
+            : currentProduct
                 .description,
 
         price:
           price !== undefined &&
           price !== null
-            ? String(price).trim()
-            : products[index].price,
+            ? String(
+                price
+              ).trim()
+            : currentProduct
+                .price,
 
         category:
-          category !== undefined
-            ? String(category).trim()
-            : products[index]
+          category !==
+            undefined
+            ? String(
+                category
+              ).trim()
+            : currentProduct
                 .category,
 
         image:
-          image !== undefined
-            ? String(image).trim()
-            : products[index].image,
+          newImage,
+
+        imageFilename:
+          newImageFilename,
 
         updatedAt:
-          new Date().toISOString()
+          new Date()
+            .toISOString()
       };
 
-      saveProducts(
-        products
+      products[index] =
+        updatedProduct;
+
+      // ======================================================
+      // SAUVEGARDER D'ABORD LE JSON
+      // ======================================================
+
+      try {
+
+        saveProducts(
+          products
+        );
+
+      } catch (error) {
+
+        // La nouvelle image n'est pas encore
+        // référencée correctement -> suppression
+        if (
+          req.file
+        ) {
+
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        throw error;
+      }
+
+      // ======================================================
+      // APRÈS SAUVEGARDE :
+      // SUPPRIMER L'ANCIENNE IMAGE
+      // ======================================================
+
+      if (
+        req.file &&
+        oldImagePath &&
+        oldImagePath !==
+          req.file.path
+      ) {
+
+        deleteFileIfExists(
+          oldImagePath
+        );
+      }
+
+      console.log(
+        `✅ Produit modifié : ${updatedProduct.name}`
       );
 
       return res.json(
-        products[index]
+        updatedProduct
       );
 
     } catch (error) {
+
       console.error(
         '❌ Erreur modification produit :',
         error
@@ -982,53 +1924,91 @@ router.put(
         .status(500)
         .json({
           error:
-            'Impossible de modifier le produit'
+            error.message ||
+            'Impossible de modifier le produit.'
         });
     }
   }
 );
 
-// Supprimer
+// ============================================================
+// API PRODUITS - SUPPRESSION
+// ============================================================
+
 router.delete(
   '/api/products/:id',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const products =
         loadProducts();
 
-      const exists =
-        products.some(
-          product =>
-            product.id ===
+      const product =
+        products.find(
+          item =>
+            item.id ===
             req.params.id
         );
 
-      if (!exists) {
+      if (!product) {
+
         return res
           .status(404)
           .json({
             error:
-              'Produit introuvable'
+              'Produit introuvable.'
           });
       }
 
       const filtered =
         products.filter(
-          product =>
-            product.id !==
+          item =>
+            item.id !==
             req.params.id
         );
+
+      // ======================================================
+      // D'ABORD SAUVEGARDER LE CATALOGUE
+      // ======================================================
 
       saveProducts(
         filtered
       );
 
+      // ======================================================
+      // ENSUITE SUPPRIMER LA PHOTO
+      // ======================================================
+
+      const imagePath =
+        getLocalImagePath(
+          product
+        );
+
+      if (
+        imagePath
+      ) {
+
+        deleteFileIfExists(
+          imagePath
+        );
+      }
+
+      console.log(
+        `🗑️ Produit supprimé : ${product.name}`
+      );
+
       return res.json({
-        success: true
+        success:
+          true
       });
 
     } catch (error) {
+
       console.error(
         '❌ Erreur suppression produit :',
         error
@@ -1038,64 +2018,85 @@ router.delete(
         .status(500)
         .json({
           error:
-            'Impossible de supprimer le produit'
+            'Impossible de supprimer le produit.'
         });
     }
   }
 );
 
 // ============================================================
-// API INSTRUCTIONS
+// API INSTRUCTIONS - LISTE
 // ============================================================
 
-// Liste
 router.get(
   '/api/instructions',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     return res.json(
       loadInstructions()
     );
   }
 );
 
-// Ajouter
+// ============================================================
+// API INSTRUCTIONS - AJOUT
+// ============================================================
+
 router.post(
   '/api/instructions',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const {
         title,
         content,
         active
-      } = req.body || {};
+      } =
+        req.body ||
+        {};
 
       const cleanTitle =
         String(
-          title || ''
+          title ||
+          ''
         ).trim();
 
       const cleanContent =
         String(
-          content || ''
+          content ||
+          ''
         ).trim();
 
-      if (!cleanTitle) {
+      if (
+        !cleanTitle
+      ) {
+
         return res
           .status(400)
           .json({
             error:
-              'Le titre est obligatoire'
+              'Le titre est obligatoire.'
           });
       }
 
-      if (!cleanContent) {
+      if (
+        !cleanContent
+      ) {
+
         return res
           .status(400)
           .json({
             error:
-              'L’instruction est obligatoire'
+              'L’instruction est obligatoire.'
           });
       }
 
@@ -1103,9 +2104,11 @@ router.post(
         loadInstructions();
 
       const now =
-        new Date().toISOString();
+        new Date()
+          .toISOString();
 
       const instruction = {
+
         id:
           crypto.randomUUID(),
 
@@ -1133,11 +2136,14 @@ router.post(
         instructions
       );
 
-      return res.json(
-        instruction
-      );
+      return res
+        .status(201)
+        .json(
+          instruction
+        );
 
     } catch (error) {
+
       console.error(
         '❌ Erreur ajout instruction :',
         error
@@ -1147,18 +2153,26 @@ router.post(
         .status(500)
         .json({
           error:
-            'Impossible d’ajouter l’instruction'
+            'Impossible d’ajouter l’instruction.'
         });
     }
   }
 );
 
-// Modifier
+// ============================================================
+// API INSTRUCTIONS - MODIFICATION
+// ============================================================
+
 router.put(
   '/api/instructions/:id',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const instructions =
         loadInstructions();
 
@@ -1169,12 +2183,15 @@ router.put(
             req.params.id
         );
 
-      if (index === -1) {
+      if (
+        index === -1
+      ) {
+
         return res
           .status(404)
           .json({
             error:
-              'Instruction introuvable'
+              'Instruction introuvable.'
           });
       }
 
@@ -1182,55 +2199,73 @@ router.put(
         title,
         content,
         active
-      } = req.body || {};
+      } =
+        req.body ||
+        {};
 
       if (
-        title !== undefined &&
-        !String(title).trim()
+        title !==
+          undefined &&
+        !String(
+          title
+        ).trim()
       ) {
+
         return res
           .status(400)
           .json({
             error:
-              'Le titre ne peut pas être vide'
+              'Le titre ne peut pas être vide.'
           });
       }
 
       if (
-        content !== undefined &&
-        !String(content).trim()
+        content !==
+          undefined &&
+        !String(
+          content
+        ).trim()
       ) {
+
         return res
           .status(400)
           .json({
             error:
-              'L’instruction ne peut pas être vide'
+              'L’instruction ne peut pas être vide.'
           });
       }
 
       instructions[index] = {
+
         ...instructions[index],
 
         title:
           title !== undefined
-            ? String(title).trim()
+            ? String(
+                title
+              ).trim()
             : instructions[index]
                 .title,
 
         content:
           content !== undefined
-            ? String(content).trim()
+            ? String(
+                content
+              ).trim()
             : instructions[index]
                 .content,
 
         active:
           active !== undefined
-            ? Boolean(active)
+            ? Boolean(
+                active
+              )
             : instructions[index]
                 .active,
 
         updatedAt:
-          new Date().toISOString()
+          new Date()
+            .toISOString()
       };
 
       saveInstructions(
@@ -1242,6 +2277,7 @@ router.put(
       );
 
     } catch (error) {
+
       console.error(
         '❌ Erreur modification instruction :',
         error
@@ -1251,18 +2287,26 @@ router.put(
         .status(500)
         .json({
           error:
-            'Impossible de modifier l’instruction'
+            'Impossible de modifier l’instruction.'
         });
     }
   }
 );
 
-// Supprimer
+// ============================================================
+// API INSTRUCTIONS - SUPPRESSION
+// ============================================================
+
 router.delete(
   '/api/instructions/:id',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const instructions =
         loadInstructions();
 
@@ -1273,12 +2317,15 @@ router.delete(
             req.params.id
         );
 
-      if (!exists) {
+      if (
+        !exists
+      ) {
+
         return res
           .status(404)
           .json({
             error:
-              'Instruction introuvable'
+              'Instruction introuvable.'
           });
       }
 
@@ -1294,10 +2341,12 @@ router.delete(
       );
 
       return res.json({
-        success: true
+        success:
+          true
       });
 
     } catch (error) {
+
       console.error(
         '❌ Erreur suppression instruction :',
         error
@@ -1307,27 +2356,37 @@ router.delete(
         .status(500)
         .json({
           error:
-            'Impossible de supprimer l’instruction'
+            'Impossible de supprimer l’instruction.'
         });
     }
   }
 );
 
 // ============================================================
-// IMPORTER PLUSIEURS INSTRUCTIONS
+// IMPORT PLUSIEURS INSTRUCTIONS
 // ============================================================
 
 router.post(
   '/api/instructions/import',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const text =
         String(
-          req.body?.text || ''
+          req.body
+            ?.text ||
+          ''
         ).trim();
 
-      if (!text) {
+      if (
+        !text
+      ) {
+
         return res
           .status(400)
           .json({
@@ -1341,7 +2400,10 @@ router.post(
           text
         );
 
-      if (parsed.length === 0) {
+      if (
+        parsed.length === 0
+      ) {
+
         return res
           .status(400)
           .json({
@@ -1364,13 +2426,21 @@ router.post(
           )
         );
 
-      let imported = 0;
-      let duplicates = 0;
+      let imported =
+        0;
+
+      let duplicates =
+        0;
 
       const now =
-        new Date().toISOString();
+        new Date()
+          .toISOString();
 
-      for (const parsedItem of parsed) {
+      for (
+        const parsedItem
+        of parsed
+      ) {
+
         const fingerprint =
           instructionFingerprint(
             parsedItem.title,
@@ -1382,11 +2452,13 @@ router.post(
             fingerprint
           )
         ) {
+
           duplicates++;
           continue;
         }
 
         instructions.push({
+
           id:
             crypto.randomUUID(),
 
@@ -1418,14 +2490,20 @@ router.post(
       );
 
       return res.json({
-        success: true,
+
+        success:
+          true,
+
         imported,
+
         duplicates,
+
         total:
           instructions.length
       });
 
     } catch (error) {
+
       console.error(
         '❌ Erreur import instructions :',
         error
@@ -1435,26 +2513,34 @@ router.post(
         .status(500)
         .json({
           error:
-            'Impossible d’importer les instructions'
+            'Impossible d’importer les instructions.'
         });
     }
   }
 );
 
 // ============================================================
-// IMPORTER L'ANCIEN BUSINESS-INFO.TXT
+// IMPORT BUSINESS-INFO.TXT
 // ============================================================
 
 router.post(
   '/api/instructions/import-legacy',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     try {
+
       const legacyText =
         loadLegacyBusinessInfo()
           .trim();
 
-      if (!legacyText) {
+      if (
+        !legacyText
+      ) {
+
         return res
           .status(404)
           .json({
@@ -1468,7 +2554,10 @@ router.post(
           legacyText
         );
 
-      if (parsed.length === 0) {
+      if (
+        parsed.length === 0
+      ) {
+
         return res
           .status(400)
           .json({
@@ -1491,13 +2580,21 @@ router.post(
           )
         );
 
-      let imported = 0;
-      let duplicates = 0;
+      let imported =
+        0;
+
+      let duplicates =
+        0;
 
       const now =
-        new Date().toISOString();
+        new Date()
+          .toISOString();
 
-      for (const parsedItem of parsed) {
+      for (
+        const parsedItem
+        of parsed
+      ) {
+
         const fingerprint =
           instructionFingerprint(
             parsedItem.title,
@@ -1509,11 +2606,13 @@ router.post(
             fingerprint
           )
         ) {
+
           duplicates++;
           continue;
         }
 
         instructions.push({
+
           id:
             crypto.randomUUID(),
 
@@ -1548,16 +2647,22 @@ router.post(
       );
 
       return res.json({
-        success: true,
+
+        success:
+          true,
+
         imported,
+
         duplicates,
+
         total:
           instructions.length
       });
 
     } catch (error) {
+
       console.error(
-        '❌ Erreur import business-info.txt :',
+        '❌ Erreur import business-info :',
         error
       );
 
@@ -1565,40 +2670,59 @@ router.post(
         .status(500)
         .json({
           error:
-            'Impossible d’importer business-info.txt'
+            'Impossible d’importer business-info.txt.'
         });
     }
   }
 );
 
 // ============================================================
-// CHAT TEST
+// DISCUSSION DE TEST
 // ============================================================
 
-let chatHandler = null;
+let chatHandler =
+  null;
 
-function setChatHandler(fn) {
+function setChatHandler(
+  fn
+) {
+
   if (
-    typeof fn !== 'function'
+    typeof fn !==
+    'function'
   ) {
+
     throw new Error(
       'setChatHandler attend une fonction.'
     );
   }
 
-  chatHandler = fn;
+  chatHandler =
+    fn;
 
   console.log(
-    '✅ Discussion de test Admin connectée'
+    '✅ Discussion test connectée à generateReply()'
   );
 }
+
+// ============================================================
+// API DISCUSSION TEST
+// ============================================================
 
 router.post(
   '/api/test-chat',
   requireAuth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
+
     try {
-      if (!chatHandler) {
+
+      if (
+        !chatHandler
+      ) {
+
         return res
           .status(503)
           .json({
@@ -1609,15 +2733,20 @@ router.post(
 
       const message =
         String(
-          req.body?.message || ''
+          req.body
+            ?.message ||
+          ''
         ).trim();
 
-      if (!message) {
+      if (
+        !message
+      ) {
+
         return res
           .status(400)
           .json({
             error:
-              'Message vide'
+              'Message vide.'
           });
       }
 
@@ -1632,8 +2761,9 @@ router.post(
       });
 
     } catch (error) {
+
       console.error(
-        '❌ Erreur test IA :',
+        '❌ Erreur discussion test :',
         error
       );
 
@@ -1642,7 +2772,7 @@ router.post(
         .json({
           error:
             error.message ||
-            'Erreur pendant la génération'
+            'Erreur pendant la génération de la réponse.'
         });
     }
   }
@@ -1655,7 +2785,11 @@ router.post(
 router.get(
   '/api/stats',
   requireAuth,
-  (req, res) => {
+  (
+    req,
+    res
+  ) => {
+
     const products =
       loadProducts();
 
@@ -1668,9 +2802,20 @@ router.get(
           instruction.active !== false
       );
 
+    const productsWithImages =
+      products.filter(
+        product =>
+          Boolean(
+            product.image
+          )
+      ).length;
+
     return res.json({
+
       productCount:
         products.length,
+
+      productsWithImages,
 
       instructionsCount:
         instructions.length,
@@ -1691,12 +2836,14 @@ router.get(
 );
 
 // ============================================================
-// LOGIN HTML
+// PAGE LOGIN
 // ============================================================
 
 function renderLoginPage() {
+
   return `
 <!DOCTYPE html>
+
 <html lang="fr">
 
 <head>
@@ -1708,7 +2855,9 @@ function renderLoginPage() {
   content="width=device-width, initial-scale=1.0"
 >
 
-<title>Mondeco — Administration</title>
+<title>
+  Mondeco — Administration
+</title>
 
 <style>
 
@@ -1721,8 +2870,14 @@ function renderLoginPage() {
 }
 
 body {
-  font-family: 'Inter', sans-serif;
-  background: #1F1B16;
+
+  font-family:
+    'Inter',
+    sans-serif;
+
+  background:
+    #1F1B16;
+
   background-image:
     radial-gradient(
       circle at 20% 20%,
@@ -1730,114 +2885,193 @@ body {
       #1F1B16 60%
     );
 
-  min-height: 100vh;
+  min-height:
+    100vh;
 
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display:
+    flex;
 
-  padding: 20px;
+  align-items:
+    center;
+
+  justify-content:
+    center;
+
+  padding:
+    20px;
 }
 
 .card {
-  background: #F7F4EF;
 
-  border-radius: 12px;
+  background:
+    #F7F4EF;
 
-  padding: 48px 40px;
+  border-radius:
+    12px;
 
-  width: 100%;
-  max-width: 400px;
+  padding:
+    48px 40px;
+
+  width:
+    100%;
+
+  max-width:
+    400px;
 
   box-shadow:
     0 20px 60px
-    rgba(0,0,0,0.4);
+    rgba(
+      0,
+      0,
+      0,
+      0.4
+    );
 }
 
 .wordmark {
-  font-family: 'Fraunces', serif;
-  font-size: 30px;
-  font-weight: 600;
-  color: #1F1B16;
+
+  font-family:
+    'Fraunces',
+    serif;
+
+  font-size:
+    30px;
+
+  font-weight:
+    600;
+
+  color:
+    #1F1B16;
 }
 
 .subtitle {
-  color: #7A7266;
-  font-size: 14px;
-  margin-top: 4px;
-  margin-bottom: 32px;
+
+  color:
+    #7A7266;
+
+  font-size:
+    14px;
+
+  margin-top:
+    4px;
+
+  margin-bottom:
+    32px;
 }
 
 label {
-  display: block;
 
-  font-size: 13px;
-  font-weight: 500;
+  display:
+    block;
 
-  color: #4A4438;
+  font-size:
+    13px;
 
-  margin-bottom: 6px;
+  font-weight:
+    500;
+
+  color:
+    #4A4438;
+
+  margin-bottom:
+    6px;
 }
 
 input {
-  width: 100%;
 
-  padding: 12px 14px;
+  width:
+    100%;
+
+  padding:
+    12px 14px;
 
   border:
-    1.5px solid #E4DED2;
+    1.5px solid
+    #E4DED2;
 
-  border-radius: 8px;
+  border-radius:
+    8px;
 
-  font-size: 15px;
+  font-size:
+    15px;
 
-  background: #fff;
+  background:
+    #fff;
 
-  color: #1F1B16;
+  color:
+    #1F1B16;
 }
 
 input:focus {
-  outline: none;
-  border-color: #B5541F;
+
+  outline:
+    none;
+
+  border-color:
+    #B5541F;
 }
 
 button {
-  width: 100%;
 
-  margin-top: 20px;
+  width:
+    100%;
 
-  padding: 13px;
+  margin-top:
+    20px;
 
-  border: none;
+  padding:
+    13px;
 
-  border-radius: 8px;
+  border:
+    none;
 
-  background: #B5541F;
+  border-radius:
+    8px;
 
-  color: #fff;
+  background:
+    #B5541F;
 
-  font-size: 15px;
-  font-weight: 600;
+  color:
+    #fff;
 
-  cursor: pointer;
+  font-size:
+    15px;
+
+  font-weight:
+    600;
+
+  cursor:
+    pointer;
 }
 
 button:hover {
-  background: #9C4718;
+
+  background:
+    #9C4718;
 }
 
 button:disabled {
-  opacity: .6;
+
+  opacity:
+    0.6;
+
+  cursor:
+    wait;
 }
 
 .error {
-  color: #B5541F;
 
-  font-size: 13px;
+  color:
+    #B5541F;
 
-  margin-top: 12px;
+  font-size:
+    13px;
 
-  display: none;
+  margin-top:
+    12px;
+
+  display:
+    none;
 }
 
 </style>
@@ -1912,7 +3146,9 @@ form.addEventListener(
     errorBox.style.display =
       'none';
 
-    button.disabled = true;
+    button.disabled =
+      true;
+
     button.textContent =
       'Connexion...';
 
@@ -1927,7 +3163,9 @@ form.addEventListener(
         await fetch(
           '/admin/login',
           {
-            method: 'POST',
+
+            method:
+              'POST',
 
             headers: {
               'Content-Type':
@@ -1948,6 +3186,7 @@ form.addEventListener(
         response.ok &&
         data.success
       ) {
+
         window.location.href =
           '/admin';
 
@@ -1971,28 +3210,33 @@ form.addEventListener(
 
     } finally {
 
-      button.disabled = false;
+      button.disabled =
+        false;
 
       button.textContent =
         'Se connecter';
     }
-
   }
 );
 
 </script>
 
 </body>
+
 </html>
 `;
 }
 
 // ============================================================
-// EXPORT
+// EXPORTS
 // ============================================================
 
 module.exports = {
-  adminRouter: router,
+
+  adminRouter:
+    router,
+
   getBusinessContext,
+
   setChatHandler
 };
