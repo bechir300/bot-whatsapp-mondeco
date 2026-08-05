@@ -36,7 +36,8 @@ const VERIFY_TOKEN = (process.env.VERIFY_TOKEN || '').trim();
 const WHATSAPP_TOKEN = (process.env.WHATSAPP_TOKEN || '').trim();
 const PHONE_NUMBER_ID = (process.env.PHONE_NUMBER_ID || '').trim();
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
+const CLOUDFLARE_ACCOUNT_ID = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+const CLOUDFLARE_API_TOKEN = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
 
 const META_API_VERSION = (process.env.META_API_VERSION || 'v21.0').trim();
 
@@ -51,17 +52,17 @@ const GROQ_VISION_MODEL = (
   process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b'
 ).trim();
 
-const OPENAI_IMAGE_MODEL = (
-  process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2'
+const CLOUDFLARE_IMAGE_MODEL = (
+  process.env.CLOUDFLARE_IMAGE_MODEL || '@cf/black-forest-labs/flux-2-klein-4b'
 ).trim();
 
-const OPENAI_IMAGE_SIZE = (
-  process.env.OPENAI_IMAGE_SIZE || 'auto'
-).trim();
+const CLOUDFLARE_IMAGE_WIDTH = Number(
+  process.env.CLOUDFLARE_IMAGE_WIDTH || 1024
+);
 
-const OPENAI_IMAGE_QUALITY = (
-  process.env.OPENAI_IMAGE_QUALITY || 'medium'
-).trim();
+const CLOUDFLARE_IMAGE_HEIGHT = Number(
+  process.env.CLOUDFLARE_IMAGE_HEIGHT || 768
+);
 
 // ============================================================
 // DIAGNOSTIC AU DÉMARRAGE
@@ -76,10 +77,11 @@ console.log('VERIFY_TOKEN :', VERIFY_TOKEN ? '✅ OK' : '❌ MANQUANT');
 console.log('WHATSAPP_TOKEN :', WHATSAPP_TOKEN ? '✅ OK' : '❌ MANQUANT');
 console.log('PHONE_NUMBER_ID :', PHONE_NUMBER_ID ? '✅ OK' : '❌ MANQUANT');
 console.log('GROQ_API_KEY :', GROQ_API_KEY ? '✅ OK' : '❌ MANQUANT');
-console.log('OPENAI_API_KEY :', OPENAI_API_KEY ? '✅ OK' : '⚠️ MANQUANT (simulations indisponibles)');
+console.log('CLOUDFLARE_ACCOUNT_ID :', CLOUDFLARE_ACCOUNT_ID ? '✅ OK' : '⚠️ MANQUANT (simulations indisponibles)');
+console.log('CLOUDFLARE_API_TOKEN :', CLOUDFLARE_API_TOKEN ? '✅ OK' : '⚠️ MANQUANT (simulations indisponibles)');
 console.log('GROQ_MODEL :', GROQ_MODEL);
 console.log('GROQ_VISION_MODEL :', GROQ_VISION_MODEL);
-console.log('OPENAI_IMAGE_MODEL :', OPENAI_IMAGE_MODEL);
+console.log('CLOUDFLARE_IMAGE_MODEL :', CLOUDFLARE_IMAGE_MODEL);
 console.log('==============================================');
 console.log('');
 
@@ -369,7 +371,7 @@ RÈGLES D'ANALYSE :
 
 // ============================================================
 // PERSONNALISATION VISUELLE INTERNE
-// Groq comprend la photo ; OpenAI Image API réalise l'édition.
+// Groq comprend la photo ; Cloudflare Workers AI réalise l'édition.
 // ============================================================
 
 function buildCustomizationRequestText(request = {}) {
@@ -506,19 +508,47 @@ RÈGLES :
 `.trim();
 }
 
-async function callOpenAIImageEdit(sourceImage, prompt) {
-  if (!OPENAI_API_KEY) {
+async function callCloudflareImageEdit(
+  sourceImage,
+  prompt,
+  requestedWidth,
+  requestedHeight
+) {
+  if (!CLOUDFLARE_ACCOUNT_ID) {
     throw new Error(
-      'OPENAI_API_KEY manquante dans Railway. Elle est nécessaire pour générer les simulations visuelles.'
+      'CLOUDFLARE_ACCOUNT_ID manquant dans Railway. Ajoutez-le pour activer les simulations visuelles.'
     );
   }
 
-  const formData = new FormData();
+  if (!CLOUDFLARE_API_TOKEN) {
+    throw new Error(
+      'CLOUDFLARE_API_TOKEN manquant dans Railway. Ajoutez-le pour activer les simulations visuelles.'
+    );
+  }
 
-  formData.append('model', OPENAI_IMAGE_MODEL);
+  const clampDimension = (value, fallback) => {
+    const parsed = Number(value);
+    const safe = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.max(256, Math.min(1920, Math.round(safe)));
+  };
+
+  const width = clampDimension(
+    requestedWidth,
+    CLOUDFLARE_IMAGE_WIDTH || 1024
+  );
+
+  const height = clampDimension(
+    requestedHeight,
+    CLOUDFLARE_IMAGE_HEIGHT || 768
+  );
+
+  const formData = new FormData();
+  formData.append('prompt', prompt);
+  formData.append('width', String(width));
+  formData.append('height', String(height));
 
   formData.append(
-    'image[]',
+    'input_image_0',
     new Blob(
       [sourceImage.buffer],
       { type: sourceImage.mimetype || 'image/jpeg' }
@@ -526,61 +556,142 @@ async function callOpenAIImageEdit(sourceImage, prompt) {
     sourceImage.originalname || 'reference.jpg'
   );
 
-  formData.append('prompt', prompt);
-  formData.append('size', OPENAI_IMAGE_SIZE);
-  formData.append('quality', OPENAI_IMAGE_QUALITY);
-  formData.append('output_format', 'jpeg');
-  formData.append('output_compression', '90');
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/` +
+    `${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/` +
+    `${CLOUDFLARE_IMAGE_MODEL}`;
 
-  const response = await fetch(
-    'https://api.openai.com/v1/images/edits',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`
-      },
-      body: formData
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${CLOUDFLARE_API_TOKEN}`
+    },
+    body: formData
+  });
+
+  const contentType = String(
+    response.headers.get('content-type') || ''
+  ).toLowerCase();
+
+  if (!response.ok) {
+    let errorMessage = `Erreur Cloudflare Workers AI HTTP ${response.status}`;
+
+    try {
+      const errorData = contentType.includes('application/json')
+        ? await response.json()
+        : { raw: await response.text() };
+
+      console.error(
+        '❌ Cloudflare Workers AI :',
+        JSON.stringify(errorData)
+      );
+
+      const cloudflareMessage =
+        errorData?.errors?.[0]?.message ||
+        errorData?.error?.message ||
+        errorData?.message ||
+        errorData?.raw;
+
+      if (cloudflareMessage) {
+        errorMessage = String(cloudflareMessage);
+      }
+    } catch {
+      // On conserve le message HTTP générique.
     }
-  );
 
-  let data = {};
+    if (/512|input image|image.*size|dimension/i.test(errorMessage)) {
+      throw new Error(
+        'Cloudflare refuse la taille de l’image de référence. Rechargez la page puis réessayez : l’Admin compresse automatiquement les images sous 512 px pour FLUX.2.'
+      );
+    }
+
+    throw new Error(errorMessage);
+  }
+
+  // Certains modèles Cloudflare répondent directement avec des octets image.
+  if (contentType.startsWith('image/')) {
+    return {
+      imageBuffer: Buffer.from(await response.arrayBuffer()),
+      mimeType: contentType.split(';')[0] || 'image/jpeg'
+    };
+  }
+
+  let data = null;
 
   try {
     data = await response.json();
   } catch {
-    data = {};
+    throw new Error(
+      'Cloudflare Workers AI a retourné une réponse image invalide.'
+    );
   }
 
-  if (!response.ok) {
+  if (data?.success === false) {
+    throw new Error(
+      data?.errors?.[0]?.message ||
+      'Cloudflare Workers AI a refusé la génération.'
+    );
+  }
+
+  const imageBase64 =
+    data?.result?.image ||
+    data?.image ||
+    data?.result?.output?.image ||
+    '';
+
+  if (!imageBase64) {
     console.error(
-      '❌ OpenAI Image API :',
+      '❌ Réponse Cloudflare sans image :',
       JSON.stringify(data)
     );
 
     throw new Error(
-      data?.error?.message ||
-      `Erreur OpenAI Image API HTTP ${response.status}`
+      'Cloudflare Workers AI n’a retourné aucune image.'
     );
   }
 
-  const imageBase64 = data?.data?.[0]?.b64_json;
+  const rawImageString = String(imageBase64);
+  const dataUriMimeMatch = rawImageString.match(
+    /^data:(image\/[^;]+);base64,/i
+  );
 
-  if (!imageBase64) {
-    throw new Error(
-      'OpenAI Image API n’a retourné aucune image.'
-    );
+  const cleanBase64 = rawImageString.replace(
+    /^data:image\/[^;]+;base64,/i,
+    ''
+  );
+
+  const imageBuffer = Buffer.from(cleanBase64, 'base64');
+
+  let mimeType = dataUriMimeMatch?.[1] || 'image/jpeg';
+
+  if (
+    imageBuffer.length >= 8 &&
+    imageBuffer[0] === 0x89 &&
+    imageBuffer[1] === 0x50 &&
+    imageBuffer[2] === 0x4e &&
+    imageBuffer[3] === 0x47
+  ) {
+    mimeType = 'image/png';
+  } else if (
+    imageBuffer.length >= 12 &&
+    imageBuffer.toString('ascii', 0, 4) === 'RIFF' &&
+    imageBuffer.toString('ascii', 8, 12) === 'WEBP'
+  ) {
+    mimeType = 'image/webp';
   }
 
   return {
-    imageBuffer: Buffer.from(imageBase64, 'base64'),
-    mimeType: 'image/jpeg'
+    imageBuffer,
+    mimeType
   };
 }
 
 async function generateCustomizationSimulation({
   product,
   request,
-  sourceImage
+  sourceImage,
+  outputWidth,
+  outputHeight
 }) {
   if (!sourceImage?.buffer) {
     throw new Error('Image de référence manquante.');
@@ -598,9 +709,11 @@ async function generateCustomizationSimulation({
     analysis
   );
 
-  const generated = await callOpenAIImageEdit(
+  const generated = await callCloudflareImageEdit(
     sourceImage,
-    prompt
+    prompt,
+    outputWidth,
+    outputHeight
   );
 
   return {
@@ -703,12 +816,13 @@ app.get('/debug-env', (req, res) => {
     whatsapp_token_present: Boolean(WHATSAPP_TOKEN),
     phone_number_id_present: Boolean(PHONE_NUMBER_ID),
     groq_api_key_present: Boolean(GROQ_API_KEY),
-    openai_api_key_present: Boolean(OPENAI_API_KEY),
+    cloudflare_account_id_present: Boolean(CLOUDFLARE_ACCOUNT_ID),
+    cloudflare_api_token_present: Boolean(CLOUDFLARE_API_TOKEN),
     admin_password_present: Boolean(process.env.ADMIN_PASSWORD),
     meta_api_version: META_API_VERSION,
     groq_model: GROQ_MODEL,
     groq_vision_model: GROQ_VISION_MODEL,
-    openai_image_model: OPENAI_IMAGE_MODEL
+    cloudflare_image_model: CLOUDFLARE_IMAGE_MODEL
   });
 });
 
