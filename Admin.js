@@ -1,6 +1,8 @@
 // ============================================================
-// MONDECO - PANNEAU D'ADMINISTRATION
-// Fichier : Admin.js
+// MONDECO - ADMINISTRATION
+// Admin.js
+// Stockage persistant Railway + Produits + Instructions
+// + Test IA image + Personnalisation visuelle
 // ============================================================
 
 const express = require('express');
@@ -15,1631 +17,4155 @@ const router = express.Router();
 // CONFIGURATION
 // ============================================================
 
-const DATA_DIR = (process.env.DATA_DIR || __dirname).trim();
+const APP_DIR = __dirname;
+
+const DATA_DIR = (
+  process.env.DATA_DIR ||
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  APP_DIR
+).trim();
+
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
-const INSTRUCTIONS_JSON_PATH = path.join(DATA_DIR, 'instructions.json');
+const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
+const CUSTOMIZATIONS_PATH = path.join(
+  DATA_DIR,
+  'customization-requests.json'
+);
+
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
-const CUSTOMIZATION_IMAGES_DIR = path.join(DATA_DIR, 'customizations');
-const LEGACY_BUSINESS_INFO_PATH = path.join(__dirname, 'business-info.txt');
-const ADMIN_HTML_PATH = path.join(__dirname, 'Admin.html');
+const CUSTOMIZATIONS_DIR = path.join(
+  DATA_DIR,
+  'customizations'
+);
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-fs.mkdirSync(CUSTOMIZATION_IMAGES_DIR, { recursive: true });
+const LEGACY_PRODUCTS_PATH = path.join(
+  APP_DIR,
+  'products.json'
+);
 
-const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || 'mondeco2026').trim();
+const LEGACY_INSTRUCTIONS_PATH = path.join(
+  APP_DIR,
+  'instructions.json'
+);
 
-if (!process.env.ADMIN_PASSWORD) {
-  console.warn('⚠️ ADMIN_PASSWORD non défini. Mot de passe par défaut utilisé.');
-}
+const LEGACY_CUSTOMIZATIONS_PATH = path.join(
+  APP_DIR,
+  'customization-requests.json'
+);
 
-router.use(express.json({ limit: '5mb' }));
+const LEGACY_UPLOADS_DIR = path.join(
+  APP_DIR,
+  'uploads'
+);
+
+const LEGACY_CUSTOMIZATIONS_DIR = path.join(
+  APP_DIR,
+  'customizations'
+);
+
+const LEGACY_BUSINESS_INFO_PATH = path.join(
+  APP_DIR,
+  'business-info.txt'
+);
+
+const ADMIN_HTML_PATH = path.join(
+  APP_DIR,
+  'Admin.html'
+);
+
+const ADMIN_PASSWORD = (
+  process.env.ADMIN_PASSWORD ||
+  'mondeco2026'
+).trim();
+
+fs.mkdirSync(DATA_DIR, {
+  recursive: true
+});
+
+fs.mkdirSync(UPLOADS_DIR, {
+  recursive: true
+});
+
+fs.mkdirSync(CUSTOMIZATIONS_DIR, {
+  recursive: true
+});
+
+router.use(
+  express.json({
+    limit: '5mb'
+  })
+);
 
 // ============================================================
-// SESSIONS ADMIN
+// STOCKAGE PERSISTANT
 // ============================================================
 
-const validSessions = new Map();
-const SESSION_DURATION = 24 * 60 * 60 * 1000;
-
-function parseCookies(header = '') {
-  const cookies = {};
-
-  header.split(';').forEach(pair => {
-    const index = pair.indexOf('=');
-    if (index === -1) return;
-
-    const key = pair.slice(0, index).trim();
-    const rawValue = pair.slice(index + 1).trim();
-
-    try {
-      cookies[key] = decodeURIComponent(rawValue);
-    } catch {
-      cookies[key] = rawValue;
-    }
-  });
-
-  return cookies;
+function samePath(a, b) {
+  return path.resolve(a) === path.resolve(b);
 }
 
-function cleanExpiredSessions() {
-  const now = Date.now();
-
-  for (const [token, expiresAt] of validSessions.entries()) {
-    if (expiresAt <= now) {
-      validSessions.delete(token);
-    }
-  }
-}
-
-function isValidSession(token) {
-  if (!token) return false;
-
-  cleanExpiredSessions();
-
-  const expiresAt = validSessions.get(token);
-  if (!expiresAt) return false;
-
-  if (expiresAt <= Date.now()) {
-    validSessions.delete(token);
+function fileExistsWithContent(filePath) {
+  try {
+    return (
+      fs.existsSync(filePath) &&
+      fs.statSync(filePath).size > 0
+    );
+  } catch {
     return false;
   }
-
-  return true;
 }
 
-function requireAuth(req, res, next) {
-  const cookies = parseCookies(req.headers.cookie || '');
-  const token = cookies.mondeco_admin_session;
+function copyFileIfTargetMissing(
+  source,
+  target,
+  label
+) {
+  try {
+    if (samePath(source, target)) {
+      return false;
+    }
 
-  if (isValidSession(token)) {
-    return next();
+    if (!fileExistsWithContent(source)) {
+      return false;
+    }
+
+    if (fileExistsWithContent(target)) {
+      return false;
+    }
+
+    fs.mkdirSync(
+      path.dirname(target),
+      {
+        recursive: true
+      }
+    );
+
+    fs.copyFileSync(
+      source,
+      target
+    );
+
+    console.log(
+      `✅ Migration ${label} vers ${target}`
+    );
+
+    return true;
+  } catch (error) {
+    console.warn(
+      `⚠️ Migration ${label} impossible : ${error.message}`
+    );
+
+    return false;
+  }
+}
+
+function copyMissingFiles(
+  sourceDir,
+  targetDir,
+  label
+) {
+  try {
+    if (samePath(sourceDir, targetDir)) {
+      return 0;
+    }
+
+    if (!fs.existsSync(sourceDir)) {
+      return 0;
+    }
+
+    fs.mkdirSync(
+      targetDir,
+      {
+        recursive: true
+      }
+    );
+
+    let copied = 0;
+
+    const entries = fs.readdirSync(
+      sourceDir,
+      {
+        withFileTypes: true
+      }
+    );
+
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const source = path.join(
+        sourceDir,
+        entry.name
+      );
+
+      const target = path.join(
+        targetDir,
+        entry.name
+      );
+
+      if (fs.existsSync(target)) {
+        continue;
+      }
+
+      fs.copyFileSync(
+        source,
+        target
+      );
+
+      copied += 1;
+    }
+
+    if (copied > 0) {
+      console.log(
+        `✅ ${copied} fichier(s) ${label} migré(s)`
+      );
+    }
+
+    return copied;
+  } catch (error) {
+    console.warn(
+      `⚠️ Migration ${label} impossible : ${error.message}`
+    );
+
+    return 0;
+  }
+}
+
+function migrateLegacyData() {
+  if (samePath(DATA_DIR, APP_DIR)) {
+    return;
   }
 
-  if (req.path.startsWith('/api/')) {
-    return res.status(401).json({ error: 'Non authentifié' });
+  copyFileIfTargetMissing(
+    LEGACY_PRODUCTS_PATH,
+    PRODUCTS_PATH,
+    'products.json'
+  );
+
+  copyFileIfTargetMissing(
+    LEGACY_INSTRUCTIONS_PATH,
+    INSTRUCTIONS_PATH,
+    'instructions.json'
+  );
+
+  copyFileIfTargetMissing(
+    LEGACY_CUSTOMIZATIONS_PATH,
+    CUSTOMIZATIONS_PATH,
+    'customization-requests.json'
+  );
+
+  copyMissingFiles(
+    LEGACY_UPLOADS_DIR,
+    UPLOADS_DIR,
+    'images produits'
+  );
+
+  copyMissingFiles(
+    LEGACY_CUSTOMIZATIONS_DIR,
+    CUSTOMIZATIONS_DIR,
+    'images personnalisations'
+  );
+}
+
+function writeJsonAtomic(
+  filePath,
+  data
+) {
+  const tempPath =
+    `${filePath}.tmp`;
+
+  const backupPath =
+    `${filePath}.bak`;
+
+  fs.mkdirSync(
+    path.dirname(filePath),
+    {
+      recursive: true
+    }
+  );
+
+  if (fileExistsWithContent(filePath)) {
+    try {
+      fs.copyFileSync(
+        filePath,
+        backupPath
+      );
+    } catch (error) {
+      console.warn(
+        `⚠️ Sauvegarde .bak impossible : ${error.message}`
+      );
+    }
   }
 
-  return res.redirect('/admin/login');
+  fs.writeFileSync(
+    tempPath,
+    JSON.stringify(
+      data,
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  fs.renameSync(
+    tempPath,
+    filePath
+  );
+}
+
+function readJsonArray(
+  filePath,
+  label
+) {
+  const backupPath =
+    `${filePath}.bak`;
+
+  function read(candidate) {
+    if (!fileExistsWithContent(candidate)) {
+      return null;
+    }
+
+    const content =
+      fs.readFileSync(
+        candidate,
+        'utf8'
+      );
+
+    const parsed =
+      JSON.parse(content);
+
+    return Array.isArray(parsed)
+      ? parsed
+      : [];
+  }
+
+  try {
+    const data = read(filePath);
+
+    return data === null
+      ? []
+      : data;
+  } catch (error) {
+    console.error(
+      `❌ Lecture ${label} impossible : ${error.message}`
+    );
+
+    try {
+      const backup =
+        read(backupPath);
+
+      if (backup !== null) {
+        console.warn(
+          `⚠️ ${label} chargé depuis ${path.basename(
+            backupPath
+          )}`
+        );
+
+        return backup;
+      }
+    } catch (backupError) {
+      console.error(
+        `❌ Backup ${label} invalide : ${backupError.message}`
+      );
+    }
+
+    return [];
+  }
+}
+
+function storageIsWritable() {
+  const testFile = path.join(
+    DATA_DIR,
+    `.write-test-${process.pid}-${Date.now()}`
+  );
+
+  try {
+    fs.writeFileSync(
+      testFile,
+      'ok',
+      'utf8'
+    );
+
+    fs.unlinkSync(testFile);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+migrateLegacyData();
+
+console.log(
+  '💾 Stockage MONDECO :',
+  {
+    dataDir: DATA_DIR,
+    persistentConfigured:
+      DATA_DIR !== APP_DIR,
+    writable:
+      storageIsWritable()
+  }
+);
+
+if (
+  DATA_DIR === APP_DIR &&
+  process.env.RAILWAY_ENVIRONMENT_NAME
+) {
+  console.warn(
+    '⚠️ Railway détecté sans stockage persistant. ' +
+    'Montez un Volume sur /data puis ajoutez DATA_DIR=/data.'
+  );
 }
 
 // ============================================================
 // HELPERS
 // ============================================================
 
-function parseBoolean(value, defaultValue = true) {
-  if (value === undefined || value === null || value === '') {
+function safeString(value) {
+  return String(
+    value ?? ''
+  ).trim();
+}
+
+function parseBoolean(
+  value,
+  defaultValue = false
+) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ''
+  ) {
     return defaultValue;
   }
 
-  if (typeof value === 'boolean') return value;
+  if (
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
 
-  const normalized = String(value).trim().toLowerCase();
-  return !['false', '0', 'no', 'non', 'off'].includes(normalized);
+  return ![
+    'false',
+    '0',
+    'no',
+    'non',
+    'off'
+  ].includes(
+    String(value)
+      .trim()
+      .toLowerCase()
+  );
 }
 
-function safeString(value) {
-  return String(value ?? '').trim();
-}
-
-function deleteFileIfExists(filePath) {
+function deleteFileIfExists(
+  filePath
+) {
   try {
-    if (filePath && fs.existsSync(filePath)) {
+    if (
+      filePath &&
+      fs.existsSync(filePath)
+    ) {
       fs.unlinkSync(filePath);
     }
   } catch (error) {
-    console.warn('⚠️ Impossible de supprimer le fichier :', error.message);
+    console.warn(
+      `⚠️ Suppression fichier impossible : ${error.message}`
+    );
   }
 }
 
-function getLocalImagePath(product) {
-  if (!product) return null;
+function mimeTypeFromPath(
+  filePath
+) {
+  const ext =
+    path.extname(
+      filePath || ''
+    ).toLowerCase();
 
-  if (product.imageFilename) {
-    return path.join(UPLOADS_DIR, path.basename(product.imageFilename));
+  if (ext === '.png') {
+    return 'image/png';
   }
 
-  if (product.image && String(product.image).includes('/admin/uploads/')) {
-    return path.join(UPLOADS_DIR, path.basename(String(product.image)));
+  if (ext === '.webp') {
+    return 'image/webp';
+  }
+
+  return 'image/jpeg';
+}
+
+function extensionFromMimeType(
+  mimetype
+) {
+  if (
+    mimetype === 'image/png'
+  ) {
+    return '.png';
+  }
+
+  if (
+    mimetype === 'image/webp'
+  ) {
+    return '.webp';
+  }
+
+  return '.jpg';
+}
+
+function getLocalProductImagePath(
+  product
+) {
+  if (!product) {
+    return null;
+  }
+
+  if (product.imageFilename) {
+    return path.join(
+      UPLOADS_DIR,
+      path.basename(
+        product.imageFilename
+      )
+    );
+  }
+
+  if (
+    safeString(
+      product.image
+    ).includes(
+      '/admin/uploads/'
+    )
+  ) {
+    return path.join(
+      UPLOADS_DIR,
+      path.basename(
+        product.image
+      )
+    );
   }
 
   return null;
 }
 
-
-function mimeTypeFromPath(filePath) {
-  const ext = path.extname(filePath || '').toLowerCase();
-
-  if (ext === '.png') return 'image/png';
-  if (ext === '.webp') return 'image/webp';
-  return 'image/jpeg';
-}
-
-function extensionFromMimeType(mimetype) {
-  if (mimetype === 'image/png') return '.png';
-  if (mimetype === 'image/webp') return '.webp';
-  return '.jpg';
-}
-
-function loadCustomizations() {
-  try {
-    if (!fs.existsSync(CUSTOMIZATIONS_PATH)) return [];
-
-    const content = fs.readFileSync(CUSTOMIZATIONS_PATH, 'utf8');
-    if (!content.trim()) return [];
-
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error('❌ Erreur lecture customization-requests.json :', error);
-    return [];
-  }
-}
-
-function saveCustomizations(items) {
-  const temporaryPath = `${CUSTOMIZATIONS_PATH}.tmp`;
-
-  fs.writeFileSync(
-    temporaryPath,
-    JSON.stringify(items, null, 2),
-    'utf8'
-  );
-
-  fs.renameSync(temporaryPath, CUSTOMIZATIONS_PATH);
-}
-
-function buildCustomizationCapabilities(product) {
-  if (!product) return [];
-
-  const capabilities = [];
-
-  if (product.customizableColor === true) capabilities.push('couleur');
-  if (product.customizableFabric === true) capabilities.push('tissu');
-  if (product.customizableDimensions === true) capabilities.push('dimensions');
-  if (product.customizableCorner === true) capabilities.push('coin/orientation');
-
-  return capabilities;
-}
-
 // ============================================================
-// MULTER - IMAGES PRODUITS
-// ============================================================
-
-const allowedImageMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
-
-function imageFilter(req, file, callback) {
-  if (!allowedImageMimeTypes.includes(file.mimetype)) {
-    return callback(
-      new Error('Format image non accepté. Utilisez JPG, PNG ou WEBP.'),
-      false
-    );
-  }
-
-  callback(null, true);
-}
-
-const productImageStorage = multer.diskStorage({
-  destination: (req, file, callback) => {
-    callback(null, UPLOADS_DIR);
-  },
-
-  filename: (req, file, callback) => {
-    let extension = path.extname(file.originalname).toLowerCase();
-
-    if (!['.jpg', '.jpeg', '.png', '.webp'].includes(extension)) {
-      extension =
-        file.mimetype === 'image/png'
-          ? '.png'
-          : file.mimetype === 'image/webp'
-            ? '.webp'
-            : '.jpg';
-    }
-
-    callback(
-      null,
-      `product-${Date.now()}-${crypto.randomUUID()}${extension}`
-    );
-  }
-});
-
-const productImageUpload = multer({
-  storage: productImageStorage,
-  fileFilter: imageFilter,
-  limits: {
-    fileSize: 8 * 1024 * 1024
-  }
-});
-
-function uploadSingleProductImage(req, res, next) {
-  productImageUpload.single('image')(req, res, error => {
-    if (!error) return next();
-
-    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        error: 'La photo produit dépasse la taille maximale de 8 Mo.'
-      });
-    }
-
-    return res.status(400).json({
-      error: error.message || 'Image produit non valide.'
-    });
-  });
-}
-
-// ============================================================
-// MULTER - IMAGE DISCUSSION DE TEST
-// Stockée uniquement en mémoire, jamais sauvegardée sur disque.
-// 3 Mo maximum pour rester sous la limite Base64 de l'API vision.
-// ============================================================
-
-const testImageUpload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: imageFilter,
-  limits: {
-    fileSize: 3 * 1024 * 1024
-  }
-});
-
-function uploadSingleTestImage(req, res, next) {
-  testImageUpload.single('image')(req, res, error => {
-    if (!error) return next();
-
-    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        error: 'L’image de test est trop lourde. Maximum 3 Mo après compression.'
-      });
-    }
-
-    return res.status(400).json({
-      error: error.message || 'Image de test non valide.'
-    });
-  });
-}
-
-
-// ============================================================
-// MULTER - IMAGE PERSONNALISATION
-// Optionnelle si un produit avec photo est sélectionné.
-// ============================================================
-
-const customizationImageUpload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: imageFilter,
-  limits: {
-    fileSize: 8 * 1024 * 1024
-  }
-});
-
-function uploadSingleCustomizationImage(req, res, next) {
-  customizationImageUpload.single('referenceImage')(req, res, error => {
-    if (!error) return next();
-
-    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        error: 'L’image de référence dépasse 8 Mo.'
-      });
-    }
-
-    return res.status(400).json({
-      error: error.message || 'Image de personnalisation non valide.'
-    });
-  });
-}
-
-// ============================================================
-// PRODUITS - STOCKAGE
+// DONNÉES
 // ============================================================
 
 function loadProducts() {
-  try {
-    if (!fs.existsSync(PRODUCTS_PATH)) return [];
-
-    const content = fs.readFileSync(PRODUCTS_PATH, 'utf8');
-    if (!content.trim()) return [];
-
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error('❌ Erreur lecture products.json :', error);
-    return [];
-  }
-}
-
-function saveProducts(products) {
-  const temporaryPath = `${PRODUCTS_PATH}.tmp`;
-
-  fs.writeFileSync(
-    temporaryPath,
-    JSON.stringify(products, null, 2),
-    'utf8'
+  return readJsonArray(
+    PRODUCTS_PATH,
+    'products.json'
   );
-
-  fs.renameSync(temporaryPath, PRODUCTS_PATH);
 }
 
-// ============================================================
-// INSTRUCTIONS - STOCKAGE
-// ============================================================
-
-function structuredInstructionsStoreExists() {
-  return fs.existsSync(INSTRUCTIONS_JSON_PATH);
+function saveProducts(
+  products
+) {
+  writeJsonAtomic(
+    PRODUCTS_PATH,
+    products
+  );
 }
 
 function loadInstructions() {
-  try {
-    if (!fs.existsSync(INSTRUCTIONS_JSON_PATH)) return [];
-
-    const content = fs.readFileSync(INSTRUCTIONS_JSON_PATH, 'utf8');
-    if (!content.trim()) return [];
-
-    const parsed = JSON.parse(content);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error('❌ Erreur lecture instructions.json :', error);
-    return [];
-  }
+  return readJsonArray(
+    INSTRUCTIONS_PATH,
+    'instructions.json'
+  );
 }
 
-function saveInstructions(instructions) {
-  const temporaryPath = `${INSTRUCTIONS_JSON_PATH}.tmp`;
-
-  fs.writeFileSync(
-    temporaryPath,
-    JSON.stringify(instructions, null, 2),
-    'utf8'
+function saveInstructions(
+  instructions
+) {
+  writeJsonAtomic(
+    INSTRUCTIONS_PATH,
+    instructions
   );
+}
 
-  fs.renameSync(temporaryPath, INSTRUCTIONS_JSON_PATH);
+function loadCustomizations() {
+  return readJsonArray(
+    CUSTOMIZATIONS_PATH,
+    'customization-requests.json'
+  );
+}
+
+function saveCustomizations(
+  items
+) {
+  writeJsonAtomic(
+    CUSTOMIZATIONS_PATH,
+    items
+  );
 }
 
 function loadLegacyBusinessInfo() {
   try {
-    if (!fs.existsSync(LEGACY_BUSINESS_INFO_PATH)) return '';
-    return fs.readFileSync(LEGACY_BUSINESS_INFO_PATH, 'utf8');
-  } catch (error) {
-    console.error('❌ Erreur lecture business-info.txt :', error);
+    if (
+      !fs.existsSync(
+        LEGACY_BUSINESS_INFO_PATH
+      )
+    ) {
+      return '';
+    }
+
+    return fs.readFileSync(
+      LEGACY_BUSINESS_INFO_PATH,
+      'utf8'
+    );
+  } catch {
     return '';
   }
 }
 
-function cleanInstructionTitle(text) {
-  return String(text || '')
-    .replace(/^[\s\-–—•*#\d.)]+/, '')
-    .trim();
-}
-
-function parseInstructionBlocks(text) {
-  const normalized = String(text || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .trim();
-
-  if (!normalized) return [];
-
-  return normalized
-    .split(/\n\s*\n+/)
-    .map(block => block.trim())
-    .filter(Boolean)
-    .map(block => {
-      const lines = block
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
-
-      if (!lines.length) return null;
-
-      let title = cleanInstructionTitle(lines[0]);
-      let content = lines.slice(1).join('\n').trim();
-
-      if (!content) {
-        const colonIndex = title.indexOf(':');
-
-        if (colonIndex > 5 && colonIndex < 100) {
-          content = title.slice(colonIndex + 1).trim();
-          title = title.slice(0, colonIndex).trim();
-        } else {
-          content = title;
-        }
-      }
-
-      if (!title) title = content.slice(0, 80);
-      if (title.length > 120) title = `${title.slice(0, 117)}...`;
-
-      return { title, content };
-    })
-    .filter(Boolean);
-}
-
-function instructionFingerprint(title, content) {
-  return crypto
-    .createHash('sha256')
-    .update(
-      `${String(title).trim().toLowerCase()}|${String(content)
-        .trim()
-        .toLowerCase()}`
-    )
-    .digest('hex');
+function structuredInstructionsStoreExists() {
+  return fs.existsSync(
+    INSTRUCTIONS_PATH
+  );
 }
 
 // ============================================================
-// CONTEXTE MONDECO POUR L'IA
+// CONTEXTE IA
 // ============================================================
 
-function availabilityLabel(value) {
+function availabilityLabel(
+  value
+) {
   const labels = {
-    in_stock: 'En stock',
-    made_to_order: 'Sur commande',
-    out_of_stock: 'Rupture de stock',
-    clearance: 'Déstockage'
+    in_stock:
+      'En stock',
+
+    on_order:
+      'Sur commande',
+
+    out_of_stock:
+      'Rupture',
+
+    clearance:
+      'Déstockage',
+
+    unknown:
+      'À confirmer'
   };
 
-  return labels[value] || safeString(value) || 'Non précisée';
+  return (
+    labels[value] ||
+    safeString(value) ||
+    'À confirmer'
+  );
+}
+
+function productToContext(
+  product
+) {
+  const lines = [];
+
+  lines.push(
+    `Produit : ${safeString(
+      product.name
+    )}`
+  );
+
+  if (product.category) {
+    lines.push(
+      `Catégorie : ${safeString(
+        product.category
+      )}`
+    );
+  }
+
+  if (product.price) {
+    lines.push(
+      `Prix normal : ${safeString(
+        product.price
+      )} TND`
+    );
+  }
+
+  if (product.promoPrice) {
+    lines.push(
+      `Prix promotionnel : ${safeString(
+        product.promoPrice
+      )} TND`
+    );
+  }
+
+  if (product.availability) {
+    lines.push(
+      `Disponibilité : ${availabilityLabel(
+        product.availability
+      )}`
+    );
+  }
+
+  if (product.dimensions) {
+    lines.push(
+      `Dimensions : ${safeString(
+        product.dimensions
+      )}`
+    );
+  }
+
+  if (product.composition) {
+    lines.push(
+      `Composition : ${safeString(
+        product.composition
+      )}`
+    );
+  }
+
+  if (product.colors) {
+    lines.push(
+      `Couleurs disponibles : ${safeString(
+        product.colors
+      )}`
+    );
+  }
+
+  if (product.showrooms) {
+    lines.push(
+      `Showrooms : ${safeString(
+        product.showrooms
+      )}`
+    );
+  }
+
+  if (product.productUrl) {
+    lines.push(
+      `Lien produit : ${safeString(
+        product.productUrl
+      )}`
+    );
+  }
+
+  if (product.categoryUrl) {
+    lines.push(
+      `Lien catégorie : ${safeString(
+        product.categoryUrl
+      )}`
+    );
+  }
+
+  const customizations = [];
+
+  if (
+    product.customizableColor === true
+  ) {
+    customizations.push(
+      'couleur'
+    );
+  }
+
+  if (
+    product.customizableFabric === true
+  ) {
+    customizations.push(
+      'tissu'
+    );
+  }
+
+  if (
+    product.customizableDimensions === true
+  ) {
+    customizations.push(
+      'dimensions'
+    );
+  }
+
+  if (
+    product.customizableCorner === true
+  ) {
+    customizations.push(
+      'coin/orientation'
+    );
+  }
+
+  if (
+    customizations.length
+  ) {
+    lines.push(
+      `Personnalisation possible : ${customizations.join(
+        ', '
+      )}`
+    );
+  }
+
+  if (product.description) {
+    lines.push(
+      `Description : ${safeString(
+        product.description
+      )}`
+    );
+  }
+
+  return lines.join('\n');
 }
 
 function getBusinessContext() {
-  const instructions = loadInstructions();
-  const allProducts = loadProducts();
-  const products = allProducts.filter(product => product.active !== false);
+  let instructionsText = '';
 
-  let instructionsBlock = '';
+  if (
+    structuredInstructionsStoreExists()
+  ) {
+    const activeInstructions =
+      loadInstructions().filter(
+        item =>
+          item.active !== false
+      );
 
-  if (structuredInstructionsStoreExists()) {
-    const activeInstructions = instructions.filter(
-      instruction => instruction.active !== false
+    instructionsText =
+      activeInstructions
+        .map(
+          (
+            item,
+            index
+          ) => {
+            return (
+              `${index + 1}. ${safeString(
+                item.title
+              )}\n` +
+              safeString(
+                item.content
+              )
+            );
+          }
+        )
+        .join('\n\n');
+  } else {
+    instructionsText =
+      loadLegacyBusinessInfo()
+        .trim();
+  }
+
+  const activeProducts =
+    loadProducts().filter(
+      product =>
+        product.active !== false
     );
 
-    if (activeInstructions.length) {
-      instructionsBlock =
-        'INSTRUCTIONS OBLIGATOIRES MONDECO :\n\n' +
-        activeInstructions
-          .map(
-            (instruction, index) =>
-              `${index + 1}. ${instruction.title}\n${instruction.content}`
-          )
-          .join('\n\n');
-    }
-  } else {
-    const legacy = loadLegacyBusinessInfo();
-    if (legacy.trim()) instructionsBlock = legacy.trim();
-  }
+  const productsText =
+    activeProducts
+      .map(
+        (
+          product,
+          index
+        ) => {
+          return (
+            `--- PRODUIT ${index + 1} ---\n` +
+            productToContext(
+              product
+            )
+          );
+        }
+      )
+      .join('\n\n');
 
-  let productsBlock = '';
+  return [
+    instructionsText
+      ? (
+        'INSTRUCTIONS MONDECO\n\n' +
+        instructionsText
+      )
+      : '',
 
-  if (products.length) {
-    productsBlock =
-      'CATALOGUE PRODUITS MONDECO ACTIFS :\n\n' +
-      products
-        .map(product => {
-          const parts = [];
-
-          parts.push(`Nom : ${safeString(product.name)}`);
-
-          if (product.category) {
-            parts.push(`Catégorie : ${safeString(product.category)}`);
-          }
-
-          if (product.price) {
-            parts.push(`Prix : ${safeString(product.price)} TND`);
-          }
-
-          if (product.promoPrice) {
-            parts.push(`Prix promotionnel : ${safeString(product.promoPrice)} TND`);
-          }
-
-          parts.push(`Disponibilité : ${availabilityLabel(product.availability)}`);
-
-          if (product.dimensions) {
-            parts.push(`Dimensions : ${safeString(product.dimensions)}`);
-          }
-
-          if (product.composition) {
-            parts.push(`Composition : ${safeString(product.composition)}`);
-          }
-
-          if (product.colors) {
-            parts.push(`Couleurs : ${safeString(product.colors)}`);
-          }
-
-          if (product.showrooms) {
-            parts.push(`Showrooms : ${safeString(product.showrooms)}`);
-          }
-
-          if (product.productUrl) {
-            parts.push(`Lien produit : ${safeString(product.productUrl)}`);
-          }
-
-          if (product.categoryUrl) {
-            parts.push(`Lien catégorie : ${safeString(product.categoryUrl)}`);
-          }
-
-          if (product.description) {
-            parts.push(`Description : ${safeString(product.description)}`);
-          }
-
-          const customizationCapabilities = buildCustomizationCapabilities(product);
-
-          if (customizationCapabilities.length) {
-            parts.push(
-              `Personnalisation possible : ${customizationCapabilities.join(', ')}`
-            );
-          } else {
-            parts.push('Personnalisation : non confirmée dans le catalogue');
-          }
-
-          return `- ${parts.join(' | ')}`;
-        })
-        .join('\n');
-  }
-
-  return [instructionsBlock, productsBlock].filter(Boolean).join('\n\n').trim();
+    productsText
+      ? (
+        'CATALOGUE PRODUITS MONDECO\n\n' +
+        productsText
+      )
+      : ''
+  ]
+    .filter(Boolean)
+    .join(
+      '\n\n==================================================\n\n'
+    );
 }
 
 // ============================================================
-// LOGIN / LOGOUT
+// AUTHENTIFICATION ADMIN
 // ============================================================
 
-router.get('/login', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie || '');
+const sessions =
+  new Map();
 
-  if (isValidSession(cookies.mondeco_admin_session)) {
-    return res.redirect('/admin');
-  }
+const SESSION_DURATION =
+  24 *
+  60 *
+  60 *
+  1000;
 
-  return res.status(200).type('html').send(renderLoginPage());
-});
+function parseCookies(
+  header = ''
+) {
+  const cookies = {};
 
-router.post('/login', (req, res) => {
-  try {
-    const password = String(req.body?.password || '');
+  for (
+    const part
+    of header.split(';')
+  ) {
+    const index =
+      part.indexOf('=');
 
-    if (password !== ADMIN_PASSWORD) {
-      return res.status(401).json({
-        success: false,
-        error: 'Mot de passe incorrect'
-      });
+    if (
+      index === -1
+    ) {
+      continue;
     }
 
-    const token = crypto.randomBytes(32).toString('hex');
-    validSessions.set(token, Date.now() + SESSION_DURATION);
+    const key =
+      part
+        .slice(
+          0,
+          index
+        )
+        .trim();
 
-    const isProduction =
-      process.env.NODE_ENV === 'production' ||
-      Boolean(process.env.RAILWAY_ENVIRONMENT_NAME);
+    const value =
+      part
+        .slice(
+          index + 1
+        )
+        .trim();
 
-    let cookie =
-      `mondeco_admin_session=${token}; HttpOnly; Path=/; Max-Age=86400; SameSite=Lax`;
+    if (!key) {
+      continue;
+    }
 
-    if (isProduction) cookie += '; Secure';
-
-    res.setHeader('Set-Cookie', cookie);
-    return res.json({ success: true });
-  } catch (error) {
-    console.error('❌ Erreur connexion admin :', error);
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    try {
+      cookies[key] =
+        decodeURIComponent(
+          value
+        );
+    } catch {
+      cookies[key] =
+        value;
+    }
   }
-});
 
-router.post('/logout', (req, res) => {
-  const cookies = parseCookies(req.headers.cookie || '');
-  const token = cookies.mondeco_admin_session;
+  return cookies;
+}
 
-  if (token) validSessions.delete(token);
+function cleanupSessions() {
+  const now =
+    Date.now();
 
-  let cookie =
-    'mondeco_admin_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax';
+  for (
+    const [
+      token,
+      expiresAt
+    ]
+    of sessions.entries()
+  ) {
+    if (
+      expiresAt <= now
+    ) {
+      sessions.delete(
+        token
+      );
+    }
+  }
+}
+
+function getSessionToken(
+  req
+) {
+  return (
+    parseCookies(
+      req.headers.cookie || ''
+    )
+      .mondeco_admin_session ||
+    ''
+  );
+}
+
+function isAuthenticated(
+  req
+) {
+  cleanupSessions();
+
+  const token =
+    getSessionToken(req);
+
+  if (!token) {
+    return false;
+  }
+
+  const expiresAt =
+    sessions.get(token);
 
   if (
-    process.env.NODE_ENV === 'production' ||
-    process.env.RAILWAY_ENVIRONMENT_NAME
+    !expiresAt ||
+    expiresAt <= Date.now()
   ) {
-    cookie += '; Secure';
+    sessions.delete(
+      token
+    );
+
+    return false;
   }
 
-  res.setHeader('Set-Cookie', cookie);
-  return res.json({ success: true });
-});
+  return true;
+}
 
-// ============================================================
-// DASHBOARD
-// ============================================================
-
-router.get('/', requireAuth, (req, res) => {
-  if (!fs.existsSync(ADMIN_HTML_PATH)) {
-    return res.status(500).send('Admin.html introuvable.');
+function requireAuth(
+  req,
+  res,
+  next
+) {
+  if (
+    isAuthenticated(req)
+  ) {
+    return next();
   }
 
-  return res.sendFile(ADMIN_HTML_PATH);
-});
-
-// ============================================================
-// IMAGES PRODUITS
-// ============================================================
-
-router.get('/uploads/:filename', requireAuth, (req, res) => {
-  const filename = path.basename(req.params.filename);
-  const imagePath = path.join(UPLOADS_DIR, filename);
-
-  if (!fs.existsSync(imagePath)) {
-    return res.status(404).send('Image introuvable');
+  if (
+    req.path.startsWith(
+      '/api/'
+    )
+  ) {
+    return res
+      .status(401)
+      .json({
+        error:
+          'Non authentifié'
+      });
   }
 
-  return res.sendFile(imagePath);
-});
+  return res.redirect(
+    '/admin/login'
+  );
+}
 
+function secureCookie(
+  req
+) {
+  const forwardedProto =
+    safeString(
+      req.headers[
+        'x-forwarded-proto'
+      ]
+    );
 
-router.get('/customizations/:filename', requireAuth, (req, res) => {
-  const filename = path.basename(req.params.filename);
-  const imagePath = path.join(CUSTOMIZATION_IMAGES_DIR, filename);
+  return (
+    forwardedProto === 'https' ||
+    Boolean(
+      process.env
+        .RAILWAY_ENVIRONMENT_NAME
+    )
+  );
+}
 
-  if (!fs.existsSync(imagePath)) {
-    return res.status(404).send('Simulation introuvable');
+// ============================================================
+// PAGE LOGIN
+// ============================================================
+
+function renderLoginPage() {
+  return `
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<title>
+Mondeco — Administration
+</title>
+
+<style>
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  font-family:Arial,sans-serif;
+  background:#1f1b16;
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+
+.card{
+  background:#f7f4ef;
+  width:100%;
+  max-width:400px;
+  border-radius:14px;
+  padding:38px;
+  box-shadow:
+    0 20px 60px
+    rgba(0,0,0,.3);
+}
+
+h1{
+  margin:0;
+  font-family:
+    Georgia,
+    serif;
+  font-size:30px;
+}
+
+.sub{
+  color:#756d61;
+  margin:
+    5px 0 28px;
+}
+
+label{
+  display:block;
+  font-size:13px;
+  font-weight:700;
+  margin-bottom:7px;
+}
+
+input{
+  width:100%;
+  padding:12px;
+  border:
+    1px solid
+    #ddd5c8;
+  border-radius:8px;
+  font-size:15px;
+}
+
+button{
+  width:100%;
+  padding:12px;
+  margin-top:16px;
+  border:0;
+  border-radius:8px;
+  background:#b5541f;
+  color:white;
+  font-size:15px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+.err{
+  display:none;
+  color:#b5541f;
+  font-size:13px;
+  margin-top:12px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+
+<h1>Mondeco</h1>
+
+<div class="sub">
+Administration du bot WhatsApp
+</div>
+
+<form id="form">
+
+<label>
+Mot de passe
+</label>
+
+<input
+  id="password"
+  type="password"
+  required
+  autofocus
+  autocomplete="current-password"
+>
+
+<button id="btn">
+Se connecter
+</button>
+
+<div
+  id="err"
+  class="err"
+></div>
+
+</form>
+
+</div>
+
+<script>
+
+const form =
+  document.getElementById(
+    'form'
+  );
+
+const btn =
+  document.getElementById(
+    'btn'
+  );
+
+const err =
+  document.getElementById(
+    'err'
+  );
+
+form.addEventListener(
+  'submit',
+  async event => {
+
+    event.preventDefault();
+
+    err.style.display =
+      'none';
+
+    btn.disabled =
+      true;
+
+    btn.textContent =
+      'Connexion...';
+
+    try {
+
+      const response =
+        await fetch(
+          '/admin/login',
+          {
+            method:
+              'POST',
+
+            headers:{
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                password:
+                  document.getElementById(
+                    'password'
+                  ).value
+              })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (
+        response.ok &&
+        data.success
+      ) {
+        location.href =
+          '/admin';
+
+        return;
+      }
+
+      err.textContent =
+        data.error ||
+        'Mot de passe incorrect';
+
+      err.style.display =
+        'block';
+
+    } catch (error) {
+
+      err.textContent =
+        'Impossible de contacter le serveur.';
+
+      err.style.display =
+        'block';
+
+    } finally {
+
+      btn.disabled =
+        false;
+
+      btn.textContent =
+        'Se connecter';
+    }
+  }
+);
+
+</script>
+
+</body>
+</html>
+`;
+}
+
+// ============================================================
+// ROUTES LOGIN
+// ============================================================
+
+router.get(
+  '/login',
+  (
+    req,
+    res
+  ) => {
+
+    if (
+      isAuthenticated(req)
+    ) {
+      return res.redirect(
+        '/admin'
+      );
+    }
+
+    return res
+      .type('html')
+      .send(
+        renderLoginPage()
+      );
+  }
+);
+
+router.post(
+  '/login',
+  (
+    req,
+    res
+  ) => {
+
+    const password =
+      safeString(
+        req.body?.password
+      );
+
+    if (
+      !password ||
+      password !==
+        ADMIN_PASSWORD
+    ) {
+      return res
+        .status(401)
+        .json({
+          error:
+            'Mot de passe incorrect.'
+        });
+    }
+
+    const token =
+      crypto
+        .randomBytes(32)
+        .toString('hex');
+
+    sessions.set(
+      token,
+      Date.now() +
+      SESSION_DURATION
+    );
+
+    const cookieParts = [
+      `mondeco_admin_session=${encodeURIComponent(
+        token
+      )}`,
+      'HttpOnly',
+      'SameSite=Lax',
+      'Path=/',
+      `Max-Age=${Math.floor(
+        SESSION_DURATION /
+        1000
+      )}`
+    ];
+
+    if (
+      secureCookie(req)
+    ) {
+      cookieParts.push(
+        'Secure'
+      );
+    }
+
+    res.setHeader(
+      'Set-Cookie',
+      cookieParts.join(
+        '; '
+      )
+    );
+
+    return res.json({
+      success:true
+    });
+  }
+);
+
+router.post(
+  '/logout',
+  (
+    req,
+    res
+  ) => {
+
+    const token =
+      getSessionToken(req);
+
+    if (token) {
+      sessions.delete(
+        token
+      );
+    }
+
+    const cookieParts = [
+      'mondeco_admin_session=',
+      'HttpOnly',
+      'SameSite=Lax',
+      'Path=/',
+      'Max-Age=0'
+    ];
+
+    if (
+      secureCookie(req)
+    ) {
+      cookieParts.push(
+        'Secure'
+      );
+    }
+
+    res.setHeader(
+      'Set-Cookie',
+      cookieParts.join(
+        '; '
+      )
+    );
+
+    return res.json({
+      success:true
+    });
+  }
+);
+
+router.get(
+  '/',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    if (
+      !fs.existsSync(
+        ADMIN_HTML_PATH
+      )
+    ) {
+      return res
+        .status(500)
+        .send(
+          'Admin.html introuvable.'
+        );
+    }
+
+    return res.sendFile(
+      ADMIN_HTML_PATH
+    );
+  }
+);
+
+// ============================================================
+// MULTER
+// ============================================================
+
+const ALLOWED_IMAGE_TYPES =
+  new Set([
+    'image/jpeg',
+    'image/png',
+    'image/webp'
+  ]);
+
+function imageFileFilter(
+  req,
+  file,
+  callback
+) {
+  if (
+    !ALLOWED_IMAGE_TYPES
+      .has(
+        file.mimetype
+      )
+  ) {
+    return callback(
+      new Error(
+        'Format image non accepté. Utilisez JPG, PNG ou WEBP.'
+      )
+    );
   }
 
-  return res.sendFile(imagePath);
-});
+  return callback(
+    null,
+    true
+  );
+}
+
+const productStorage =
+  multer.diskStorage({
+
+    destination(
+      req,
+      file,
+      callback
+    ) {
+      callback(
+        null,
+        UPLOADS_DIR
+      );
+    },
+
+    filename(
+      req,
+      file,
+      callback
+    ) {
+      const extension =
+        extensionFromMimeType(
+          file.mimetype
+        );
+
+      callback(
+        null,
+        `product-${Date.now()}-${crypto.randomUUID()}${extension}`
+      );
+    }
+  });
+
+const productUpload =
+  multer({
+    storage:
+      productStorage,
+
+    limits:{
+      fileSize:
+        8 *
+        1024 *
+        1024
+    },
+
+    fileFilter:
+      imageFileFilter
+  });
+
+const memoryUpload =
+  multer({
+    storage:
+      multer.memoryStorage(),
+
+    limits:{
+      fileSize:
+        8 *
+        1024 *
+        1024
+    },
+
+    fileFilter:
+      imageFileFilter
+  });
+
+function multerSingle(
+  upload,
+  fieldName
+) {
+  return (
+    req,
+    res,
+    next
+  ) => {
+
+    upload
+      .single(
+        fieldName
+      )(
+        req,
+        res,
+        error => {
+
+          if (!error) {
+            return next();
+          }
+
+          if (
+            error instanceof
+            multer.MulterError
+          ) {
+            if (
+              error.code ===
+              'LIMIT_FILE_SIZE'
+            ) {
+              return res
+                .status(400)
+                .json({
+                  error:
+                    'Image trop volumineuse. Maximum 8 Mo.'
+                });
+            }
+
+            return res
+              .status(400)
+              .json({
+                error:
+                  error.message
+              });
+          }
+
+          return res
+            .status(400)
+            .json({
+              error:
+                error.message ||
+                'Image invalide.'
+            });
+        }
+      );
+  };
+}
+
+const uploadProductImage =
+  multerSingle(
+    productUpload,
+    'image'
+  );
+
+const uploadTestImage =
+  multerSingle(
+    memoryUpload,
+    'image'
+  );
+
+const uploadCustomizationImage =
+  multerSingle(
+    memoryUpload,
+    'referenceImage'
+  );
+
+// ============================================================
+// SERVIR LES IMAGES
+// ============================================================
+
+router.get(
+  '/uploads/:filename',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    const filename =
+      path.basename(
+        req.params.filename ||
+        ''
+      );
+
+    if (!filename) {
+      return res.sendStatus(
+        404
+      );
+    }
+
+    const filePath =
+      path.join(
+        UPLOADS_DIR,
+        filename
+      );
+
+    if (
+      !fs.existsSync(
+        filePath
+      )
+    ) {
+      return res.sendStatus(
+        404
+      );
+    }
+
+    return res.sendFile(
+      filePath
+    );
+  }
+);
+
+router.get(
+  '/customizations/:filename',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    const filename =
+      path.basename(
+        req.params.filename ||
+        ''
+      );
+
+    if (!filename) {
+      return res.sendStatus(
+        404
+      );
+    }
+
+    const filePath =
+      path.join(
+        CUSTOMIZATIONS_DIR,
+        filename
+      );
+
+    if (
+      !fs.existsSync(
+        filePath
+      )
+    ) {
+      return res.sendStatus(
+        404
+      );
+    }
+
+    return res.sendFile(
+      filePath
+    );
+  }
+);
 
 // ============================================================
 // API PRODUITS
 // ============================================================
 
-router.get('/api/products', requireAuth, (req, res) => {
-  return res.json(loadProducts());
-});
+router.get(
+  '/api/products',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    return res.json(
+      loadProducts()
+    );
+  }
+);
+
+// ============================================================
+// AJOUT PRODUIT
+// ============================================================
 
 router.post(
   '/api/products',
   requireAuth,
-  uploadSingleProductImage,
-  (req, res) => {
+  uploadProductImage,
+  (
+    req,
+    res
+  ) => {
+
     try {
-      const name = safeString(req.body?.name);
-      const category = safeString(req.body?.category);
+
+      const name =
+        safeString(
+          req.body?.name
+        );
+
+      const category =
+        safeString(
+          req.body?.category
+        );
 
       if (!name) {
-        if (req.file) deleteFileIfExists(req.file.path);
-        return res.status(400).json({ error: 'Le nom du produit est obligatoire.' });
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le nom du produit est obligatoire.'
+          });
       }
 
       if (!category) {
-        if (req.file) deleteFileIfExists(req.file.path);
-        return res.status(400).json({ error: 'La catégorie est obligatoire.' });
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'La catégorie est obligatoire.'
+          });
       }
 
       if (!req.file) {
-        return res.status(400).json({
-          error: 'La photo du produit est obligatoire.'
-        });
+        return res
+          .status(400)
+          .json({
+            error:
+              'La photo du produit est obligatoire.'
+          });
       }
 
-      const products = loadProducts();
-      const now = new Date().toISOString();
+      const now =
+        new Date()
+          .toISOString();
 
       const product = {
-        id: crypto.randomUUID(),
+
+        id:
+          crypto.randomUUID(),
+
         name,
+
         category,
-        price: safeString(req.body?.price),
-        promoPrice: safeString(req.body?.promoPrice),
-        availability: safeString(req.body?.availability) || 'in_stock',
-        dimensions: safeString(req.body?.dimensions),
-        composition: safeString(req.body?.composition),
-        colors: safeString(req.body?.colors),
-        showrooms: safeString(req.body?.showrooms),
-        productUrl: safeString(req.body?.productUrl),
-        categoryUrl: safeString(req.body?.categoryUrl),
-        description: safeString(req.body?.description),
-        customizableColor: parseBoolean(req.body?.customizableColor, false),
-        customizableFabric: parseBoolean(req.body?.customizableFabric, false),
-        customizableDimensions: parseBoolean(req.body?.customizableDimensions, false),
-        customizableCorner: parseBoolean(req.body?.customizableCorner, false),
-        active: parseBoolean(req.body?.active, true),
-        image: `/admin/uploads/${req.file.filename}`,
-        imageFilename: req.file.filename,
-        createdAt: now,
-        updatedAt: now
+
+        price:
+          safeString(
+            req.body?.price
+          ),
+
+        promoPrice:
+          safeString(
+            req.body?.promoPrice
+          ),
+
+        availability:
+          safeString(
+            req.body?.availability
+          ) ||
+          'unknown',
+
+        dimensions:
+          safeString(
+            req.body?.dimensions
+          ),
+
+        composition:
+          safeString(
+            req.body?.composition
+          ),
+
+        colors:
+          safeString(
+            req.body?.colors
+          ),
+
+        showrooms:
+          safeString(
+            req.body?.showrooms
+          ),
+
+        productUrl:
+          safeString(
+            req.body?.productUrl
+          ),
+
+        categoryUrl:
+          safeString(
+            req.body?.categoryUrl
+          ),
+
+        description:
+          safeString(
+            req.body?.description
+          ),
+
+        customizableColor:
+          parseBoolean(
+            req.body
+              ?.customizableColor,
+            false
+          ),
+
+        customizableFabric:
+          parseBoolean(
+            req.body
+              ?.customizableFabric,
+            false
+          ),
+
+        customizableDimensions:
+          parseBoolean(
+            req.body
+              ?.customizableDimensions,
+            false
+          ),
+
+        customizableCorner:
+          parseBoolean(
+            req.body
+              ?.customizableCorner,
+            false
+          ),
+
+        active:
+          parseBoolean(
+            req.body?.active,
+            true
+          ),
+
+        image:
+          `/admin/uploads/${req.file.filename}`,
+
+        imageFilename:
+          req.file.filename,
+
+        createdAt:
+          now,
+
+        updatedAt:
+          now
       };
 
+      const products =
+        loadProducts();
+
+      products.push(
+        product
+      );
+
       try {
-        products.push(product);
-        saveProducts(products);
+
+        saveProducts(
+          products
+        );
+
       } catch (error) {
-        deleteFileIfExists(req.file.path);
+
+        deleteFileIfExists(
+          req.file.path
+        );
+
         throw error;
       }
 
-      return res.status(201).json(product);
+      return res
+        .status(201)
+        .json(
+          product
+        );
+
     } catch (error) {
-      console.error('❌ Erreur ajout produit :', error);
-      return res.status(500).json({
-        error: error.message || 'Impossible d’ajouter le produit.'
-      });
+
+      console.error(
+        '❌ Ajout produit :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible d’ajouter le produit.'
+        });
     }
   }
 );
+
+// ============================================================
+// MODIFICATION PRODUIT
+// ============================================================
 
 router.put(
   '/api/products/:id',
   requireAuth,
-  uploadSingleProductImage,
-  (req, res) => {
-    try {
-      const products = loadProducts();
-      const index = products.findIndex(product => product.id === req.params.id);
+  uploadProductImage,
+  (
+    req,
+    res
+  ) => {
 
-      if (index === -1) {
-        if (req.file) deleteFileIfExists(req.file.path);
-        return res.status(404).json({ error: 'Produit introuvable.' });
+    try {
+
+      const products =
+        loadProducts();
+
+      const index =
+        products.findIndex(
+          item =>
+            item.id ===
+            req.params.id
+        );
+
+      if (
+        index === -1
+      ) {
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit introuvable.'
+          });
       }
 
-      const currentProduct = products[index];
+      const current =
+        products[index];
+
+      const oldImagePath =
+        getLocalProductImagePath(
+          current
+        );
 
       const name =
-        req.body?.name !== undefined
-          ? safeString(req.body.name)
-          : safeString(currentProduct.name);
+        req.body?.name !==
+        undefined
+
+          ? safeString(
+              req.body.name
+            )
+
+          : safeString(
+              current.name
+            );
 
       const category =
-        req.body?.category !== undefined
-          ? safeString(req.body.category)
-          : safeString(currentProduct.category);
+        req.body?.category !==
+        undefined
+
+          ? safeString(
+              req.body.category
+            )
+
+          : safeString(
+              current.category
+            );
 
       if (!name) {
-        if (req.file) deleteFileIfExists(req.file.path);
-        return res.status(400).json({ error: 'Le nom du produit est obligatoire.' });
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le nom ne peut pas être vide.'
+          });
       }
 
       if (!category) {
-        if (req.file) deleteFileIfExists(req.file.path);
-        return res.status(400).json({ error: 'La catégorie est obligatoire.' });
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
+        return res
+          .status(400)
+          .json({
+            error:
+              'La catégorie ne peut pas être vide.'
+          });
       }
 
-      if (!currentProduct.image && !req.file) {
-        return res.status(400).json({
-          error: 'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.'
-        });
+      if (
+        !req.file &&
+        !current.image
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ce produit n’a pas de photo. Ajoutez une image.'
+          });
       }
 
-      const oldImagePath = getLocalImagePath(currentProduct);
+      const updated = {
 
-      const updatedProduct = {
-        ...currentProduct,
+        ...current,
+
         name,
+
         category,
+
         price:
-          req.body?.price !== undefined
-            ? safeString(req.body.price)
-            : safeString(currentProduct.price),
+          req.body?.price !==
+          undefined
+
+            ? safeString(
+                req.body.price
+              )
+
+            : safeString(
+                current.price
+              ),
+
         promoPrice:
-          req.body?.promoPrice !== undefined
-            ? safeString(req.body.promoPrice)
-            : safeString(currentProduct.promoPrice),
+          req.body?.promoPrice !==
+          undefined
+
+            ? safeString(
+                req.body.promoPrice
+              )
+
+            : safeString(
+                current.promoPrice
+              ),
+
         availability:
-          req.body?.availability !== undefined
-            ? safeString(req.body.availability) || 'in_stock'
-            : safeString(currentProduct.availability) || 'in_stock',
+          req.body?.availability !==
+          undefined
+
+            ? safeString(
+                req.body.availability
+              )
+
+            : (
+              safeString(
+                current.availability
+              ) ||
+              'unknown'
+            ),
+
         dimensions:
-          req.body?.dimensions !== undefined
-            ? safeString(req.body.dimensions)
-            : safeString(currentProduct.dimensions),
+          req.body?.dimensions !==
+          undefined
+
+            ? safeString(
+                req.body.dimensions
+              )
+
+            : safeString(
+                current.dimensions
+              ),
+
         composition:
-          req.body?.composition !== undefined
-            ? safeString(req.body.composition)
-            : safeString(currentProduct.composition),
+          req.body?.composition !==
+          undefined
+
+            ? safeString(
+                req.body.composition
+              )
+
+            : safeString(
+                current.composition
+              ),
+
         colors:
-          req.body?.colors !== undefined
-            ? safeString(req.body.colors)
-            : safeString(currentProduct.colors),
+          req.body?.colors !==
+          undefined
+
+            ? safeString(
+                req.body.colors
+              )
+
+            : safeString(
+                current.colors
+              ),
+
         showrooms:
-          req.body?.showrooms !== undefined
-            ? safeString(req.body.showrooms)
-            : safeString(currentProduct.showrooms),
+          req.body?.showrooms !==
+          undefined
+
+            ? safeString(
+                req.body.showrooms
+              )
+
+            : safeString(
+                current.showrooms
+              ),
+
         productUrl:
-          req.body?.productUrl !== undefined
-            ? safeString(req.body.productUrl)
-            : safeString(currentProduct.productUrl),
+          req.body?.productUrl !==
+          undefined
+
+            ? safeString(
+                req.body.productUrl
+              )
+
+            : safeString(
+                current.productUrl
+              ),
+
         categoryUrl:
-          req.body?.categoryUrl !== undefined
-            ? safeString(req.body.categoryUrl)
-            : safeString(currentProduct.categoryUrl),
+          req.body?.categoryUrl !==
+          undefined
+
+            ? safeString(
+                req.body.categoryUrl
+              )
+
+            : safeString(
+                current.categoryUrl
+              ),
+
         description:
-          req.body?.description !== undefined
-            ? safeString(req.body.description)
-            : safeString(currentProduct.description),
+          req.body?.description !==
+          undefined
+
+            ? safeString(
+                req.body.description
+              )
+
+            : safeString(
+                current.description
+              ),
+
         customizableColor:
-          req.body?.customizableColor !== undefined
-            ? parseBoolean(req.body.customizableColor, false)
-            : currentProduct.customizableColor === true,
+          req.body
+            ?.customizableColor !==
+          undefined
+
+            ? parseBoolean(
+                req.body
+                  .customizableColor,
+                false
+              )
+
+            : (
+              current
+                .customizableColor ===
+              true
+            ),
+
         customizableFabric:
-          req.body?.customizableFabric !== undefined
-            ? parseBoolean(req.body.customizableFabric, false)
-            : currentProduct.customizableFabric === true,
+          req.body
+            ?.customizableFabric !==
+          undefined
+
+            ? parseBoolean(
+                req.body
+                  .customizableFabric,
+                false
+              )
+
+            : (
+              current
+                .customizableFabric ===
+              true
+            ),
+
         customizableDimensions:
-          req.body?.customizableDimensions !== undefined
-            ? parseBoolean(req.body.customizableDimensions, false)
-            : currentProduct.customizableDimensions === true,
+          req.body
+            ?.customizableDimensions !==
+          undefined
+
+            ? parseBoolean(
+                req.body
+                  .customizableDimensions,
+                false
+              )
+
+            : (
+              current
+                .customizableDimensions ===
+              true
+            ),
+
         customizableCorner:
-          req.body?.customizableCorner !== undefined
-            ? parseBoolean(req.body.customizableCorner, false)
-            : currentProduct.customizableCorner === true,
+          req.body
+            ?.customizableCorner !==
+          undefined
+
+            ? parseBoolean(
+                req.body
+                  .customizableCorner,
+                false
+              )
+
+            : (
+              current
+                .customizableCorner ===
+              true
+            ),
+
         active:
-          req.body?.active !== undefined
-            ? parseBoolean(req.body.active, true)
-            : currentProduct.active !== false,
-        updatedAt: new Date().toISOString()
+          req.body?.active !==
+          undefined
+
+            ? parseBoolean(
+                req.body.active,
+                true
+              )
+
+            : (
+              current.active !==
+              false
+            ),
+
+        updatedAt:
+          new Date()
+            .toISOString()
       };
 
       if (req.file) {
-        updatedProduct.image = `/admin/uploads/${req.file.filename}`;
-        updatedProduct.imageFilename = req.file.filename;
+
+        updated.image =
+          `/admin/uploads/${req.file.filename}`;
+
+        updated.imageFilename =
+          req.file.filename;
       }
 
-      products[index] = updatedProduct;
+      products[index] =
+        updated;
 
       try {
-        saveProducts(products);
+
+        saveProducts(
+          products
+        );
+
       } catch (error) {
-        if (req.file) deleteFileIfExists(req.file.path);
+
+        if (req.file) {
+          deleteFileIfExists(
+            req.file.path
+          );
+        }
+
         throw error;
       }
 
-      if (req.file && oldImagePath && oldImagePath !== req.file.path) {
-        deleteFileIfExists(oldImagePath);
+      if (
+        req.file &&
+        oldImagePath &&
+        oldImagePath !==
+          req.file.path
+      ) {
+        deleteFileIfExists(
+          oldImagePath
+        );
       }
 
-      return res.json(updatedProduct);
+      return res.json(
+        updated
+      );
+
     } catch (error) {
-      console.error('❌ Erreur modification produit :', error);
-      return res.status(500).json({
-        error: error.message || 'Impossible de modifier le produit.'
-      });
+
+      console.error(
+        '❌ Modification produit :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible de modifier le produit.'
+        });
     }
   }
 );
 
-router.delete('/api/products/:id', requireAuth, (req, res) => {
-  try {
-    const products = loadProducts();
-    const product = products.find(item => item.id === req.params.id);
-
-    if (!product) {
-      return res.status(404).json({ error: 'Produit introuvable.' });
-    }
-
-    const filtered = products.filter(item => item.id !== req.params.id);
-    saveProducts(filtered);
-
-    const imagePath = getLocalImagePath(product);
-    if (imagePath) deleteFileIfExists(imagePath);
-
-    return res.json({ success: true });
-  } catch (error) {
-    console.error('❌ Erreur suppression produit :', error);
-    return res.status(500).json({ error: 'Impossible de supprimer le produit.' });
-  }
-});
-
 // ============================================================
-// API INSTRUCTIONS
+// SUPPRESSION PRODUIT
 // ============================================================
 
-router.get('/api/instructions', requireAuth, (req, res) => {
-  return res.json(loadInstructions());
-});
+router.delete(
+  '/api/products/:id',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
 
-router.post('/api/instructions', requireAuth, (req, res) => {
-  try {
-    const title = safeString(req.body?.title);
-    const content = safeString(req.body?.content);
+    try {
 
-    if (!title) {
-      return res.status(400).json({ error: 'Le titre est obligatoire.' });
-    }
+      const products =
+        loadProducts();
 
-    if (!content) {
-      return res.status(400).json({ error: 'L’instruction est obligatoire.' });
-    }
+      const product =
+        products.find(
+          item =>
+            item.id ===
+            req.params.id
+        );
 
-    const instructions = loadInstructions();
-    const now = new Date().toISOString();
-
-    const instruction = {
-      id: crypto.randomUUID(),
-      title,
-      content,
-      active: req.body?.active !== false,
-      createdAt: now,
-      updatedAt: now
-    };
-
-    instructions.push(instruction);
-    saveInstructions(instructions);
-
-    return res.status(201).json(instruction);
-  } catch (error) {
-    console.error('❌ Erreur ajout instruction :', error);
-    return res.status(500).json({ error: 'Impossible d’ajouter l’instruction.' });
-  }
-});
-
-router.put('/api/instructions/:id', requireAuth, (req, res) => {
-  try {
-    const instructions = loadInstructions();
-    const index = instructions.findIndex(
-      instruction => instruction.id === req.params.id
-    );
-
-    if (index === -1) {
-      return res.status(404).json({ error: 'Instruction introuvable.' });
-    }
-
-    const title =
-      req.body?.title !== undefined
-        ? safeString(req.body.title)
-        : instructions[index].title;
-
-    const content =
-      req.body?.content !== undefined
-        ? safeString(req.body.content)
-        : instructions[index].content;
-
-    if (!title) {
-      return res.status(400).json({ error: 'Le titre ne peut pas être vide.' });
-    }
-
-    if (!content) {
-      return res.status(400).json({ error: 'L’instruction ne peut pas être vide.' });
-    }
-
-    instructions[index] = {
-      ...instructions[index],
-      title,
-      content,
-      active:
-        req.body?.active !== undefined
-          ? Boolean(req.body.active)
-          : instructions[index].active,
-      updatedAt: new Date().toISOString()
-    };
-
-    saveInstructions(instructions);
-    return res.json(instructions[index]);
-  } catch (error) {
-    console.error('❌ Erreur modification instruction :', error);
-    return res.status(500).json({ error: 'Impossible de modifier l’instruction.' });
-  }
-});
-
-router.delete('/api/instructions/:id', requireAuth, (req, res) => {
-  try {
-    const instructions = loadInstructions();
-    const exists = instructions.some(
-      instruction => instruction.id === req.params.id
-    );
-
-    if (!exists) {
-      return res.status(404).json({ error: 'Instruction introuvable.' });
-    }
-
-    saveInstructions(
-      instructions.filter(instruction => instruction.id !== req.params.id)
-    );
-
-    return res.json({ success: true });
-  } catch (error) {
-    console.error('❌ Erreur suppression instruction :', error);
-    return res.status(500).json({ error: 'Impossible de supprimer l’instruction.' });
-  }
-});
-
-router.post('/api/instructions/import', requireAuth, (req, res) => {
-  try {
-    const text = safeString(req.body?.text);
-
-    if (!text) {
-      return res.status(400).json({ error: 'Aucune instruction à importer.' });
-    }
-
-    const parsed = parseInstructionBlocks(text);
-    const instructions = loadInstructions();
-    const existingFingerprints = new Set(
-      instructions.map(instruction =>
-        instructionFingerprint(instruction.title, instruction.content)
-      )
-    );
-
-    let imported = 0;
-    let duplicates = 0;
-    const now = new Date().toISOString();
-
-    for (const item of parsed) {
-      const fingerprint = instructionFingerprint(item.title, item.content);
-
-      if (existingFingerprints.has(fingerprint)) {
-        duplicates++;
-        continue;
+      if (!product) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit introuvable.'
+          });
       }
 
-      instructions.push({
-        id: crypto.randomUUID(),
-        title: item.title,
-        content: item.content,
-        active: true,
-        createdAt: now,
-        updatedAt: now
-      });
+      saveProducts(
+        products.filter(
+          item =>
+            item.id !==
+            req.params.id
+        )
+      );
 
-      existingFingerprints.add(fingerprint);
-      imported++;
-    }
+      const imagePath =
+        getLocalProductImagePath(
+          product
+        );
 
-    saveInstructions(instructions);
-
-    return res.json({
-      success: true,
-      imported,
-      duplicates,
-      total: instructions.length
-    });
-  } catch (error) {
-    console.error('❌ Erreur import instructions :', error);
-    return res.status(500).json({ error: 'Impossible d’importer les instructions.' });
-  }
-});
-
-router.post('/api/instructions/import-legacy', requireAuth, (req, res) => {
-  try {
-    const legacyText = loadLegacyBusinessInfo().trim();
-
-    if (!legacyText) {
-      return res.status(404).json({
-        error: 'business-info.txt est vide ou introuvable.'
-      });
-    }
-
-    const parsed = parseInstructionBlocks(legacyText);
-    const instructions = loadInstructions();
-    const existingFingerprints = new Set(
-      instructions.map(instruction =>
-        instructionFingerprint(instruction.title, instruction.content)
-      )
-    );
-
-    let imported = 0;
-    let duplicates = 0;
-    const now = new Date().toISOString();
-
-    for (const item of parsed) {
-      const fingerprint = instructionFingerprint(item.title, item.content);
-
-      if (existingFingerprints.has(fingerprint)) {
-        duplicates++;
-        continue;
+      if (imagePath) {
+        deleteFileIfExists(
+          imagePath
+        );
       }
 
-      instructions.push({
-        id: crypto.randomUUID(),
-        title: item.title,
-        content: item.content,
-        active: true,
-        source: 'business-info.txt',
-        createdAt: now,
-        updatedAt: now
+      return res.json({
+        success:true
       });
 
-      existingFingerprints.add(fingerprint);
-      imported++;
+    } catch (error) {
+
+      console.error(
+        '❌ Suppression produit :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de supprimer le produit.'
+        });
     }
-
-    saveInstructions(instructions);
-
-    return res.json({
-      success: true,
-      imported,
-      duplicates,
-      total: instructions.length
-    });
-  } catch (error) {
-    console.error('❌ Erreur import business-info :', error);
-    return res.status(500).json({ error: 'Impossible d’importer business-info.txt.' });
   }
-});
+);
 
 // ============================================================
-// DISCUSSION DE TEST : TEXTE + IMAGE
+// INSTRUCTIONS
+// ============================================================
+
+function parseInstructionBlocks(
+  text
+) {
+  return safeString(text)
+    .split(
+      /\n\s*\n+/
+    )
+    .map(
+      block =>
+        block.trim()
+    )
+    .filter(Boolean)
+    .map(
+      (
+        block,
+        index
+      ) => {
+
+        const lines =
+          block
+            .split('\n')
+            .map(
+              line =>
+                line.trim()
+            )
+            .filter(Boolean);
+
+        const title =
+          lines[0] ||
+          `Instruction ${index + 1}`;
+
+        const content =
+          lines.length > 1
+
+            ? lines
+                .slice(1)
+                .join('\n')
+
+            : lines[0];
+
+        return {
+          title,
+          content
+        };
+      }
+    );
+}
+
+function instructionFingerprint(
+  title,
+  content
+) {
+  return (
+    `${safeString(
+      title
+    ).toLowerCase()}::` +
+    safeString(
+      content
+    ).toLowerCase()
+  );
+}
+
+// ============================================================
+// GET INSTRUCTIONS
+// ============================================================
+
+router.get(
+  '/api/instructions',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    return res.json(
+      loadInstructions()
+    );
+  }
+);
+
+// ============================================================
+// AJOUT INSTRUCTION
+// ============================================================
+
+router.post(
+  '/api/instructions',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const title =
+        safeString(
+          req.body?.title
+        );
+
+      const content =
+        safeString(
+          req.body?.content
+        );
+
+      if (!title) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le titre est obligatoire.'
+          });
+      }
+
+      if (!content) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'L’instruction est obligatoire.'
+          });
+      }
+
+      const now =
+        new Date()
+          .toISOString();
+
+      const instruction = {
+
+        id:
+          crypto.randomUUID(),
+
+        title,
+
+        content,
+
+        active:
+          parseBoolean(
+            req.body?.active,
+            true
+          ),
+
+        createdAt:
+          now,
+
+        updatedAt:
+          now
+      };
+
+      const instructions =
+        loadInstructions();
+
+      instructions.push(
+        instruction
+      );
+
+      saveInstructions(
+        instructions
+      );
+
+      return res
+        .status(201)
+        .json(
+          instruction
+        );
+
+    } catch (error) {
+
+      console.error(
+        '❌ Ajout instruction :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’ajouter l’instruction.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// MODIFICATION INSTRUCTION
+// ============================================================
+
+router.put(
+  '/api/instructions/:id',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const instructions =
+        loadInstructions();
+
+      const index =
+        instructions
+          .findIndex(
+            item =>
+              item.id ===
+              req.params.id
+          );
+
+      if (
+        index === -1
+      ) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Instruction introuvable.'
+          });
+      }
+
+      const current =
+        instructions[index];
+
+      const title =
+        req.body?.title !==
+        undefined
+
+          ? safeString(
+              req.body.title
+            )
+
+          : safeString(
+              current.title
+            );
+
+      const content =
+        req.body?.content !==
+        undefined
+
+          ? safeString(
+              req.body.content
+            )
+
+          : safeString(
+              current.content
+            );
+
+      if (!title) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le titre ne peut pas être vide.'
+          });
+      }
+
+      if (!content) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'L’instruction ne peut pas être vide.'
+          });
+      }
+
+      instructions[index] = {
+
+        ...current,
+
+        title,
+
+        content,
+
+        active:
+          req.body?.active !==
+          undefined
+
+            ? parseBoolean(
+                req.body.active,
+                true
+              )
+
+            : (
+              current.active !==
+              false
+            ),
+
+        updatedAt:
+          new Date()
+            .toISOString()
+      };
+
+      saveInstructions(
+        instructions
+      );
+
+      return res.json(
+        instructions[index]
+      );
+
+    } catch (error) {
+
+      console.error(
+        '❌ Modification instruction :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de modifier l’instruction.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// SUPPRESSION INSTRUCTION
+// ============================================================
+
+router.delete(
+  '/api/instructions/:id',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const instructions =
+        loadInstructions();
+
+      const exists =
+        instructions.some(
+          item =>
+            item.id ===
+            req.params.id
+        );
+
+      if (!exists) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Instruction introuvable.'
+          });
+      }
+
+      saveInstructions(
+        instructions.filter(
+          item =>
+            item.id !==
+            req.params.id
+        )
+      );
+
+      return res.json({
+        success:true
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Suppression instruction :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de supprimer l’instruction.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// IMPORT INSTRUCTIONS
+// ============================================================
+
+router.post(
+  '/api/instructions/import',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const text =
+        safeString(
+          req.body?.text
+        );
+
+      if (!text) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Aucune instruction à importer.'
+          });
+      }
+
+      const incoming =
+        parseInstructionBlocks(
+          text
+        );
+
+      const instructions =
+        loadInstructions();
+
+      const fingerprints =
+        new Set(
+          instructions.map(
+            item =>
+              instructionFingerprint(
+                item.title,
+                item.content
+              )
+          )
+        );
+
+      let imported = 0;
+      let duplicates = 0;
+
+      for (
+        const item
+        of incoming
+      ) {
+
+        const fingerprint =
+          instructionFingerprint(
+            item.title,
+            item.content
+          );
+
+        if (
+          fingerprints
+            .has(
+              fingerprint
+            )
+        ) {
+
+          duplicates += 1;
+
+          continue;
+        }
+
+        const now =
+          new Date()
+            .toISOString();
+
+        instructions.push({
+
+          id:
+            crypto.randomUUID(),
+
+          title:
+            item.title,
+
+          content:
+            item.content,
+
+          active:
+            true,
+
+          createdAt:
+            now,
+
+          updatedAt:
+            now
+        });
+
+        fingerprints.add(
+          fingerprint
+        );
+
+        imported += 1;
+      }
+
+      saveInstructions(
+        instructions
+      );
+
+      return res.json({
+
+        success:true,
+
+        imported,
+
+        duplicates,
+
+        total:
+          instructions.length
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Import instructions :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’importer les instructions.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// IMPORT BUSINESS-INFO.TXT
+// ============================================================
+
+router.post(
+  '/api/instructions/import-legacy',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const legacyText =
+        loadLegacyBusinessInfo()
+          .trim();
+
+      if (!legacyText) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'business-info.txt est vide ou introuvable.'
+          });
+      }
+
+      const incoming =
+        parseInstructionBlocks(
+          legacyText
+        );
+
+      const instructions =
+        loadInstructions();
+
+      const fingerprints =
+        new Set(
+          instructions.map(
+            item =>
+              instructionFingerprint(
+                item.title,
+                item.content
+              )
+          )
+        );
+
+      let imported = 0;
+      let duplicates = 0;
+
+      for (
+        const item
+        of incoming
+      ) {
+
+        const fingerprint =
+          instructionFingerprint(
+            item.title,
+            item.content
+          );
+
+        if (
+          fingerprints
+            .has(
+              fingerprint
+            )
+        ) {
+
+          duplicates += 1;
+
+          continue;
+        }
+
+        const now =
+          new Date()
+            .toISOString();
+
+        instructions.push({
+
+          id:
+            crypto.randomUUID(),
+
+          title:
+            item.title,
+
+          content:
+            item.content,
+
+          active:
+            true,
+
+          source:
+            'business-info.txt',
+
+          createdAt:
+            now,
+
+          updatedAt:
+            now
+        });
+
+        fingerprints.add(
+          fingerprint
+        );
+
+        imported += 1;
+      }
+
+      saveInstructions(
+        instructions
+      );
+
+      return res.json({
+
+        success:true,
+
+        imported,
+
+        duplicates,
+
+        total:
+          instructions.length
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Import business-info.txt :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’importer business-info.txt.'
+        });
+    }
+  }
+);
+
+// ============================================================
+// DISCUSSION TEST
 // ============================================================
 
 let chatHandler = null;
 let imageChatHandler = null;
 
-function setChatHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error('setChatHandler attend une fonction.');
+function setChatHandler(
+  fn
+) {
+  if (
+    typeof fn !==
+    'function'
+  ) {
+    throw new Error(
+      'setChatHandler attend une fonction.'
+    );
   }
 
   chatHandler = fn;
 }
 
-function setImageChatHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error('setImageChatHandler attend une fonction.');
+function setImageChatHandler(
+  fn
+) {
+  if (
+    typeof fn !==
+    'function'
+  ) {
+    throw new Error(
+      'setImageChatHandler attend une fonction.'
+    );
   }
 
   imageChatHandler = fn;
 }
 
-router.post('/api/test-chat', requireAuth, async (req, res) => {
-  try {
-    if (!chatHandler) {
-      return res.status(503).json({ error: 'Le bot IA n’est pas encore connecté.' });
-    }
-
-    const message = safeString(req.body?.message);
-
-    if (!message) {
-      return res.status(400).json({ error: 'Message vide.' });
-    }
-
-    const reply = await chatHandler('admin-test-session', message);
-    return res.json({ reply });
-  } catch (error) {
-    console.error('❌ Erreur discussion test texte :', error);
-    return res.status(500).json({
-      error: error.message || 'Erreur pendant la génération de la réponse.'
-    });
-  }
-});
+// ============================================================
+// TEST TEXTE
+// ============================================================
 
 router.post(
-  '/api/test-chat-image',
+  '/api/test-chat',
   requireAuth,
-  uploadSingleTestImage,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
+
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'Ajoutez une image à analyser.' });
+
+      if (!chatHandler) {
+        return res
+          .status(503)
+          .json({
+            error:
+              'Le bot IA n’est pas encore connecté.'
+          });
       }
 
-      const mode = safeString(req.body?.mode) || 'analysis';
       const message =
-        safeString(req.body?.message) ||
-        'Analyse cette image et explique ce que tu vois.';
+        safeString(
+          req.body?.message
+        );
 
-      // Simulation du comportement WhatsApp réel :
-      // une image client ne reçoit pas de réponse automatique.
-      if (mode === 'whatsapp') {
-        return res.json({
-          reply:
-            'Simulation WhatsApp : image reçue. Aucune réponse automatique ne serait envoyée au client ; la conversation doit être reprise par un commercial.',
-          action: 'commercial_required'
-        });
+      if (!message) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Message vide.'
+          });
       }
 
-      if (!imageChatHandler) {
-        return res.status(503).json({
-          error: 'L’analyse d’image IA n’est pas encore connectée.'
-        });
-      }
+      const reply =
+        await chatHandler(
+          'admin-test-session',
+          message
+        );
 
-      const reply = await imageChatHandler(
-        'admin-test-session',
-        message,
-        {
-          buffer: req.file.buffer,
-          mimetype: req.file.mimetype,
-          originalname: req.file.originalname,
-          size: req.file.size
-        }
+      return res.json({
+        reply
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Test chat texte :',
+        error
       );
 
-      return res.json({ reply, action: 'vision_analysis' });
-    } catch (error) {
-      console.error('❌ Erreur discussion test image :', error);
-      return res.status(500).json({
-        error: error.message || 'Erreur pendant l’analyse de l’image.'
-      });
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Erreur pendant la réponse IA.'
+        });
     }
   }
 );
 
+// ============================================================
+// TEST IMAGE
+// ============================================================
+
+router.post(
+  '/api/test-chat-image',
+  requireAuth,
+  uploadTestImage,
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ajoutez une image à analyser.'
+          });
+      }
+
+      const mode =
+        safeString(
+          req.body?.mode
+        ) ||
+        'analysis';
+
+      const message =
+        safeString(
+          req.body?.message
+        ) ||
+        'Analyse cette image et explique ce que tu vois.';
+
+      if (
+        mode ===
+        'whatsapp'
+      ) {
+        return res.json({
+
+          reply:
+            'Simulation WhatsApp : image reçue. Aucune réponse automatique ne serait envoyée au client ; un commercial doit reprendre la conversation.',
+
+          action:
+            'commercial_required'
+        });
+      }
+
+      if (
+        !imageChatHandler
+      ) {
+        return res
+          .status(503)
+          .json({
+            error:
+              'L’analyse d’image IA n’est pas encore connectée.'
+          });
+      }
+
+      const reply =
+        await imageChatHandler(
+
+          'admin-test-session',
+
+          message,
+
+          {
+            buffer:
+              req.file.buffer,
+
+            mimetype:
+              req.file.mimetype,
+
+            originalname:
+              req.file
+                .originalname,
+
+            size:
+              req.file.size
+          }
+        );
+
+      return res.json({
+
+        reply,
+
+        action:
+          'vision_analysis'
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Test chat image :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Erreur pendant l’analyse de l’image.'
+        });
+    }
+  }
+);
 
 // ============================================================
-// PERSONNALISATION / SIMULATION VISUELLE
+// PERSONNALISATION
 // ============================================================
 
-let customizationHandler = null;
+let customizationHandler =
+  null;
 
-function setCustomizationHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error('setCustomizationHandler attend une fonction.');
+function setCustomizationHandler(
+  fn
+) {
+  if (
+    typeof fn !==
+    'function'
+  ) {
+    throw new Error(
+      'setCustomizationHandler attend une fonction.'
+    );
   }
 
-  customizationHandler = fn;
+  customizationHandler =
+    fn;
 }
 
-function buildCustomizationWarnings(product, request) {
+function buildCustomizationWarnings(
+  product,
+  request
+) {
   const warnings = [];
 
   if (!product) {
+
     warnings.push(
-      'Produit non lié au catalogue : identification, prix et faisabilité à confirmer.'
+      'Image libre : identification, prix et faisabilité à confirmer par un commercial.'
     );
 
     return warnings;
   }
 
-  if (request.color && product.customizableColor !== true) {
-    warnings.push('Le changement de couleur n’est pas confirmé comme option catalogue.');
+  if (
+    request.color &&
+    product.customizableColor !==
+    true
+  ) {
+    warnings.push(
+      'Le changement de couleur n’est pas confirmé comme option catalogue.'
+    );
   }
 
-  if (request.fabric && product.customizableFabric !== true) {
-    warnings.push('Le changement de tissu n’est pas confirmé comme option catalogue.');
+  if (
+    request.fabric &&
+    product.customizableFabric !==
+    true
+  ) {
+    warnings.push(
+      'Le changement de tissu n’est pas confirmé comme option catalogue.'
+    );
   }
 
-  if (request.dimensions && product.customizableDimensions !== true) {
-    warnings.push('Le changement de dimensions doit être validé par un commercial.');
+  if (
+    request.dimensions &&
+    product.customizableDimensions !==
+    true
+  ) {
+    warnings.push(
+      'Le changement de dimensions doit être validé par un commercial.'
+    );
   }
 
-  if (request.corner && product.customizableCorner !== true) {
-    warnings.push('Le changement de coin/orientation doit être validé par un commercial.');
+  if (
+    request.corner &&
+    product.customizableCorner !==
+    true
+  ) {
+    warnings.push(
+      'Le changement de coin/orientation doit être validé par un commercial.'
+    );
   }
 
   return warnings;
 }
 
-router.get('/api/customizations', requireAuth, (req, res) => {
-  const items = loadCustomizations().sort(
-    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-  );
+// ============================================================
+// LISTE PERSONNALISATIONS
+// ============================================================
 
-  return res.json(items);
-});
+router.get(
+  '/api/customizations',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    const items =
+      loadCustomizations()
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            new Date(
+              b.createdAt ||
+              0
+            ) -
+            new Date(
+              a.createdAt ||
+              0
+            )
+        );
+
+    return res.json(
+      items
+    );
+  }
+);
+
+// ============================================================
+// GÉNÉRER PERSONNALISATION
+// ============================================================
 
 router.post(
   '/api/customizations/generate',
   requireAuth,
-  uploadSingleCustomizationImage,
-  async (req, res) => {
+  uploadCustomizationImage,
+  async (
+    req,
+    res
+  ) => {
+
     try {
-      if (!customizationHandler) {
-        return res.status(503).json({
-          error: 'Le moteur de simulation visuelle n’est pas encore connecté.'
-        });
+
+      if (
+        !customizationHandler
+      ) {
+        return res
+          .status(503)
+          .json({
+            error:
+              'Le moteur de simulation visuelle n’est pas connecté.'
+          });
       }
 
-      const products = loadProducts();
-      const productId = safeString(req.body?.productId);
-      const product = productId
-        ? products.find(item => item.id === productId)
-        : null;
+      const products =
+        loadProducts();
 
-      if (productId && !product) {
-        return res.status(404).json({
-          error: 'Produit sélectionné introuvable.'
-        });
+      const productId =
+        safeString(
+          req.body?.productId
+        );
+
+      const product =
+        productId
+
+          ? products.find(
+              item =>
+                item.id ===
+                productId
+            )
+
+          : null;
+
+      if (
+        productId &&
+        !product
+      ) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit sélectionné introuvable.'
+          });
       }
 
       const request = {
-        customerName: safeString(req.body?.customerName),
-        customerPhone: safeString(req.body?.customerPhone),
-        color: safeString(req.body?.color),
-        fabric: safeString(req.body?.fabric),
-        dimensions: safeString(req.body?.dimensions),
-        corner: safeString(req.body?.corner),
-        notes: safeString(req.body?.notes)
+
+        customerName:
+          safeString(
+            req.body
+              ?.customerName
+          ),
+
+        customerPhone:
+          safeString(
+            req.body
+              ?.customerPhone
+          ),
+
+        color:
+          safeString(
+            req.body?.color
+          ),
+
+        fabric:
+          safeString(
+            req.body?.fabric
+          ),
+
+        dimensions:
+          safeString(
+            req.body
+              ?.dimensions
+          ),
+
+        corner:
+          safeString(
+            req.body?.corner
+          ),
+
+        notes:
+          safeString(
+            req.body?.notes
+          )
       };
 
-      const hasModification = Boolean(
-        request.color ||
-        request.fabric ||
-        request.dimensions ||
-        request.corner ||
-        request.notes
-      );
+      const hasModification =
+        Boolean(
+          request.color ||
+          request.fabric ||
+          request.dimensions ||
+          request.corner ||
+          request.notes
+        );
 
-      if (!hasModification) {
-        return res.status(400).json({
-          error: 'Indiquez au moins une modification à simuler.'
-        });
+      if (
+        !hasModification
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Indiquez au moins une modification à simuler.'
+          });
       }
 
-      let sourceImage = null;
-      let sourceImageUrl = '';
+      let sourceImage =
+        null;
+
+      let sourceImageUrl =
+        '';
 
       if (req.file) {
-        sourceImage = {
-          buffer: req.file.buffer,
-          mimetype: req.file.mimetype,
-          originalname: req.file.originalname || 'reference.jpg'
-        };
-      } else if (product) {
-        const localImagePath = getLocalImagePath(product);
 
-        if (!localImagePath || !fs.existsSync(localImagePath)) {
-          return res.status(400).json({
-            error:
-              'La photo du produit est introuvable. Ajoutez une image de référence.'
-          });
+        sourceImage = {
+
+          buffer:
+            req.file.buffer,
+
+          mimetype:
+            req.file.mimetype,
+
+          originalname:
+            req.file
+              .originalname ||
+            'reference.jpg',
+
+          size:
+            req.file.size
+        };
+
+      } else if (product) {
+
+        const localPath =
+          getLocalProductImagePath(
+            product
+          );
+
+        if (
+          !localPath ||
+          !fs.existsSync(
+            localPath
+          )
+        ) {
+          return res
+            .status(400)
+            .json({
+              error:
+                'La photo du produit est introuvable. Ajoutez une image de référence.'
+            });
         }
 
         sourceImage = {
-          buffer: fs.readFileSync(localImagePath),
-          mimetype: mimeTypeFromPath(localImagePath),
-          originalname: path.basename(localImagePath)
+
+          buffer:
+            fs.readFileSync(
+              localPath
+            ),
+
+          mimetype:
+            mimeTypeFromPath(
+              localPath
+            ),
+
+          originalname:
+            path.basename(
+              localPath
+            ),
+
+          size:
+            fs.statSync(
+              localPath
+            ).size
         };
 
-        sourceImageUrl = safeString(product.image);
+        sourceImageUrl =
+          safeString(
+            product.image
+          );
       }
 
       if (!sourceImage) {
-        return res.status(400).json({
-          error:
-            'Sélectionnez un produit avec photo ou ajoutez une image de référence.'
+        return res
+          .status(400)
+          .json({
+            error:
+              'Sélectionnez un produit avec photo ou ajoutez une image de référence.'
+          });
+      }
+
+      function outputDimension(
+        value,
+        fallback
+      ) {
+        const number =
+          Number(value);
+
+        if (
+          !Number.isFinite(
+            number
+          )
+        ) {
+          return fallback;
+        }
+
+        return Math.max(
+          256,
+          Math.min(
+            1920,
+            Math.round(
+              number
+            )
+          )
+        );
+      }
+
+      const simulation =
+        await customizationHandler({
+
+          product,
+
+          request,
+
+          sourceImage,
+
+          outputWidth:
+            outputDimension(
+              req.body
+                ?.outputWidth,
+              1024
+            ),
+
+          outputHeight:
+            outputDimension(
+              req.body
+                ?.outputHeight,
+              768
+            )
         });
+
+      if (
+        !simulation?.imageBuffer
+      ) {
+        throw new Error(
+          'Le moteur image n’a retourné aucune simulation.'
+        );
       }
 
-      const warnings = buildCustomizationWarnings(product, request);
+      const id =
+        crypto.randomUUID();
 
-      const parseOutputDimension = (value, fallback) => {
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed)) return fallback;
-        return Math.max(256, Math.min(1920, Math.round(parsed)));
-      };
+      const now =
+        new Date()
+          .toISOString();
 
-      const outputWidth = parseOutputDimension(
-        req.body?.outputWidth,
-        1024
-      );
-
-      const outputHeight = parseOutputDimension(
-        req.body?.outputHeight,
-        768
-      );
-
-      const simulation = await customizationHandler({
-        product,
-        request,
-        sourceImage,
-        outputWidth,
-        outputHeight
-      });
-
-      if (!simulation?.imageBuffer) {
-        throw new Error('Le moteur image n’a retourné aucune simulation.');
-      }
-
-      const now = new Date();
-      const id = crypto.randomUUID();
+      let sourceFilename =
+        '';
 
       if (req.file) {
-        const sourceExtension = extensionFromMimeType(sourceImage.mimetype);
-        const sourceFilename = `custom-source-${Date.now()}-${id}${sourceExtension}`;
-        const sourcePath = path.join(CUSTOMIZATION_IMAGES_DIR, sourceFilename);
 
-        fs.writeFileSync(sourcePath, sourceImage.buffer);
-        sourceImageUrl = `/admin/customizations/${sourceFilename}`;
+        sourceFilename =
+          `custom-source-${Date.now()}-${id}` +
+          extensionFromMimeType(
+            sourceImage.mimetype
+          );
+
+        fs.writeFileSync(
+          path.join(
+            CUSTOMIZATIONS_DIR,
+            sourceFilename
+          ),
+          sourceImage.buffer
+        );
+
+        sourceImageUrl =
+          `/admin/customizations/${sourceFilename}`;
       }
 
-      const resultExtension = extensionFromMimeType(
-        simulation.mimeType || 'image/jpeg'
+      const resultFilename =
+        `custom-result-${Date.now()}-${id}` +
+        extensionFromMimeType(
+          simulation.mimeType ||
+          'image/jpeg'
+        );
+
+      fs.writeFileSync(
+        path.join(
+          CUSTOMIZATIONS_DIR,
+          resultFilename
+        ),
+        simulation.imageBuffer
       );
 
-      const resultFilename =
-        `custom-result-${Date.now()}-${id}${resultExtension}`;
-
-      const resultPath =
-        path.join(CUSTOMIZATION_IMAGES_DIR, resultFilename);
-
-      fs.writeFileSync(resultPath, simulation.imageBuffer);
-
       const item = {
+
         id,
-        productId: product?.id || '',
-        productName: safeString(product?.name) || 'Image libre',
-        customerName: request.customerName,
-        customerPhone: request.customerPhone,
+
+        productId:
+          product?.id ||
+          '',
+
+        productName:
+          safeString(
+            product?.name
+          ) ||
+          'Image libre',
+
+        customerName:
+          request
+            .customerName,
+
+        customerPhone:
+          request
+            .customerPhone,
+
         request,
-        warnings,
-        analysis: safeString(simulation.analysis),
-        sourceImage: sourceImageUrl,
-        resultImage: `/admin/customizations/${resultFilename}`,
+
+        warnings:
+          buildCustomizationWarnings(
+            product,
+            request
+          ),
+
+        analysis:
+          safeString(
+            simulation.analysis
+          ),
+
+        sourceImage:
+          sourceImageUrl,
+
+        sourceFilename,
+
+        resultImage:
+          `/admin/customizations/${resultFilename}`,
+
         resultFilename,
-        sourceFilename:
-          req.file && sourceImageUrl
-            ? path.basename(sourceImageUrl)
-            : '',
-        status: 'simulation_generated',
-        requiresCommercialValidation: true,
-        createdAt: now.toISOString(),
-        updatedAt: now.toISOString()
+
+        status:
+          'simulation_generated',
+
+        requiresCommercialValidation:
+          true,
+
+        createdAt:
+          now,
+
+        updatedAt:
+          now
       };
 
-      const items = loadCustomizations();
-      items.push(item);
-      saveCustomizations(items);
+      const items =
+        loadCustomizations();
 
-      return res.status(201).json(item);
+      items.push(
+        item
+      );
+
+      saveCustomizations(
+        items
+      );
+
+      return res
+        .status(201)
+        .json(
+          item
+        );
+
     } catch (error) {
-      console.error('❌ Erreur génération personnalisation :', error);
 
-      return res.status(500).json({
-        error:
-          error.message ||
-          'Impossible de générer la simulation visuelle.'
-      });
+      console.error(
+        '❌ Personnalisation :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible de générer la simulation.'
+        });
     }
   }
 );
 
-router.put('/api/customizations/:id/status', requireAuth, (req, res) => {
-  try {
-    const allowedStatuses = [
-      'simulation_generated',
-      'awaiting_validation',
-      'approved',
-      'sent_to_client',
-      'rejected'
-    ];
+// ============================================================
+// MODIFIER STATUT PERSONNALISATION
+// ============================================================
 
-    const status = safeString(req.body?.status);
+router.put(
+  '/api/customizations/:id/status',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
 
-    if (!allowedStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Statut non valide.' });
+    try {
+
+      const allowed =
+        new Set([
+          'simulation_generated',
+          'awaiting_validation',
+          'approved',
+          'sent_to_client',
+          'rejected'
+        ]);
+
+      const status =
+        safeString(
+          req.body?.status
+        );
+
+      if (
+        !allowed.has(
+          status
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Statut non valide.'
+          });
+      }
+
+      const items =
+        loadCustomizations();
+
+      const index =
+        items.findIndex(
+          item =>
+            item.id ===
+            req.params.id
+        );
+
+      if (
+        index === -1
+      ) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Demande introuvable.'
+          });
+      }
+
+      items[index] = {
+
+        ...items[index],
+
+        status,
+
+        updatedAt:
+          new Date()
+            .toISOString()
+      };
+
+      saveCustomizations(
+        items
+      );
+
+      return res.json(
+        items[index]
+      );
+
+    } catch (error) {
+
+      console.error(
+        '❌ Statut personnalisation :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de modifier le statut.'
+        });
     }
+  }
+);
 
-    const items = loadCustomizations();
-    const index = items.findIndex(item => item.id === req.params.id);
+// ============================================================
+// SUPPRIMER PERSONNALISATION
+// ============================================================
 
-    if (index === -1) {
-      return res.status(404).json({ error: 'Demande introuvable.' });
+router.delete(
+  '/api/customizations/:id',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+
+    try {
+
+      const items =
+        loadCustomizations();
+
+      const item =
+        items.find(
+          entry =>
+            entry.id ===
+            req.params.id
+        );
+
+      if (!item) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Demande introuvable.'
+          });
+      }
+
+      saveCustomizations(
+        items.filter(
+          entry =>
+            entry.id !==
+            req.params.id
+        )
+      );
+
+      if (
+        item.resultFilename
+      ) {
+        deleteFileIfExists(
+          path.join(
+            CUSTOMIZATIONS_DIR,
+            path.basename(
+              item.resultFilename
+            )
+          )
+        );
+      }
+
+      if (
+        item.sourceFilename
+      ) {
+        deleteFileIfExists(
+          path.join(
+            CUSTOMIZATIONS_DIR,
+            path.basename(
+              item.sourceFilename
+            )
+          )
+        );
+      }
+
+      return res.json({
+        success:true
+      });
+
+    } catch (error) {
+
+      console.error(
+        '❌ Suppression personnalisation :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de supprimer la demande.'
+        });
     }
+  }
+);
 
-    items[index] = {
-      ...items[index],
-      status,
-      updatedAt: new Date().toISOString()
-    };
+// ============================================================
+// ÉTAT STOCKAGE
+// ============================================================
 
-    saveCustomizations(items);
+router.get(
+  '/api/storage-status',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
 
-    return res.json(items[index]);
-  } catch (error) {
-    console.error('❌ Erreur statut personnalisation :', error);
-    return res.status(500).json({
-      error: 'Impossible de modifier le statut.'
+    return res.json({
+
+      dataDir:
+        DATA_DIR,
+
+      persistentConfigured:
+        DATA_DIR !==
+        APP_DIR,
+
+      railwayVolumeMountPath:
+        process.env
+          .RAILWAY_VOLUME_MOUNT_PATH ||
+        null,
+
+      dataDirEnv:
+        process.env.DATA_DIR ||
+        null,
+
+      writable:
+        storageIsWritable(),
+
+      productsFile:
+        fs.existsSync(
+          PRODUCTS_PATH
+        ),
+
+      instructionsFile:
+        fs.existsSync(
+          INSTRUCTIONS_PATH
+        ),
+
+      customizationsFile:
+        fs.existsSync(
+          CUSTOMIZATIONS_PATH
+        ),
+
+      uploadsDirectory:
+        fs.existsSync(
+          UPLOADS_DIR
+        ),
+
+      customizationsDirectory:
+        fs.existsSync(
+          CUSTOMIZATIONS_DIR
+        ),
+
+      recommendedRailwayMountPath:
+        '/data',
+
+      recommendedDataDir:
+        '/data'
     });
   }
-});
-
-router.delete('/api/customizations/:id', requireAuth, (req, res) => {
-  try {
-    const items = loadCustomizations();
-    const item = items.find(entry => entry.id === req.params.id);
-
-    if (!item) {
-      return res.status(404).json({ error: 'Demande introuvable.' });
-    }
-
-    const filtered = items.filter(entry => entry.id !== req.params.id);
-    saveCustomizations(filtered);
-
-    if (item.resultFilename) {
-      deleteFileIfExists(
-        path.join(CUSTOMIZATION_IMAGES_DIR, path.basename(item.resultFilename))
-      );
-    }
-
-    if (item.sourceFilename) {
-      deleteFileIfExists(
-        path.join(CUSTOMIZATION_IMAGES_DIR, path.basename(item.sourceFilename))
-      );
-    }
-
-    return res.json({ success: true });
-  } catch (error) {
-    console.error('❌ Erreur suppression personnalisation :', error);
-    return res.status(500).json({
-      error: 'Impossible de supprimer la demande.'
-    });
-  }
-});
+);
 
 // ============================================================
 // STATS
 // ============================================================
 
-router.get('/api/stats', requireAuth, (req, res) => {
-  const products = loadProducts();
-  const instructions = loadInstructions();
+router.get(
+  '/api/stats',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
 
-  return res.json({
-    productCount: products.length,
-    activeProductCount: products.filter(product => product.active !== false).length,
-    productsWithImages: products.filter(product => Boolean(product.image)).length,
-    customizationCount: loadCustomizations().length,
-    instructionsCount: instructions.length,
-    activeInstructionsCount: instructions.filter(
-      instruction => instruction.active !== false
-    ).length,
-    structuredInstructions: structuredInstructionsStoreExists(),
-    legacyBusinessInfoAvailable: Boolean(loadLegacyBusinessInfo().trim())
-  });
-});
+    const products =
+      loadProducts();
 
-// ============================================================
-// LOGIN HTML
-// ============================================================
+    const instructions =
+      loadInstructions();
 
-function renderLoginPage() {
-  return `
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mondeco — Administration</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Inter',sans-serif;background:#1F1B16;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:#F7F4EF;border-radius:12px;padding:48px 40px;width:100%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
-.wordmark{font-family:'Fraunces',serif;font-size:30px;font-weight:600;color:#1F1B16}
-.subtitle{color:#7A7266;font-size:14px;margin-top:4px;margin-bottom:32px}
-label{display:block;font-size:13px;font-weight:500;color:#4A4438;margin-bottom:6px}
-input{width:100%;padding:12px 14px;border:1.5px solid #E4DED2;border-radius:8px;font-size:15px;background:#fff;color:#1F1B16}
-input:focus{outline:none;border-color:#B5541F}
-button{width:100%;margin-top:20px;padding:13px;border:none;border-radius:8px;background:#B5541F;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
-button:hover{background:#9C4718}button:disabled{opacity:.6}.error{color:#B5541F;font-size:13px;margin-top:12px;display:none}
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="wordmark">Mondeco</div>
-  <div class="subtitle">Administration du bot WhatsApp</div>
-  <form id="loginForm">
-    <label for="password">Mot de passe</label>
-    <input type="password" id="password" autocomplete="current-password" autofocus required>
-    <button id="loginButton" type="submit">Se connecter</button>
-    <div class="error" id="error"></div>
-  </form>
-</div>
-<script>
-const form=document.getElementById('loginForm');
-const button=document.getElementById('loginButton');
-const errorBox=document.getElementById('error');
-form.addEventListener('submit',async event=>{
-  event.preventDefault();
-  errorBox.style.display='none';
-  button.disabled=true;
-  button.textContent='Connexion...';
-  try{
-    const password=document.getElementById('password').value;
-    const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
-    const data=await response.json();
-    if(response.ok&&data.success){window.location.href='/admin';return;}
-    errorBox.textContent=data.error||'Mot de passe incorrect';
-    errorBox.style.display='block';
-  }catch(error){
-    errorBox.textContent='Impossible de contacter le serveur.';
-    errorBox.style.display='block';
-  }finally{
-    button.disabled=false;
-    button.textContent='Se connecter';
+    const customizations =
+      loadCustomizations();
+
+    return res.json({
+
+      productCount:
+        products.length,
+
+      activeProductCount:
+        products.filter(
+          product =>
+            product.active !==
+            false
+        ).length,
+
+      productsWithImages:
+        products.filter(
+          product =>
+            Boolean(
+              product.image
+            )
+        ).length,
+
+      instructionsCount:
+        instructions.length,
+
+      activeInstructionsCount:
+        instructions.filter(
+          instruction =>
+            instruction.active !==
+            false
+        ).length,
+
+      customizationCount:
+        customizations.length,
+
+      structuredInstructions:
+        structuredInstructionsStoreExists(),
+
+      legacyBusinessInfoAvailable:
+        Boolean(
+          loadLegacyBusinessInfo()
+            .trim()
+        ),
+
+      storage:{
+
+        dataDir:
+          DATA_DIR,
+
+        persistentConfigured:
+          DATA_DIR !==
+          APP_DIR,
+
+        writable:
+          storageIsWritable()
+      }
+    });
   }
-});
-</script>
-</body>
-</html>`;
-}
+);
 
 // ============================================================
 // EXPORTS
 // ============================================================
 
 module.exports = {
-  adminRouter: router,
+
+  adminRouter:
+    router,
+
   getBusinessContext,
+
   setChatHandler,
+
   setImageChatHandler,
+
   setCustomizationHandler
 };
