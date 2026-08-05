@@ -1729,7 +1729,7 @@ body {
     <div class="custom-card">
       <div class="custom-card-title">Nouvelle simulation</div>
       <div class="custom-card-desc">
-        Sélectionnez un produit du catalogue. Vous pouvez aussi ajouter une autre photo de référence si nécessaire.
+        Sélectionnez un produit du catalogue. Vous pouvez aussi ajouter une autre photo de référence. L’image est automatiquement préparée pour la simulation IA.
       </div>
 
       <form id="customizationForm" enctype="multipart/form-data">
@@ -3382,6 +3382,89 @@ function showCustomizationResult(item) {
   result.classList.add('visible');
 }
 
+async function prepareImageForCloudflare(file) {
+  const image = await loadImageElement(file);
+
+  // FLUX.2 sur Workers AI demande des images de référence
+  // strictement plus petites que 512 × 512 px.
+  const maxInputDimension = 500;
+  const inputScale = Math.min(
+    1,
+    maxInputDimension / Math.max(image.naturalWidth, image.naturalHeight)
+  );
+
+  const inputWidth = Math.max(
+    1,
+    Math.round(image.naturalWidth * inputScale)
+  );
+
+  const inputHeight = Math.max(
+    1,
+    Math.round(image.naturalHeight * inputScale)
+  );
+
+  const canvas = document.createElement('canvas');
+  canvas.width = inputWidth;
+  canvas.height = inputHeight;
+
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0, inputWidth, inputHeight);
+
+  const blob = await canvasToBlob(canvas, 0.9);
+
+  // On demande une sortie jusqu’à 1024 px en conservant
+  // au mieux le ratio de la photo originale.
+  const maxOutputDimension = 1024;
+  const outputScale =
+    maxOutputDimension / Math.max(image.naturalWidth, image.naturalHeight);
+
+  const round16 = value => Math.max(
+    256,
+    Math.min(1920, Math.round(value / 16) * 16)
+  );
+
+  const outputWidth = round16(image.naturalWidth * outputScale);
+  const outputHeight = round16(image.naturalHeight * outputScale);
+
+  return {
+    file: new File([blob], 'mondeco-cloudflare-reference.jpg', {
+      type: 'image/jpeg'
+    }),
+    outputWidth,
+    outputHeight
+  };
+}
+
+async function getCustomizationReferenceFile(productId, selectedFile) {
+  if (selectedFile) {
+    return selectedFile;
+  }
+
+  const product = products.find(item => item.id === productId);
+
+  if (!product?.image) {
+    throw new Error(
+      'Le produit sélectionné ne possède pas de photo. Ajoutez une image de référence.'
+    );
+  }
+
+  const response = await apiFetch(product.image);
+
+  if (!response.ok) {
+    throw new Error(
+      'Impossible de charger la photo du produit sélectionné.'
+    );
+  }
+
+  const blob = await response.blob();
+
+  return new File(
+    [blob],
+    'mondeco-product-reference.jpg',
+    { type: blob.type || 'image/jpeg' }
+  );
+}
+
 customizationForm.addEventListener('submit', async event => {
   event.preventDefault();
 
@@ -3421,14 +3504,25 @@ customizationForm.addEventListener('submit', async event => {
     document.getElementById('customCustomerPhone').value
   );
 
-  if (referenceFile) {
-    formData.append('referenceImage', referenceFile);
-  }
-
   generateCustomizationBtn.disabled = true;
-  generateCustomizationBtn.textContent = '⏳ Génération en cours...';
+  generateCustomizationBtn.textContent = '⏳ Préparation de l’image...';
 
   try {
+    const rawReferenceFile = await getCustomizationReferenceFile(
+      productId,
+      referenceFile
+    );
+
+    const prepared = await prepareImageForCloudflare(
+      rawReferenceFile
+    );
+
+    formData.append('referenceImage', prepared.file);
+    formData.append('outputWidth', String(prepared.outputWidth));
+    formData.append('outputHeight', String(prepared.outputHeight));
+
+    generateCustomizationBtn.textContent = '⏳ Génération en cours...';
+
     const response = await apiFetch(
       '/admin/api/customizations/generate',
       {
