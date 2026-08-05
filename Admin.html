@@ -32,6 +32,7 @@
   --success: #5C7A52;
   --success-bg: #E9F2E6;
   --danger: #B5541F;
+  --danger-bg: #F8E7DF;
 }
 
 * {
@@ -41,21 +42,11 @@
 }
 
 body {
-  font-family:
-    'Inter',
-    sans-serif;
-
-  background:
-    var(--paper);
-
-  color:
-    var(--ink);
-
-  display:
-    flex;
-
-  min-height:
-    100vh;
+  font-family: 'Inter', sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  display: flex;
+  min-height: 100vh;
 }
 
 /* ============================================================
@@ -63,124 +54,64 @@ body {
    ============================================================ */
 
 .sidebar {
-  width:
-    240px;
-
-  background:
-    var(--sidebar);
-
-  color:
-    #F7F4EF;
-
-  display:
-    flex;
-
-  flex-direction:
-    column;
-
-  padding:
-    28px 20px;
-
-  flex-shrink:
-    0;
+  width: 240px;
+  background: var(--sidebar);
+  color: #F7F4EF;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 20px;
+  flex-shrink: 0;
 }
 
 .wordmark {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    22px;
-
-  font-weight:
-    600;
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 600;
 }
 
 .wordmark-sub {
-  font-size:
-    12px;
-
-  color:
-    #9C9384;
-
-  margin-top:
-    2px;
-
-  margin-bottom:
-    36px;
+  font-size: 12px;
+  color: #9C9384;
+  margin-top: 2px;
+  margin-bottom: 36px;
 }
 
 .nav-item {
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  gap:
-    10px;
-
-  padding:
-    11px 14px;
-
-  border-radius:
-    8px;
-
-  font-size:
-    14px;
-
-  font-weight:
-    500;
-
-  color:
-    #C9C1B3;
-
-  cursor:
-    pointer;
-
-  margin-bottom:
-    4px;
-
-  transition:
-    background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #C9C1B3;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.15s;
 }
 
 .nav-item:hover {
-  background:
-    var(--sidebar-hover);
+  background: var(--sidebar-hover);
 }
 
 .nav-item.active {
-  background:
-    var(--copper);
-
-  color:
-    #fff;
+  background: var(--copper);
+  color: #fff;
 }
 
 .sidebar-footer {
-  margin-top:
-    auto;
+  margin-top: auto;
 }
 
 .logout-btn {
-  font-size:
-    13px;
-
-  color:
-    #9C9384;
-
-  cursor:
-    pointer;
-
-  padding:
-    8px 14px;
+  font-size: 13px;
+  color: #9C9384;
+  cursor: pointer;
+  padding: 8px 14px;
 }
 
 .logout-btn:hover {
-  color:
-    #F7F4EF;
+  color: #F7F4EF;
 }
 
 /* ============================================================
@@ -188,156 +119,86 @@ body {
    ============================================================ */
 
 .main {
-  flex:
-    1;
-
-  padding:
-    40px 48px;
-
-  max-width:
-    1150px;
-
-  width:
-    100%;
+  flex: 1;
+  padding: 40px 48px;
+  max-width: 1150px;
+  width: 100%;
 }
 
 .page-header {
-  margin-bottom:
-    32px;
+  margin-bottom: 32px;
 }
 
 .page-title {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    30px;
-
-  font-weight:
-    600;
+  font-family: 'Fraunces', serif;
+  font-size: 30px;
+  font-weight: 600;
 }
 
 .page-desc {
-  color:
-    var(--muted);
-
-  font-size:
-    14px;
-
-  margin-top:
-    6px;
-
-  line-height:
-    1.5;
+  color: var(--muted);
+  font-size: 14px;
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 .view {
-  display:
-    none;
+  display: none;
 }
 
 .view.active {
-  display:
-    block;
+  display: block;
 }
 
 /* ============================================================
-   BUTTONS
+   BOUTONS
    ============================================================ */
 
 .btn {
-  display:
-    inline-flex;
-
-  align-items:
-    center;
-
-  justify-content:
-    center;
-
-  gap:
-    6px;
-
-  padding:
-    10px 18px;
-
-  border-radius:
-    8px;
-
-  border:
-    none;
-
-  font-size:
-    14px;
-
-  font-weight:
-    600;
-
-  cursor:
-    pointer;
-
-  font-family:
-    'Inter',
-    sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
 }
 
 .btn:disabled {
-  opacity:
-    .55;
-
-  cursor:
-    not-allowed;
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .btn-primary {
-  background:
-    var(--copper);
-
-  color:
-    #fff;
+  background: var(--copper);
+  color: #fff;
 }
 
 .btn-primary:hover {
-  background:
-    var(--copper-dark);
+  background: var(--copper-dark);
 }
 
 .btn-ghost {
-  background:
-    transparent;
-
-  color:
-    var(--ink);
-
-  border:
-    1.5px solid
-    var(--border);
+  background: transparent;
+  color: var(--ink);
+  border: 1.5px solid var(--border);
 }
 
 .btn-ghost:hover {
-  background:
-    #EFEAE0;
+  background: #EFEAE0;
 }
 
 .btn-danger-text {
-  background:
-    none;
-
-  border:
-    none;
-
-  color:
-    var(--danger);
-
-  font-size:
-    13px;
-
-  cursor:
-    pointer;
-
-  font-weight:
-    500;
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
 }
 
 /* ============================================================
@@ -345,132 +206,68 @@ body {
    ============================================================ */
 
 .stats-row {
-  display:
-    grid;
-
-  grid-template-columns:
-    repeat(3, 1fr);
-
-  gap:
-    16px;
-
-  margin-bottom:
-    32px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 32px;
 }
 
 .stat-card {
-  background:
-    var(--paper-raised);
-
-  border:
-    1px solid
-    var(--border);
-
-  border-radius:
-    10px;
-
-  padding:
-    20px 22px;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
 }
 
 .stat-value {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    30px;
-
-  font-weight:
-    600;
+  font-family: 'Fraunces', serif;
+  font-size: 30px;
+  font-weight: 600;
 }
 
 .stat-label {
-  font-size:
-    13px;
-
-  color:
-    var(--muted);
-
-  margin-top:
-    4px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
 }
 
 .home-actions {
-  display:
-    grid;
-
-  grid-template-columns:
-    repeat(3, 1fr);
-
-  gap:
-    16px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }
 
 .home-action-card {
-  background:
-    var(--paper-raised);
-
-  border:
-    1px solid
-    var(--border);
-
-  border-radius:
-    10px;
-
-  padding:
-    20px 22px;
-
-  cursor:
-    pointer;
-
-  transition:
-    border-color 0.15s;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
 
 .home-action-card:hover {
-  border-color:
-    var(--copper);
+  border-color: var(--copper);
 }
 
 .home-action-title {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    16px;
-
-  font-weight:
-    600;
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .home-action-desc {
-  font-size:
-    13px;
-
-  color:
-    var(--muted);
-
-  margin-top:
-    6px;
-
-  line-height:
-    1.5;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 .home-action-link {
-  font-size:
-    13px;
-
-  color:
-    var(--copper);
-
-  font-weight:
-    600;
-
-  margin-top:
-    12px;
+  font-size: 13px;
+  color: var(--copper);
+  font-weight: 600;
+  margin-top: 12px;
 }
 
 /* ============================================================
@@ -478,155 +275,194 @@ body {
    ============================================================ */
 
 .toolbar {
-  display:
-    flex;
-
-  justify-content:
-    space-between;
-
-  align-items:
-    center;
-
-  margin-bottom:
-    20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
 }
 
 .product-grid {
-  display:
-    grid;
-
+  display: grid;
   grid-template-columns:
     repeat(
       auto-fill,
       minmax(260px, 1fr)
     );
-
-  gap:
-    16px;
+  gap: 16px;
 }
 
 .product-card {
-  background:
-    var(--paper-raised);
+  background: var(--paper-raised);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
 
-  border-radius:
-    10px;
+.product-image-wrapper {
+  width: 100%;
+  height: 205px;
+  background: #F0ECE5;
+  position: relative;
+  overflow: hidden;
+}
 
-  overflow:
-    hidden;
+.product-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
-  border:
-    1px solid
-    var(--border);
-
-  border-left:
-    4px solid
-    var(--copper);
-
-  display:
-    flex;
-
-  flex-direction:
-    column;
+.product-image-placeholder {
+  height: 205px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #F0ECE5;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .product-card-body {
-  padding:
-    16px 18px;
-
-  flex:
-    1;
+  padding: 16px 18px;
+  flex: 1;
+  border-left: 4px solid var(--copper);
 }
 
 .product-cat {
-  font-size:
-    11px;
-
-  text-transform:
-    uppercase;
-
-  letter-spacing:
-    0.05em;
-
-  color:
-    var(--copper);
-
-  font-weight:
-    600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--copper);
+  font-weight: 600;
 }
 
 .product-name {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    18px;
-
-  font-weight:
-    600;
-
-  margin-top:
-    4px;
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 4px;
 }
 
 .product-desc {
-  font-size:
-    13px;
-
-  color:
-    var(--muted);
-
-  margin-top:
-    6px;
-
-  line-height:
-    1.5;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 .product-price {
-  font-size:
-    15px;
-
-  font-weight:
-    700;
-
-  margin-top:
-    10px;
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 10px;
 }
 
 .product-actions {
-  display:
-    flex;
-
-  gap:
-    14px;
-
-  padding:
-    12px 18px;
-
-  border-top:
-    1px solid
-    var(--border);
+  display: flex;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
 }
 
 .product-actions span {
-  font-size:
-    13px;
-
-  color:
-    var(--muted);
-
-  cursor:
-    pointer;
-
-  font-weight:
-    500;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 500;
 }
 
 .product-actions span:hover {
-  color:
-    var(--ink);
+  color: var(--ink);
+}
+
+/* ============================================================
+   UPLOAD IMAGE
+   ============================================================ */
+
+.image-upload-zone {
+  width: 100%;
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  background: #FAF8F4;
+  padding: 18px;
+  text-align: center;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.image-upload-zone:hover {
+  border-color: var(--copper);
+  background: #FCF8F4;
+}
+
+.image-upload-icon {
+  font-size: 30px;
+  margin-bottom: 7px;
+}
+
+.image-upload-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.image-upload-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+
+.image-file-input {
+  display: none;
+}
+
+.product-image-preview-container {
+  margin-top: 14px;
+  display: none;
+}
+
+.product-image-preview-container.visible {
+  display: block;
+}
+
+.product-image-preview-box {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #F3F0EA;
+}
+
+.product-image-preview {
+  display: block;
+  width: 100%;
+  height: 260px;
+  object-fit: contain;
+}
+
+.image-preview-label {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  background: rgba(31, 27, 22, 0.82);
+  color: #fff;
+  font-size: 11px;
+  padding: 6px 9px;
+  border-radius: 6px;
+}
+
+.image-required {
+  color: var(--danger);
+}
+
+.current-image-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.5;
 }
 
 /* ============================================================
@@ -634,36 +470,18 @@ body {
    ============================================================ */
 
 .empty-state {
-  text-align:
-    center;
-
-  padding:
-    60px 20px;
-
-  color:
-    var(--muted);
-
-  border:
-    1.5px dashed
-    var(--border);
-
-  border-radius:
-    12px;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
 }
 
 .empty-title {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    18px;
-
-  color:
-    var(--ink);
-
-  margin-bottom:
-    6px;
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  color: var(--ink);
+  margin-bottom: 6px;
 }
 
 /* ============================================================
@@ -671,267 +489,134 @@ body {
    ============================================================ */
 
 .instructions-header {
-  display:
-    flex;
-
-  justify-content:
-    space-between;
-
-  align-items:
-    flex-start;
-
-  gap:
-    20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
 }
 
 .instructions-buttons {
-  display:
-    flex;
-
-  flex-wrap:
-    wrap;
-
-  gap:
-    8px;
-
-  justify-content:
-    flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .instruction-summary {
-  background:
-    var(--paper-raised);
-
-  border:
-    1px solid
-    var(--border);
-
-  border-radius:
-    10px;
-
-  padding:
-    14px 18px;
-
-  margin-bottom:
-    16px;
-
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  flex-wrap:
-    wrap;
-
-  gap:
-    10px;
-
-  font-size:
-    13px;
-
-  color:
-    var(--muted);
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .instruction-summary strong {
-  color:
-    var(--success);
+  color: var(--success);
 }
 
 .instructions-list {
-  display:
-    flex;
-
-  flex-direction:
-    column;
-
-  gap:
-    10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .instruction-card {
-  background:
-    var(--paper-raised);
-
-  border:
-    1px solid
-    var(--border);
-
-  border-radius:
-    10px;
-
-  padding:
-    16px 18px;
-
-  display:
-    flex;
-
-  align-items:
-    flex-start;
-
-  gap:
-    14px;
-
-  transition:
-    .15s;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  transition: 0.15s;
 }
 
 .instruction-card:hover {
-  border-color:
-    #C9C0B2;
-
+  border-color: #C9C0B2;
   box-shadow:
     0 3px 12px
     rgba(0,0,0,.04);
 }
 
 .instruction-status {
-  width:
-    34px;
-
-  height:
-    34px;
-
-  flex-shrink:
-    0;
-
-  border-radius:
-    8px;
-
-  display:
-    flex;
-
-  align-items:
-    center;
-
-  justify-content:
-    center;
-
-  font-weight:
-    700;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
 }
 
 .instruction-status.active {
-  background:
-    var(--success-bg);
-
-  color:
-    var(--success);
+  background: var(--success-bg);
+  color: var(--success);
 }
 
 .instruction-status.inactive {
-  background:
-    #EFECE7;
-
-  color:
-    var(--muted);
+  background: #EFECE7;
+  color: var(--muted);
 }
 
 .instruction-body {
-  flex:
-    1;
-
-  min-width:
-    0;
+  flex: 1;
+  min-width: 0;
 }
 
 .instruction-title {
-  font-size:
-    14px;
-
-  font-weight:
-    600;
-
-  line-height:
-    1.45;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .instruction-preview {
-  color:
-    var(--muted);
-
-  font-size:
-    13px;
-
-  line-height:
-    1.55;
-
-  margin-top:
-    5px;
-
-  display:
-    -webkit-box;
-
-  -webkit-line-clamp:
-    2;
-
-  -webkit-box-orient:
-    vertical;
-
-  overflow:
-    hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  margin-top: 5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .instruction-meta {
-  margin-top:
-    8px;
-
-  font-size:
-    11px;
-
-  color:
-    #A49B8D;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #A49B8D;
 }
 
 .instruction-actions {
-  display:
-    flex;
-
-  flex-wrap:
-    wrap;
-
-  gap:
-    4px;
-
-  justify-content:
-    flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
 }
 
 .instruction-action {
-  border:
-    none;
-
-  background:
-    transparent;
-
-  cursor:
-    pointer;
-
-  font-size:
-    12px;
-
-  padding:
-    7px 8px;
-
-  border-radius:
-    6px;
-
-  color:
-    var(--muted);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--muted);
 }
 
 .instruction-action:hover {
-  background:
-    #F3EFE8;
-
-  color:
-    var(--ink);
+  background: #F3EFE8;
+  color: var(--ink);
 }
 
 .instruction-action.delete:hover {
-  color:
-    var(--danger);
+  color: var(--danger);
 }
 
 /* ============================================================
@@ -939,175 +624,85 @@ body {
    ============================================================ */
 
 .chat-shell {
-  background:
-    var(--paper-raised);
-
-  border:
-    1px solid
-    var(--border);
-
-  border-radius:
-    12px;
-
-  display:
-    flex;
-
-  flex-direction:
-    column;
-
-  height:
-    560px;
-
-  max-width:
-    520px;
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 560px;
+  max-width: 520px;
 }
 
 .chat-messages {
-  flex:
-    1;
-
-  overflow-y:
-    auto;
-
-  padding:
-    20px;
-
-  display:
-    flex;
-
-  flex-direction:
-    column;
-
-  gap:
-    12px;
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .chat-empty {
-  color:
-    var(--muted);
-
-  font-size:
-    13px;
-
-  text-align:
-    center;
-
-  margin-top:
-    40px;
-
-  line-height:
-    1.6;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  margin-top: 40px;
+  line-height: 1.6;
 }
 
 .chat-bubble {
-  max-width:
-    82%;
-
-  padding:
-    10px 14px;
-
-  border-radius:
-    14px;
-
-  font-size:
-    14px;
-
-  line-height:
-    1.5;
+  max-width: 82%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .chat-bubble.user {
-  align-self:
-    flex-end;
-
-  background:
-    var(--ink);
-
-  color:
-    #fff;
-
-  border-bottom-right-radius:
-    4px;
+  align-self: flex-end;
+  background: var(--ink);
+  color: #fff;
+  border-bottom-right-radius: 4px;
 }
 
 .chat-bubble.bot {
-  align-self:
-    flex-start;
-
-  background:
-    #EFEAE0;
-
-  color:
-    var(--ink);
-
-  border-bottom-left-radius:
-    4px;
+  align-self: flex-start;
+  background: #EFEAE0;
+  color: var(--ink);
+  border-bottom-left-radius: 4px;
 }
 
 .chat-bubble.error {
-  align-self:
-    flex-start;
-
-  background:
-    #F5DED2;
-
-  color:
-    var(--danger);
+  align-self: flex-start;
+  background: #F5DED2;
+  color: var(--danger);
 }
 
 .chat-bubble.typing {
-  align-self:
-    flex-start;
-
-  background:
-    #EFEAE0;
-
-  color:
-    var(--muted);
-
-  font-style:
-    italic;
+  align-self: flex-start;
+  background: #EFEAE0;
+  color: var(--muted);
+  font-style: italic;
 }
 
 .chat-input-row {
-  display:
-    flex;
-
-  gap:
-    10px;
-
-  padding:
-    14px;
-
-  border-top:
-    1px solid
-    var(--border);
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
 }
 
 .chat-input-row input {
-  flex:
-    1;
-
-  padding:
-    10px 14px;
-
-  border:
-    1.5px solid
-    var(--border);
-
-  border-radius:
-    8px;
-
-  font-size:
-    14px;
+  flex: 1;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
 }
 
 .chat-input-row input:focus {
-  outline:
-    none;
-
-  border-color:
-    var(--copper);
+  outline: none;
+  border-color: var(--copper);
 }
 
 /* ============================================================
@@ -1115,260 +710,149 @@ body {
    ============================================================ */
 
 .modal-overlay {
-  display:
-    none;
-
-  position:
-    fixed;
-
-  inset:
-    0;
-
-  background:
-    rgba(31,27,22,.5);
-
-  align-items:
-    center;
-
-  justify-content:
-    center;
-
-  z-index:
-    100;
-
-  padding:
-    20px;
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(31,27,22,.5);
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
 }
 
 .modal-overlay.active {
-  display:
-    flex;
+  display: flex;
 }
 
 .modal {
-  background:
-    var(--paper-raised);
-
-  border-radius:
-    12px;
-
-  padding:
-    32px;
-
-  width:
-    100%;
-
-  max-width:
-    500px;
-
-  max-height:
-    88vh;
-
-  overflow-y:
-    auto;
+  background: var(--paper-raised);
+  border-radius: 12px;
+  padding: 32px;
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .modal.large {
-  max-width:
-    680px;
+  max-width: 680px;
 }
 
 .modal-title {
-  font-family:
-    'Fraunces',
-    serif;
-
-  font-size:
-    21px;
-
-  font-weight:
-    600;
-
-  margin-bottom:
-    20px;
+  font-family: 'Fraunces', serif;
+  font-size: 21px;
+  font-weight: 600;
+  margin-bottom: 20px;
 }
 
 .modal-desc {
-  font-size:
-    13px;
-
-  line-height:
-    1.6;
-
-  color:
-    var(--muted);
-
-  margin-top:
-    -10px;
-
-  margin-bottom:
-    20px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin-top: -10px;
+  margin-bottom: 20px;
 }
 
 .field {
-  margin-bottom:
-    16px;
+  margin-bottom: 16px;
 }
 
 .field label {
-  display:
-    block;
-
-  font-size:
-    13px;
-
-  font-weight:
-    500;
-
-  color:
-    #4A4438;
-
-  margin-bottom:
-    6px;
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4A4438;
+  margin-bottom: 6px;
 }
 
 .field input,
 .field textarea {
-  width:
-    100%;
-
-  padding:
-    10px 12px;
-
-  border:
-    1.5px solid
-    var(--border);
-
-  border-radius:
-    7px;
-
-  font-size:
-    14px;
-
-  font-family:
-    'Inter',
-    sans-serif;
-
-  color:
-    var(--ink);
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+  color: var(--ink);
 }
 
 .field input:focus,
 .field textarea:focus {
-  outline:
-    none;
-
-  border-color:
-    var(--copper);
+  outline: none;
+  border-color: var(--copper);
 }
 
 .field textarea {
-  resize:
-    vertical;
-
-  min-height:
-    90px;
+  resize: vertical;
+  min-height: 90px;
 }
 
 .modal-actions {
-  display:
-    flex;
-
-  gap:
-    10px;
-
-  margin-top:
-    24px;
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
 }
 
 .modal-actions .btn {
-  flex:
-    1;
+  flex: 1;
 }
 
 /* ============================================================
    RESPONSIVE
    ============================================================ */
 
-@media (
-  max-width: 850px
-) {
+@media (max-width: 850px) {
 
   body {
-    display:
-      block;
+    display: block;
   }
 
   .sidebar {
-    width:
-      100%;
-
-    padding:
-      18px;
-
-    flex-direction:
-      row;
-
-    flex-wrap:
-      wrap;
-
-    gap:
-      5px;
+    width: 100%;
+    padding: 18px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 5px;
   }
 
   .wordmark {
-    width:
-      100%;
+    width: 100%;
   }
 
   .wordmark-sub {
-    width:
-      100%;
-
-    margin-bottom:
-      10px;
+    width: 100%;
+    margin-bottom: 10px;
   }
 
   .sidebar-footer {
-    margin-top:
-      0;
+    margin-top: 0;
   }
 
   .main {
-    padding:
-      25px 18px;
+    padding: 25px 18px;
   }
 
   .stats-row,
   .home-actions {
-    grid-template-columns:
-      1fr;
+    grid-template-columns: 1fr;
   }
 
   .instructions-header {
-    flex-direction:
-      column;
+    flex-direction: column;
   }
 
   .instructions-buttons {
-    justify-content:
-      flex-start;
+    justify-content: flex-start;
   }
 
   .instruction-card {
-    flex-wrap:
-      wrap;
+    flex-wrap: wrap;
   }
 
   .instruction-actions {
-    width:
-      100%;
-
-    justify-content:
-      flex-start;
-
-    padding-left:
-      48px;
+    width: 100%;
+    justify-content: flex-start;
+    padding-left: 48px;
   }
 
 }
@@ -1519,7 +1003,7 @@ body {
       </div>
 
       <div class="home-action-desc">
-        Ajoutez les produits et prix que l'IA peut utiliser.
+        Ajoutez le produit, son prix, sa description et obligatoirement sa photo.
       </div>
 
       <div class="home-action-link">
@@ -1586,7 +1070,7 @@ body {
     </div>
 
     <div class="page-desc">
-      Ces produits sont automatiquement inclus dans le contexte de l'IA.
+      Chaque produit doit avoir une photo. Ces informations sont utilisées par votre assistant MONDECO.
     </div>
 
   </div>
@@ -1620,7 +1104,7 @@ body {
     </div>
 
     <div>
-      Ajoutez votre premier produit.
+      Ajoutez votre premier produit avec sa photo.
     </div>
 
   </div>
@@ -1687,9 +1171,7 @@ body {
       0 instruction active
     </strong>
 
-    <span>
-      •
-    </span>
+    <span>•</span>
 
     <span
       id="totalInstructionCount"
@@ -1715,7 +1197,7 @@ body {
     </div>
 
     <div>
-      Cliquez sur « Ajouter une instruction » ou importez votre ancien business-info.txt.
+      Cliquez sur « Ajouter une instruction » ou importez votre ancien texte.
     </div>
 
   </div>
@@ -1793,7 +1275,7 @@ body {
   id="modalOverlay"
 >
 
-  <div class="modal">
+  <div class="modal large">
 
     <div
       class="modal-title"
@@ -1802,12 +1284,22 @@ body {
       Ajouter un produit
     </div>
 
-    <form id="productForm">
+    <form
+      id="productForm"
+      enctype="multipart/form-data"
+    >
 
       <input
         type="hidden"
         id="productId"
       >
+
+      <input
+        type="hidden"
+        id="currentProductImage"
+      >
+
+      <!-- NOM -->
 
       <div class="field">
 
@@ -1824,6 +1316,86 @@ body {
 
       </div>
 
+      <!-- PHOTO -->
+
+      <div class="field">
+
+        <label>
+          Photo du produit
+          <span
+            class="image-required"
+            id="productImageRequiredStar"
+          >
+            *
+          </span>
+        </label>
+
+        <label
+          for="productImage"
+          class="image-upload-zone"
+        >
+
+          <div class="image-upload-icon">
+            🖼️
+          </div>
+
+          <div class="image-upload-title">
+            Choisir une photo
+          </div>
+
+          <div
+            class="image-upload-hint"
+            id="imageUploadHint"
+          >
+            Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo
+          </div>
+
+        </label>
+
+        <input
+          class="image-file-input"
+          type="file"
+          id="productImage"
+          name="image"
+          accept="image/jpeg,image/png,image/webp"
+        >
+
+        <div
+          class="product-image-preview-container"
+          id="productImagePreviewContainer"
+        >
+
+          <div class="product-image-preview-box">
+
+            <img
+              class="product-image-preview"
+              id="productImagePreview"
+              alt="Aperçu du produit"
+            >
+
+            <div
+              class="image-preview-label"
+              id="imagePreviewLabel"
+            >
+              Nouvelle photo
+            </div>
+
+          </div>
+
+        </div>
+
+        <div
+          class="current-image-note"
+          id="currentImageNote"
+          style="display:none;"
+        >
+          La photo actuelle sera conservée si vous ne choisissez pas une nouvelle image.
+        </div>
+
+      </div>
+
+      <!-- CATÉGORIE -->
+
       <div class="field">
 
         <label for="productCategory">
@@ -1837,6 +1409,8 @@ body {
         >
 
       </div>
+
+      <!-- PRIX -->
 
       <div class="field">
 
@@ -1852,6 +1426,8 @@ body {
 
       </div>
 
+      <!-- DESCRIPTION -->
+
       <div class="field">
 
         <label for="productDescription">
@@ -1860,7 +1436,7 @@ body {
 
         <textarea
           id="productDescription"
-          placeholder="Dimensions, composition, couleurs, détails..."
+          placeholder="Dimensions, composition, couleurs, disponibilité, détails importants..."
         ></textarea>
 
       </div>
@@ -1878,6 +1454,7 @@ body {
         <button
           type="submit"
           class="btn btn-primary"
+          id="saveProductBtn"
         >
           Enregistrer
         </button>
@@ -1995,7 +1572,7 @@ body {
 </div>
 
 <!-- =========================================================
-     MODAL IMPORT
+     MODAL IMPORT INSTRUCTIONS
      ========================================================= -->
 
 <div
@@ -2061,14 +1638,15 @@ Demander progressivement la ville, les dimensions et le délai d'achat."
 
 <script>
 
-// ============================================================
-// FETCH AVEC GESTION SESSION
-// ============================================================
+/* ============================================================
+   API
+   ============================================================ */
 
 async function apiFetch(
   url,
   options = {}
 ) {
+
   const response =
     await fetch(
       url,
@@ -2078,6 +1656,7 @@ async function apiFetch(
   if (
     response.status === 401
   ) {
+
     window.location.href =
       '/admin/login';
 
@@ -2089,11 +1668,12 @@ async function apiFetch(
   return response;
 }
 
-// ============================================================
-// ESCAPE HTML
-// ============================================================
+/* ============================================================
+   ESCAPE HTML
+   ============================================================ */
 
 function escapeHtml(value) {
+
   const div =
     document.createElement(
       'div'
@@ -2105,11 +1685,12 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
-// ============================================================
-// NAVIGATION
-// ============================================================
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
 
 function openView(viewName) {
+
   document
     .querySelectorAll(
       '.nav-item[data-view]'
@@ -2187,9 +1768,9 @@ document
 
   });
 
-// ============================================================
-// LOGOUT
-// ============================================================
+/* ============================================================
+   LOGOUT
+   ============================================================ */
 
 document
   .getElementById(
@@ -2212,14 +1793,16 @@ document
     }
   );
 
-// ============================================================
-// PRODUITS
-// ============================================================
+/* ============================================================
+   PRODUITS
+   ============================================================ */
 
 let products = [];
 
 async function loadProducts() {
+
   try {
+
     const response =
       await apiFetch(
         '/admin/api/products'
@@ -2228,13 +1811,18 @@ async function loadProducts() {
     products =
       await response.json();
 
-    if (!Array.isArray(products)) {
+    if (
+      !Array.isArray(
+        products
+      )
+    ) {
       products = [];
     }
 
     renderProducts();
 
   } catch (error) {
+
     console.error(
       'Produits :',
       error
@@ -2243,6 +1831,7 @@ async function loadProducts() {
 }
 
 function renderProducts() {
+
   const grid =
     document.getElementById(
       'productGrid'
@@ -2256,7 +1845,9 @@ function renderProducts() {
   if (
     products.length === 0
   ) {
-    grid.innerHTML = '';
+
+    grid.innerHTML =
+      '';
 
     grid.style.display =
       'none';
@@ -2276,7 +1867,33 @@ function renderProducts() {
   grid.innerHTML =
     products
       .map(product => `
+
         <div class="product-card">
+
+          ${
+            product.image
+              ? `
+                <div class="product-image-wrapper">
+
+                  <img
+                    class="product-image"
+                    src="${escapeHtml(product.image)}"
+                    alt="${escapeHtml(product.name)}"
+                    loading="lazy"
+                    onerror="
+                      this.parentElement.innerHTML =
+                      '<div class=&quot;product-image-placeholder&quot;>Image indisponible</div>'
+                    "
+                  >
+
+                </div>
+              `
+              : `
+                <div class="product-image-placeholder">
+                  Aucune image
+                </div>
+              `
+          }
 
           <div class="product-card-body">
 
@@ -2333,13 +1950,14 @@ function renderProducts() {
           </div>
 
         </div>
+
       `)
       .join('');
 }
 
-// ============================================================
-// MODAL PRODUIT
-// ============================================================
+/* ============================================================
+   MODAL PRODUIT
+   ============================================================ */
 
 const productOverlay =
   document.getElementById(
@@ -2351,6 +1969,110 @@ const productForm =
     'productForm'
   );
 
+const productImageInput =
+  document.getElementById(
+    'productImage'
+  );
+
+const productImagePreview =
+  document.getElementById(
+    'productImagePreview'
+  );
+
+const productImagePreviewContainer =
+  document.getElementById(
+    'productImagePreviewContainer'
+  );
+
+const currentImageNote =
+  document.getElementById(
+    'currentImageNote'
+  );
+
+const imagePreviewLabel =
+  document.getElementById(
+    'imagePreviewLabel'
+  );
+
+const imageUploadHint =
+  document.getElementById(
+    'imageUploadHint'
+  );
+
+const imageRequiredStar =
+  document.getElementById(
+    'productImageRequiredStar'
+  );
+
+const saveProductBtn =
+  document.getElementById(
+    'saveProductBtn'
+  );
+
+let temporaryPreviewUrl =
+  null;
+
+/* ============================================================
+   RESET MODAL PRODUIT
+   ============================================================ */
+
+function resetProductModal() {
+
+  productForm.reset();
+
+  document
+    .getElementById(
+      'productId'
+    )
+    .value = '';
+
+  document
+    .getElementById(
+      'currentProductImage'
+    )
+    .value = '';
+
+  productImageInput.value =
+    '';
+
+  productImageInput.required =
+    true;
+
+  currentImageNote.style.display =
+    'none';
+
+  imageRequiredStar.style.display =
+    'inline';
+
+  imageUploadHint.textContent =
+    'Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo';
+
+  productImagePreviewContainer
+    .classList
+    .remove(
+      'visible'
+    );
+
+  productImagePreview.src =
+    '';
+
+  if (
+    temporaryPreviewUrl
+  ) {
+
+    URL.revokeObjectURL(
+      temporaryPreviewUrl
+    );
+
+    temporaryPreviewUrl =
+      null;
+  }
+}
+
+/* ============================================================
+   AJOUT PRODUIT
+   ============================================================ */
+
 document
   .getElementById(
     'addProductBtn'
@@ -2359,6 +2081,8 @@ document
     'click',
     () => {
 
+      resetProductModal();
+
       document
         .getElementById(
           'modalTitle'
@@ -2366,19 +2090,15 @@ document
         .textContent =
           'Ajouter un produit';
 
-      productForm.reset();
-
-      document
-        .getElementById(
-          'productId'
-        )
-        .value = '';
-
       productOverlay
         .classList
         .add('active');
     }
   );
+
+/* ============================================================
+   ANNULER
+   ============================================================ */
 
 document
   .getElementById(
@@ -2387,11 +2107,102 @@ document
   .addEventListener(
     'click',
     () => {
+
       productOverlay
         .classList
         .remove('active');
+
+      resetProductModal();
     }
   );
+
+/* ============================================================
+   APERÇU IMAGE
+   ============================================================ */
+
+productImageInput
+  .addEventListener(
+    'change',
+    () => {
+
+      const file =
+        productImageInput
+          .files[0];
+
+      if (!file) {
+        return;
+      }
+
+      const allowedTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp'
+      ];
+
+      if (
+        !allowedTypes.includes(
+          file.type
+        )
+      ) {
+
+        alert(
+          'Format non accepté. Utilisez JPG, PNG ou WEBP.'
+        );
+
+        productImageInput.value =
+          '';
+
+        return;
+      }
+
+      const maxSize =
+        8 * 1024 * 1024;
+
+      if (
+        file.size > maxSize
+      ) {
+
+        alert(
+          'La photo dépasse 8 Mo.'
+        );
+
+        productImageInput.value =
+          '';
+
+        return;
+      }
+
+      if (
+        temporaryPreviewUrl
+      ) {
+
+        URL.revokeObjectURL(
+          temporaryPreviewUrl
+        );
+      }
+
+      temporaryPreviewUrl =
+        URL.createObjectURL(
+          file
+        );
+
+      productImagePreview.src =
+        temporaryPreviewUrl;
+
+      imagePreviewLabel.textContent =
+        'Nouvelle photo';
+
+      productImagePreviewContainer
+        .classList
+        .add(
+          'visible'
+        );
+    }
+  );
+
+/* ============================================================
+   MODIFIER PRODUIT
+   ============================================================ */
 
 window.editProduct =
   function(id) {
@@ -2405,6 +2216,8 @@ window.editProduct =
     if (!product) {
       return;
     }
+
+    resetProductModal();
 
     document
       .getElementById(
@@ -2448,17 +2261,93 @@ window.editProduct =
       .value =
         product.description || '';
 
+    document
+      .getElementById(
+        'currentProductImage'
+      )
+      .value =
+        product.image || '';
+
+    /*
+      En modification :
+      la nouvelle photo n'est pas obligatoire
+      si le produit possède déjà une image.
+    */
+
+    if (
+      product.image
+    ) {
+
+      productImageInput.required =
+        false;
+
+      imageRequiredStar.style.display =
+        'none';
+
+      currentImageNote.style.display =
+        'block';
+
+      imageUploadHint.textContent =
+        'Choisissez une nouvelle photo uniquement si vous souhaitez remplacer la photo actuelle.';
+
+      productImagePreview.src =
+        product.image;
+
+      imagePreviewLabel.textContent =
+        'Photo actuelle';
+
+      productImagePreviewContainer
+        .classList
+        .add(
+          'visible'
+        );
+
+    } else {
+
+      /*
+        Pour un ancien produit qui n'a pas encore
+        de photo, elle devient obligatoire.
+      */
+
+      productImageInput.required =
+        true;
+
+      imageRequiredStar.style.display =
+        'inline';
+
+      currentImageNote.style.display =
+        'none';
+
+      imageUploadHint.textContent =
+        'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.';
+    }
+
     productOverlay
       .classList
       .add('active');
   };
 
+/* ============================================================
+   SUPPRIMER PRODUIT
+   ============================================================ */
+
 window.deleteProduct =
   async function(id) {
 
+    const product =
+      products.find(
+        item =>
+          item.id === id
+      );
+
+    const label =
+      product
+        ? product.name
+        : 'ce produit';
+
     if (
       !confirm(
-        'Supprimer ce produit ?'
+        `Supprimer « ${label} » ?`
       )
     ) {
       return;
@@ -2474,8 +2363,17 @@ window.deleteProduct =
         }
       );
 
+    let data = {};
+
+    try {
+      data =
+        await response.json();
+    } catch {}
+
     if (!response.ok) {
+
       alert(
+        data.error ||
         'Impossible de supprimer le produit.'
       );
 
@@ -2485,6 +2383,10 @@ window.deleteProduct =
     await loadProducts();
     await loadStats();
   };
+
+/* ============================================================
+   ENREGISTRER PRODUIT AVEC FORMDATA
+   ============================================================ */
 
 productForm
   .addEventListener(
@@ -2500,95 +2402,192 @@ productForm
           )
           .value;
 
-      const payload = {
+      const currentImage =
+        document
+          .getElementById(
+            'currentProductImage'
+          )
+          .value;
 
-        name:
-          document
-            .getElementById(
-              'productName'
-            )
-            .value,
+      const imageFile =
+        productImageInput
+          .files[0];
 
-        category:
-          document
-            .getElementById(
-              'productCategory'
-            )
-            .value,
+      /*
+        Photo obligatoire :
+        - création : toujours
+        - modification d'un ancien produit sans image : oui
+        - modification d'un produit qui a déjà une image : non
+      */
 
-        price:
-          document
-            .getElementById(
-              'productPrice'
-            )
-            .value,
+      if (
+        !imageFile &&
+        !currentImage
+      ) {
 
-        description:
-          document
-            .getElementById(
-              'productDescription'
-            )
-            .value
-      };
-
-      const url =
-        id
-          ? '/admin/api/products/' +
-            id
-          : '/admin/api/products';
-
-      const method =
-        id
-          ? 'PUT'
-          : 'POST';
-
-      const response =
-        await apiFetch(
-          url,
-          {
-            method,
-
-            headers: {
-              'Content-Type':
-                'application/json'
-            },
-
-            body:
-              JSON.stringify(
-                payload
-              )
-          }
-        );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
         alert(
-          data.error ||
-          'Erreur pendant la sauvegarde.'
+          'La photo du produit est obligatoire.'
         );
 
         return;
       }
 
-      productOverlay
-        .classList
-        .remove('active');
+      const formData =
+        new FormData();
 
-      await loadProducts();
-      await loadStats();
+      formData.append(
+        'name',
+        document
+          .getElementById(
+            'productName'
+          )
+          .value
+      );
+
+      formData.append(
+        'category',
+        document
+          .getElementById(
+            'productCategory'
+          )
+          .value
+      );
+
+      formData.append(
+        'price',
+        document
+          .getElementById(
+            'productPrice'
+          )
+          .value
+      );
+
+      formData.append(
+        'description',
+        document
+          .getElementById(
+            'productDescription'
+          )
+          .value
+      );
+
+      if (
+        imageFile
+      ) {
+
+        formData.append(
+          'image',
+          imageFile
+        );
+      }
+
+      saveProductBtn.disabled =
+        true;
+
+      saveProductBtn.textContent =
+        'Enregistrement...';
+
+      try {
+
+        const url =
+          id
+            ? '/admin/api/products/' +
+              id
+            : '/admin/api/products';
+
+        const method =
+          id
+            ? 'PUT'
+            : 'POST';
+
+        /*
+          IMPORTANT :
+          ne PAS définir manuellement
+          Content-Type multipart/form-data.
+
+          Le navigateur ajoute automatiquement
+          le boundary nécessaire à FormData.
+        */
+
+        const response =
+          await apiFetch(
+            url,
+            {
+              method,
+              body:
+                formData
+            }
+          );
+
+        let data = {};
+
+        try {
+
+          data =
+            await response.json();
+
+        } catch {
+
+          data = {
+            error:
+              'Réponse serveur invalide.'
+          };
+        }
+
+        if (!response.ok) {
+
+          alert(
+            data.error ||
+            'Impossible d’enregistrer le produit.'
+          );
+
+          return;
+        }
+
+        productOverlay
+          .classList
+          .remove(
+            'active'
+          );
+
+        resetProductModal();
+
+        await loadProducts();
+        await loadStats();
+
+      } catch (error) {
+
+        console.error(
+          'Sauvegarde produit :',
+          error
+        );
+
+        alert(
+          'Impossible de contacter le serveur.'
+        );
+
+      } finally {
+
+        saveProductBtn.disabled =
+          false;
+
+        saveProductBtn.textContent =
+          'Enregistrer';
+      }
+
     }
   );
 
-// ============================================================
-// INSTRUCTIONS
-// ============================================================
+/* ============================================================
+   INSTRUCTIONS
+   ============================================================ */
 
 let instructions = [];
 
 async function loadInstructions() {
+
   try {
+
     const response =
       await apiFetch(
         '/admin/api/instructions'
@@ -2608,6 +2607,7 @@ async function loadInstructions() {
     renderInstructions();
 
   } catch (error) {
+
     console.error(
       'Instructions :',
       error
@@ -2616,6 +2616,7 @@ async function loadInstructions() {
 }
 
 function renderInstructions() {
+
   const list =
     document.getElementById(
       'instructionsList'
@@ -2655,7 +2656,9 @@ function renderInstructions() {
   if (
     instructions.length === 0
   ) {
-    list.innerHTML = '';
+
+    list.innerHTML =
+      '';
 
     empty.style.display =
       'block';
@@ -2674,6 +2677,7 @@ function renderInstructions() {
           instruction.active !== false;
 
         return `
+
           <div class="instruction-card">
 
             <div
@@ -2743,14 +2747,16 @@ function renderInstructions() {
             </div>
 
           </div>
+
         `;
+
       })
       .join('');
 }
 
-// ============================================================
-// MODAL INSTRUCTION
-// ============================================================
+/* ============================================================
+   MODAL INSTRUCTION
+   ============================================================ */
 
 const instructionOverlay =
   document.getElementById(
@@ -2918,6 +2924,7 @@ instructionForm
         await apiFetch(
           url,
           {
+
             method,
 
             headers: {
@@ -2936,6 +2943,7 @@ instructionForm
         await response.json();
 
       if (!response.ok) {
+
         alert(
           data.error ||
           'Erreur pendant la sauvegarde.'
@@ -2953,9 +2961,9 @@ instructionForm
     }
   );
 
-// ============================================================
-// ACTIVER / DÉSACTIVER
-// ============================================================
+/* ============================================================
+   ACTIVER / DÉSACTIVER INSTRUCTION
+   ============================================================ */
 
 window.toggleInstruction =
   async function(id) {
@@ -2975,6 +2983,7 @@ window.toggleInstruction =
         '/admin/api/instructions/' +
           id,
         {
+
           method:
             'PUT',
 
@@ -2995,6 +3004,7 @@ window.toggleInstruction =
       );
 
     if (!response.ok) {
+
       alert(
         'Impossible de modifier l’instruction.'
       );
@@ -3006,9 +3016,9 @@ window.toggleInstruction =
     await loadStats();
   };
 
-// ============================================================
-// SUPPRIMER INSTRUCTION
-// ============================================================
+/* ============================================================
+   SUPPRIMER INSTRUCTION
+   ============================================================ */
 
 window.deleteInstruction =
   async function(id) {
@@ -3042,6 +3052,7 @@ window.deleteInstruction =
       );
 
     if (!response.ok) {
+
       alert(
         'Impossible de supprimer l’instruction.'
       );
@@ -3053,9 +3064,9 @@ window.deleteInstruction =
     await loadStats();
   };
 
-// ============================================================
-// IMPORT MANUEL
-// ============================================================
+/* ============================================================
+   IMPORT MANUEL INSTRUCTIONS
+   ============================================================ */
 
 const importOverlay =
   document.getElementById(
@@ -3077,21 +3088,22 @@ const confirmImportButton =
     'confirmImportInstructionsBtn'
   );
 
-importButton.addEventListener(
-  'click',
-  () => {
+importButton
+  .addEventListener(
+    'click',
+    () => {
 
-    document
-      .getElementById(
-        'bulkInstructionsText'
-      )
-      .value = '';
+      document
+        .getElementById(
+          'bulkInstructionsText'
+        )
+        .value = '';
 
-    importOverlay
-      .classList
-      .add('active');
-  }
-);
+      importOverlay
+        .classList
+        .add('active');
+    }
+  );
 
 cancelImportButton
   .addEventListener(
@@ -3118,6 +3130,7 @@ confirmImportButton
           .trim();
 
       if (!text) {
+
         alert(
           'Collez au moins une instruction.'
         );
@@ -3137,6 +3150,7 @@ confirmImportButton
           await apiFetch(
             '/admin/api/instructions/import',
             {
+
               method:
                 'POST',
 
@@ -3156,6 +3170,7 @@ confirmImportButton
           await response.json();
 
         if (!response.ok) {
+
           alert(
             data.error ||
             'Erreur pendant l’import.'
@@ -3192,9 +3207,9 @@ confirmImportButton
     }
   );
 
-// ============================================================
-// IMPORTER BUSINESS-INFO.TXT
-// ============================================================
+/* ============================================================
+   IMPORT BUSINESS-INFO.TXT
+   ============================================================ */
 
 document
   .getElementById(
@@ -3228,6 +3243,7 @@ document
           await response.json();
 
         if (!response.ok) {
+
           alert(
             data.error ||
             'Import impossible.'
@@ -3258,11 +3274,12 @@ document
     }
   );
 
-// ============================================================
-// STATS
-// ============================================================
+/* ============================================================
+   STATS
+   ============================================================ */
 
 async function loadStats() {
+
   try {
 
     const response =
@@ -3289,6 +3306,7 @@ async function loadStats() {
         0;
 
   } catch (error) {
+
     console.error(
       'Stats :',
       error
@@ -3296,9 +3314,9 @@ async function loadStats() {
   }
 }
 
-// ============================================================
-// CHAT TEST
-// ============================================================
+/* ============================================================
+   CHAT TEST
+   ============================================================ */
 
 const chatMessages =
   document.getElementById(
@@ -3319,6 +3337,7 @@ function addBubble(
   text,
   type
 ) {
+
   const empty =
     chatMessages.querySelector(
       '.chat-empty'
@@ -3383,6 +3402,7 @@ chatForm
           await apiFetch(
             '/admin/api/test-chat',
             {
+
               method:
                 'POST',
 
@@ -3404,14 +3424,17 @@ chatForm
         typingBubble.remove();
 
         if (response.ok) {
+
           addBubble(
             data.reply,
             'bot'
           );
+
         } else {
+
           addBubble(
             data.error ||
-              'Une erreur est survenue.',
+            'Une erreur est survenue.',
             'error'
           );
         }
@@ -3433,9 +3456,9 @@ chatForm
     }
   );
 
-// ============================================================
-// FERMER MODALS EN CLIQUANT SUR LE FOND
-// ============================================================
+/* ============================================================
+   FERMER MODAL EN CLIQUANT SUR LE FOND
+   ============================================================ */
 
 document
   .querySelectorAll(
@@ -3451,6 +3474,7 @@ document
           event.target ===
           overlay
         ) {
+
           overlay.classList.remove(
             'active'
           );
@@ -3461,37 +3485,41 @@ document
 
   });
 
-// ============================================================
-// ESC
-// ============================================================
+/* ============================================================
+   ESC
+   ============================================================ */
 
-document.addEventListener(
-  'keydown',
-  event => {
+document
+  .addEventListener(
+    'keydown',
+    event => {
 
-    if (
-      event.key === 'Escape'
-    ) {
-      document
-        .querySelectorAll(
-          '.modal-overlay.active'
-        )
-        .forEach(
-          overlay =>
-            overlay.classList.remove(
-              'active'
-            )
-        );
+      if (
+        event.key ===
+        'Escape'
+      ) {
+
+        document
+          .querySelectorAll(
+            '.modal-overlay.active'
+          )
+          .forEach(
+            overlay =>
+              overlay.classList.remove(
+                'active'
+              )
+          );
+      }
+
     }
+  );
 
-  }
-);
-
-// ============================================================
-// INITIALISATION
-// ============================================================
+/* ============================================================
+   INITIALISATION
+   ============================================================ */
 
 async function initializeAdmin() {
+
   await Promise.all([
     loadProducts(),
     loadInstructions(),
