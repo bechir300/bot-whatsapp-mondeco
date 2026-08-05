@@ -1,6 +1,6 @@
 // Bot WhatsApp + IA via l'API officielle WhatsApp Cloud (Meta) + Groq (IA)
 // Lancer avec : node server.js
-
+console.log('>>> VERSION TEST 12345 <<<');
 require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
