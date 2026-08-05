@@ -1,22 +1,11 @@
 <!DOCTYPE html>
-
 <html lang="fr">
-
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0"
->
-
-<title>
-  Mondeco — Administration
-</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mondeco — Administration</title>
 
 <style>
-
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -33,6 +22,7 @@
   --success-bg: #E9F2E6;
   --danger: #B5541F;
   --danger-bg: #F8E7DF;
+  --shadow: 0 8px 28px rgba(31, 27, 22, 0.08);
 }
 
 * {
@@ -61,6 +51,9 @@ body {
   flex-direction: column;
   padding: 28px 20px;
   flex-shrink: 0;
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
 }
 
 .wordmark {
@@ -87,7 +80,8 @@ body {
   color: #C9C1B3;
   cursor: pointer;
   margin-bottom: 4px;
-  transition: background 0.15s;
+  transition: 0.15s;
+  user-select: none;
 }
 
 .nav-item:hover {
@@ -121,12 +115,17 @@ body {
 .main {
   flex: 1;
   padding: 40px 48px;
-  max-width: 1150px;
   width: 100%;
+  min-width: 0;
+}
+
+.content-width {
+  width: 100%;
+  max-width: 1220px;
 }
 
 .page-header {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
 }
 
 .page-title {
@@ -139,7 +138,7 @@ body {
   color: var(--muted);
   font-size: 14px;
   margin-top: 6px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .view {
@@ -151,21 +150,23 @@ body {
 }
 
 /* ============================================================
-   BOUTONS
+   BUTTONS
    ============================================================ */
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 7px;
   padding: 10px 18px;
+  min-height: 40px;
   border-radius: 8px;
   border: none;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   font-family: 'Inter', sans-serif;
+  transition: 0.15s;
 }
 
 .btn:disabled {
@@ -183,22 +184,19 @@ body {
 }
 
 .btn-ghost {
-  background: transparent;
+  background: var(--paper-raised);
   color: var(--ink);
   border: 1.5px solid var(--border);
 }
 
 .btn-ghost:hover {
-  background: #EFEAE0;
+  border-color: #CBC2B5;
+  background: #F2EEE7;
 }
 
-.btn-danger-text {
-  background: none;
-  border: none;
-  color: var(--danger);
-  font-size: 13px;
-  cursor: pointer;
-  font-weight: 500;
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
 }
 
 /* ============================================================
@@ -215,7 +213,7 @@ body {
 .stat-card {
   background: var(--paper-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 20px 22px;
 }
 
@@ -240,14 +238,15 @@ body {
 .home-action-card {
   background: var(--paper-raised);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 20px 22px;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: 0.15s;
 }
 
 .home-action-card:hover {
   border-color: var(--copper);
+  transform: translateY(-1px);
 }
 
 .home-action-title {
@@ -274,111 +273,270 @@ body {
    PRODUITS
    ============================================================ */
 
-.toolbar {
+.products-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
   margin-bottom: 20px;
 }
 
-.product-grid {
-  display: grid;
-  grid-template-columns:
-    repeat(
-      auto-fill,
-      minmax(260px, 1fr)
-    );
-  gap: 16px;
-}
-
-.product-card {
-  background: var(--paper-raised);
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
+.products-toolbar-left,
+.products-toolbar-right {
   display: flex;
-  flex-direction: column;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.product-image-wrapper {
-  width: 100%;
-  height: 205px;
-  background: #F0ECE5;
-  position: relative;
-  overflow: hidden;
-}
-
-.product-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.product-image-placeholder {
-  height: 205px;
-  display: flex;
+.list-counter {
+  display: inline-flex;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
   align-items: center;
   justify-content: center;
-  background: #F0ECE5;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.product-card-body {
-  padding: 16px 18px;
-  flex: 1;
-  border-left: 4px solid var(--copper);
-}
-
-.product-cat {
+  border-radius: 999px;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--copper);
-  font-weight: 600;
-}
-
-.product-name {
-  font-family: 'Fraunces', serif;
-  font-size: 18px;
-  font-weight: 600;
-  margin-top: 4px;
-}
-
-.product-desc {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 6px;
-  line-height: 1.5;
-}
-
-.product-price {
-  font-size: 15px;
-  font-weight: 700;
-  margin-top: 10px;
-}
-
-.product-actions {
-  display: flex;
-  gap: 14px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-}
-
-.product-actions span {
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.product-actions span:hover {
+  background: #EEE8DE;
   color: var(--ink);
 }
 
+.products-list-panel {
+  display: none;
+}
+
+.products-list-panel.visible {
+  display: block;
+}
+
+.list-panel {
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.list-panel-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.list-panel-title {
+  font-family: 'Fraunces', serif;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.list-panel-subtitle {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.search-wrap {
+  min-width: 300px;
+  position: relative;
+}
+
+.search-wrap input {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px 10px 36px;
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+}
+
+.search-wrap input:focus {
+  outline: none;
+  border-color: var(--copper);
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.products-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 820px;
+}
+
+.products-table th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 700;
+  background: #FBF9F6;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.products-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #EEE9E1;
+  vertical-align: middle;
+  font-size: 13px;
+}
+
+.products-table tr:last-child td {
+  border-bottom: none;
+}
+
+.products-table tbody tr:hover {
+  background: #FCFAF7;
+}
+
+.table-product-photo {
+  width: 72px;
+  height: 54px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  background: #EFEAE2;
+  border: 1px solid var(--border);
+}
+
+.table-photo-placeholder {
+  width: 72px;
+  height: 54px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #EFEAE2;
+  color: var(--muted);
+  font-size: 10px;
+  border: 1px solid var(--border);
+}
+
+.table-product-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.table-product-description {
+  color: var(--muted);
+  margin-top: 4px;
+  max-width: 380px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.category-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #F1ECE4;
+  color: #5B5348;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.table-price {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.action-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--ink);
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.action-btn:hover {
+  border-color: var(--copper);
+}
+
+.action-btn.delete {
+  color: var(--danger);
+}
+
+.action-btn.delete:hover {
+  background: var(--danger-bg);
+  border-color: #E6C1B1;
+}
+
+.list-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.list-empty-title {
+  color: var(--ink);
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.add-product-intro {
+  background: var(--paper-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  text-align: center;
+}
+
+.add-product-intro-icon {
+  font-size: 42px;
+  margin-bottom: 12px;
+}
+
+.add-product-intro-title {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.add-product-intro-desc {
+  max-width: 560px;
+  margin: 8px auto 18px;
+  color: var(--muted);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
 /* ============================================================
-   UPLOAD IMAGE
+   IMAGE UPLOAD
    ============================================================ */
 
 .image-upload-zone {
@@ -439,7 +597,7 @@ body {
 .product-image-preview {
   display: block;
   width: 100%;
-  height: 260px;
+  height: 280px;
   object-fit: contain;
 }
 
@@ -466,7 +624,7 @@ body {
 }
 
 /* ============================================================
-   EMPTY
+   EMPTY STATE
    ============================================================ */
 
 .empty-state {
@@ -539,9 +697,7 @@ body {
 
 .instruction-card:hover {
   border-color: #C9C0B2;
-  box-shadow:
-    0 3px 12px
-    rgba(0,0,0,.04);
+  box-shadow: 0 3px 12px rgba(0,0,0,.04);
 }
 
 .instruction-status {
@@ -630,7 +786,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 560px;
-  max-width: 520px;
+  max-width: 560px;
 }
 
 .chat-messages {
@@ -656,6 +812,7 @@ body {
   border-radius: 14px;
   font-size: 14px;
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .chat-bubble.user {
@@ -698,6 +855,7 @@ body {
   border: 1.5px solid var(--border);
   border-radius: 8px;
   font-size: 14px;
+  font-family: 'Inter', sans-serif;
 }
 
 .chat-input-row input:focus {
@@ -732,6 +890,7 @@ body {
   max-width: 500px;
   max-height: 90vh;
   overflow-y: auto;
+  box-shadow: 0 20px 70px rgba(31, 27, 22, 0.22);
 }
 
 .modal.large {
@@ -798,29 +957,57 @@ body {
 }
 
 /* ============================================================
+   TOAST
+   ============================================================ */
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 300;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 9px;
+  padding: 12px 16px;
+  font-size: 13px;
+  box-shadow: 0 12px 36px rgba(0,0,0,.18);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: .2s;
+  max-width: 360px;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 
-@media (max-width: 850px) {
-
+@media (max-width: 900px) {
   body {
     display: block;
   }
 
   .sidebar {
     width: 100%;
+    min-height: auto;
+    position: static;
     padding: 18px;
     flex-direction: row;
     flex-wrap: wrap;
     gap: 5px;
   }
 
-  .wordmark {
+  .wordmark,
+  .wordmark-sub {
     width: 100%;
   }
 
   .wordmark-sub {
-    width: 100%;
     margin-bottom: 10px;
   }
 
@@ -855,501 +1042,270 @@ body {
     padding-left: 48px;
   }
 
+  .search-wrap {
+    min-width: 100%;
+  }
+
+  .products-toolbar-left,
+  .products-toolbar-right {
+    width: 100%;
+  }
 }
-
 </style>
-
 </head>
 
 <body>
 
-<!-- =========================================================
-     SIDEBAR
-     ========================================================= -->
-
 <nav class="sidebar">
+  <div class="wordmark">Mondeco</div>
+  <div class="wordmark-sub">Bot WhatsApp</div>
 
-  <div class="wordmark">
-    Mondeco
-  </div>
-
-  <div class="wordmark-sub">
-    Bot WhatsApp
-  </div>
-
-  <div
-    class="nav-item active"
-    data-view="home"
-  >
-    🏠 Accueil
-  </div>
-
-  <div
-    class="nav-item"
-    data-view="products"
-  >
-    🪑 Produits
-  </div>
-
-  <div
-    class="nav-item"
-    data-view="instructions"
-  >
-    📋 Instructions IA
-  </div>
-
-  <div
-    class="nav-item"
-    data-view="test"
-  >
-    💬 Discussion de test
-  </div>
+  <div class="nav-item active" data-view="home">🏠 Accueil</div>
+  <div class="nav-item" data-view="products">🪑 Produits</div>
+  <div class="nav-item" data-view="instructions">📋 Instructions IA</div>
+  <div class="nav-item" data-view="test">💬 Discussion de test</div>
 
   <div class="sidebar-footer">
-
-    <div
-      class="logout-btn"
-      id="logoutBtn"
-    >
-      Se déconnecter
-    </div>
-
+    <div class="logout-btn" id="logoutBtn">Se déconnecter</div>
   </div>
-
 </nav>
 
-<!-- =========================================================
-     MAIN
-     ========================================================= -->
-
 <main class="main">
+<div class="content-width">
 
 <!-- =========================================================
      ACCUEIL
      ========================================================= -->
 
-<section
-  class="view active"
-  id="view-home"
->
-
+<section class="view active" id="view-home">
   <div class="page-header">
-
-    <div class="page-title">
-      Bonjour 👋
-    </div>
-
-    <div class="page-desc">
-      Voici l'état de votre assistant WhatsApp Mondeco.
-    </div>
-
+    <div class="page-title">Bonjour 👋</div>
+    <div class="page-desc">Voici l'état de votre assistant WhatsApp Mondeco.</div>
   </div>
 
   <div class="stats-row">
-
     <div class="stat-card">
-
-      <div
-        class="stat-value"
-        id="statProducts"
-      >
-        —
-      </div>
-
-      <div class="stat-label">
-        Produits au catalogue
-      </div>
-
+      <div class="stat-value" id="statProducts">—</div>
+      <div class="stat-label">Produits au catalogue</div>
     </div>
 
     <div class="stat-card">
-
-      <div
-        class="stat-value"
-        id="statInstructions"
-      >
-        —
-      </div>
-
-      <div class="stat-label">
-        Instructions actives
-      </div>
-
+      <div class="stat-value" id="statInstructions">—</div>
+      <div class="stat-label">Instructions actives</div>
     </div>
 
     <div class="stat-card">
-
-      <div class="stat-value">
-        🟢
-      </div>
-
-      <div class="stat-label">
-        Bot en ligne
-      </div>
-
+      <div class="stat-value">🟢</div>
+      <div class="stat-label">Bot en ligne</div>
     </div>
-
   </div>
 
   <div class="home-actions">
-
-    <div
-      class="home-action-card"
-      data-goto="products"
-    >
-
-      <div class="home-action-title">
-        Ajouter un produit
-      </div>
-
-      <div class="home-action-desc">
-        Ajoutez le produit, son prix, sa description et obligatoirement sa photo.
-      </div>
-
-      <div class="home-action-link">
-        Ouvrir Produits →
-      </div>
-
+    <div class="home-action-card" data-goto="products" data-product-action="add">
+      <div class="home-action-title">Ajouter un produit</div>
+      <div class="home-action-desc">Ajoutez un produit avec sa photo, son prix et ses informations.</div>
+      <div class="home-action-link">Ajouter un produit →</div>
     </div>
 
-    <div
-      class="home-action-card"
-      data-goto="instructions"
-    >
-
-      <div class="home-action-title">
-        Gérer les instructions
-      </div>
-
-      <div class="home-action-desc">
-        Créez des règles séparées comme dans Meta Business Agent.
-      </div>
-
-      <div class="home-action-link">
-        Ouvrir Instructions →
-      </div>
-
+    <div class="home-action-card" data-goto="products" data-product-action="list">
+      <div class="home-action-title">Liste des produits</div>
+      <div class="home-action-desc">Consultez tous les produits déjà enregistrés, puis modifiez ou supprimez ceux de votre choix.</div>
+      <div class="home-action-link">Voir la liste →</div>
     </div>
 
-    <div
-      class="home-action-card"
-      data-goto="test"
-    >
-
-      <div class="home-action-title">
-        Tester le bot
-      </div>
-
-      <div class="home-action-desc">
-        Testez les nouvelles règles avant WhatsApp.
-      </div>
-
-      <div class="home-action-link">
-        Ouvrir Discussion de test →
-      </div>
-
+    <div class="home-action-card" data-goto="instructions">
+      <div class="home-action-title">Gérer les instructions</div>
+      <div class="home-action-desc">Ajoutez, modifiez ou désactivez les règles utilisées par l'IA.</div>
+      <div class="home-action-link">Ouvrir Instructions →</div>
     </div>
-
   </div>
-
 </section>
 
 <!-- =========================================================
      PRODUITS
      ========================================================= -->
 
-<section
-  class="view"
-  id="view-products"
->
-
+<section class="view" id="view-products">
   <div class="page-header">
-
-    <div class="page-title">
-      Catalogue produits
-    </div>
-
+    <div class="page-title">Catalogue produits</div>
     <div class="page-desc">
-      Chaque produit doit avoir une photo. Ces informations sont utilisées par votre assistant MONDECO.
+      Ajoutez vos produits avec une photo obligatoire. La liste permet ensuite de modifier ou supprimer chaque produit.
     </div>
-
   </div>
 
-  <div class="toolbar">
+  <div class="products-toolbar">
+    <div class="products-toolbar-left">
+      <button class="btn btn-primary" id="addProductBtn">
+        + Ajouter un produit
+      </button>
 
-    <span></span>
-
-    <button
-      class="btn btn-primary"
-      id="addProductBtn"
-    >
-      + Ajouter un produit
-    </button>
-
-  </div>
-
-  <div
-    id="productGrid"
-    class="product-grid"
-  ></div>
-
-  <div
-    id="emptyState"
-    class="empty-state"
-    style="display:none;"
-  >
-
-    <div class="empty-title">
-      Aucun produit
+      <button class="btn btn-ghost" id="showProductsListBtn">
+        📋 Liste des produits
+        <span class="list-counter" id="productsListCount">0</span>
+      </button>
     </div>
 
-    <div>
-      Ajoutez votre premier produit avec sa photo.
+    <div class="products-toolbar-right">
+      <button class="btn btn-ghost" id="refreshProductsBtn">
+        ↻ Actualiser
+      </button>
     </div>
-
   </div>
 
+  <div class="add-product-intro" id="productsIntro">
+    <div class="add-product-intro-icon">🪑</div>
+    <div class="add-product-intro-title">Gestion du catalogue MONDECO</div>
+    <div class="add-product-intro-desc">
+      Utilisez « Ajouter un produit » pour créer une nouvelle fiche. Utilisez « Liste des produits » pour retrouver les produits déjà enregistrés, rechercher un modèle, le modifier ou le supprimer.
+    </div>
+    <button class="btn btn-primary" id="introAddProductBtn">+ Ajouter un produit</button>
+  </div>
+
+  <div class="products-list-panel" id="productsListPanel">
+    <div class="list-panel">
+      <div class="list-panel-header">
+        <div>
+          <div class="list-panel-title">Produits enregistrés</div>
+          <div class="list-panel-subtitle" id="productsResultLabel">0 produit</div>
+        </div>
+
+        <div class="search-wrap">
+          <span class="search-icon">🔎</span>
+          <input
+            type="search"
+            id="productSearchInput"
+            placeholder="Rechercher un produit ou une catégorie..."
+            autocomplete="off"
+          >
+        </div>
+      </div>
+
+      <div class="table-scroll" id="productsTableWrap">
+        <table class="products-table">
+          <thead>
+            <tr>
+              <th>Photo</th>
+              <th>Produit</th>
+              <th>Catégorie</th>
+              <th>Prix</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="productsTableBody"></tbody>
+        </table>
+      </div>
+
+      <div class="list-empty" id="productsListEmpty" style="display:none;">
+        <div class="list-empty-title">Aucun produit trouvé</div>
+        <div id="productsListEmptyText">Ajoutez votre premier produit au catalogue.</div>
+      </div>
+    </div>
+  </div>
 </section>
 
 <!-- =========================================================
      INSTRUCTIONS
      ========================================================= -->
 
-<section
-  class="view"
-  id="view-instructions"
->
-
-  <div
-    class="page-header instructions-header"
-  >
-
+<section class="view" id="view-instructions">
+  <div class="page-header instructions-header">
     <div>
-
-      <div class="page-title">
-        Instructions du bot
-      </div>
-
+      <div class="page-title">Instructions du bot</div>
       <div class="page-desc">
-        Chaque règle est indépendante. Seules les instructions actives sont envoyées à l'IA.
+        Chaque instruction est indépendante. Seules les instructions actives sont envoyées à l'IA.
       </div>
-
     </div>
 
     <div class="instructions-buttons">
-
-      <button
-        class="btn btn-ghost"
-        id="importLegacyBtn"
-      >
-        Importer ancien texte
-      </button>
-
-      <button
-        class="btn btn-ghost"
-        id="importInstructionsBtn"
-      >
-        Importer plusieurs
-      </button>
-
-      <button
-        class="btn btn-primary"
-        id="addInstructionBtn"
-      >
-        + Ajouter une instruction
-      </button>
-
+      <button class="btn btn-ghost" id="importLegacyBtn">Importer ancien texte</button>
+      <button class="btn btn-ghost" id="importInstructionsBtn">Importer plusieurs</button>
+      <button class="btn btn-primary" id="addInstructionBtn">+ Ajouter une instruction</button>
     </div>
-
   </div>
 
   <div class="instruction-summary">
-
-    <strong
-      id="activeInstructionCount"
-    >
-      0 instruction active
-    </strong>
-
+    <strong id="activeInstructionCount">0 instruction active</strong>
     <span>•</span>
-
-    <span
-      id="totalInstructionCount"
-    >
-      0 au total
-    </span>
-
+    <span id="totalInstructionCount">0 au total</span>
   </div>
 
-  <div
-    id="instructionsList"
-    class="instructions-list"
-  ></div>
+  <div id="instructionsList" class="instructions-list"></div>
 
-  <div
-    id="instructionsEmpty"
-    class="empty-state"
-    style="display:none;"
-  >
-
-    <div class="empty-title">
-      Aucune instruction séparée
-    </div>
-
-    <div>
-      Cliquez sur « Ajouter une instruction » ou importez votre ancien texte.
-    </div>
-
+  <div id="instructionsEmpty" class="empty-state" style="display:none;">
+    <div class="empty-title">Aucune instruction séparée</div>
+    <div>Ajoutez votre première instruction ou importez l'ancien texte.</div>
   </div>
-
 </section>
 
 <!-- =========================================================
      TEST
      ========================================================= -->
 
-<section
-  class="view"
-  id="view-test"
->
-
+<section class="view" id="view-test">
   <div class="page-header">
-
-    <div class="page-title">
-      Discussion de test
-    </div>
-
+    <div class="page-title">Discussion de test</div>
     <div class="page-desc">
       Discutez avec votre IA comme un client. Aucun message n'est envoyé sur WhatsApp.
     </div>
-
   </div>
 
   <div class="chat-shell">
-
-    <div
-      class="chat-messages"
-      id="chatMessages"
-    >
-
+    <div class="chat-messages" id="chatMessages">
       <div class="chat-empty">
         Écrivez un message pour commencer.<br><br>
         Exemple : « Bonjour, quel est le prix du salon Infinity ? »
       </div>
-
     </div>
 
-    <form
-      class="chat-input-row"
-      id="chatForm"
-    >
-
+    <form class="chat-input-row" id="chatForm">
       <input
         type="text"
         id="chatInput"
         placeholder="Écrivez comme un client..."
         autocomplete="off"
       >
-
-      <button
-        type="submit"
-        class="btn btn-primary"
-      >
-        Envoyer
-      </button>
-
+      <button type="submit" class="btn btn-primary">Envoyer</button>
     </form>
-
   </div>
-
 </section>
 
+</div>
 </main>
 
 <!-- =========================================================
      MODAL PRODUIT
      ========================================================= -->
 
-<div
-  class="modal-overlay"
-  id="modalOverlay"
->
-
+<div class="modal-overlay" id="productModalOverlay">
   <div class="modal large">
+    <div class="modal-title" id="productModalTitle">Ajouter un produit</div>
 
-    <div
-      class="modal-title"
-      id="modalTitle"
-    >
-      Ajouter un produit
-    </div>
-
-    <form
-      id="productForm"
-      enctype="multipart/form-data"
-    >
-
-      <input
-        type="hidden"
-        id="productId"
-      >
-
-      <input
-        type="hidden"
-        id="currentProductImage"
-      >
-
-      <!-- NOM -->
+    <form id="productForm" enctype="multipart/form-data">
+      <input type="hidden" id="productId">
+      <input type="hidden" id="currentProductImage">
 
       <div class="field">
-
-        <label for="productName">
-          Nom du produit *
-        </label>
-
+        <label for="productName">Nom du produit *</label>
         <input
           type="text"
           id="productName"
           required
           placeholder="Ex : Salon Infinity"
         >
-
       </div>
 
-      <!-- PHOTO -->
-
       <div class="field">
-
         <label>
           Photo du produit
-          <span
-            class="image-required"
-            id="productImageRequiredStar"
-          >
-            *
-          </span>
+          <span class="image-required" id="productImageRequiredStar">*</span>
         </label>
 
-        <label
-          for="productImage"
-          class="image-upload-zone"
-        >
-
-          <div class="image-upload-icon">
-            🖼️
-          </div>
-
-          <div class="image-upload-title">
-            Choisir une photo
-          </div>
-
-          <div
-            class="image-upload-hint"
-            id="imageUploadHint"
-          >
+        <label for="productImage" class="image-upload-zone">
+          <div class="image-upload-icon">🖼️</div>
+          <div class="image-upload-title">Choisir une photo</div>
+          <div class="image-upload-hint" id="imageUploadHint">
             Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo
           </div>
-
         </label>
 
         <input
@@ -1360,243 +1316,121 @@ body {
           accept="image/jpeg,image/png,image/webp"
         >
 
-        <div
-          class="product-image-preview-container"
-          id="productImagePreviewContainer"
-        >
-
+        <div class="product-image-preview-container" id="productImagePreviewContainer">
           <div class="product-image-preview-box">
-
             <img
               class="product-image-preview"
               id="productImagePreview"
               alt="Aperçu du produit"
             >
-
-            <div
-              class="image-preview-label"
-              id="imagePreviewLabel"
-            >
-              Nouvelle photo
-            </div>
-
+            <div class="image-preview-label" id="imagePreviewLabel">Nouvelle photo</div>
           </div>
-
         </div>
 
-        <div
-          class="current-image-note"
-          id="currentImageNote"
-          style="display:none;"
-        >
+        <div class="current-image-note" id="currentImageNote" style="display:none;">
           La photo actuelle sera conservée si vous ne choisissez pas une nouvelle image.
         </div>
-
       </div>
 
-      <!-- CATÉGORIE -->
-
       <div class="field">
-
-        <label for="productCategory">
-          Catégorie
-        </label>
-
+        <label for="productCategory">Catégorie</label>
         <input
           type="text"
           id="productCategory"
           placeholder="Ex : Salon"
         >
-
       </div>
 
-      <!-- PRIX -->
-
       <div class="field">
-
-        <label for="productPrice">
-          Prix (TND)
-        </label>
-
+        <label for="productPrice">Prix (TND)</label>
         <input
           type="text"
           id="productPrice"
           placeholder="Ex : 4190"
         >
-
       </div>
 
-      <!-- DESCRIPTION -->
-
       <div class="field">
-
-        <label for="productDescription">
-          Description
-        </label>
-
+        <label for="productDescription">Description</label>
         <textarea
           id="productDescription"
           placeholder="Dimensions, composition, couleurs, disponibilité, détails importants..."
         ></textarea>
-
       </div>
 
       <div class="modal-actions">
-
-        <button
-          type="button"
-          class="btn btn-ghost"
-          id="cancelModalBtn"
-        >
-          Annuler
-        </button>
-
-        <button
-          type="submit"
-          class="btn btn-primary"
-          id="saveProductBtn"
-        >
-          Enregistrer
-        </button>
-
+        <button type="button" class="btn btn-ghost" id="cancelProductBtn">Annuler</button>
+        <button type="submit" class="btn btn-primary" id="saveProductBtn">Enregistrer</button>
       </div>
-
     </form>
-
   </div>
-
 </div>
 
 <!-- =========================================================
      MODAL INSTRUCTION
      ========================================================= -->
 
-<div
-  class="modal-overlay"
-  id="instructionModalOverlay"
->
-
+<div class="modal-overlay" id="instructionModalOverlay">
   <div class="modal large">
-
-    <div
-      class="modal-title"
-      id="instructionModalTitle"
-    >
-      Ajouter une instruction
-    </div>
+    <div class="modal-title" id="instructionModalTitle">Ajouter une instruction</div>
 
     <form id="instructionForm">
-
-      <input
-        type="hidden"
-        id="instructionId"
-      >
+      <input type="hidden" id="instructionId">
 
       <div class="field">
-
-        <label for="instructionTitle">
-          Titre *
-        </label>
-
+        <label for="instructionTitle">Titre *</label>
         <input
           type="text"
           id="instructionTitle"
           required
           placeholder="Ex : Ne jamais inventer un prix"
         >
-
       </div>
 
       <div class="field">
-
-        <label for="instructionContent">
-          Instruction complète *
-        </label>
-
+        <label for="instructionContent">Instruction complète *</label>
         <textarea
           id="instructionContent"
           required
           style="min-height:230px;"
           placeholder="Expliquez précisément ce que l'IA doit faire..."
         ></textarea>
-
       </div>
 
       <div class="field">
-
-        <label
-          style="
-            display:flex;
-            align-items:center;
-            gap:10px;
-            cursor:pointer;
-          "
-        >
-
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
           <input
             type="checkbox"
             id="instructionActive"
             checked
             style="width:auto;"
           >
-
           Instruction active
-
         </label>
-
       </div>
 
       <div class="modal-actions">
-
-        <button
-          type="button"
-          class="btn btn-ghost"
-          id="cancelInstructionBtn"
-        >
-          Annuler
-        </button>
-
-        <button
-          type="submit"
-          class="btn btn-primary"
-        >
-          Enregistrer
-        </button>
-
+        <button type="button" class="btn btn-ghost" id="cancelInstructionBtn">Annuler</button>
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
       </div>
-
     </form>
-
   </div>
-
 </div>
 
 <!-- =========================================================
      MODAL IMPORT INSTRUCTIONS
      ========================================================= -->
 
-<div
-  class="modal-overlay"
-  id="importInstructionsOverlay"
->
-
+<div class="modal-overlay" id="importInstructionsOverlay">
   <div class="modal large">
-
-    <div class="modal-title">
-      Importer plusieurs instructions
-    </div>
+    <div class="modal-title">Importer plusieurs instructions</div>
 
     <div class="modal-desc">
-      Séparez chaque instruction par une ligne vide.
-      La première ligne de chaque bloc devient le titre.
+      Séparez chaque instruction par une ligne vide. La première ligne de chaque bloc devient le titre.
     </div>
 
     <div class="field">
-
-      <label for="bulkInstructionsText">
-        Instructions
-      </label>
-
+      <label for="bulkInstructionsText">Instructions</label>
       <textarea
         id="bulkInstructionsText"
         style="min-height:350px;"
@@ -1609,80 +1443,65 @@ Lorsqu'un client envoie une photo ou une capture d'écran, ne pas répondre auto
 Qualification client
 Demander progressivement la ville, les dimensions et le délai d'achat."
       ></textarea>
-
     </div>
 
     <div class="modal-actions">
-
-      <button
-        type="button"
-        class="btn btn-ghost"
-        id="cancelImportInstructionsBtn"
-      >
-        Annuler
-      </button>
-
-      <button
-        type="button"
-        class="btn btn-primary"
-        id="confirmImportInstructionsBtn"
-      >
-        Importer
-      </button>
-
+      <button type="button" class="btn btn-ghost" id="cancelImportInstructionsBtn">Annuler</button>
+      <button type="button" class="btn btn-primary" id="confirmImportInstructionsBtn">Importer</button>
     </div>
-
   </div>
-
 </div>
 
-<script>
+<div class="toast" id="toast"></div>
 
+<script>
 /* ============================================================
    API
    ============================================================ */
 
-async function apiFetch(
-  url,
-  options = {}
-) {
+async function apiFetch(url, options = {}) {
+  const response = await fetch(url, options);
 
-  const response =
-    await fetch(
-      url,
-      options
-    );
-
-  if (
-    response.status === 401
-  ) {
-
-    window.location.href =
-      '/admin/login';
-
-    throw new Error(
-      'Session expirée'
-    );
+  if (response.status === 401) {
+    window.location.href = '/admin/login';
+    throw new Error('Session expirée');
   }
 
   return response;
 }
 
+async function safeJson(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
 /* ============================================================
-   ESCAPE HTML
+   HELPERS
    ============================================================ */
 
 function escapeHtml(value) {
-
-  const div =
-    document.createElement(
-      'div'
-    );
-
-  div.textContent =
-    String(value ?? '');
-
+  const div = document.createElement('div');
+  div.textContent = String(value ?? '');
   return div.innerHTML;
+}
+
+function showToast(message) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('visible');
+
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => {
+    toast.classList.remove('visible');
+  }, 2600);
+}
+
+function formatProductPrice(price) {
+  const value = String(price ?? '').trim();
+  return value ? `${value} TND` : '—';
 }
 
 /* ============================================================
@@ -1690,893 +1509,473 @@ function escapeHtml(value) {
    ============================================================ */
 
 function openView(viewName) {
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+    item.classList.remove('active');
+  });
 
-  document
-    .querySelectorAll(
-      '.nav-item[data-view]'
-    )
-    .forEach(item =>
-      item.classList.remove(
-        'active'
-      )
-    );
+  document.querySelectorAll('.view').forEach(view => {
+    view.classList.remove('active');
+  });
 
-  document
-    .querySelectorAll(
-      '.view'
-    )
-    .forEach(view =>
-      view.classList.remove(
-        'active'
-      )
-    );
+  const nav = document.querySelector(`.nav-item[data-view="${viewName}"]`);
+  const view = document.getElementById('view-' + viewName);
 
-  const nav =
-    document.querySelector(
-      `.nav-item[data-view="${viewName}"]`
-    );
-
-  const view =
-    document.getElementById(
-      'view-' + viewName
-    );
-
-  if (nav) {
-    nav.classList.add(
-      'active'
-    );
-  }
-
-  if (view) {
-    view.classList.add(
-      'active'
-    );
-  }
+  if (nav) nav.classList.add('active');
+  if (view) view.classList.add('active');
 }
 
-document
-  .querySelectorAll(
-    '.nav-item[data-view]'
-  )
-  .forEach(item => {
-
-    item.addEventListener(
-      'click',
-      () => {
-        openView(
-          item.dataset.view
-        );
-      }
-    );
-
+document.querySelectorAll('.nav-item[data-view]').forEach(item => {
+  item.addEventListener('click', () => {
+    openView(item.dataset.view);
   });
+});
 
-document
-  .querySelectorAll(
-    '.home-action-card'
-  )
-  .forEach(card => {
+document.querySelectorAll('.home-action-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const destination = card.dataset.goto;
+    openView(destination);
 
-    card.addEventListener(
-      'click',
-      () => {
-        openView(
-          card.dataset.goto
-        );
+    if (destination === 'products') {
+      const action = card.dataset.productAction;
+
+      if (action === 'add') {
+        openAddProductModal();
       }
-    );
 
+      if (action === 'list') {
+        showProductsList();
+      }
+    }
   });
+});
 
 /* ============================================================
    LOGOUT
    ============================================================ */
 
-document
-  .getElementById(
-    'logoutBtn'
-  )
-  .addEventListener(
-    'click',
-    async () => {
-
-      await fetch(
-        '/admin/logout',
-        {
-          method: 'POST'
-        }
-      );
-
-      window.location.href =
-        '/admin/login';
-
-    }
-  );
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/admin/logout', { method: 'POST' });
+  window.location.href = '/admin/login';
+});
 
 /* ============================================================
    PRODUITS
    ============================================================ */
 
 let products = [];
+let productSearch = '';
 
 async function loadProducts() {
-
   try {
+    const response = await apiFetch('/admin/api/products');
+    const data = await safeJson(response);
 
-    const response =
-      await apiFetch(
-        '/admin/api/products'
-      );
+    products = Array.isArray(data) ? data : [];
 
-    products =
-      await response.json();
+    document.getElementById('productsListCount').textContent = products.length;
 
-    if (
-      !Array.isArray(
-        products
-      )
-    ) {
-      products = [];
-    }
-
-    renderProducts();
-
+    renderProductsTable();
   } catch (error) {
-
-    console.error(
-      'Produits :',
-      error
-    );
+    console.error('Produits :', error);
   }
 }
 
-function renderProducts() {
+function getFilteredProducts() {
+  const query = productSearch.trim().toLowerCase();
 
-  const grid =
-    document.getElementById(
-      'productGrid'
-    );
+  if (!query) {
+    return products;
+  }
 
-  const empty =
-    document.getElementById(
-      'emptyState'
-    );
+  return products.filter(product => {
+    const searchable = [
+      product.name,
+      product.category,
+      product.price,
+      product.description
+    ]
+      .map(value => String(value ?? '').toLowerCase())
+      .join(' ');
 
-  if (
-    products.length === 0
-  ) {
+    return searchable.includes(query);
+  });
+}
 
-    grid.innerHTML =
-      '';
+function renderProductsTable() {
+  const body = document.getElementById('productsTableBody');
+  const tableWrap = document.getElementById('productsTableWrap');
+  const empty = document.getElementById('productsListEmpty');
+  const emptyText = document.getElementById('productsListEmptyText');
+  const resultLabel = document.getElementById('productsResultLabel');
 
-    grid.style.display =
-      'none';
+  const filtered = getFilteredProducts();
 
-    empty.style.display =
-      'block';
+  resultLabel.textContent =
+    filtered.length === 1
+      ? '1 produit affiché'
+      : `${filtered.length} produits affichés`;
+
+  if (filtered.length === 0) {
+    body.innerHTML = '';
+    tableWrap.style.display = 'none';
+    empty.style.display = 'block';
+
+    emptyText.textContent = products.length === 0
+      ? 'Ajoutez votre premier produit au catalogue.'
+      : 'Aucun produit ne correspond à votre recherche.';
 
     return;
   }
 
-  grid.style.display =
-    'grid';
+  tableWrap.style.display = 'block';
+  empty.style.display = 'none';
 
-  empty.style.display =
-    'none';
+  body.innerHTML = filtered.map(product => {
+    const imageCell = product.image
+      ? `
+        <img
+          class="table-product-photo"
+          src="${escapeHtml(product.image)}"
+          alt="${escapeHtml(product.name)}"
+          loading="lazy"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
+        >
+        <div class="table-photo-placeholder" style="display:none;">Image indisponible</div>
+      `
+      : `<div class="table-photo-placeholder">Sans photo</div>`;
 
-  grid.innerHTML =
-    products
-      .map(product => `
+    return `
+      <tr>
+        <td>${imageCell}</td>
 
-        <div class="product-card">
-
+        <td>
+          <div class="table-product-name">${escapeHtml(product.name || '')}</div>
           ${
-            product.image
-              ? `
-                <div class="product-image-wrapper">
-
-                  <img
-                    class="product-image"
-                    src="${escapeHtml(product.image)}"
-                    alt="${escapeHtml(product.name)}"
-                    loading="lazy"
-                    onerror="
-                      this.parentElement.innerHTML =
-                      '<div class=&quot;product-image-placeholder&quot;>Image indisponible</div>'
-                    "
-                  >
-
-                </div>
-              `
-              : `
-                <div class="product-image-placeholder">
-                  Aucune image
-                </div>
-              `
+            product.description
+              ? `<div class="table-product-description">${escapeHtml(product.description)}</div>`
+              : ''
           }
+        </td>
 
-          <div class="product-card-body">
+        <td>
+          ${
+            product.category
+              ? `<span class="category-pill">${escapeHtml(product.category)}</span>`
+              : '—'
+          }
+        </td>
 
-            ${
-              product.category
-                ? `
-                  <div class="product-cat">
-                    ${escapeHtml(product.category)}
-                  </div>
-                `
-                : ''
-            }
+        <td class="table-price">${escapeHtml(formatProductPrice(product.price))}</td>
 
-            <div class="product-name">
-              ${escapeHtml(product.name)}
-            </div>
-
-            ${
-              product.description
-                ? `
-                  <div class="product-desc">
-                    ${escapeHtml(product.description)}
-                  </div>
-                `
-                : ''
-            }
-
-            ${
-              product.price
-                ? `
-                  <div class="product-price">
-                    ${escapeHtml(product.price)} TND
-                  </div>
-                `
-                : ''
-            }
-
-          </div>
-
-          <div class="product-actions">
-
-            <span
+        <td>
+          <div class="table-actions">
+            <button
+              type="button"
+              class="action-btn"
               onclick="editProduct('${product.id}')"
             >
               Modifier
-            </span>
+            </button>
 
-            <span
+            <button
+              type="button"
+              class="action-btn delete"
               onclick="deleteProduct('${product.id}')"
             >
               Supprimer
-            </span>
-
+            </button>
           </div>
-
-        </div>
-
-      `)
-      .join('');
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
+
+function showProductsList() {
+  document.getElementById('productsIntro').style.display = 'none';
+  document.getElementById('productsListPanel').classList.add('visible');
+  renderProductsTable();
+
+  setTimeout(() => {
+    document.getElementById('productSearchInput').focus();
+  }, 50);
+}
+
+document.getElementById('showProductsListBtn').addEventListener('click', () => {
+  showProductsList();
+});
+
+document.getElementById('refreshProductsBtn').addEventListener('click', async () => {
+  await loadProducts();
+  showProductsList();
+  showToast('Liste des produits actualisée.');
+});
+
+document.getElementById('productSearchInput').addEventListener('input', event => {
+  productSearch = event.target.value;
+  renderProductsTable();
+});
 
 /* ============================================================
    MODAL PRODUIT
    ============================================================ */
 
-const productOverlay =
-  document.getElementById(
-    'modalOverlay'
-  );
+const productOverlay = document.getElementById('productModalOverlay');
+const productForm = document.getElementById('productForm');
+const productImageInput = document.getElementById('productImage');
+const productImagePreview = document.getElementById('productImagePreview');
+const productImagePreviewContainer = document.getElementById('productImagePreviewContainer');
+const currentImageNote = document.getElementById('currentImageNote');
+const imagePreviewLabel = document.getElementById('imagePreviewLabel');
+const imageUploadHint = document.getElementById('imageUploadHint');
+const imageRequiredStar = document.getElementById('productImageRequiredStar');
+const saveProductBtn = document.getElementById('saveProductBtn');
 
-const productForm =
-  document.getElementById(
-    'productForm'
-  );
+let temporaryPreviewUrl = null;
 
-const productImageInput =
-  document.getElementById(
-    'productImage'
-  );
-
-const productImagePreview =
-  document.getElementById(
-    'productImagePreview'
-  );
-
-const productImagePreviewContainer =
-  document.getElementById(
-    'productImagePreviewContainer'
-  );
-
-const currentImageNote =
-  document.getElementById(
-    'currentImageNote'
-  );
-
-const imagePreviewLabel =
-  document.getElementById(
-    'imagePreviewLabel'
-  );
-
-const imageUploadHint =
-  document.getElementById(
-    'imageUploadHint'
-  );
-
-const imageRequiredStar =
-  document.getElementById(
-    'productImageRequiredStar'
-  );
-
-const saveProductBtn =
-  document.getElementById(
-    'saveProductBtn'
-  );
-
-let temporaryPreviewUrl =
-  null;
-
-/* ============================================================
-   RESET MODAL PRODUIT
-   ============================================================ */
+function clearTemporaryPreview() {
+  if (temporaryPreviewUrl) {
+    URL.revokeObjectURL(temporaryPreviewUrl);
+    temporaryPreviewUrl = null;
+  }
+}
 
 function resetProductModal() {
+  clearTemporaryPreview();
 
   productForm.reset();
 
-  document
-    .getElementById(
-      'productId'
-    )
-    .value = '';
+  document.getElementById('productId').value = '';
+  document.getElementById('currentProductImage').value = '';
 
-  document
-    .getElementById(
-      'currentProductImage'
-    )
-    .value = '';
+  productImageInput.value = '';
+  productImageInput.required = true;
 
-  productImageInput.value =
-    '';
-
-  productImageInput.required =
-    true;
-
-  currentImageNote.style.display =
-    'none';
-
-  imageRequiredStar.style.display =
-    'inline';
+  currentImageNote.style.display = 'none';
+  imageRequiredStar.style.display = 'inline';
 
   imageUploadHint.textContent =
     'Photo obligatoire • JPG, PNG ou WEBP • Maximum 8 Mo';
 
-  productImagePreviewContainer
-    .classList
-    .remove(
-      'visible'
-    );
+  productImagePreviewContainer.classList.remove('visible');
+  productImagePreview.removeAttribute('src');
 
-  productImagePreview.src =
-    '';
-
-  if (
-    temporaryPreviewUrl
-  ) {
-
-    URL.revokeObjectURL(
-      temporaryPreviewUrl
-    );
-
-    temporaryPreviewUrl =
-      null;
-  }
+  imagePreviewLabel.textContent = 'Nouvelle photo';
 }
 
-/* ============================================================
-   AJOUT PRODUIT
-   ============================================================ */
+function openAddProductModal() {
+  resetProductModal();
 
-document
-  .getElementById(
-    'addProductBtn'
-  )
-  .addEventListener(
-    'click',
-    () => {
+  document.getElementById('productModalTitle').textContent =
+    'Ajouter un produit';
 
-      resetProductModal();
+  productOverlay.classList.add('active');
 
-      document
-        .getElementById(
-          'modalTitle'
-        )
-        .textContent =
-          'Ajouter un produit';
+  setTimeout(() => {
+    document.getElementById('productName').focus();
+  }, 50);
+}
 
-      productOverlay
-        .classList
-        .add('active');
-    }
+document.getElementById('addProductBtn').addEventListener('click', openAddProductModal);
+document.getElementById('introAddProductBtn').addEventListener('click', openAddProductModal);
+
+document.getElementById('cancelProductBtn').addEventListener('click', () => {
+  productOverlay.classList.remove('active');
+  resetProductModal();
+});
+
+productImageInput.addEventListener('change', () => {
+  const file = productImageInput.files[0];
+
+  if (!file) {
+    return;
+  }
+
+  const allowedTypes = [
+    'image/jpeg',
+    'image/png',
+    'image/webp'
+  ];
+
+  if (!allowedTypes.includes(file.type)) {
+    alert('Format non accepté. Utilisez JPG, PNG ou WEBP.');
+    productImageInput.value = '';
+    return;
+  }
+
+  const maxSize = 8 * 1024 * 1024;
+
+  if (file.size > maxSize) {
+    alert('La photo dépasse 8 Mo.');
+    productImageInput.value = '';
+    return;
+  }
+
+  clearTemporaryPreview();
+
+  temporaryPreviewUrl = URL.createObjectURL(file);
+
+  productImagePreview.src = temporaryPreviewUrl;
+  imagePreviewLabel.textContent = 'Nouvelle photo';
+  productImagePreviewContainer.classList.add('visible');
+});
+
+window.editProduct = function(id) {
+  const product = products.find(item => item.id === id);
+
+  if (!product) {
+    alert('Produit introuvable.');
+    return;
+  }
+
+  resetProductModal();
+
+  document.getElementById('productModalTitle').textContent =
+    'Modifier le produit';
+
+  document.getElementById('productId').value = product.id;
+  document.getElementById('productName').value = product.name || '';
+  document.getElementById('productCategory').value = product.category || '';
+  document.getElementById('productPrice').value = product.price || '';
+  document.getElementById('productDescription').value = product.description || '';
+  document.getElementById('currentProductImage').value = product.image || '';
+
+  if (product.image) {
+    productImageInput.required = false;
+    imageRequiredStar.style.display = 'none';
+    currentImageNote.style.display = 'block';
+
+    imageUploadHint.textContent =
+      'Choisissez une nouvelle photo uniquement si vous souhaitez remplacer la photo actuelle.';
+
+    productImagePreview.src = product.image;
+    imagePreviewLabel.textContent = 'Photo actuelle';
+    productImagePreviewContainer.classList.add('visible');
+  } else {
+    productImageInput.required = true;
+    imageRequiredStar.style.display = 'inline';
+    currentImageNote.style.display = 'none';
+
+    imageUploadHint.textContent =
+      'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.';
+  }
+
+  productOverlay.classList.add('active');
+};
+
+window.deleteProduct = async function(id) {
+  const product = products.find(item => item.id === id);
+
+  if (!product) {
+    alert('Produit introuvable.');
+    return;
+  }
+
+  const confirmed = confirm(
+    `Supprimer « ${product.name} » ?\n\nCette action supprimera également sa photo enregistrée.`
   );
 
-/* ============================================================
-   ANNULER
-   ============================================================ */
+  if (!confirmed) {
+    return;
+  }
 
-document
-  .getElementById(
-    'cancelModalBtn'
-  )
-  .addEventListener(
-    'click',
-    () => {
+  try {
+    const response = await apiFetch(
+      '/admin/api/products/' + encodeURIComponent(id),
+      { method: 'DELETE' }
+    );
 
-      productOverlay
-        .classList
-        .remove('active');
-
-      resetProductModal();
-    }
-  );
-
-/* ============================================================
-   APERÇU IMAGE
-   ============================================================ */
-
-productImageInput
-  .addEventListener(
-    'change',
-    () => {
-
-      const file =
-        productImageInput
-          .files[0];
-
-      if (!file) {
-        return;
-      }
-
-      const allowedTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/webp'
-      ];
-
-      if (
-        !allowedTypes.includes(
-          file.type
-        )
-      ) {
-
-        alert(
-          'Format non accepté. Utilisez JPG, PNG ou WEBP.'
-        );
-
-        productImageInput.value =
-          '';
-
-        return;
-      }
-
-      const maxSize =
-        8 * 1024 * 1024;
-
-      if (
-        file.size > maxSize
-      ) {
-
-        alert(
-          'La photo dépasse 8 Mo.'
-        );
-
-        productImageInput.value =
-          '';
-
-        return;
-      }
-
-      if (
-        temporaryPreviewUrl
-      ) {
-
-        URL.revokeObjectURL(
-          temporaryPreviewUrl
-        );
-      }
-
-      temporaryPreviewUrl =
-        URL.createObjectURL(
-          file
-        );
-
-      productImagePreview.src =
-        temporaryPreviewUrl;
-
-      imagePreviewLabel.textContent =
-        'Nouvelle photo';
-
-      productImagePreviewContainer
-        .classList
-        .add(
-          'visible'
-        );
-    }
-  );
-
-/* ============================================================
-   MODIFIER PRODUIT
-   ============================================================ */
-
-window.editProduct =
-  function(id) {
-
-    const product =
-      products.find(
-        item =>
-          item.id === id
-      );
-
-    if (!product) {
-      return;
-    }
-
-    resetProductModal();
-
-    document
-      .getElementById(
-        'modalTitle'
-      )
-      .textContent =
-        'Modifier le produit';
-
-    document
-      .getElementById(
-        'productId'
-      )
-      .value =
-        product.id;
-
-    document
-      .getElementById(
-        'productName'
-      )
-      .value =
-        product.name || '';
-
-    document
-      .getElementById(
-        'productCategory'
-      )
-      .value =
-        product.category || '';
-
-    document
-      .getElementById(
-        'productPrice'
-      )
-      .value =
-        product.price || '';
-
-    document
-      .getElementById(
-        'productDescription'
-      )
-      .value =
-        product.description || '';
-
-    document
-      .getElementById(
-        'currentProductImage'
-      )
-      .value =
-        product.image || '';
-
-    /*
-      En modification :
-      la nouvelle photo n'est pas obligatoire
-      si le produit possède déjà une image.
-    */
-
-    if (
-      product.image
-    ) {
-
-      productImageInput.required =
-        false;
-
-      imageRequiredStar.style.display =
-        'none';
-
-      currentImageNote.style.display =
-        'block';
-
-      imageUploadHint.textContent =
-        'Choisissez une nouvelle photo uniquement si vous souhaitez remplacer la photo actuelle.';
-
-      productImagePreview.src =
-        product.image;
-
-      imagePreviewLabel.textContent =
-        'Photo actuelle';
-
-      productImagePreviewContainer
-        .classList
-        .add(
-          'visible'
-        );
-
-    } else {
-
-      /*
-        Pour un ancien produit qui n'a pas encore
-        de photo, elle devient obligatoire.
-      */
-
-      productImageInput.required =
-        true;
-
-      imageRequiredStar.style.display =
-        'inline';
-
-      currentImageNote.style.display =
-        'none';
-
-      imageUploadHint.textContent =
-        'Ce produit n’a pas encore de photo. Ajoutez obligatoirement une image.';
-    }
-
-    productOverlay
-      .classList
-      .add('active');
-  };
-
-/* ============================================================
-   SUPPRIMER PRODUIT
-   ============================================================ */
-
-window.deleteProduct =
-  async function(id) {
-
-    const product =
-      products.find(
-        item =>
-          item.id === id
-      );
-
-    const label =
-      product
-        ? product.name
-        : 'ce produit';
-
-    if (
-      !confirm(
-        `Supprimer « ${label} » ?`
-      )
-    ) {
-      return;
-    }
-
-    const response =
-      await apiFetch(
-        '/admin/api/products/' +
-          id,
-        {
-          method:
-            'DELETE'
-        }
-      );
-
-    let data = {};
-
-    try {
-      data =
-        await response.json();
-    } catch {}
+    const data = await safeJson(response);
 
     if (!response.ok) {
-
-      alert(
-        data.error ||
-        'Impossible de supprimer le produit.'
-      );
-
+      alert(data.error || 'Impossible de supprimer le produit.');
       return;
     }
 
     await loadProducts();
     await loadStats();
-  };
+    showProductsList();
 
-/* ============================================================
-   ENREGISTRER PRODUIT AVEC FORMDATA
-   ============================================================ */
+    showToast(`Produit « ${product.name} » supprimé.`);
+  } catch (error) {
+    console.error('Suppression produit :', error);
+    alert('Impossible de contacter le serveur.');
+  }
+};
 
-productForm
-  .addEventListener(
-    'submit',
-    async event => {
+productForm.addEventListener('submit', async event => {
+  event.preventDefault();
 
-      event.preventDefault();
+  const id = document.getElementById('productId').value;
+  const currentImage = document.getElementById('currentProductImage').value;
+  const imageFile = productImageInput.files[0];
 
-      const id =
-        document
-          .getElementById(
-            'productId'
-          )
-          .value;
+  if (!imageFile && !currentImage) {
+    alert('La photo du produit est obligatoire.');
+    return;
+  }
 
-      const currentImage =
-        document
-          .getElementById(
-            'currentProductImage'
-          )
-          .value;
+  const name = document.getElementById('productName').value.trim();
 
-      const imageFile =
-        productImageInput
-          .files[0];
+  if (!name) {
+    alert('Le nom du produit est obligatoire.');
+    return;
+  }
 
-      /*
-        Photo obligatoire :
-        - création : toujours
-        - modification d'un ancien produit sans image : oui
-        - modification d'un produit qui a déjà une image : non
-      */
+  const formData = new FormData();
 
-      if (
-        !imageFile &&
-        !currentImage
-      ) {
+  formData.append('name', name);
+  formData.append('category', document.getElementById('productCategory').value);
+  formData.append('price', document.getElementById('productPrice').value);
+  formData.append('description', document.getElementById('productDescription').value);
 
-        alert(
-          'La photo du produit est obligatoire.'
-        );
+  if (imageFile) {
+    formData.append('image', imageFile);
+  }
 
-        return;
-      }
+  saveProductBtn.disabled = true;
+  saveProductBtn.textContent = 'Enregistrement...';
 
-      const formData =
-        new FormData();
+  try {
+    const url = id
+      ? '/admin/api/products/' + encodeURIComponent(id)
+      : '/admin/api/products';
 
-      formData.append(
-        'name',
-        document
-          .getElementById(
-            'productName'
-          )
-          .value
-      );
+    const method = id ? 'PUT' : 'POST';
 
-      formData.append(
-        'category',
-        document
-          .getElementById(
-            'productCategory'
-          )
-          .value
-      );
+    const response = await apiFetch(url, {
+      method,
+      body: formData
+    });
 
-      formData.append(
-        'price',
-        document
-          .getElementById(
-            'productPrice'
-          )
-          .value
-      );
+    const data = await safeJson(response);
 
-      formData.append(
-        'description',
-        document
-          .getElementById(
-            'productDescription'
-          )
-          .value
-      );
-
-      if (
-        imageFile
-      ) {
-
-        formData.append(
-          'image',
-          imageFile
-        );
-      }
-
-      saveProductBtn.disabled =
-        true;
-
-      saveProductBtn.textContent =
-        'Enregistrement...';
-
-      try {
-
-        const url =
-          id
-            ? '/admin/api/products/' +
-              id
-            : '/admin/api/products';
-
-        const method =
-          id
-            ? 'PUT'
-            : 'POST';
-
-        /*
-          IMPORTANT :
-          ne PAS définir manuellement
-          Content-Type multipart/form-data.
-
-          Le navigateur ajoute automatiquement
-          le boundary nécessaire à FormData.
-        */
-
-        const response =
-          await apiFetch(
-            url,
-            {
-              method,
-              body:
-                formData
-            }
-          );
-
-        let data = {};
-
-        try {
-
-          data =
-            await response.json();
-
-        } catch {
-
-          data = {
-            error:
-              'Réponse serveur invalide.'
-          };
-        }
-
-        if (!response.ok) {
-
-          alert(
-            data.error ||
-            'Impossible d’enregistrer le produit.'
-          );
-
-          return;
-        }
-
-        productOverlay
-          .classList
-          .remove(
-            'active'
-          );
-
-        resetProductModal();
-
-        await loadProducts();
-        await loadStats();
-
-      } catch (error) {
-
-        console.error(
-          'Sauvegarde produit :',
-          error
-        );
-
-        alert(
-          'Impossible de contacter le serveur.'
-        );
-
-      } finally {
-
-        saveProductBtn.disabled =
-          false;
-
-        saveProductBtn.textContent =
-          'Enregistrer';
-      }
-
+    if (!response.ok) {
+      alert(data.error || 'Impossible d’enregistrer le produit.');
+      return;
     }
-  );
+
+    productOverlay.classList.remove('active');
+    resetProductModal();
+
+    await loadProducts();
+    await loadStats();
+
+    showProductsList();
+
+    showToast(
+      id
+        ? 'Produit modifié avec succès.'
+        : 'Produit ajouté avec succès.'
+    );
+  } catch (error) {
+    console.error('Sauvegarde produit :', error);
+    alert('Impossible de contacter le serveur.');
+  } finally {
+    saveProductBtn.disabled = false;
+    saveProductBtn.textContent = 'Enregistrer';
+  }
+});
 
 /* ============================================================
    INSTRUCTIONS
@@ -2585,732 +1984,356 @@ productForm
 let instructions = [];
 
 async function loadInstructions() {
-
   try {
+    const response = await apiFetch('/admin/api/instructions');
+    const data = await safeJson(response);
 
-    const response =
-      await apiFetch(
-        '/admin/api/instructions'
-      );
-
-    instructions =
-      await response.json();
-
-    if (
-      !Array.isArray(
-        instructions
-      )
-    ) {
-      instructions = [];
-    }
+    instructions = Array.isArray(data) ? data : [];
 
     renderInstructions();
-
   } catch (error) {
-
-    console.error(
-      'Instructions :',
-      error
-    );
+    console.error('Instructions :', error);
   }
 }
 
 function renderInstructions() {
+  const list = document.getElementById('instructionsList');
+  const empty = document.getElementById('instructionsEmpty');
+  const activeCountElement = document.getElementById('activeInstructionCount');
+  const totalCountElement = document.getElementById('totalInstructionCount');
 
-  const list =
-    document.getElementById(
-      'instructionsList'
-    );
-
-  const empty =
-    document.getElementById(
-      'instructionsEmpty'
-    );
-
-  const activeCountElement =
-    document.getElementById(
-      'activeInstructionCount'
-    );
-
-  const totalCountElement =
-    document.getElementById(
-      'totalInstructionCount'
-    );
-
-  const activeCount =
-    instructions.filter(
-      instruction =>
-        instruction.active !== false
-    ).length;
+  const activeCount = instructions.filter(
+    instruction => instruction.active !== false
+  ).length;
 
   activeCountElement.textContent =
-    `${activeCount} ${
-      activeCount > 1
-        ? 'instructions actives'
-        : 'instruction active'
-    }`;
+    `${activeCount} ${activeCount > 1 ? 'instructions actives' : 'instruction active'}`;
 
   totalCountElement.textContent =
     `${instructions.length} au total`;
 
-  if (
-    instructions.length === 0
-  ) {
-
-    list.innerHTML =
-      '';
-
-    empty.style.display =
-      'block';
-
+  if (instructions.length === 0) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
     return;
   }
 
-  empty.style.display =
-    'none';
+  empty.style.display = 'none';
 
-  list.innerHTML =
-    instructions
-      .map(instruction => {
+  list.innerHTML = instructions.map(instruction => {
+    const active = instruction.active !== false;
 
-        const active =
-          instruction.active !== false;
+    return `
+      <div class="instruction-card">
+        <div class="instruction-status ${active ? 'active' : 'inactive'}">
+          ${active ? '✓' : '—'}
+        </div>
 
-        return `
-
-          <div class="instruction-card">
-
-            <div
-              class="
-                instruction-status
-                ${
-                  active
-                    ? 'active'
-                    : 'inactive'
-                }
-              "
-            >
-              ${
-                active
-                  ? '✓'
-                  : '—'
-              }
-            </div>
-
-            <div class="instruction-body">
-
-              <div class="instruction-title">
-                ${escapeHtml(instruction.title)}
-              </div>
-
-              <div class="instruction-preview">
-                ${escapeHtml(instruction.content)}
-              </div>
-
-              <div class="instruction-meta">
-                ${
-                  active
-                    ? 'Instruction active'
-                    : 'Instruction désactivée'
-                }
-              </div>
-
-            </div>
-
-            <div class="instruction-actions">
-
-              <button
-                class="instruction-action"
-                onclick="toggleInstruction('${instruction.id}')"
-              >
-                ${
-                  active
-                    ? 'Désactiver'
-                    : 'Activer'
-                }
-              </button>
-
-              <button
-                class="instruction-action"
-                onclick="editInstruction('${instruction.id}')"
-              >
-                Modifier
-              </button>
-
-              <button
-                class="instruction-action delete"
-                onclick="deleteInstruction('${instruction.id}')"
-              >
-                Supprimer
-              </button>
-
-            </div>
-
+        <div class="instruction-body">
+          <div class="instruction-title">
+            ${escapeHtml(instruction.title)}
           </div>
 
-        `;
+          <div class="instruction-preview">
+            ${escapeHtml(instruction.content)}
+          </div>
 
-      })
-      .join('');
+          <div class="instruction-meta">
+            ${active ? 'Instruction active' : 'Instruction désactivée'}
+          </div>
+        </div>
+
+        <div class="instruction-actions">
+          <button
+            type="button"
+            class="instruction-action"
+            onclick="toggleInstruction('${instruction.id}')"
+          >
+            ${active ? 'Désactiver' : 'Activer'}
+          </button>
+
+          <button
+            type="button"
+            class="instruction-action"
+            onclick="editInstruction('${instruction.id}')"
+          >
+            Modifier
+          </button>
+
+          <button
+            type="button"
+            class="instruction-action delete"
+            onclick="deleteInstruction('${instruction.id}')"
+          >
+            Supprimer
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 /* ============================================================
    MODAL INSTRUCTION
    ============================================================ */
 
-const instructionOverlay =
-  document.getElementById(
-    'instructionModalOverlay'
-  );
+const instructionOverlay = document.getElementById('instructionModalOverlay');
+const instructionForm = document.getElementById('instructionForm');
 
-const instructionForm =
-  document.getElementById(
-    'instructionForm'
-  );
+document.getElementById('addInstructionBtn').addEventListener('click', () => {
+  instructionForm.reset();
 
-document
-  .getElementById(
-    'addInstructionBtn'
-  )
-  .addEventListener(
-    'click',
-    () => {
+  document.getElementById('instructionModalTitle').textContent =
+    'Ajouter une instruction';
 
-      instructionForm.reset();
+  document.getElementById('instructionId').value = '';
+  document.getElementById('instructionActive').checked = true;
 
-      document
-        .getElementById(
-          'instructionModalTitle'
-        )
-        .textContent =
-          'Ajouter une instruction';
+  instructionOverlay.classList.add('active');
 
-      document
-        .getElementById(
-          'instructionId'
-        )
-        .value = '';
+  setTimeout(() => {
+    document.getElementById('instructionTitle').focus();
+  }, 50);
+});
 
-      document
-        .getElementById(
-          'instructionActive'
-        )
-        .checked =
-          true;
+document.getElementById('cancelInstructionBtn').addEventListener('click', () => {
+  instructionOverlay.classList.remove('active');
+});
 
-      instructionOverlay
-        .classList
-        .add('active');
-    }
-  );
+window.editInstruction = function(id) {
+  const instruction = instructions.find(item => item.id === id);
 
-document
-  .getElementById(
-    'cancelInstructionBtn'
-  )
-  .addEventListener(
-    'click',
-    () => {
+  if (!instruction) {
+    return;
+  }
 
-      instructionOverlay
-        .classList
-        .remove('active');
-    }
-  );
+  document.getElementById('instructionModalTitle').textContent =
+    'Modifier l’instruction';
 
-window.editInstruction =
-  function(id) {
+  document.getElementById('instructionId').value = instruction.id;
+  document.getElementById('instructionTitle').value = instruction.title || '';
+  document.getElementById('instructionContent').value = instruction.content || '';
+  document.getElementById('instructionActive').checked = instruction.active !== false;
 
-    const instruction =
-      instructions.find(
-        item =>
-          item.id === id
-      );
+  instructionOverlay.classList.add('active');
+};
 
-    if (!instruction) {
-      return;
-    }
+instructionForm.addEventListener('submit', async event => {
+  event.preventDefault();
 
-    document
-      .getElementById(
-        'instructionModalTitle'
-      )
-      .textContent =
-        'Modifier l’instruction';
+  const id = document.getElementById('instructionId').value;
 
-    document
-      .getElementById(
-        'instructionId'
-      )
-      .value =
-        instruction.id;
-
-    document
-      .getElementById(
-        'instructionTitle'
-      )
-      .value =
-        instruction.title || '';
-
-    document
-      .getElementById(
-        'instructionContent'
-      )
-      .value =
-        instruction.content || '';
-
-    document
-      .getElementById(
-        'instructionActive'
-      )
-      .checked =
-        instruction.active !== false;
-
-    instructionOverlay
-      .classList
-      .add('active');
+  const payload = {
+    title: document.getElementById('instructionTitle').value,
+    content: document.getElementById('instructionContent').value,
+    active: document.getElementById('instructionActive').checked
   };
 
-instructionForm
-  .addEventListener(
-    'submit',
-    async event => {
+  const url = id
+    ? '/admin/api/instructions/' + encodeURIComponent(id)
+    : '/admin/api/instructions';
 
-      event.preventDefault();
+  const method = id ? 'PUT' : 'POST';
 
-      const id =
-        document
-          .getElementById(
-            'instructionId'
-          )
-          .value;
+  const response = await apiFetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
 
-      const payload = {
+  const data = await safeJson(response);
 
-        title:
-          document
-            .getElementById(
-              'instructionTitle'
-            )
-            .value,
+  if (!response.ok) {
+    alert(data.error || 'Erreur pendant la sauvegarde.');
+    return;
+  }
 
-        content:
-          document
-            .getElementById(
-              'instructionContent'
-            )
-            .value,
+  instructionOverlay.classList.remove('active');
 
-        active:
-          document
-            .getElementById(
-              'instructionActive'
-            )
-            .checked
-      };
+  await loadInstructions();
+  await loadStats();
 
-      const url =
-        id
-          ? '/admin/api/instructions/' +
-            id
-          : '/admin/api/instructions';
+  showToast(id ? 'Instruction modifiée.' : 'Instruction ajoutée.');
+});
 
-      const method =
-        id
-          ? 'PUT'
-          : 'POST';
+window.toggleInstruction = async function(id) {
+  const instruction = instructions.find(item => item.id === id);
 
-      const response =
-        await apiFetch(
-          url,
-          {
+  if (!instruction) {
+    return;
+  }
 
-            method,
+  const activeNow = instruction.active !== false;
 
-            headers: {
-              'Content-Type':
-                'application/json'
-            },
-
-            body:
-              JSON.stringify(
-                payload
-              )
-          }
-        );
-
-      const data =
-        await response.json();
-
-      if (!response.ok) {
-
-        alert(
-          data.error ||
-          'Erreur pendant la sauvegarde.'
-        );
-
-        return;
-      }
-
-      instructionOverlay
-        .classList
-        .remove('active');
-
-      await loadInstructions();
-      await loadStats();
+  const response = await apiFetch(
+    '/admin/api/instructions/' + encodeURIComponent(id),
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        active: !activeNow
+      })
     }
   );
 
-/* ============================================================
-   ACTIVER / DÉSACTIVER INSTRUCTION
-   ============================================================ */
+  const data = await safeJson(response);
 
-window.toggleInstruction =
-  async function(id) {
+  if (!response.ok) {
+    alert(data.error || 'Impossible de modifier l’instruction.');
+    return;
+  }
 
-    const instruction =
-      instructions.find(
-        item =>
-          item.id === id
-      );
+  await loadInstructions();
+  await loadStats();
+};
 
-    if (!instruction) {
-      return;
+window.deleteInstruction = async function(id) {
+  const instruction = instructions.find(item => item.id === id);
+
+  if (!instruction) {
+    return;
+  }
+
+  if (!confirm(`Supprimer l’instruction « ${instruction.title} » ?`)) {
+    return;
+  }
+
+  const response = await apiFetch(
+    '/admin/api/instructions/' + encodeURIComponent(id),
+    {
+      method: 'DELETE'
     }
+  );
 
-    const response =
-      await apiFetch(
-        '/admin/api/instructions/' +
-          id,
-        {
+  const data = await safeJson(response);
 
-          method:
-            'PUT',
+  if (!response.ok) {
+    alert(data.error || 'Impossible de supprimer l’instruction.');
+    return;
+  }
 
-          headers: {
-            'Content-Type':
-              'application/json'
-          },
+  await loadInstructions();
+  await loadStats();
 
-          body:
-            JSON.stringify({
-              active:
-                !(
-                  instruction.active !==
-                  false
-                )
-            })
-        }
-      );
-
-    if (!response.ok) {
-
-      alert(
-        'Impossible de modifier l’instruction.'
-      );
-
-      return;
-    }
-
-    await loadInstructions();
-    await loadStats();
-  };
-
-/* ============================================================
-   SUPPRIMER INSTRUCTION
-   ============================================================ */
-
-window.deleteInstruction =
-  async function(id) {
-
-    const instruction =
-      instructions.find(
-        item =>
-          item.id === id
-      );
-
-    if (!instruction) {
-      return;
-    }
-
-    if (
-      !confirm(
-        `Supprimer l’instruction « ${instruction.title} » ?`
-      )
-    ) {
-      return;
-    }
-
-    const response =
-      await apiFetch(
-        '/admin/api/instructions/' +
-          id,
-        {
-          method:
-            'DELETE'
-        }
-      );
-
-    if (!response.ok) {
-
-      alert(
-        'Impossible de supprimer l’instruction.'
-      );
-
-      return;
-    }
-
-    await loadInstructions();
-    await loadStats();
-  };
+  showToast('Instruction supprimée.');
+};
 
 /* ============================================================
    IMPORT MANUEL INSTRUCTIONS
    ============================================================ */
 
-const importOverlay =
-  document.getElementById(
-    'importInstructionsOverlay'
-  );
+const importOverlay = document.getElementById('importInstructionsOverlay');
+const confirmImportButton = document.getElementById('confirmImportInstructionsBtn');
 
-const importButton =
-  document.getElementById(
-    'importInstructionsBtn'
-  );
+document.getElementById('importInstructionsBtn').addEventListener('click', () => {
+  document.getElementById('bulkInstructionsText').value = '';
+  importOverlay.classList.add('active');
+});
 
-const cancelImportButton =
-  document.getElementById(
-    'cancelImportInstructionsBtn'
-  );
+document.getElementById('cancelImportInstructionsBtn').addEventListener('click', () => {
+  importOverlay.classList.remove('active');
+});
 
-const confirmImportButton =
-  document.getElementById(
-    'confirmImportInstructionsBtn'
-  );
+confirmImportButton.addEventListener('click', async () => {
+  const text = document.getElementById('bulkInstructionsText').value.trim();
 
-importButton
-  .addEventListener(
-    'click',
-    () => {
+  if (!text) {
+    alert('Collez au moins une instruction.');
+    return;
+  }
 
-      document
-        .getElementById(
-          'bulkInstructionsText'
-        )
-        .value = '';
+  confirmImportButton.disabled = true;
+  confirmImportButton.textContent = 'Importation...';
 
-      importOverlay
-        .classList
-        .add('active');
+  try {
+    const response = await apiFetch('/admin/api/instructions/import', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ text })
+    });
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      alert(data.error || 'Erreur pendant l’import.');
+      return;
     }
-  );
 
-cancelImportButton
-  .addEventListener(
-    'click',
-    () => {
+    importOverlay.classList.remove('active');
 
-      importOverlay
-        .classList
-        .remove('active');
-    }
-  );
+    await loadInstructions();
+    await loadStats();
 
-confirmImportButton
-  .addEventListener(
-    'click',
-    async () => {
-
-      const text =
-        document
-          .getElementById(
-            'bulkInstructionsText'
-          )
-          .value
-          .trim();
-
-      if (!text) {
-
-        alert(
-          'Collez au moins une instruction.'
-        );
-
-        return;
-      }
-
-      confirmImportButton.disabled =
-        true;
-
-      confirmImportButton.textContent =
-        'Importation...';
-
-      try {
-
-        const response =
-          await apiFetch(
-            '/admin/api/instructions/import',
-            {
-
-              method:
-                'POST',
-
-              headers: {
-                'Content-Type':
-                  'application/json'
-              },
-
-              body:
-                JSON.stringify({
-                  text
-                })
-            }
-          );
-
-        const data =
-          await response.json();
-
-        if (!response.ok) {
-
-          alert(
-            data.error ||
-            'Erreur pendant l’import.'
-          );
-
-          return;
-        }
-
-        importOverlay
-          .classList
-          .remove('active');
-
-        await loadInstructions();
-        await loadStats();
-
-        alert(
-          `${data.imported} instruction(s) importée(s).` +
-          (
-            data.duplicates
-              ? ` ${data.duplicates} doublon(s) ignoré(s).`
-              : ''
-          )
-        );
-
-      } finally {
-
-        confirmImportButton.disabled =
-          false;
-
-        confirmImportButton.textContent =
-          'Importer';
-      }
-
-    }
-  );
+    showToast(
+      `${data.imported || 0} instruction(s) importée(s).`
+    );
+  } catch (error) {
+    alert('Impossible de contacter le serveur.');
+  } finally {
+    confirmImportButton.disabled = false;
+    confirmImportButton.textContent = 'Importer';
+  }
+});
 
 /* ============================================================
    IMPORT BUSINESS-INFO.TXT
    ============================================================ */
 
-document
-  .getElementById(
-    'importLegacyBtn'
-  )
-  .addEventListener(
-    'click',
-    async () => {
-
-      const confirmed =
-        confirm(
-          'Importer le contenu actuel de business-info.txt en instructions séparées ? Les doublons seront ignorés.'
-        );
-
-      if (!confirmed) {
-        return;
-      }
-
-      try {
-
-        const response =
-          await apiFetch(
-            '/admin/api/instructions/import-legacy',
-            {
-              method:
-                'POST'
-            }
-          );
-
-        const data =
-          await response.json();
-
-        if (!response.ok) {
-
-          alert(
-            data.error ||
-            'Import impossible.'
-          );
-
-          return;
-        }
-
-        await loadInstructions();
-        await loadStats();
-
-        alert(
-          `${data.imported} instruction(s) importée(s).` +
-          (
-            data.duplicates
-              ? ` ${data.duplicates} doublon(s) ignoré(s).`
-              : ''
-          )
-        );
-
-      } catch (error) {
-
-        alert(
-          'Impossible d’importer business-info.txt.'
-        );
-      }
-
-    }
+document.getElementById('importLegacyBtn').addEventListener('click', async () => {
+  const confirmed = confirm(
+    'Importer le contenu actuel de business-info.txt en instructions séparées ? Les doublons seront ignorés.'
   );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const response = await apiFetch(
+      '/admin/api/instructions/import-legacy',
+      {
+        method: 'POST'
+      }
+    );
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      alert(data.error || 'Import impossible.');
+      return;
+    }
+
+    await loadInstructions();
+    await loadStats();
+
+    showToast(`${data.imported || 0} instruction(s) importée(s).`);
+  } catch (error) {
+    alert('Impossible d’importer business-info.txt.');
+  }
+});
 
 /* ============================================================
    STATS
    ============================================================ */
 
 async function loadStats() {
-
   try {
+    const response = await apiFetch('/admin/api/stats');
+    const data = await safeJson(response);
 
-    const response =
-      await apiFetch(
-        '/admin/api/stats'
-      );
+    document.getElementById('statProducts').textContent =
+      data.productCount ?? products.length ?? 0;
 
-    const data =
-      await response.json();
-
-    document
-      .getElementById(
-        'statProducts'
-      )
-      .textContent =
-        data.productCount ?? 0;
-
-    document
-      .getElementById(
-        'statInstructions'
-      )
-      .textContent =
-        data.activeInstructionsCount ??
-        0;
-
+    document.getElementById('statInstructions').textContent =
+      data.activeInstructionsCount ?? 0;
   } catch (error) {
-
-    console.error(
-      'Stats :',
-      error
-    );
+    console.error('Stats :', error);
   }
 }
 
@@ -3318,208 +2341,106 @@ async function loadStats() {
    CHAT TEST
    ============================================================ */
 
-const chatMessages =
-  document.getElementById(
-    'chatMessages'
-  );
+const chatMessages = document.getElementById('chatMessages');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
 
-const chatForm =
-  document.getElementById(
-    'chatForm'
-  );
-
-const chatInput =
-  document.getElementById(
-    'chatInput'
-  );
-
-function addBubble(
-  text,
-  type
-) {
-
-  const empty =
-    chatMessages.querySelector(
-      '.chat-empty'
-    );
+function addBubble(text, type) {
+  const empty = chatMessages.querySelector('.chat-empty');
 
   if (empty) {
     empty.remove();
   }
 
-  const bubble =
-    document.createElement(
-      'div'
-    );
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble ' + type;
+  bubble.textContent = text;
 
-  bubble.className =
-    'chat-bubble ' +
-    type;
-
-  bubble.textContent =
-    text;
-
-  chatMessages.appendChild(
-    bubble
-  );
-
-  chatMessages.scrollTop =
-    chatMessages.scrollHeight;
+  chatMessages.appendChild(bubble);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 
   return bubble;
 }
 
-chatForm
-  .addEventListener(
-    'submit',
-    async event => {
+chatForm.addEventListener('submit', async event => {
+  event.preventDefault();
 
-      event.preventDefault();
+  const message = chatInput.value.trim();
 
-      const message =
-        chatInput.value.trim();
+  if (!message) {
+    return;
+  }
 
-      if (!message) {
-        return;
-      }
+  addBubble(message, 'user');
+  chatInput.value = '';
 
-      addBubble(
-        message,
-        'user'
-      );
-
-      chatInput.value = '';
-
-      const typingBubble =
-        addBubble(
-          '... en train de répondre',
-          'typing'
-        );
-
-      try {
-
-        const response =
-          await apiFetch(
-            '/admin/api/test-chat',
-            {
-
-              method:
-                'POST',
-
-              headers: {
-                'Content-Type':
-                  'application/json'
-              },
-
-              body:
-                JSON.stringify({
-                  message
-                })
-            }
-          );
-
-        const data =
-          await response.json();
-
-        typingBubble.remove();
-
-        if (response.ok) {
-
-          addBubble(
-            data.reply,
-            'bot'
-          );
-
-        } else {
-
-          addBubble(
-            data.error ||
-            'Une erreur est survenue.',
-            'error'
-          );
-        }
-
-      } catch (error) {
-
-        if (
-          typingBubble.isConnected
-        ) {
-          typingBubble.remove();
-        }
-
-        addBubble(
-          'Impossible de contacter le serveur.',
-          'error'
-        );
-      }
-
-    }
+  const typingBubble = addBubble(
+    '... en train de répondre',
+    'typing'
   );
 
+  try {
+    const response = await apiFetch('/admin/api/test-chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message })
+    });
+
+    const data = await safeJson(response);
+
+    typingBubble.remove();
+
+    if (response.ok) {
+      addBubble(data.reply || '', 'bot');
+    } else {
+      addBubble(data.error || 'Une erreur est survenue.', 'error');
+    }
+  } catch (error) {
+    if (typingBubble.isConnected) {
+      typingBubble.remove();
+    }
+
+    addBubble('Impossible de contacter le serveur.', 'error');
+  }
+});
+
 /* ============================================================
-   FERMER MODAL EN CLIQUANT SUR LE FOND
+   MODALS
    ============================================================ */
 
-document
-  .querySelectorAll(
-    '.modal-overlay'
-  )
-  .forEach(overlay => {
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', event => {
+    if (event.target !== overlay) {
+      return;
+    }
 
-    overlay.addEventListener(
-      'click',
-      event => {
+    overlay.classList.remove('active');
 
-        if (
-          event.target ===
-          overlay
-        ) {
+    if (overlay === productOverlay) {
+      resetProductModal();
+    }
+  });
+});
 
-          overlay.classList.remove(
-            'active'
-          );
-        }
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') {
+    return;
+  }
 
-      }
-    );
-
+  document.querySelectorAll('.modal-overlay.active').forEach(overlay => {
+    overlay.classList.remove('active');
   });
 
-/* ============================================================
-   ESC
-   ============================================================ */
-
-document
-  .addEventListener(
-    'keydown',
-    event => {
-
-      if (
-        event.key ===
-        'Escape'
-      ) {
-
-        document
-          .querySelectorAll(
-            '.modal-overlay.active'
-          )
-          .forEach(
-            overlay =>
-              overlay.classList.remove(
-                'active'
-              )
-          );
-      }
-
-    }
-  );
+  resetProductModal();
+});
 
 /* ============================================================
    INITIALISATION
    ============================================================ */
 
 async function initializeAdmin() {
-
   await Promise.all([
     loadProducts(),
     loadInstructions(),
@@ -3528,9 +2449,7 @@ async function initializeAdmin() {
 }
 
 initializeAdmin();
-
 </script>
 
 </body>
-
 </html>
