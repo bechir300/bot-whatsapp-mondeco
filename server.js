@@ -14,7 +14,8 @@ const {
   adminRouter,
   getBusinessContext,
   setChatHandler,
-  setImageChatHandler
+  setImageChatHandler,
+  setCustomizationHandler
 } = require('./Admin');
 
 const app = express();
@@ -35,6 +36,7 @@ const VERIFY_TOKEN = (process.env.VERIFY_TOKEN || '').trim();
 const WHATSAPP_TOKEN = (process.env.WHATSAPP_TOKEN || '').trim();
 const PHONE_NUMBER_ID = (process.env.PHONE_NUMBER_ID || '').trim();
 const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim();
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || '').trim();
 
 const META_API_VERSION = (process.env.META_API_VERSION || 'v21.0').trim();
 
@@ -47,6 +49,18 @@ const GROQ_MODEL = (
 // Modèle vision utilisé uniquement dans Discussion de test avec image.
 const GROQ_VISION_MODEL = (
   process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b'
+).trim();
+
+const OPENAI_IMAGE_MODEL = (
+  process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2'
+).trim();
+
+const OPENAI_IMAGE_SIZE = (
+  process.env.OPENAI_IMAGE_SIZE || 'auto'
+).trim();
+
+const OPENAI_IMAGE_QUALITY = (
+  process.env.OPENAI_IMAGE_QUALITY || 'medium'
 ).trim();
 
 // ============================================================
@@ -62,8 +76,10 @@ console.log('VERIFY_TOKEN :', VERIFY_TOKEN ? '✅ OK' : '❌ MANQUANT');
 console.log('WHATSAPP_TOKEN :', WHATSAPP_TOKEN ? '✅ OK' : '❌ MANQUANT');
 console.log('PHONE_NUMBER_ID :', PHONE_NUMBER_ID ? '✅ OK' : '❌ MANQUANT');
 console.log('GROQ_API_KEY :', GROQ_API_KEY ? '✅ OK' : '❌ MANQUANT');
+console.log('OPENAI_API_KEY :', OPENAI_API_KEY ? '✅ OK' : '⚠️ MANQUANT (simulations indisponibles)');
 console.log('GROQ_MODEL :', GROQ_MODEL);
 console.log('GROQ_VISION_MODEL :', GROQ_VISION_MODEL);
+console.log('OPENAI_IMAGE_MODEL :', OPENAI_IMAGE_MODEL);
 console.log('==============================================');
 console.log('');
 
@@ -350,8 +366,252 @@ RÈGLES D'ANALYSE :
   return reply;
 }
 
+
+// ============================================================
+// PERSONNALISATION VISUELLE INTERNE
+// Groq comprend la photo ; OpenAI Image API réalise l'édition.
+// ============================================================
+
+function buildCustomizationRequestText(request = {}) {
+  const lines = [];
+
+  if (request.color) {
+    lines.push(`Couleur souhaitée : ${request.color}`);
+  }
+
+  if (request.fabric) {
+    lines.push(`Tissu / matière souhaité(e) : ${request.fabric}`);
+  }
+
+  if (request.dimensions) {
+    lines.push(`Dimensions souhaitées : ${request.dimensions}`);
+  }
+
+  if (request.corner) {
+    lines.push(`Coin / orientation souhaité(e) : ${request.corner}`);
+  }
+
+  if (request.notes) {
+    lines.push(`Autres demandes : ${request.notes}`);
+  }
+
+  return lines.join('\n');
+}
+
+async function analyzeCustomizationImage(product, request, sourceImage) {
+  if (!GROQ_API_KEY) {
+    return '';
+  }
+
+  const imageDataUrl =
+    `data:${sourceImage.mimetype};base64,${sourceImage.buffer.toString('base64')}`;
+
+  const productContext = product
+    ? [
+        `Produit catalogue : ${product.name || ''}`,
+        product.category ? `Catégorie : ${product.category}` : '',
+        product.dimensions ? `Dimensions catalogue : ${product.dimensions}` : '',
+        product.composition ? `Composition : ${product.composition}` : '',
+        product.colors ? `Couleurs catalogue : ${product.colors}` : ''
+      ].filter(Boolean).join('\n')
+    : 'Image libre non liée avec certitude à un produit catalogue.';
+
+  const requestText = buildCustomizationRequestText(request);
+
+  const prompt = `
+Analyse cette photo de mobilier pour préparer une simulation de personnalisation MONDECO.
+
+${productContext}
+
+DEMANDE :
+${requestText}
+
+Décris uniquement les éléments visuels utiles à préserver pendant l'édition :
+- type de meuble et nombre de modules visibles ;
+- forme générale et orientation ;
+- accoudoirs, dossier, assises, pieds, coutures et détails distinctifs ;
+- tissu, matière et couleur actuels ;
+- disposition par rapport à la caméra et au décor.
+
+Ne déduis pas des dimensions exactes depuis la photo.
+Ne confirme pas la faisabilité technique.
+Ne donne aucun prix.
+Réponse concise en français.
+`.trim();
+
+  try {
+    return await callGroqChat({
+      model: GROQ_VISION_MODEL,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: prompt
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: imageDataUrl
+              }
+            }
+          ]
+        }
+      ],
+      max_completion_tokens: 600
+    });
+  } catch (error) {
+    console.warn(
+      '⚠️ Analyse Groq de la personnalisation indisponible :',
+      error.message
+    );
+
+    return '';
+  }
+}
+
+function buildImageEditPrompt(product, request, analysis) {
+  const requestedChanges = buildCustomizationRequestText(request);
+
+  const productName =
+    product?.name
+      ? `Le produit de référence est le modèle MONDECO « ${product.name} ».`
+      : 'L’image fournie est une référence de mobilier.';
+
+  return `
+Créer une simulation photoréaliste de personnalisation à partir de l'image fournie.
+
+${productName}
+
+CONSIGNE ABSOLUE :
+Préserver au maximum l'identité du meuble original et tous les détails qui ne sont PAS explicitement demandés à modifier : design, nombre de modules, style, coutures, dossier, accoudoirs, pieds, proportions générales, perspective, cadrage, éclairage et décor.
+
+MODIFICATIONS DEMANDÉES :
+${requestedChanges}
+
+ANALYSE VISUELLE DE RÉFÉRENCE :
+${analysis || 'Préserver fidèlement tous les éléments visibles de la photo originale.'}
+
+RÈGLES :
+- Modifier uniquement ce qui est demandé.
+- Si une couleur est demandée, appliquer cette couleur au revêtement concerné sans changer le design.
+- Si un tissu est demandé, simuler visuellement cette matière en conservant la forme du meuble.
+- Si le coin gauche/droit est demandé, produire une simulation visuelle cohérente de l'orientation souhaitée tout en conservant le style du modèle.
+- Si des dimensions sont demandées, montrer uniquement une adaptation VISUELLE approximative des proportions. Ne pas ajouter de cotes, règles, texte ou mesures sur l'image.
+- Ne pas inventer de nouveau meuble, accessoire ou module qui n'est pas demandé.
+- Aucun texte, aucun prix, aucun logo et aucun filigrane.
+- Rendu showroom réaliste, propre, haute qualité.
+- La simulation est indicative et ne constitue pas une validation technique de fabrication.
+`.trim();
+}
+
+async function callOpenAIImageEdit(sourceImage, prompt) {
+  if (!OPENAI_API_KEY) {
+    throw new Error(
+      'OPENAI_API_KEY manquante dans Railway. Elle est nécessaire pour générer les simulations visuelles.'
+    );
+  }
+
+  const formData = new FormData();
+
+  formData.append('model', OPENAI_IMAGE_MODEL);
+
+  formData.append(
+    'image[]',
+    new Blob(
+      [sourceImage.buffer],
+      { type: sourceImage.mimetype || 'image/jpeg' }
+    ),
+    sourceImage.originalname || 'reference.jpg'
+  );
+
+  formData.append('prompt', prompt);
+  formData.append('size', OPENAI_IMAGE_SIZE);
+  formData.append('quality', OPENAI_IMAGE_QUALITY);
+  formData.append('output_format', 'jpeg');
+  formData.append('output_compression', '90');
+
+  const response = await fetch(
+    'https://api.openai.com/v1/images/edits',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: formData
+    }
+  );
+
+  let data = {};
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error(
+      '❌ OpenAI Image API :',
+      JSON.stringify(data)
+    );
+
+    throw new Error(
+      data?.error?.message ||
+      `Erreur OpenAI Image API HTTP ${response.status}`
+    );
+  }
+
+  const imageBase64 = data?.data?.[0]?.b64_json;
+
+  if (!imageBase64) {
+    throw new Error(
+      'OpenAI Image API n’a retourné aucune image.'
+    );
+  }
+
+  return {
+    imageBuffer: Buffer.from(imageBase64, 'base64'),
+    mimeType: 'image/jpeg'
+  };
+}
+
+async function generateCustomizationSimulation({
+  product,
+  request,
+  sourceImage
+}) {
+  if (!sourceImage?.buffer) {
+    throw new Error('Image de référence manquante.');
+  }
+
+  const analysis = await analyzeCustomizationImage(
+    product,
+    request,
+    sourceImage
+  );
+
+  const prompt = buildImageEditPrompt(
+    product,
+    request,
+    analysis
+  );
+
+  const generated = await callOpenAIImageEdit(
+    sourceImage,
+    prompt
+  );
+
+  return {
+    ...generated,
+    analysis
+  };
+}
+
 setChatHandler(generateReply);
 setImageChatHandler(generateVisionReply);
+setCustomizationHandler(generateCustomizationSimulation);
 
 // ============================================================
 // ENVOI WHATSAPP
@@ -443,10 +703,12 @@ app.get('/debug-env', (req, res) => {
     whatsapp_token_present: Boolean(WHATSAPP_TOKEN),
     phone_number_id_present: Boolean(PHONE_NUMBER_ID),
     groq_api_key_present: Boolean(GROQ_API_KEY),
+    openai_api_key_present: Boolean(OPENAI_API_KEY),
     admin_password_present: Boolean(process.env.ADMIN_PASSWORD),
     meta_api_version: META_API_VERSION,
     groq_model: GROQ_MODEL,
-    groq_vision_model: GROQ_VISION_MODEL
+    groq_vision_model: GROQ_VISION_MODEL,
+    openai_image_model: OPENAI_IMAGE_MODEL
   });
 });
 
