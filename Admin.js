@@ -24,6 +24,8 @@ const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
+const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
+const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 
@@ -62,6 +64,55 @@ const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
+
+
+const WOOCOMMERCE_URL = (
+  process.env.WOOCOMMERCE_URL ||
+  'https://mondeco.tn'
+)
+  .trim()
+  .replace(/\/+$/, '');
+
+const WOOCOMMERCE_CONSUMER_KEY = (
+  process.env.WOOCOMMERCE_CONSUMER_KEY ||
+  ''
+).trim();
+
+const WOOCOMMERCE_CONSUMER_SECRET = (
+  process.env.WOOCOMMERCE_CONSUMER_SECRET ||
+  ''
+).trim();
+
+const WOOCOMMERCE_WEBHOOK_SECRET = (
+  process.env.WOOCOMMERCE_WEBHOOK_SECRET ||
+  ''
+).trim();
+
+const WOOCOMMERCE_SYNC_ENABLED =
+  String(
+    process.env.WOOCOMMERCE_SYNC_ENABLED ?? 'true'
+  )
+    .trim()
+    .toLowerCase() !== 'false';
+
+const WOOCOMMERCE_SYNC_MINUTES =
+  Math.max(
+    5,
+    Math.min(
+      1440,
+      Number(
+        process.env.WOOCOMMERCE_SYNC_MINUTES ||
+        30
+      ) || 30
+    )
+  );
+
+const WOOCOMMERCE_SYNC_IMAGES =
+  String(
+    process.env.WOOCOMMERCE_SYNC_IMAGES ?? 'true'
+  )
+    .trim()
+    .toLowerCase() !== 'false';
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -414,6 +465,15 @@ function snapshotFiles() {
     {
       source: CUSTOMIZATIONS_PATH,
       name: 'customization-requests.json'
+    },
+    {
+      source: COMMERCIAL_CORRECTIONS_PATH,
+      name: 'commercial-corrections.json'
+    }
+,
+    {
+      source: WOOCOMMERCE_SYNC_PATH,
+      name: 'woocommerce-sync.json'
     }
   ];
 }
@@ -730,6 +790,10 @@ function createExternalDataExport() {
       getBotSettings(),
     customizations:
       loadCustomizations(),
+    commercialCorrections:
+      loadCommercialCorrections(),
+    woocommerceSync:
+      loadWooCommerceSyncState(),
     note:
       'Cet export JSON contient les données structurées. Les images restent protégées dans le Volume et les snapshots complets /data/backups/snapshots.'
   };
@@ -1183,6 +1247,188 @@ function saveCustomizations(items) {
     CUSTOMIZATIONS_PATH,
     items
   );
+}
+
+// ============================================================
+// CORRECTIONS COMMERCIALES
+// ============================================================
+
+const COMMERCIAL_CORRECTION_STATUSES =
+  new Set([
+    'pending',
+    'approved',
+    'ignored'
+  ]);
+
+const COMMERCIAL_PRODUCT_FIELDS = {
+  price: 'Prix normal',
+  promoPrice: 'Prix promotionnel',
+  availability: 'Disponibilité',
+  dimensions: 'Dimensions',
+  composition: 'Composition',
+  colors: 'Couleurs',
+  showrooms: 'Showrooms',
+  productUrl: 'Lien produit',
+  categoryUrl: 'Lien catégorie',
+  description: 'Description'
+};
+
+function loadCommercialCorrections() {
+  return readJsonArray(
+    COMMERCIAL_CORRECTIONS_PATH,
+    'commercial-corrections.json'
+  );
+}
+
+function saveCommercialCorrections(items) {
+  const safeItems =
+    Array.isArray(items)
+      ? items.slice(-2000)
+      : [];
+
+  writeJsonAtomic(
+    COMMERCIAL_CORRECTIONS_PATH,
+    safeItems
+  );
+}
+
+function createCommercialCorrectionCandidate(input = {}) {
+  const phone =
+    normalizePhone(input.phone);
+
+  const question =
+    safeString(input.question);
+
+  const commercialReply =
+    safeString(input.commercialReply);
+
+  if (!commercialReply) {
+    return null;
+  }
+
+  const source =
+    safeString(input.source) ||
+    'commercial';
+
+  const now =
+    new Date().toISOString();
+
+  const corrections =
+    loadCommercialCorrections();
+
+  const duplicateWindowMs =
+    10 * 60 * 1000;
+
+  const duplicate =
+    [...corrections]
+      .reverse()
+      .find(item => {
+        const createdAt =
+          Date.parse(
+            item.createdAt ||
+            ''
+          );
+
+        return (
+          item.status === 'pending' &&
+          normalizePhone(item.phone) === phone &&
+          safeString(item.question) === question &&
+          safeString(item.commercialReply) === commercialReply &&
+          Number.isFinite(createdAt) &&
+          Date.now() - createdAt < duplicateWindowMs
+        );
+      });
+
+  if (duplicate) {
+    return duplicate;
+  }
+
+  const correction = {
+    id: crypto.randomUUID(),
+    type: 'knowledge',
+    status: 'pending',
+    phone,
+    question,
+    commercialReply,
+    source,
+    createdAt: now,
+    updatedAt: now,
+    reviewedAt: null,
+    instructionId: null
+  };
+
+  corrections.push(correction);
+  saveCommercialCorrections(corrections);
+
+  console.log(
+    '🧠 Correction commerciale en attente :',
+    correction.id
+  );
+
+  return correction;
+}
+
+function updateCommercialCorrection(id, updater) {
+  const corrections =
+    loadCommercialCorrections();
+
+  const index =
+    corrections.findIndex(
+      item => item.id === id
+    );
+
+  if (index === -1) {
+    return null;
+  }
+
+  const current =
+    corrections[index];
+
+  const updated =
+    updater({ ...current }) ||
+    current;
+
+  corrections[index] = {
+    ...updated,
+    updatedAt:
+      new Date().toISOString()
+  };
+
+  saveCommercialCorrections(
+    corrections
+  );
+
+  return corrections[index];
+}
+
+function normalizeAvailabilityCorrection(value) {
+  const normalized =
+    safeString(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+
+  const map = {
+    'en stock': 'in_stock',
+    'stock': 'in_stock',
+    'in_stock': 'in_stock',
+    'sur commande': 'on_order',
+    'commande': 'on_order',
+    'on_order': 'on_order',
+    'rupture': 'out_of_stock',
+    'rupture de stock': 'out_of_stock',
+    'out_of_stock': 'out_of_stock',
+    'destockage': 'clearance',
+    'déstockage': 'clearance',
+    'clearance': 'clearance',
+    'inconnu': 'unknown',
+    'a confirmer': 'unknown',
+    'à confirmer': 'unknown',
+    'unknown': 'unknown'
+  };
+
+  return map[normalized] ||
+    safeString(value);
 }
 
 // ============================================================
@@ -2126,6 +2372,2064 @@ router.get(
     return res.sendFile(filePath);
   }
 );
+
+
+// ============================================================
+// WOOCOMMERCE — SYNCHRONISATION SITE
+// ============================================================
+
+const WOO_SYNC_DEFAULT_STATE = {
+  lastAttemptAt: null,
+  lastSuccessAt: null,
+  lastError: '',
+  lastReason: '',
+  lastDurationMs: 0,
+  lastFetched: 0,
+  lastCreated: 0,
+  lastUpdated: 0,
+  lastUnchanged: 0,
+  lastDeactivated: 0,
+  lastWebhookAt: null,
+  lastWebhookTopic: '',
+  lastWebhookProductId: null
+};
+
+let wooSyncRunning = false;
+let wooSyncIntervalHandle = null;
+
+function wooConfigured() {
+  return Boolean(
+    WOOCOMMERCE_URL &&
+    WOOCOMMERCE_CONSUMER_KEY &&
+    WOOCOMMERCE_CONSUMER_SECRET
+  );
+}
+
+function loadWooCommerceSyncState() {
+  try {
+    if (!fs.existsSync(WOOCOMMERCE_SYNC_PATH)) {
+      return {
+        ...WOO_SYNC_DEFAULT_STATE
+      };
+    }
+
+    const parsed =
+      JSON.parse(
+        fs.readFileSync(
+          WOOCOMMERCE_SYNC_PATH,
+          'utf8'
+        ) || '{}'
+      );
+
+    return {
+      ...WOO_SYNC_DEFAULT_STATE,
+      ...(
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed)
+          ? parsed
+          : {}
+      )
+    };
+  } catch (error) {
+    console.warn(
+      '⚠️ Lecture woocommerce-sync.json :',
+      error.message
+    );
+
+    return {
+      ...WOO_SYNC_DEFAULT_STATE
+    };
+  }
+}
+
+function saveWooCommerceSyncState(patch = {}) {
+  const next = {
+    ...loadWooCommerceSyncState(),
+    ...patch
+  };
+
+  writeJsonAtomic(
+    WOOCOMMERCE_SYNC_PATH,
+    next
+  );
+
+  return next;
+}
+
+function wooPublicStatus(req = null) {
+  const sync =
+    loadWooCommerceSyncState();
+
+  const forwardedProto =
+    safeString(
+      req?.headers?.['x-forwarded-proto']
+    )
+      .split(',')[0]
+      .trim();
+
+  const protocol =
+    forwardedProto ||
+    safeString(req?.protocol) ||
+    'https';
+
+  const host =
+    safeString(
+      req?.get?.('host')
+    );
+
+  const webhookUrl =
+    host
+      ? `${protocol}://${host}/admin/api/woocommerce/webhook`
+      : '';
+
+  return {
+    configured:
+      wooConfigured(),
+
+    siteUrl:
+      WOOCOMMERCE_URL,
+
+    consumerKeyPresent:
+      Boolean(
+        WOOCOMMERCE_CONSUMER_KEY
+      ),
+
+    consumerSecretPresent:
+      Boolean(
+        WOOCOMMERCE_CONSUMER_SECRET
+      ),
+
+    webhookSecretPresent:
+      Boolean(
+        WOOCOMMERCE_WEBHOOK_SECRET
+      ),
+
+    syncEnabled:
+      WOOCOMMERCE_SYNC_ENABLED,
+
+    syncMinutes:
+      WOOCOMMERCE_SYNC_MINUTES,
+
+    syncImages:
+      WOOCOMMERCE_SYNC_IMAGES,
+
+    running:
+      wooSyncRunning,
+
+    webhookUrl,
+
+    ...sync
+  };
+}
+
+function htmlToPlainText(value) {
+  return safeString(value)
+    .replace(
+      /<script[\s\S]*?<\/script>/gi,
+      ' '
+    )
+    .replace(
+      /<style[\s\S]*?<\/style>/gi,
+      ' '
+    )
+    .replace(
+      /<[^>]+>/g,
+      ' '
+    )
+    .replaceAll('&nbsp;', ' ')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#039;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replace(
+      /\s+/g,
+      ' '
+    )
+    .trim();
+}
+
+function normalizeWooLookup(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(
+      /[\u0300-\u036f]/g,
+      ''
+    )
+    .toLowerCase()
+    .replace(
+      /[^a-z0-9]+/g,
+      ' '
+    )
+    .replace(
+      /\s+/g,
+      ' '
+    )
+    .trim();
+}
+
+function wooAttributeValue(
+  product,
+  acceptedNames
+) {
+  const wanted =
+    new Set(
+      acceptedNames.map(
+        normalizeWooLookup
+      )
+    );
+
+  const attributes =
+    Array.isArray(
+      product?.attributes
+    )
+      ? product.attributes
+      : [];
+
+  for (const attribute of attributes) {
+    const normalizedName =
+      normalizeWooLookup(
+        attribute?.name ||
+        attribute?.slug
+      );
+
+    if (
+      !normalizedName ||
+      !wanted.has(
+        normalizedName
+      )
+    ) {
+      continue;
+    }
+
+    const options =
+      Array.isArray(
+        attribute?.options
+      )
+        ? attribute.options
+        : [];
+
+    const value =
+      options
+        .map(safeString)
+        .filter(Boolean)
+        .join(', ');
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function wooDimensionsText(product) {
+  const custom =
+    wooAttributeValue(
+      product,
+      [
+        'dimensions',
+        'dimension',
+        'mesures',
+        'mesure'
+      ]
+    );
+
+  if (custom) {
+    return custom;
+  }
+
+  const dimensions =
+    product?.dimensions &&
+    typeof product.dimensions === 'object'
+      ? product.dimensions
+      : {};
+
+  const length =
+    safeString(
+      dimensions.length
+    );
+
+  const width =
+    safeString(
+      dimensions.width
+    );
+
+  const height =
+    safeString(
+      dimensions.height
+    );
+
+  const parts = [];
+
+  if (length) {
+    parts.push(
+      `L ${length}`
+    );
+  }
+
+  if (width) {
+    parts.push(
+      `l ${width}`
+    );
+  }
+
+  if (height) {
+    parts.push(
+      `H ${height}`
+    );
+  }
+
+  return parts.join(' × ');
+}
+
+function wooAvailability(product) {
+  const stockStatus =
+    safeString(
+      product?.stock_status
+    ).toLowerCase();
+
+  if (
+    stockStatus ===
+    'instock'
+  ) {
+    return 'in_stock';
+  }
+
+  if (
+    stockStatus ===
+    'outofstock'
+  ) {
+    return 'out_of_stock';
+  }
+
+  if (
+    stockStatus ===
+    'onbackorder'
+  ) {
+    return 'on_order';
+  }
+
+  return 'unknown';
+}
+
+function mapWooCommerceProduct(product) {
+  const categories =
+    Array.isArray(
+      product?.categories
+    )
+      ? product.categories
+      : [];
+
+  const category =
+    categories
+      .map(item =>
+        safeString(
+          item?.name
+        )
+      )
+      .filter(Boolean)
+      .join(' / ') ||
+    'WooCommerce';
+
+  const colors =
+    wooAttributeValue(
+      product,
+      [
+        'couleur',
+        'couleurs',
+        'color',
+        'colors'
+      ]
+    );
+
+  const composition =
+    wooAttributeValue(
+      product,
+      [
+        'composition',
+        'matiere',
+        'matieres',
+        'material',
+        'materials'
+      ]
+    );
+
+  const showrooms =
+    wooAttributeValue(
+      product,
+      [
+        'showroom',
+        'showrooms',
+        'magasin',
+        'magasins'
+      ]
+    );
+
+  const imageUrl =
+    Array.isArray(
+      product?.images
+    ) &&
+    product.images[0]
+      ? safeString(
+          product.images[0].src
+        )
+      : '';
+
+  const regularPrice =
+    safeString(
+      product?.regular_price
+    );
+
+  const currentPrice =
+    safeString(
+      product?.price
+    );
+
+  return {
+    woocommerceId:
+      Number(
+        product?.id
+      ) || null,
+
+    woocommerceSku:
+      safeString(
+        product?.sku
+      ),
+
+    woocommerceSlug:
+      safeString(
+        product?.slug
+      ),
+
+    woocommerceStatus:
+      safeString(
+        product?.status
+      ),
+
+    woocommerceType:
+      safeString(
+        product?.type
+      ),
+
+    woocommerceStockStatus:
+      safeString(
+        product?.stock_status
+      ),
+
+    woocommerceStockQuantity:
+      product?.stock_quantity === null ||
+      product?.stock_quantity === undefined
+        ? null
+        : Number(
+            product.stock_quantity
+          ),
+
+    woocommerceModifiedAt:
+      safeString(
+        product?.date_modified_gmt ||
+        product?.date_modified
+      ),
+
+    name:
+      safeString(
+        product?.name
+      ),
+
+    category,
+
+    price:
+      regularPrice ||
+      currentPrice,
+
+    promoPrice:
+      safeString(
+        product?.sale_price
+      ),
+
+    availability:
+      wooAvailability(
+        product
+      ),
+
+    dimensions:
+      wooDimensionsText(
+        product
+      ),
+
+    composition,
+
+    colors,
+
+    showrooms,
+
+    productUrl:
+      safeString(
+        product?.permalink
+      ),
+
+    description:
+      htmlToPlainText(
+        product?.short_description ||
+        product?.description
+      ),
+
+    imageUrl,
+
+    active:
+      safeString(
+        product?.status
+      ) === 'publish'
+  };
+}
+
+function findWooProductIndex(
+  products,
+  remote
+) {
+  if (
+    remote.woocommerceId
+  ) {
+    const byId =
+      products.findIndex(
+        item =>
+          Number(
+            item?.woocommerceId
+          ) ===
+          Number(
+            remote.woocommerceId
+          )
+      );
+
+    if (byId >= 0) {
+      return byId;
+    }
+  }
+
+  if (
+    remote.woocommerceSku
+  ) {
+    const sku =
+      normalizeWooLookup(
+        remote.woocommerceSku
+      );
+
+    const bySku =
+      products.findIndex(
+        item =>
+          sku &&
+          (
+            normalizeWooLookup(
+              item?.woocommerceSku
+            ) === sku ||
+            normalizeWooLookup(
+              item?.sku
+            ) === sku
+          )
+      );
+
+    if (bySku >= 0) {
+      return bySku;
+    }
+  }
+
+  if (
+    remote.woocommerceSlug
+  ) {
+    const slug =
+      normalizeWooLookup(
+        remote.woocommerceSlug
+      );
+
+    const bySlug =
+      products.findIndex(
+        item =>
+          normalizeWooLookup(
+            item?.woocommerceSlug
+          ) === slug
+      );
+
+    if (bySlug >= 0) {
+      return bySlug;
+    }
+  }
+
+  const normalizedName =
+    normalizeWooLookup(
+      remote.name
+    );
+
+  if (!normalizedName) {
+    return -1;
+  }
+
+  const sameNameIndexes =
+    products
+      .map(
+        (
+          item,
+          index
+        ) => ({
+          index,
+          name:
+            normalizeWooLookup(
+              item?.name
+            )
+        })
+      )
+      .filter(
+        item =>
+          item.name ===
+          normalizedName
+      )
+      .map(
+        item =>
+          item.index
+      );
+
+  return (
+    sameNameIndexes.length === 1
+      ? sameNameIndexes[0]
+      : -1
+  );
+}
+
+function mergeWooProduct(
+  current,
+  remote,
+  now
+) {
+  const currentImage =
+    safeString(
+      current?.image
+    );
+
+  const currentUsesWooImage =
+    safeString(
+      current?.syncSource
+    ) === 'woocommerce' &&
+    currentImage &&
+    !currentImage.startsWith(
+      '/admin/uploads/'
+    );
+
+  let image =
+    currentImage;
+
+  let imageFilename =
+    safeString(
+      current?.imageFilename
+    );
+
+  if (
+    WOOCOMMERCE_SYNC_IMAGES &&
+    remote.imageUrl &&
+    (
+      !currentImage ||
+      currentUsesWooImage
+    )
+  ) {
+    image =
+      remote.imageUrl;
+
+    imageFilename =
+      '';
+  }
+
+  return {
+    ...current,
+
+    name:
+      remote.name ||
+      safeString(
+        current?.name
+      ),
+
+    category:
+      remote.category ||
+      safeString(
+        current?.category
+      ) ||
+      'WooCommerce',
+
+    price:
+      remote.price,
+
+    promoPrice:
+      remote.promoPrice,
+
+    availability:
+      remote.availability,
+
+    dimensions:
+      remote.dimensions ||
+      safeString(
+        current?.dimensions
+      ),
+
+    composition:
+      remote.composition ||
+      safeString(
+        current?.composition
+      ),
+
+    colors:
+      remote.colors ||
+      safeString(
+        current?.colors
+      ),
+
+    showrooms:
+      remote.showrooms ||
+      safeString(
+        current?.showrooms
+      ),
+
+    productUrl:
+      remote.productUrl ||
+      safeString(
+        current?.productUrl
+      ),
+
+    description:
+      remote.description ||
+      safeString(
+        current?.description
+      ),
+
+    image,
+    imageFilename,
+
+    woocommerceImageUrl:
+      remote.imageUrl,
+
+    woocommerceId:
+      remote.woocommerceId,
+
+    woocommerceSku:
+      remote.woocommerceSku,
+
+    woocommerceSlug:
+      remote.woocommerceSlug,
+
+    woocommerceStatus:
+      remote.woocommerceStatus,
+
+    woocommerceType:
+      remote.woocommerceType,
+
+    woocommerceStockStatus:
+      remote.woocommerceStockStatus,
+
+    woocommerceStockQuantity:
+      remote.woocommerceStockQuantity,
+
+    woocommerceModifiedAt:
+      remote.woocommerceModifiedAt,
+
+    syncSource:
+      'woocommerce',
+
+    active:
+      remote.active,
+
+    wooMissingAt:
+      null,
+
+    updatedAt:
+      now
+  };
+}
+
+function createLocalProductFromWoo(
+  remote,
+  now
+) {
+  return {
+    id:
+      crypto.randomUUID(),
+
+    name:
+      remote.name ||
+      `Produit WooCommerce ${remote.woocommerceId || ''}`.trim(),
+
+    category:
+      remote.category ||
+      'WooCommerce',
+
+    price:
+      remote.price,
+
+    promoPrice:
+      remote.promoPrice,
+
+    availability:
+      remote.availability,
+
+    dimensions:
+      remote.dimensions,
+
+    composition:
+      remote.composition,
+
+    colors:
+      remote.colors,
+
+    showrooms:
+      remote.showrooms,
+
+    productUrl:
+      remote.productUrl,
+
+    categoryUrl:
+      '',
+
+    description:
+      remote.description,
+
+    customizableColor:
+      false,
+
+    customizableFabric:
+      false,
+
+    customizableDimensions:
+      false,
+
+    customizableCorner:
+      false,
+
+    active:
+      remote.active,
+
+    image:
+      remote.imageUrl,
+
+    imageFilename:
+      '',
+
+    woocommerceImageUrl:
+      remote.imageUrl,
+
+    woocommerceId:
+      remote.woocommerceId,
+
+    woocommerceSku:
+      remote.woocommerceSku,
+
+    woocommerceSlug:
+      remote.woocommerceSlug,
+
+    woocommerceStatus:
+      remote.woocommerceStatus,
+
+    woocommerceType:
+      remote.woocommerceType,
+
+    woocommerceStockStatus:
+      remote.woocommerceStockStatus,
+
+    woocommerceStockQuantity:
+      remote.woocommerceStockQuantity,
+
+    woocommerceModifiedAt:
+      remote.woocommerceModifiedAt,
+
+    syncSource:
+      'woocommerce',
+
+    wooMissingAt:
+      null,
+
+    createdAt:
+      now,
+
+    updatedAt:
+      now
+  };
+}
+
+function comparableWooProduct(
+  product
+) {
+  const copy = {
+    ...product
+  };
+
+  delete copy.updatedAt;
+  delete copy.wooMissingAt;
+
+  return copy;
+}
+
+function upsertWooProductInArray(
+  products,
+  wooProduct,
+  now =
+    new Date().toISOString()
+) {
+  const remote =
+    mapWooCommerceProduct(
+      wooProduct
+    );
+
+  if (
+    !remote.woocommerceId
+  ) {
+    throw new Error(
+      'Produit WooCommerce sans ID.'
+    );
+  }
+
+  const index =
+    findWooProductIndex(
+      products,
+      remote
+    );
+
+  if (index === -1) {
+    const created =
+      createLocalProductFromWoo(
+        remote,
+        now
+      );
+
+    products.push(
+      created
+    );
+
+    return {
+      action:
+        'created',
+      product:
+        created
+    };
+  }
+
+  const current =
+    products[index];
+
+  const updated =
+    mergeWooProduct(
+      current,
+      remote,
+      now
+    );
+
+  const changed =
+    JSON.stringify(
+      comparableWooProduct(
+        current
+      )
+    ) !==
+    JSON.stringify(
+      comparableWooProduct(
+        updated
+      )
+    );
+
+  products[index] =
+    changed
+      ? updated
+      : {
+          ...current,
+          woocommerceModifiedAt:
+            remote.woocommerceModifiedAt,
+          wooMissingAt:
+            null
+        };
+
+  return {
+    action:
+      changed
+        ? 'updated'
+        : 'unchanged',
+    product:
+      products[index]
+  };
+}
+
+function markWooProductDeleted(
+  products,
+  wooId,
+  now =
+    new Date().toISOString()
+) {
+  const numericId =
+    Number(
+      wooId
+    );
+
+  if (!numericId) {
+    return false;
+  }
+
+  const index =
+    products.findIndex(
+      item =>
+        Number(
+          item?.woocommerceId
+        ) === numericId
+    );
+
+  if (index === -1) {
+    return false;
+  }
+
+  products[index] = {
+    ...products[index],
+
+    active:
+      false,
+
+    availability:
+      'out_of_stock',
+
+    woocommerceStatus:
+      'deleted',
+
+    wooMissingAt:
+      now,
+
+    updatedAt:
+      now
+  };
+
+  return true;
+}
+
+function wooBasicAuthHeader() {
+  return (
+    'Basic ' +
+    Buffer.from(
+      `${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`
+    ).toString(
+      'base64'
+    )
+  );
+}
+
+async function wooApiRequest(
+  endpoint,
+  options = {}
+) {
+  if (!wooConfigured()) {
+    throw new Error(
+      'WooCommerce n’est pas configuré. Ajoutez les variables Railway.'
+    );
+  }
+
+  const cleanEndpoint =
+    safeString(
+      endpoint
+    )
+      .replace(
+        /^\/+/,
+        ''
+      );
+
+  const url =
+    new URL(
+      `${WOOCOMMERCE_URL}/wp-json/wc/v3/${cleanEndpoint}`
+    );
+
+  const query =
+    options.query &&
+    typeof options.query === 'object'
+      ? options.query
+      : {};
+
+  for (
+    const [key, value]
+    of Object.entries(query)
+  ) {
+    if (
+      value === undefined ||
+      value === null ||
+      value === ''
+    ) {
+      continue;
+    }
+
+    url.searchParams.set(
+      key,
+      String(value)
+    );
+  }
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      25000
+    );
+
+  try {
+    const response =
+      await fetch(
+        url,
+        {
+          method:
+            options.method ||
+            'GET',
+
+          headers: {
+            Authorization:
+              wooBasicAuthHeader(),
+
+            Accept:
+              'application/json',
+
+            ...(
+              options.body
+                ? {
+                    'Content-Type':
+                      'application/json'
+                  }
+                : {}
+            )
+          },
+
+          body:
+            options.body
+              ? JSON.stringify(
+                  options.body
+                )
+              : undefined,
+
+          signal:
+            controller.signal
+        }
+      );
+
+    const raw =
+      await response.text();
+
+    let data;
+
+    try {
+      data =
+        raw
+          ? JSON.parse(raw)
+          : {};
+    } catch {
+      data =
+        raw;
+    }
+
+    if (!response.ok) {
+      const message =
+        data
+          ?.message ||
+        data
+          ?.data
+          ?.message ||
+        (
+          typeof data === 'string'
+            ? data
+            : ''
+        ) ||
+        `WooCommerce HTTP ${response.status}`;
+
+      throw new Error(
+        String(message)
+      );
+    }
+
+    return {
+      data,
+      headers:
+        response.headers,
+      status:
+        response.status
+    };
+  } catch (error) {
+    if (
+      error?.name ===
+      'AbortError'
+    ) {
+      throw new Error(
+        'WooCommerce ne répond pas dans le délai prévu.'
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(
+      timeout
+    );
+  }
+}
+
+async function fetchAllWooProducts() {
+  const products = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const result =
+      await wooApiRequest(
+        'products',
+        {
+          query: {
+            per_page:
+              100,
+
+            page,
+
+            status:
+              'any',
+
+            orderby:
+              'id',
+
+            order:
+              'asc'
+          }
+        }
+      );
+
+    if (
+      !Array.isArray(
+        result.data
+      )
+    ) {
+      throw new Error(
+        'Réponse WooCommerce produits invalide.'
+      );
+    }
+
+    products.push(
+      ...result.data
+    );
+
+    totalPages =
+      Math.max(
+        1,
+        Number(
+          result.headers.get(
+            'x-wp-totalpages'
+          )
+        ) || 1
+      );
+
+    page += 1;
+  } while (
+    page <= totalPages
+  );
+
+  return products;
+}
+
+async function testWooCommerceConnection() {
+  const result =
+    await wooApiRequest(
+      'products',
+      {
+        query: {
+          per_page:
+            1,
+          page:
+            1
+        }
+      }
+    );
+
+  return {
+    success:
+      true,
+
+    reachable:
+      true,
+
+    sampleCount:
+      Array.isArray(
+        result.data
+      )
+        ? result.data.length
+        : 0,
+
+    totalProducts:
+      Number(
+        result.headers.get(
+          'x-wp-total'
+        )
+      ) || null
+  };
+}
+
+async function runWooCommerceSync(
+  reason =
+    'manual'
+) {
+  if (!wooConfigured()) {
+    throw new Error(
+      'WooCommerce n’est pas configuré dans Railway.'
+    );
+  }
+
+  if (wooSyncRunning) {
+    throw new Error(
+      'Une synchronisation WooCommerce est déjà en cours.'
+    );
+  }
+
+  wooSyncRunning =
+    true;
+
+  const startedAt =
+    Date.now();
+
+  saveWooCommerceSyncState({
+    lastAttemptAt:
+      new Date().toISOString(),
+
+    lastReason:
+      safeString(reason) ||
+      'manual',
+
+    lastError:
+      ''
+  });
+
+  try {
+    const remoteProducts =
+      await fetchAllWooProducts();
+
+    const products =
+      loadProducts();
+
+    const now =
+      new Date().toISOString();
+
+    const remoteIds =
+      new Set();
+
+    let created = 0;
+    let updated = 0;
+    let unchanged = 0;
+    let deactivated = 0;
+
+    for (
+      const wooProduct
+      of remoteProducts
+    ) {
+      const wooId =
+        Number(
+          wooProduct?.id
+        );
+
+      if (wooId) {
+        remoteIds.add(
+          wooId
+        );
+      }
+
+      const result =
+        upsertWooProductInArray(
+          products,
+          wooProduct,
+          now
+        );
+
+      if (
+        result.action ===
+        'created'
+      ) {
+        created += 1;
+      } else if (
+        result.action ===
+        'updated'
+      ) {
+        updated += 1;
+      } else {
+        unchanged += 1;
+      }
+    }
+
+    for (
+      let index = 0;
+      index < products.length;
+      index += 1
+    ) {
+      const product =
+        products[index];
+
+      if (
+        safeString(
+          product?.syncSource
+        ) !== 'woocommerce'
+      ) {
+        continue;
+      }
+
+      const wooId =
+        Number(
+          product?.woocommerceId
+        );
+
+      if (
+        !wooId ||
+        remoteIds.has(
+          wooId
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        product.active !== false ||
+        product.availability !==
+          'out_of_stock'
+      ) {
+        products[index] = {
+          ...product,
+          active:
+            false,
+          availability:
+            'out_of_stock',
+          wooMissingAt:
+            now,
+          updatedAt:
+            now
+        };
+
+        deactivated += 1;
+      }
+    }
+
+    saveProducts(
+      products
+    );
+
+    const syncState =
+      saveWooCommerceSyncState({
+        lastSuccessAt:
+          now,
+
+        lastError:
+          '',
+
+        lastDurationMs:
+          Date.now() -
+          startedAt,
+
+        lastFetched:
+          remoteProducts.length,
+
+        lastCreated:
+          created,
+
+        lastUpdated:
+          updated,
+
+        lastUnchanged:
+          unchanged,
+
+        lastDeactivated:
+          deactivated
+      });
+
+    console.log(
+      '🔄 WooCommerce synchronisé :',
+      {
+        reason,
+        fetched:
+          remoteProducts.length,
+        created,
+        updated,
+        unchanged,
+        deactivated
+      }
+    );
+
+    return {
+      success:
+        true,
+
+      fetched:
+        remoteProducts.length,
+
+      created,
+      updated,
+      unchanged,
+      deactivated,
+
+      state:
+        syncState
+    };
+  } catch (error) {
+    saveWooCommerceSyncState({
+      lastError:
+        error.message,
+
+      lastDurationMs:
+        Date.now() -
+        startedAt
+    });
+
+    console.error(
+      '❌ Synchronisation WooCommerce :',
+      error.message
+    );
+
+    throw error;
+  } finally {
+    wooSyncRunning =
+      false;
+  }
+}
+
+function verifyWooWebhookSignature(
+  req
+) {
+  if (
+    !WOOCOMMERCE_WEBHOOK_SECRET
+  ) {
+    return false;
+  }
+
+  const received =
+    safeString(
+      req.get(
+        'x-wc-webhook-signature'
+      )
+    );
+
+  if (!received) {
+    return false;
+  }
+
+  const rawBody =
+    Buffer.isBuffer(
+      req.rawBody
+    )
+      ? req.rawBody
+      : Buffer.from(
+          JSON.stringify(
+            req.body ||
+            {}
+          ),
+          'utf8'
+        );
+
+  const expected =
+    crypto
+      .createHmac(
+        'sha256',
+        WOOCOMMERCE_WEBHOOK_SECRET
+      )
+      .update(
+        rawBody
+      )
+      .digest(
+        'base64'
+      );
+
+  const receivedBuffer =
+    Buffer.from(
+      received,
+      'utf8'
+    );
+
+  const expectedBuffer =
+    Buffer.from(
+      expected,
+      'utf8'
+    );
+
+  if (
+    receivedBuffer.length !==
+    expectedBuffer.length
+  ) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    receivedBuffer,
+    expectedBuffer
+  );
+}
+
+async function processWooCommerceWebhook(
+  topic,
+  payload
+) {
+  const now =
+    new Date().toISOString();
+
+  const normalizedTopic =
+    safeString(
+      topic
+    ).toLowerCase();
+
+  const wooId =
+    Number(
+      payload?.id
+    ) || null;
+
+  if (
+    normalizedTopic ===
+      'product.created' ||
+    normalizedTopic ===
+      'product.updated'
+  ) {
+    const products =
+      loadProducts();
+
+    const result =
+      upsertWooProductInArray(
+        products,
+        payload,
+        now
+      );
+
+    saveProducts(
+      products
+    );
+
+    saveWooCommerceSyncState({
+      lastWebhookAt:
+        now,
+      lastWebhookTopic:
+        normalizedTopic,
+      lastWebhookProductId:
+        wooId,
+      lastError:
+        ''
+    });
+
+    console.log(
+      `⚡ WooCommerce webhook ${normalizedTopic} :`,
+      wooId,
+      result.action
+    );
+
+    return;
+  }
+
+  if (
+    normalizedTopic ===
+    'product.deleted'
+  ) {
+    const products =
+      loadProducts();
+
+    markWooProductDeleted(
+      products,
+      wooId,
+      now
+    );
+
+    saveProducts(
+      products
+    );
+
+    saveWooCommerceSyncState({
+      lastWebhookAt:
+        now,
+      lastWebhookTopic:
+        normalizedTopic,
+      lastWebhookProductId:
+        wooId,
+      lastError:
+        ''
+    });
+
+    console.log(
+      '⚡ WooCommerce webhook product.deleted :',
+      wooId
+    );
+
+    return;
+  }
+
+  saveWooCommerceSyncState({
+    lastWebhookAt:
+      now,
+    lastWebhookTopic:
+      normalizedTopic,
+    lastWebhookProductId:
+      wooId
+  });
+}
+
+function getWooWebhookDeliveryUrl(
+  req
+) {
+  const forwardedProto =
+    safeString(
+      req.headers[
+        'x-forwarded-proto'
+      ]
+    )
+      .split(',')[0]
+      .trim();
+
+  const protocol =
+    forwardedProto ||
+    req.protocol ||
+    'https';
+
+  const host =
+    safeString(
+      req.get('host')
+    );
+
+  return (
+    `${protocol}://${host}` +
+    '/admin/api/woocommerce/webhook'
+  );
+}
+
+async function installWooCommerceWebhooks(
+  req
+) {
+  if (
+    !WOOCOMMERCE_WEBHOOK_SECRET
+  ) {
+    throw new Error(
+      'Ajoutez WOOCOMMERCE_WEBHOOK_SECRET dans Railway avant d’installer les webhooks.'
+    );
+  }
+
+  const deliveryUrl =
+    getWooWebhookDeliveryUrl(
+      req
+    );
+
+  const existingResult =
+    await wooApiRequest(
+      'webhooks',
+      {
+        query: {
+          per_page:
+            100
+        }
+      }
+    );
+
+  const existing =
+    Array.isArray(
+      existingResult.data
+    )
+      ? existingResult.data
+      : [];
+
+  const topics = [
+    'product.created',
+    'product.updated',
+    'product.deleted'
+  ];
+
+  const results = [];
+
+  for (
+    const topic
+    of topics
+  ) {
+    const found =
+      existing.find(
+        item =>
+          safeString(
+            item?.topic
+          ) === topic &&
+          safeString(
+            item?.delivery_url
+          ).replace(/\/+$/, '') ===
+          deliveryUrl.replace(/\/+$/, '')
+      );
+
+    if (found) {
+      results.push({
+        topic,
+        status:
+          'already_exists',
+        id:
+          found.id
+      });
+
+      continue;
+    }
+
+    const created =
+      await wooApiRequest(
+        'webhooks',
+        {
+          method:
+            'POST',
+
+          body: {
+            name:
+              `MONDECO ${topic}`,
+
+            topic,
+
+            delivery_url:
+              deliveryUrl,
+
+            secret:
+              WOOCOMMERCE_WEBHOOK_SECRET,
+
+            status:
+              'active'
+          }
+        }
+      );
+
+    results.push({
+      topic,
+      status:
+        'created',
+      id:
+        created.data?.id ||
+        null
+    });
+  }
+
+  return {
+    success:
+      true,
+    deliveryUrl,
+    webhooks:
+      results
+  };
+}
+
+router.post(
+  '/api/woocommerce/webhook',
+  (req, res) => {
+    if (
+      !WOOCOMMERCE_WEBHOOK_SECRET
+    ) {
+      return res
+        .status(503)
+        .json({
+          error:
+            'Webhook WooCommerce non configuré.'
+        });
+    }
+
+    if (
+      !verifyWooWebhookSignature(
+        req
+      )
+    ) {
+      console.warn(
+        '⚠️ Signature webhook WooCommerce invalide.'
+      );
+
+      return res
+        .status(401)
+        .json({
+          error:
+            'Signature webhook invalide.'
+        });
+    }
+
+    const topic =
+      safeString(
+        req.get(
+          'x-wc-webhook-topic'
+        )
+      );
+
+    const payload =
+      req.body ||
+      {};
+
+    res
+      .status(200)
+      .json({
+        received:
+          true
+      });
+
+    setImmediate(
+      () => {
+        processWooCommerceWebhook(
+          topic,
+          payload
+        ).catch(
+          error => {
+            console.error(
+              '❌ Traitement webhook WooCommerce :',
+              error.message
+            );
+
+            saveWooCommerceSyncState({
+              lastError:
+                error.message
+            });
+          }
+        );
+      }
+    );
+  }
+);
+
+router.get(
+  '/api/woocommerce/status',
+  requireAuth,
+  (req, res) => {
+    return res.json(
+      wooPublicStatus(
+        req
+      )
+    );
+  }
+);
+
+router.post(
+  '/api/woocommerce/test',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const result =
+        await testWooCommerceConnection();
+
+      return res.json({
+        ...result,
+        status:
+          wooPublicStatus(
+            req
+          )
+      });
+    } catch (error) {
+      return res
+        .status(502)
+        .json({
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/woocommerce/sync',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const result =
+        await runWooCommerceSync(
+          'manual-admin'
+        );
+
+      return res.json({
+        ...result,
+        status:
+          wooPublicStatus(
+            req
+          )
+      });
+    } catch (error) {
+      return res
+        .status(502)
+        .json({
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/woocommerce/webhooks/install',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const result =
+        await installWooCommerceWebhooks(
+          req
+        );
+
+      return res.json(
+        result
+      );
+    } catch (error) {
+      return res
+        .status(502)
+        .json({
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+function startWooCommerceAutoSync() {
+  if (
+    !WOOCOMMERCE_SYNC_ENABLED ||
+    !wooConfigured()
+  ) {
+    console.log(
+      '🔄 WooCommerce auto-sync : désactivé ou non configuré.'
+    );
+
+    return;
+  }
+
+  if (
+    wooSyncIntervalHandle
+  ) {
+    clearInterval(
+      wooSyncIntervalHandle
+    );
+  }
+
+  const intervalMs =
+    WOOCOMMERCE_SYNC_MINUTES *
+    60 *
+    1000;
+
+  console.log(
+    `🔄 WooCommerce auto-sync : toutes les ${WOOCOMMERCE_SYNC_MINUTES} min`
+  );
+
+  setTimeout(
+    () => {
+      runWooCommerceSync(
+        'startup'
+      ).catch(
+        error => {
+          console.warn(
+            '⚠️ Sync WooCommerce au démarrage :',
+            error.message
+          );
+        }
+      );
+    },
+    20000
+  );
+
+  wooSyncIntervalHandle =
+    setInterval(
+      () => {
+        if (wooSyncRunning) {
+          return;
+        }
+
+        runWooCommerceSync(
+          'scheduled'
+        ).catch(
+          error => {
+            console.warn(
+              '⚠️ Sync WooCommerce planifiée :',
+              error.message
+            );
+          }
+        );
+      },
+      intervalMs
+    );
+}
+
+startWooCommerceAutoSync();
 
 // ============================================================
 // API PRODUITS
@@ -3212,11 +5516,509 @@ router.get(
 );
 
 // ============================================================
+// API CORRECTIONS COMMERCIALES
+// ============================================================
+
+router.get(
+  '/api/commercial-corrections',
+  requireAuth,
+  (req, res) => {
+    const corrections =
+      loadCommercialCorrections()
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0) -
+            new Date(a.createdAt || 0)
+        );
+
+    return res.json(corrections);
+  }
+);
+
+router.post(
+  '/api/commercial-corrections',
+  requireAuth,
+  (req, res) => {
+    try {
+      const commercialReply =
+        safeString(
+          req.body?.commercialReply
+        );
+
+      if (!commercialReply) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'La réponse commerciale est obligatoire.'
+          });
+      }
+
+      const correction =
+        createCommercialCorrectionCandidate({
+          phone:
+            req.body?.phone,
+          question:
+            req.body?.question,
+          commercialReply,
+          source:
+            safeString(req.body?.source) ||
+            'admin_manual'
+        });
+
+      return res
+        .status(201)
+        .json(correction);
+    } catch (error) {
+      console.error(
+        '❌ Création correction commerciale :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’enregistrer la correction.'
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/commercial-corrections/manual-knowledge',
+  requireAuth,
+  (req, res) => {
+    try {
+      const title =
+        safeString(req.body?.title);
+
+      const content =
+        safeString(req.body?.content);
+
+      const question =
+        safeString(req.body?.question);
+
+      if (!title || !content) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le titre et l’information validée sont obligatoires.'
+          });
+      }
+
+      const instructions =
+        loadInstructions();
+
+      const fingerprint =
+        instructionFingerprint(
+          title,
+          content
+        );
+
+      const existing =
+        instructions.find(item =>
+          instructionFingerprint(
+            item.title,
+            item.content
+          ) === fingerprint
+        );
+
+      const now =
+        new Date().toISOString();
+
+      let instruction = existing;
+
+      if (!instruction) {
+        instruction = {
+          id: crypto.randomUUID(),
+          title,
+          content,
+          active: true,
+          source:
+            'commercial-manual',
+          createdAt: now,
+          updatedAt: now
+        };
+
+        instructions.push(
+          instruction
+        );
+
+        saveInstructions(
+          instructions
+        );
+      }
+
+      const corrections =
+        loadCommercialCorrections();
+
+      const correction = {
+        id: crypto.randomUUID(),
+        type: 'knowledge',
+        status: 'approved',
+        phone:
+          normalizePhone(req.body?.phone),
+        question,
+        commercialReply:
+          content,
+        source:
+          'admin_manual_knowledge',
+        createdAt: now,
+        updatedAt: now,
+        reviewedAt: now,
+        instructionId:
+          instruction.id
+      };
+
+      corrections.push(correction);
+      saveCommercialCorrections(
+        corrections
+      );
+
+      return res
+        .status(201)
+        .json({
+          correction,
+          instruction,
+          duplicate:
+            Boolean(existing)
+        });
+    } catch (error) {
+      console.error(
+        '❌ Ajout connaissance commerciale :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’ajouter cette information aux connaissances.'
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/commercial-corrections/:id/approve-instruction',
+  requireAuth,
+  (req, res) => {
+    try {
+      const corrections =
+        loadCommercialCorrections();
+
+      const correctionIndex =
+        corrections.findIndex(
+          item =>
+            item.id === req.params.id
+        );
+
+      if (correctionIndex === -1) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Correction introuvable.'
+          });
+      }
+
+      const correction =
+        corrections[correctionIndex];
+
+      const defaultTitle =
+        correction.question
+          ? `Correction commerciale — ${safeString(correction.question).slice(0, 90)}`
+          : 'Information validée par un commercial';
+
+      const title =
+        safeString(req.body?.title) ||
+        defaultTitle;
+
+      const content =
+        safeString(req.body?.content) ||
+        safeString(
+          correction.commercialReply
+        );
+
+      if (!content) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'L’information à apprendre est vide.'
+          });
+      }
+
+      const instructions =
+        loadInstructions();
+
+      const fingerprint =
+        instructionFingerprint(
+          title,
+          content
+        );
+
+      let instruction =
+        instructions.find(item =>
+          instructionFingerprint(
+            item.title,
+            item.content
+          ) === fingerprint
+        );
+
+      const duplicate =
+        Boolean(instruction);
+
+      const now =
+        new Date().toISOString();
+
+      if (!instruction) {
+        instruction = {
+          id: crypto.randomUUID(),
+          title,
+          content,
+          active: true,
+          source:
+            'commercial-correction',
+          correctionId:
+            correction.id,
+          createdAt: now,
+          updatedAt: now
+        };
+
+        instructions.push(
+          instruction
+        );
+
+        saveInstructions(
+          instructions
+        );
+      }
+
+      corrections[correctionIndex] = {
+        ...correction,
+        status: 'approved',
+        reviewedAt: now,
+        updatedAt: now,
+        instructionId:
+          instruction.id,
+        approvedTitle:
+          title,
+        approvedContent:
+          content
+      };
+
+      saveCommercialCorrections(
+        corrections
+      );
+
+      return res.json({
+        correction:
+          corrections[correctionIndex],
+        instruction,
+        duplicate
+      });
+    } catch (error) {
+      console.error(
+        '❌ Validation correction commerciale :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de valider cette correction.'
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/commercial-corrections/:id/ignore',
+  requireAuth,
+  (req, res) => {
+    const updated =
+      updateCommercialCorrection(
+        req.params.id,
+        current => ({
+          ...current,
+          status: 'ignored',
+          reviewedAt:
+            new Date().toISOString()
+        })
+      );
+
+    if (!updated) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Correction introuvable.'
+        });
+    }
+
+    return res.json(updated);
+  }
+);
+
+router.post(
+  '/api/commercial-corrections/product',
+  requireAuth,
+  (req, res) => {
+    try {
+      const productId =
+        safeString(req.body?.productId);
+
+      const field =
+        safeString(req.body?.field);
+
+      let value =
+        safeString(req.body?.value);
+
+      if (!productId) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Sélectionnez un produit.'
+          });
+      }
+
+      if (!COMMERCIAL_PRODUCT_FIELDS[field]) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Champ produit non autorisé.'
+          });
+      }
+
+      if (field === 'availability') {
+        value =
+          normalizeAvailabilityCorrection(
+            value
+          );
+
+        const allowed =
+          new Set([
+            'in_stock',
+            'on_order',
+            'out_of_stock',
+            'clearance',
+            'unknown'
+          ]);
+
+        if (!allowed.has(value)) {
+          return res
+            .status(400)
+            .json({
+              error:
+                'Disponibilité invalide. Utilisez : En stock, Sur commande, Rupture, Déstockage ou À confirmer.'
+            });
+        }
+      }
+
+      const products =
+        loadProducts();
+
+      const index =
+        products.findIndex(
+          item => item.id === productId
+        );
+
+      if (index === -1) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit introuvable.'
+          });
+      }
+
+      const product =
+        products[index];
+
+      const oldValue =
+        safeString(product[field]);
+
+      products[index] = {
+        ...product,
+        [field]: value,
+        updatedAt:
+          new Date().toISOString()
+      };
+
+      saveProducts(products);
+
+      const now =
+        new Date().toISOString();
+
+      const corrections =
+        loadCommercialCorrections();
+
+      const correction = {
+        id: crypto.randomUUID(),
+        type: 'product',
+        status: 'approved',
+        phone: '',
+        question:
+          safeString(req.body?.question),
+        commercialReply:
+          `${COMMERCIAL_PRODUCT_FIELDS[field]} : ${value || '(vide)'}`,
+        source:
+          'admin_product_correction',
+        productId,
+        productName:
+          safeString(product.name),
+        productField:
+          field,
+        oldValue,
+        newValue:
+          value,
+        note:
+          safeString(req.body?.note),
+        createdAt: now,
+        updatedAt: now,
+        reviewedAt: now,
+        instructionId: null
+      };
+
+      corrections.push(correction);
+      saveCommercialCorrections(
+        corrections
+      );
+
+      return res.json({
+        correction,
+        product:
+          products[index]
+      });
+    } catch (error) {
+      console.error(
+        '❌ Correction fiche produit :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de corriger la fiche produit.'
+        });
+    }
+  }
+);
+
+// ============================================================
 // DISCUSSION DE TEST
 // ============================================================
 
 let chatHandler = null;
 let imageChatHandler = null;
+let commercialSendHandler = null;
 
 function setChatHandler(fn) {
   if (typeof fn !== 'function') {
@@ -3237,6 +6039,90 @@ function setImageChatHandler(fn) {
 
   imageChatHandler = fn;
 }
+
+function setCommercialSendHandler(fn) {
+  if (typeof fn !== 'function') {
+    throw new Error(
+      'setCommercialSendHandler attend une fonction.'
+    );
+  }
+
+  commercialSendHandler = fn;
+}
+
+router.post(
+  '/api/commercial/send',
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (!commercialSendHandler) {
+        return res
+          .status(503)
+          .json({
+            error:
+              'L’envoi WhatsApp commercial n’est pas encore connecté.'
+          });
+      }
+
+      const phone =
+        normalizePhone(req.body?.phone);
+
+      const text =
+        safeString(req.body?.text);
+
+      const question =
+        safeString(req.body?.question);
+
+      if (!phone) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Numéro client obligatoire.'
+          });
+      }
+
+      if (!text) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Réponse commerciale obligatoire.'
+          });
+      }
+
+      const result =
+        await commercialSendHandler({
+          phone,
+          text,
+          question
+        });
+
+      return res.json({
+        success: true,
+        ...(
+          result &&
+          typeof result === 'object'
+            ? result
+            : {}
+        )
+      });
+    } catch (error) {
+      console.error(
+        '❌ Envoi commercial depuis Admin :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible d’envoyer le message commercial.'
+        });
+    }
+  }
+);
 
 router.post(
   '/api/test-chat',
@@ -3927,6 +6813,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         lastAction: safeString(last?.action),
         lastReplySent: Boolean(last?.reply_sent),
         lastSource: safeString(last?.source),
+        hasAdReferral: Boolean(state.cameFromAd || state.adReferral),
+        adHeadline: safeString(state?.adReferral?.headline),
+        adBody: safeString(state?.adReferral?.body),
+        adSourceId: safeString(state?.adReferral?.sourceId),
+        adSourceUrl: safeString(state?.adReferral?.sourceUrl),
         humanPaused: Boolean(state.humanPaused),
         awaitingResponse: Boolean(state.awaitingResponse),
         followUpsSent: Number(state.followUpsSent || 0)
@@ -3995,6 +6886,11 @@ router.get(
       settingsFile:
         fs.existsSync(SETTINGS_PATH),
 
+      woocommerceSyncFile:
+        fs.existsSync(
+          WOOCOMMERCE_SYNC_PATH
+        ),
+
       instructionMigrationDone:
         fs.existsSync(
           INSTRUCTIONS_MIGRATION_MARKER
@@ -4057,6 +6953,14 @@ router.get(
             Boolean(product.image)
         ).length,
 
+      woocommerceManagedProducts:
+        products.filter(
+          product =>
+            safeString(
+              product.syncSource
+            ) === 'woocommerce'
+        ).length,
+
       instructionsCount:
         instructions.length,
 
@@ -4106,5 +7010,7 @@ module.exports = {
   getBotSettings,
   setChatHandler,
   setImageChatHandler,
-  setCustomizationHandler
+  setCustomizationHandler,
+  setCommercialSendHandler,
+  createCommercialCorrectionCandidate
 };
