@@ -27,6 +27,23 @@ const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
+const SNAPSHOTS_DIR = path.join(BACKUPS_DIR, 'snapshots');
+const RECYCLE_DIR = path.join(BACKUPS_DIR, 'recycle');
+
+const MAX_JSON_BACKUPS_PER_FILE = 50;
+const MAX_FULL_SNAPSHOTS = 20;
+
+const IS_RAILWAY = Boolean(
+  process.env.RAILWAY_ENVIRONMENT_NAME
+);
+
+const PERSISTENCE_STRICT =
+  String(
+    process.env.PERSISTENCE_STRICT ?? 'true'
+  ).trim().toLowerCase() !== 'false';
+
 const LEGACY_PRODUCTS_PATH = path.join(APP_DIR, 'products.json');
 const LEGACY_INSTRUCTIONS_PATH = path.join(APP_DIR, 'instructions.json');
 const LEGACY_CUSTOMIZATIONS_PATH = path.join(APP_DIR, 'customization-requests.json');
@@ -49,8 +66,12 @@ const ADMIN_PASSWORD = (
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
+fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
+fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+fs.mkdirSync(RECYCLE_DIR, { recursive: true });
 
-router.use(express.json({ limit: '5mb' }));
+router.use(express.json({ limit: '20mb' }));
 
 // ============================================================
 // HELPERS
@@ -111,6 +132,638 @@ function storageIsWritable() {
   }
 }
 
+
+function timestampId(date = new Date()) {
+  const pad = value => String(value).padStart(2, '0');
+  const ms = String(date.getMilliseconds()).padStart(3, '0');
+
+  return (
+    `${date.getFullYear()}` +
+    `${pad(date.getMonth() + 1)}` +
+    `${pad(date.getDate())}-` +
+    `${pad(date.getHours())}` +
+    `${pad(date.getMinutes())}` +
+    `${pad(date.getSeconds())}-` +
+    ms
+  );
+}
+
+function ensurePersistenceSafety() {
+  const persistentConfigured =
+    !samePath(DATA_DIR, APP_DIR);
+
+  const mountPath = safeString(
+    process.env.RAILWAY_VOLUME_MOUNT_PATH
+  );
+
+  if (
+    IS_RAILWAY &&
+    PERSISTENCE_STRICT &&
+    !persistentConfigured
+  ) {
+    throw new Error(
+      'STOCKAGE PERSISTANT OBLIGATOIRE : Railway est actif mais DATA_DIR pointe vers /app. ' +
+      'Montez un Volume sur /data et définissez DATA_DIR=/data.'
+    );
+  }
+
+  if (
+    IS_RAILWAY &&
+    PERSISTENCE_STRICT &&
+    mountPath &&
+    !(
+      samePath(DATA_DIR, mountPath) ||
+      path.resolve(DATA_DIR).startsWith(
+        path.resolve(mountPath) + path.sep
+      )
+    )
+  ) {
+    throw new Error(
+      `STOCKAGE PERSISTANT MAL CONFIGURÉ : DATA_DIR=${DATA_DIR} ` +
+      `mais le Volume Railway est monté sur ${mountPath}.`
+    );
+  }
+
+  if (!storageIsWritable()) {
+    throw new Error(
+      `Le dossier de données ${DATA_DIR} n'est pas accessible en écriture.`
+    );
+  }
+}
+
+function pruneFiles(directory, maxFiles) {
+  try {
+    if (!fs.existsSync(directory)) return;
+
+    const files = fs
+      .readdirSync(directory)
+      .map(name => {
+        const fullPath = path.join(directory, name);
+
+        try {
+          const stat = fs.statSync(fullPath);
+
+          return stat.isFile()
+            ? {
+                name,
+                fullPath,
+                mtimeMs: stat.mtimeMs
+              }
+            : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    for (const file of files.slice(maxFiles)) {
+      try {
+        fs.unlinkSync(file.fullPath);
+      } catch (error) {
+        console.warn(
+          '⚠️ Nettoyage ancien backup impossible :',
+          error.message
+        );
+      }
+    }
+  } catch (error) {
+    console.warn(
+      '⚠️ Nettoyage des backups impossible :',
+      error.message
+    );
+  }
+}
+
+function backupJsonVersion(filePath) {
+  try {
+    if (!fileExistsWithContent(filePath)) return null;
+
+    const baseName =
+      path.basename(filePath, path.extname(filePath));
+
+    const ext =
+      path.extname(filePath) || '.json';
+
+    const targetDir =
+      path.join(JSON_BACKUPS_DIR, baseName);
+
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const backupPath =
+      path.join(
+        targetDir,
+        `${baseName}-${timestampId()}${ext}`
+      );
+
+    fs.copyFileSync(
+      filePath,
+      backupPath
+    );
+
+    pruneFiles(
+      targetDir,
+      MAX_JSON_BACKUPS_PER_FILE
+    );
+
+    return backupPath;
+  } catch (error) {
+    console.warn(
+      `⚠️ Backup versionné impossible pour ${path.basename(filePath)} :`,
+      error.message
+    );
+
+    return null;
+  }
+}
+
+function copyDirectoryRecursive(sourceDir, targetDir) {
+  if (!fs.existsSync(sourceDir)) return;
+
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const entries =
+    fs.readdirSync(
+      sourceDir,
+      { withFileTypes: true }
+    );
+
+  for (const entry of entries) {
+    const source =
+      path.join(sourceDir, entry.name);
+
+    const target =
+      path.join(targetDir, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(
+        source,
+        target
+      );
+    } else if (entry.isFile()) {
+      fs.copyFileSync(
+        source,
+        target
+      );
+    }
+  }
+}
+
+function clearDirectory(directory) {
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(
+      directory,
+      { recursive: true }
+    );
+    return;
+  }
+
+  for (
+    const entry
+    of fs.readdirSync(
+      directory,
+      { withFileTypes: true }
+    )
+  ) {
+    const fullPath =
+      path.join(
+        directory,
+        entry.name
+      );
+
+    if (entry.isDirectory()) {
+      fs.rmSync(
+        fullPath,
+        {
+          recursive: true,
+          force: true
+        }
+      );
+    } else {
+      fs.unlinkSync(fullPath);
+    }
+  }
+}
+
+function archiveFileBeforeDelete(filePath, category = 'files') {
+  try {
+    if (
+      !filePath ||
+      !fs.existsSync(filePath)
+    ) {
+      return null;
+    }
+
+    const targetDir =
+      path.join(
+        RECYCLE_DIR,
+        category
+      );
+
+    fs.mkdirSync(
+      targetDir,
+      { recursive: true }
+    );
+
+    const target =
+      path.join(
+        targetDir,
+        `${timestampId()}-${path.basename(filePath)}`
+      );
+
+    fs.copyFileSync(
+      filePath,
+      target
+    );
+
+    deleteFileIfExists(
+      filePath
+    );
+
+    return target;
+  } catch (error) {
+    console.warn(
+      '⚠️ Archivage avant suppression impossible :',
+      error.message
+    );
+
+    // Ne jamais bloquer une opération commerciale seulement
+    // parce que la copie de sécurité n'a pas pu être créée.
+    deleteFileIfExists(
+      filePath
+    );
+
+    return null;
+  }
+}
+
+function snapshotFiles() {
+  return [
+    {
+      source: PRODUCTS_PATH,
+      name: 'products.json'
+    },
+    {
+      source: INSTRUCTIONS_PATH,
+      name: 'instructions.json'
+    },
+    {
+      source: SETTINGS_PATH,
+      name: 'settings.json'
+    },
+    {
+      source: CUSTOMIZATIONS_PATH,
+      name: 'customization-requests.json'
+    }
+  ];
+}
+
+function snapshotMetadata(snapshotDir) {
+  const filePath =
+    path.join(
+      snapshotDir,
+      'snapshot-meta.json'
+    );
+
+  try {
+    if (!fs.existsSync(filePath)) {
+      return {};
+    }
+
+    return JSON.parse(
+      fs.readFileSync(
+        filePath,
+        'utf8'
+      ) || '{}'
+    );
+  } catch {
+    return {};
+  }
+}
+
+function listFullSnapshots() {
+  if (!fs.existsSync(SNAPSHOTS_DIR)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(
+      SNAPSHOTS_DIR,
+      { withFileTypes: true }
+    )
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const fullPath =
+        path.join(
+          SNAPSHOTS_DIR,
+          entry.name
+        );
+
+      const stat =
+        fs.statSync(fullPath);
+
+      const meta =
+        snapshotMetadata(fullPath);
+
+      return {
+        id: entry.name,
+        createdAt:
+          meta.createdAt ||
+          stat.mtime.toISOString(),
+        reason:
+          meta.reason ||
+          'manual',
+        productCount:
+          Number(meta.productCount || 0),
+        instructionCount:
+          Number(meta.instructionCount || 0),
+        customizationCount:
+          Number(meta.customizationCount || 0)
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt) -
+        new Date(a.createdAt)
+    );
+}
+
+function pruneFullSnapshots() {
+  const snapshots =
+    listFullSnapshots();
+
+  for (
+    const snapshot
+    of snapshots.slice(
+      MAX_FULL_SNAPSHOTS
+    )
+  ) {
+    try {
+      fs.rmSync(
+        path.join(
+          SNAPSHOTS_DIR,
+          snapshot.id
+        ),
+        {
+          recursive: true,
+          force: true
+        }
+      );
+    } catch (error) {
+      console.warn(
+        '⚠️ Suppression ancien snapshot impossible :',
+        error.message
+      );
+    }
+  }
+}
+
+function createFullSnapshot(reason = 'manual') {
+  const id =
+    `snapshot-${timestampId()}`;
+
+  const snapshotDir =
+    path.join(
+      SNAPSHOTS_DIR,
+      id
+    );
+
+  fs.mkdirSync(
+    snapshotDir,
+    { recursive: true }
+  );
+
+  for (const item of snapshotFiles()) {
+    if (fs.existsSync(item.source)) {
+      fs.copyFileSync(
+        item.source,
+        path.join(
+          snapshotDir,
+          item.name
+        )
+      );
+    }
+  }
+
+  copyDirectoryRecursive(
+    UPLOADS_DIR,
+    path.join(
+      snapshotDir,
+      'uploads'
+    )
+  );
+
+  copyDirectoryRecursive(
+    CUSTOMIZATIONS_DIR,
+    path.join(
+      snapshotDir,
+      'customizations'
+    )
+  );
+
+  const products =
+    readJsonArray(
+      PRODUCTS_PATH,
+      'products.json'
+    );
+
+  const instructions =
+    readJsonArray(
+      INSTRUCTIONS_PATH,
+      'instructions.json'
+    );
+
+  const customizations =
+    readJsonArray(
+      CUSTOMIZATIONS_PATH,
+      'customization-requests.json'
+    );
+
+  const meta = {
+    id,
+    createdAt:
+      new Date().toISOString(),
+    reason:
+      safeString(reason) || 'manual',
+    productCount:
+      products.length,
+    instructionCount:
+      instructions.length,
+    customizationCount:
+      customizations.length
+  };
+
+  fs.writeFileSync(
+    path.join(
+      snapshotDir,
+      'snapshot-meta.json'
+    ),
+    JSON.stringify(
+      meta,
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  pruneFullSnapshots();
+
+  console.log(
+    `💾 Snapshot créé : ${id}`
+  );
+
+  return meta;
+}
+
+function restoreFullSnapshot(snapshotId) {
+  const safeId =
+    path.basename(
+      safeString(snapshotId)
+    );
+
+  if (!safeId) {
+    throw new Error(
+      'Sauvegarde invalide.'
+    );
+  }
+
+  const snapshotDir =
+    path.join(
+      SNAPSHOTS_DIR,
+      safeId
+    );
+
+  if (
+    !fs.existsSync(snapshotDir) ||
+    !fs.statSync(snapshotDir).isDirectory()
+  ) {
+    throw new Error(
+      'Sauvegarde introuvable.'
+    );
+  }
+
+  // Protection avant restauration.
+  createFullSnapshot(
+    `before-restore-${safeId}`
+  );
+
+  for (const item of snapshotFiles()) {
+    const source =
+      path.join(
+        snapshotDir,
+        item.name
+      );
+
+    if (fs.existsSync(source)) {
+      backupJsonVersion(
+        item.source
+      );
+
+      fs.copyFileSync(
+        source,
+        item.source
+      );
+    }
+  }
+
+  const snapshotUploads =
+    path.join(
+      snapshotDir,
+      'uploads'
+    );
+
+  if (fs.existsSync(snapshotUploads)) {
+    clearDirectory(
+      UPLOADS_DIR
+    );
+
+    copyDirectoryRecursive(
+      snapshotUploads,
+      UPLOADS_DIR
+    );
+  }
+
+  const snapshotCustomizations =
+    path.join(
+      snapshotDir,
+      'customizations'
+    );
+
+  if (
+    fs.existsSync(
+      snapshotCustomizations
+    )
+  ) {
+    clearDirectory(
+      CUSTOMIZATIONS_DIR
+    );
+
+    copyDirectoryRecursive(
+      snapshotCustomizations,
+      CUSTOMIZATIONS_DIR
+    );
+  }
+
+  markInstructionsMigrationDone();
+
+  console.log(
+    `♻️ Snapshot restauré : ${safeId}`
+  );
+
+  return snapshotMetadata(
+    snapshotDir
+  );
+}
+
+function createExternalDataExport() {
+  return {
+    exportVersion: 1,
+    createdAt:
+      new Date().toISOString(),
+    dataDir:
+      DATA_DIR,
+    products:
+      loadProducts(),
+    instructions:
+      loadInstructions(),
+    settings:
+      getBotSettings(),
+    customizations:
+      loadCustomizations(),
+    note:
+      'Cet export JSON contient les données structurées. Les images restent protégées dans le Volume et les snapshots complets /data/backups/snapshots.'
+  };
+}
+
+function ensureDailySnapshot() {
+  try {
+    const today =
+      new Date()
+        .toISOString()
+        .slice(0, 10);
+
+    const existsToday =
+      listFullSnapshots()
+        .some(snapshot =>
+          String(
+            snapshot.createdAt
+          ).slice(0, 10) === today
+        );
+
+    if (!existsToday) {
+      createFullSnapshot(
+        'automatic-daily'
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '⚠️ Snapshot quotidien impossible :',
+      error.message
+    );
+  }
+}
+
+
 function writeJsonAtomic(filePath, data) {
   const tempPath = `${filePath}.tmp`;
   const backupPath = `${filePath}.bak`;
@@ -118,6 +771,8 @@ function writeJsonAtomic(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
   if (fileExistsWithContent(filePath)) {
+    backupJsonVersion(filePath);
+
     try {
       fs.copyFileSync(filePath, backupPath);
     } catch (error) {
@@ -841,9 +1496,11 @@ function saveBotSettings(settings) {
 // INITIALISATION
 // ============================================================
 
+ensurePersistenceSafety();
 migrateLegacyData();
 initializePersistentInstructions();
 initializeSettings();
+ensureDailySnapshot();
 
 console.log(
   '💾 Stockage MONDECO :',
@@ -856,13 +1513,9 @@ console.log(
   }
 );
 
-if (
-  DATA_DIR === APP_DIR &&
-  process.env.RAILWAY_ENVIRONMENT_NAME
-) {
-  console.warn(
-    '⚠️ Railway détecté sans stockage persistant. ' +
-    'Montez un Volume sur /data puis ajoutez DATA_DIR=/data.'
+if (IS_RAILWAY) {
+  console.log(
+    `🛡️ Persistence Guard : ${PERSISTENCE_STRICT ? 'ACTIF' : 'DÉSACTIVÉ'}`
   );
 }
 
@@ -1844,7 +2497,7 @@ router.put(
         oldImagePath &&
         oldImagePath !== req.file.path
       ) {
-        deleteFileIfExists(oldImagePath);
+        archiveFileBeforeDelete(oldImagePath, 'product-images');
       }
 
       return res.json(updated);
@@ -1895,7 +2548,7 @@ router.delete(
         getLocalProductImagePath(product);
 
       if (imagePath) {
-        deleteFileIfExists(imagePath);
+        archiveFileBeforeDelete(imagePath, 'product-images');
       }
 
       return res.json({
@@ -2357,6 +3010,193 @@ router.put(
         .json({
           error:
             'Impossible de sauvegarder les paramètres.'
+        });
+    }
+  }
+);
+
+
+// ============================================================
+// API SAUVEGARDES / RESTAURATION
+// ============================================================
+
+router.get(
+  '/api/backups',
+  requireAuth,
+  (req, res) => {
+    try {
+      return res.json({
+        snapshots:
+          listFullSnapshots(),
+        maxSnapshots:
+          MAX_FULL_SNAPSHOTS
+      });
+    } catch (error) {
+      console.error(
+        '❌ Liste sauvegardes :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de lire les sauvegardes.'
+        });
+    }
+  }
+);
+
+router.get(
+  '/api/backups/status',
+  requireAuth,
+  (req, res) => {
+    try {
+      const snapshots =
+        listFullSnapshots();
+
+      return res.json({
+        dataDir:
+          DATA_DIR,
+        persistentConfigured:
+          !samePath(DATA_DIR, APP_DIR),
+        writable:
+          storageIsWritable(),
+        persistenceStrict:
+          PERSISTENCE_STRICT,
+        railwayVolumeMountPath:
+          process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+          null,
+        backupDirectory:
+          BACKUPS_DIR,
+        snapshotCount:
+          snapshots.length,
+        lastSnapshot:
+          snapshots[0] || null,
+        maxSnapshots:
+          MAX_FULL_SNAPSHOTS,
+        jsonBackupLimit:
+          MAX_JSON_BACKUPS_PER_FILE
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de vérifier les sauvegardes.'
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/backups',
+  requireAuth,
+  (req, res) => {
+    try {
+      const snapshot =
+        createFullSnapshot(
+          safeString(
+            req.body?.reason
+          ) ||
+          'manual'
+        );
+
+      return res
+        .status(201)
+        .json({
+          success:
+            true,
+          snapshot
+        });
+    } catch (error) {
+      console.error(
+        '❌ Création sauvegarde :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible de créer la sauvegarde.'
+        });
+    }
+  }
+);
+
+router.post(
+  '/api/backups/:id/restore',
+  requireAuth,
+  (req, res) => {
+    try {
+      const restored =
+        restoreFullSnapshot(
+          req.params.id
+        );
+
+      return res.json({
+        success:
+          true,
+        restored
+      });
+    } catch (error) {
+      console.error(
+        '❌ Restauration sauvegarde :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible de restaurer la sauvegarde.'
+        });
+    }
+  }
+);
+
+router.get(
+  '/api/export-data',
+  requireAuth,
+  (req, res) => {
+    try {
+      const data =
+        createExternalDataExport();
+
+      const filename =
+        `mondeco-data-${timestampId()}.json`;
+
+      res.setHeader(
+        'Content-Type',
+        'application/json; charset=utf-8'
+      );
+
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"`
+      );
+
+      return res.send(
+        JSON.stringify(
+          data,
+          null,
+          2
+        )
+      );
+    } catch (error) {
+      console.error(
+        '❌ Export données :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible d’exporter les données.'
         });
     }
   }
@@ -2982,24 +3822,26 @@ router.delete(
       );
 
       if (item.resultFilename) {
-        deleteFileIfExists(
+        archiveFileBeforeDelete(
           path.join(
             CUSTOMIZATIONS_DIR,
             path.basename(
               item.resultFilename
             )
-          )
+          ),
+          'customization-images'
         );
       }
 
       if (item.sourceFilename) {
-        deleteFileIfExists(
+        archiveFileBeforeDelete(
           path.join(
             CUSTOMIZATIONS_DIR,
             path.basename(
               item.sourceFilename
             )
-          )
+          ),
+          'customization-images'
         );
       }
 
@@ -3071,6 +3913,18 @@ router.get(
 
       customizationsDirectory:
         fs.existsSync(CUSTOMIZATIONS_DIR),
+
+      backupsDirectory:
+        fs.existsSync(BACKUPS_DIR),
+
+      persistenceStrict:
+        PERSISTENCE_STRICT,
+
+      snapshotCount:
+        listFullSnapshots().length,
+
+      lastSnapshot:
+        listFullSnapshots()[0] || null,
 
       recommendedRailwayMountPath:
         '/data',
