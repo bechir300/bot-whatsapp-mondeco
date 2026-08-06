@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<meta name="theme-color" content="#11100f">
 <title>MONDECO — Agent WhatsApp</title>
 
 <style>
@@ -2280,6 +2283,71 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   V6.3 — Protection des données
+   ========================================================== */
+
+.data-protection-card .protection-status{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:14px 0;
+}
+
+.protection-chip{
+  padding:10px 11px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#fbfaf8;
+}
+
+.protection-chip .label{
+  display:block;
+  margin-bottom:3px;
+  color:#91867f;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+
+.protection-chip .value{
+  color:var(--text);
+  font-size:12px;
+  font-weight:750;
+}
+
+.backup-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:12px;
+}
+
+.backup-list{
+  margin-top:14px;
+}
+
+.backup-list select{
+  width:100%;
+}
+
+@media(max-width:620px){
+  .data-protection-card .protection-status{
+    grid-template-columns:1fr;
+  }
+
+  .backup-actions{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+
+  .backup-actions .btn{
+    width:100%;
+  }
+}
+
 </style>
 </head>
 
@@ -2929,6 +2997,67 @@ tbody tr:hover{
             <h3 class="setting-title">Résumé actuel</h3>
             <div id="settingsSummary" class="notice info">
               Chargement...
+            </div>
+          </div>
+
+          <div class="card setting-section data-protection-card">
+            <h3 class="setting-title">Protection des données</h3>
+            <p class="setting-sub">
+              Produits, instructions, paramètres et images sont enregistrés sur le Volume Railway.
+              Une sauvegarde complète peut être créée et restaurée depuis cette page.
+            </p>
+
+            <div id="backupProtectionNotice" class="notice info">
+              Vérification de la protection...
+            </div>
+
+            <div class="protection-status">
+              <div class="protection-chip">
+                <span class="label">Stockage</span>
+                <span class="value" id="backupStorageStatus">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Dernière sauvegarde</span>
+                <span class="value" id="backupLastSnapshot">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Snapshots conservés</span>
+                <span class="value" id="backupSnapshotCount">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Protection stricte</span>
+                <span class="value" id="backupStrictStatus">—</span>
+              </div>
+            </div>
+
+            <div class="backup-actions">
+              <button class="btn primary" id="createBackupBtn" type="button">
+                Créer une sauvegarde
+              </button>
+
+              <button class="btn" id="exportDataBtn" type="button">
+                Exporter les données JSON
+              </button>
+            </div>
+
+            <div class="backup-list">
+              <div class="field">
+                <label>Restaurer une sauvegarde complète</label>
+                <select id="backupSnapshotSelect">
+                  <option value="">Aucune sauvegarde disponible</option>
+                </select>
+                <div class="help">
+                  La restauration remet les JSON et les images dans l'état exact de la sauvegarde choisie.
+                  Une sauvegarde de sécurité est créée automatiquement avant toute restauration.
+                </div>
+              </div>
+
+              <button class="btn danger" id="restoreBackupBtn" type="button">
+                Restaurer la sauvegarde sélectionnée
+              </button>
             </div>
           </div>
         </div>
@@ -4163,6 +4292,7 @@ buildWeeklyRows();
 
 async function loadSettings(){
   settings = await apiFetch(`${API}/settings`);
+  await loadBackupProtection();
 
   document.getElementById('settingAiEnabled').checked =
     settings.aiEnabled === true;
@@ -4376,6 +4506,205 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
     button.textContent = old;
   }
 });
+
+
+// ============================================================
+// PROTECTION DES DONNÉES / BACKUPS
+// ============================================================
+
+let backupState = null;
+
+function formatBackupDate(value){
+  if(!value) return 'Aucune';
+
+  try{
+    return new Intl.DateTimeFormat('fr-FR',{
+      dateStyle:'short',
+      timeStyle:'short'
+    }).format(new Date(value));
+  }catch{
+    return value;
+  }
+}
+
+async function loadBackupProtection(){
+  try{
+    const [status, list] = await Promise.all([
+      apiFetch(`${API}/backups/status`),
+      apiFetch(`${API}/backups`)
+    ]);
+
+    backupState = {
+      status,
+      snapshots:list.snapshots || []
+    };
+
+    const notice =
+      document.getElementById('backupProtectionNotice');
+
+    const storageOk =
+      status.persistentConfigured &&
+      status.writable;
+
+    notice.className =
+      `notice ${storageOk ? 'success' : 'warning'}`;
+
+    notice.textContent =
+      storageOk
+        ? `Protection active : données persistantes sur ${status.dataDir}.`
+        : 'Attention : stockage persistant non confirmé. Ne saisissez pas de nouvelles données avant correction.';
+
+    document.getElementById('backupStorageStatus').textContent =
+      storageOk
+        ? `${status.dataDir} • actif`
+        : 'À vérifier';
+
+    document.getElementById('backupLastSnapshot').textContent =
+      status.lastSnapshot
+        ? formatBackupDate(status.lastSnapshot.createdAt)
+        : 'Aucune';
+
+    document.getElementById('backupSnapshotCount').textContent =
+      `${status.snapshotCount || 0} / ${status.maxSnapshots || 20}`;
+
+    document.getElementById('backupStrictStatus').textContent =
+      status.persistenceStrict
+        ? 'Activée'
+        : 'Désactivée';
+
+    const select =
+      document.getElementById('backupSnapshotSelect');
+
+    const snapshots =
+      list.snapshots || [];
+
+    if(!snapshots.length){
+      select.innerHTML =
+        '<option value="">Aucune sauvegarde disponible</option>';
+    }else{
+      select.innerHTML =
+        '<option value="">Choisir une sauvegarde...</option>' +
+        snapshots.map(snapshot => {
+          const detail =
+            `${formatBackupDate(snapshot.createdAt)} • ` +
+            `${snapshot.productCount || 0} produits • ` +
+            `${snapshot.instructionCount || 0} instructions`;
+
+          return `
+            <option value="${escapeHtml(snapshot.id)}">
+              ${escapeHtml(detail)}
+            </option>
+          `;
+        }).join('');
+    }
+
+  }catch(error){
+    const notice =
+      document.getElementById('backupProtectionNotice');
+
+    if(notice){
+      notice.className =
+        'notice warning';
+
+      notice.textContent =
+        `Impossible de vérifier les sauvegardes : ${error.message}`;
+    }
+  }
+}
+
+document.getElementById('createBackupBtn').addEventListener('click', async () => {
+  const button =
+    document.getElementById('createBackupBtn');
+
+  const old =
+    button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Sauvegarde...';
+
+  try{
+    const result =
+      await apiFetch(`${API}/backups`,{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          reason:'manual-admin'
+        })
+      });
+
+    alert(
+      `Sauvegarde créée : ${result.snapshot?.id || 'OK'}`
+    );
+
+    await loadBackupProtection();
+
+  }catch(error){
+    alert(error.message);
+
+  }finally{
+    button.disabled = false;
+    button.textContent = old;
+  }
+});
+
+document.getElementById('exportDataBtn').addEventListener('click', () => {
+  window.location.href =
+    `${API}/export-data`;
+});
+
+document.getElementById('restoreBackupBtn').addEventListener('click', async () => {
+  const select =
+    document.getElementById('backupSnapshotSelect');
+
+  const snapshotId =
+    select.value;
+
+  if(!snapshotId){
+    alert('Choisissez une sauvegarde à restaurer.');
+    return;
+  }
+
+  const ok = confirm(
+    'Restaurer cette sauvegarde ?\\n\\n' +
+    'Les produits, instructions, paramètres et images actuels seront remplacés par ceux de cette sauvegarde. ' +
+    'Une sauvegarde de sécurité de l’état actuel sera créée automatiquement.'
+  );
+
+  if(!ok) return;
+
+  const button =
+    document.getElementById('restoreBackupBtn');
+
+  const old =
+    button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Restauration...';
+
+  try{
+    await apiFetch(
+      `${API}/backups/${encodeURIComponent(snapshotId)}/restore`,
+      {
+        method:'POST'
+      }
+    );
+
+    alert(
+      'Sauvegarde restaurée avec succès. L’interface va être rechargée.'
+    );
+
+    location.reload();
+
+  }catch(error){
+    alert(error.message);
+
+    button.disabled = false;
+    button.textContent = old;
+  }
+});
+
 
 // ============================================================
 // LOGOUT / INIT
