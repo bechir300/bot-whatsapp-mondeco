@@ -1291,7 +1291,7 @@ function buildImageEditPrompt(
   const productName =
     product?.name
       ? `Le produit de référence est le modèle MONDECO « ${product.name} ».`
-      : 'L’image fournie est une référence de mobilier.';
+      : 'L\u2019image fournie est une référence de mobilier.';
 
   return `
 Créer une simulation photoréaliste de personnalisation à partir de l'image fournie.
@@ -1539,7 +1539,7 @@ async function callCloudflareImageEdit(
     );
 
     throw new Error(
-      'Cloudflare n’a retourné aucune image.'
+      'Cloudflare n\u2019a retourné aucune image.'
     );
   }
 
