@@ -4202,7 +4202,88 @@ async function installWooCommerceWebhooks(
 
 router.post(
   '/api/woocommerce/webhook',
+
+  // Le ping initial WooCommerce n'a pas forcément un Content-Type
+  // application/x-www-form-urlencoded selon la pile WordPress/PHP.
+  // On lit donc tout corps NON déjà traité par express.json().
+  express.text({
+    type:
+      () => true,
+    limit:
+      '64kb'
+  }),
+
   (req, res) => {
+    const userAgent =
+      safeString(
+        req.get(
+          'user-agent'
+        )
+      );
+
+    const webhookTopic =
+      safeString(
+        req.get(
+          'x-wc-webhook-topic'
+        )
+      );
+
+    const webhookSignature =
+      safeString(
+        req.get(
+          'x-wc-webhook-signature'
+        )
+      );
+
+    const pingBody =
+      typeof req.body === 'string'
+        ? safeString(
+            req.body
+          )
+        : (
+            Buffer.isBuffer(
+              req.rawBody
+            )
+              ? safeString(
+                  req.rawBody.toString(
+                    'utf8'
+                  )
+                )
+              : ''
+          );
+
+    const isWooHookshot =
+      /woocommerce\/.+hookshot/i.test(
+        userAgent
+      );
+
+    const isWooPing =
+      isWooHookshot &&
+      !webhookTopic &&
+      !webhookSignature &&
+      /^webhook_id=\d+$/.test(
+        pingBody
+      );
+
+    // WooCommerce exige HTTP 200 au premier enregistrement.
+    // Ce ping ne contient aucune donnée produit, n'est pas une
+    // livraison signée et ne modifie aucune donnée MONDECO.
+    if (isWooPing) {
+      console.log(
+        '✅ Ping initial WooCommerce accepté :',
+        pingBody
+      );
+
+      return res
+        .status(200)
+        .json({
+          received:
+            true,
+          type:
+            'woocommerce_ping'
+        });
+    }
+
     if (
       !WOOCOMMERCE_WEBHOOK_SECRET
     ) {
@@ -4269,6 +4350,25 @@ router.post(
         );
       }
     );
+  }
+);
+
+
+router.get(
+  '/api/woocommerce/webhook',
+  (req, res) => {
+    return res
+      .status(200)
+      .json({
+        status:
+          'ok',
+        endpoint:
+          'woocommerce_webhook',
+        configured:
+          Boolean(
+            WOOCOMMERCE_WEBHOOK_SECRET
+          )
+      });
   }
 );
 
