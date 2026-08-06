@@ -1,4013 +1,4801 @@
-// ============================================================
-// MONDECO - ADMINISTRATION
-// Admin.js
-// Produits + Instructions + Personnalisation + Paramètres
-// Stockage persistant Railway via /data
-// ============================================================
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MONDECO — Agent WhatsApp</title>
 
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const multer = require('multer');
-
-const router = express.Router();
-
-const APP_DIR = __dirname;
-const DATA_DIR = (
-  process.env.DATA_DIR ||
-  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
-  APP_DIR
-).trim();
-
-const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
-const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
-const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
-const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
-
-const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
-const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
-const SNAPSHOTS_DIR = path.join(BACKUPS_DIR, 'snapshots');
-const RECYCLE_DIR = path.join(BACKUPS_DIR, 'recycle');
-
-const MAX_JSON_BACKUPS_PER_FILE = 50;
-const MAX_FULL_SNAPSHOTS = 20;
-
-const IS_RAILWAY = Boolean(
-  process.env.RAILWAY_ENVIRONMENT_NAME
-);
-
-const PERSISTENCE_STRICT =
-  String(
-    process.env.PERSISTENCE_STRICT ?? 'true'
-  ).trim().toLowerCase() !== 'false';
-
-const LEGACY_PRODUCTS_PATH = path.join(APP_DIR, 'products.json');
-const LEGACY_INSTRUCTIONS_PATH = path.join(APP_DIR, 'instructions.json');
-const LEGACY_CUSTOMIZATIONS_PATH = path.join(APP_DIR, 'customization-requests.json');
-const LEGACY_UPLOADS_DIR = path.join(APP_DIR, 'uploads');
-const LEGACY_CUSTOMIZATIONS_DIR = path.join(APP_DIR, 'customizations');
-const LEGACY_BUSINESS_INFO_PATH = path.join(APP_DIR, 'business-info.txt');
-
-const INSTRUCTIONS_MIGRATION_MARKER = path.join(
-  DATA_DIR,
-  '.instructions-migration-done'
-);
-
-const ADMIN_HTML_PATH = path.join(APP_DIR, 'Admin.html');
-
-const ADMIN_PASSWORD = (
-  process.env.ADMIN_PASSWORD ||
-  'mondeco2026'
-).trim();
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
-fs.mkdirSync(BACKUPS_DIR, { recursive: true });
-fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
-fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
-fs.mkdirSync(RECYCLE_DIR, { recursive: true });
-
-router.use(express.json({ limit: '20mb' }));
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-function safeString(value) {
-  return String(value ?? '').trim();
+<style>
+:root{
+  --bg:#f7f3ed;
+  --panel:#ffffff;
+  --sidebar:#1f1a15;
+  --sidebar-soft:#2c251f;
+  --text:#211b16;
+  --muted:#786e63;
+  --line:#e7ded4;
+  --accent:#be551b;
+  --accent-dark:#994214;
+  --green:#2c8c52;
+  --red:#b43d36;
+  --yellow:#b9851a;
+  --shadow:0 10px 30px rgba(43,31,20,.08);
+  --radius:14px;
 }
 
-function normalizePhone(value) {
-  return safeString(value).replace(/\D/g, '');
+*{
+  box-sizing:border-box;
 }
 
-function parseBoolean(value, defaultValue = false) {
-  if (value === undefined || value === null || value === '') {
-    return defaultValue;
+body{
+  margin:0;
+  font-family:Arial,Helvetica,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+}
+
+button,input,textarea,select{
+  font:inherit;
+}
+
+button{
+  cursor:pointer;
+}
+
+.hidden{
+  display:none !important;
+}
+
+.app{
+  min-height:100vh;
+  display:grid;
+  grid-template-columns:270px 1fr;
+}
+
+.sidebar{
+  background:var(--sidebar);
+  color:#fff;
+  padding:28px 18px;
+  position:sticky;
+  top:0;
+  height:100vh;
+}
+
+.brand{
+  padding:0 8px 28px;
+}
+
+.brand h1{
+  font-family:Georgia,serif;
+  font-size:29px;
+  margin:0;
+}
+
+.brand p{
+  color:#c7b9aa;
+  margin:4px 0 0;
+  font-size:14px;
+}
+
+.nav{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+
+.nav button{
+  border:0;
+  background:transparent;
+  color:#eee4d9;
+  border-radius:10px;
+  text-align:left;
+  padding:13px 14px;
+  font-weight:700;
+  font-size:15px;
+}
+
+.nav button:hover{
+  background:var(--sidebar-soft);
+}
+
+.nav button.active{
+  background:var(--accent);
+  color:#fff;
+}
+
+.sidebar-footer{
+  position:absolute;
+  left:18px;
+  right:18px;
+  bottom:22px;
+}
+
+.logout-btn{
+  width:100%;
+  background:transparent;
+  border:1px solid #5e5145;
+  color:#ddd1c5;
+  padding:11px;
+  border-radius:9px;
+}
+
+.main{
+  padding:42px 56px 70px;
+  min-width:0;
+}
+
+.page{
+  display:none;
+}
+
+.page.active{
+  display:block;
+}
+
+.page-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:20px;
+  margin-bottom:24px;
+}
+
+.page-title{
+  margin:0;
+  font-family:Georgia,serif;
+  font-size:39px;
+  line-height:1.1;
+}
+
+.page-subtitle{
+  color:var(--muted);
+  margin:8px 0 0;
+  font-size:16px;
+}
+
+.actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  justify-content:flex-end;
+}
+
+.btn{
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--text);
+  border-radius:10px;
+  padding:11px 15px;
+  font-weight:700;
+}
+
+.btn:hover{
+  background:#faf7f3;
+}
+
+.btn.primary{
+  background:var(--accent);
+  color:#fff;
+  border-color:var(--accent);
+}
+
+.btn.primary:hover{
+  background:var(--accent-dark);
+}
+
+.btn.danger{
+  color:#fff;
+  border-color:var(--red);
+  background:var(--red);
+}
+
+.btn.small{
+  padding:8px 10px;
+  font-size:13px;
+}
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:20px;
+}
+
+.card + .card{
+  margin-top:16px;
+}
+
+.grid{
+  display:grid;
+  gap:16px;
+}
+
+.grid-2{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+
+.grid-3{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+
+.stat{
+  padding:20px;
+}
+
+.stat-label{
+  color:var(--muted);
+  font-size:13px;
+  font-weight:700;
+}
+
+.stat-value{
+  font-family:Georgia,serif;
+  font-size:34px;
+  margin-top:8px;
+}
+
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:6px 10px;
+  border-radius:999px;
+  font-size:13px;
+  font-weight:700;
+  background:#eef4ef;
+  color:var(--green);
+}
+
+.status-pill.off{
+  background:#f8ecea;
+  color:var(--red);
+}
+
+.toolbar{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  margin-bottom:16px;
+}
+
+.search{
+  flex:1;
+  min-width:230px;
+  max-width:440px;
+}
+
+input,
+textarea,
+select{
+  width:100%;
+  border:1px solid #dcd2c7;
+  border-radius:9px;
+  padding:11px 12px;
+  background:#fff;
+  color:var(--text);
+}
+
+textarea{
+  min-height:110px;
+  resize:vertical;
+}
+
+label{
+  display:block;
+  font-weight:700;
+  font-size:13px;
+  margin-bottom:7px;
+}
+
+.field{
+  margin-bottom:14px;
+}
+
+.help{
+  color:var(--muted);
+  font-size:12px;
+  margin-top:5px;
+  line-height:1.45;
+}
+
+.table-wrap{
+  overflow-x:auto;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#fff;
+}
+
+table{
+  width:100%;
+  border-collapse:collapse;
+  min-width:760px;
+}
+
+th,
+td{
+  padding:13px 14px;
+  border-bottom:1px solid #eee6dd;
+  text-align:left;
+  vertical-align:middle;
+}
+
+th{
+  background:#faf7f3;
+  font-size:12px;
+  text-transform:uppercase;
+  color:#6f655b;
+  letter-spacing:.04em;
+}
+
+tr:last-child td{
+  border-bottom:0;
+}
+
+.product-thumb{
+  width:76px;
+  height:58px;
+  border-radius:9px;
+  object-fit:cover;
+  border:1px solid var(--line);
+  background:#f3eee8;
+}
+
+.empty{
+  border:1px dashed #dfd4c8;
+  border-radius:14px;
+  padding:55px 20px;
+  text-align:center;
+  color:var(--muted);
+}
+
+.empty strong{
+  display:block;
+  color:var(--text);
+  font-family:Georgia,serif;
+  font-size:22px;
+  margin-bottom:8px;
+}
+
+.instruction-card{
+  display:flex;
+  gap:16px;
+  justify-content:space-between;
+  align-items:flex-start;
+}
+
+.instruction-card.inactive{
+  opacity:.55;
+}
+
+.instruction-title{
+  font-weight:800;
+  margin-bottom:8px;
+}
+
+.instruction-content{
+  white-space:pre-wrap;
+  color:#51483f;
+  line-height:1.55;
+}
+
+.instruction-actions{
+  flex:0 0 auto;
+  display:flex;
+  gap:7px;
+}
+
+.setting-section{
+  margin-bottom:18px;
+}
+
+.setting-title{
+  font-family:Georgia,serif;
+  font-size:23px;
+  margin:0 0 6px;
+}
+
+.setting-sub{
+  color:var(--muted);
+  margin:0 0 15px;
+  font-size:14px;
+}
+
+.setting-option{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  padding:13px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  margin-bottom:8px;
+}
+
+.setting-option input[type="radio"],
+.setting-option input[type="checkbox"]{
+  width:auto;
+  margin-top:3px;
+}
+
+.setting-option strong{
+  display:block;
+  margin-bottom:3px;
+}
+
+.setting-option span{
+  color:var(--muted);
+  font-size:13px;
+}
+
+.switch-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+}
+
+.switch{
+  position:relative;
+  width:46px;
+  height:26px;
+  flex:0 0 auto;
+}
+
+.switch input{
+  opacity:0;
+  width:0;
+  height:0;
+}
+
+.slider{
+  position:absolute;
+  inset:0;
+  background:#ccc;
+  border-radius:999px;
+  transition:.2s;
+}
+
+.slider:before{
+  content:"";
+  position:absolute;
+  width:20px;
+  height:20px;
+  left:3px;
+  top:3px;
+  background:#fff;
+  border-radius:50%;
+  transition:.2s;
+  box-shadow:0 1px 5px rgba(0,0,0,.2);
+}
+
+.switch input:checked + .slider{
+  background:#1686bd;
+}
+
+.switch input:checked + .slider:before{
+  transform:translateX(20px);
+}
+
+.week-row{
+  display:grid;
+  grid-template-columns:110px 70px 1fr 1fr;
+  gap:10px;
+  align-items:center;
+  margin-bottom:9px;
+}
+
+.week-row input[type="checkbox"]{
+  width:auto;
+}
+
+.preview{
+  width:100%;
+  max-height:300px;
+  object-fit:contain;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:#f4efe9;
+}
+
+.chat-box{
+  height:400px;
+  overflow-y:auto;
+  background:#f5efe8;
+  border:1px solid var(--line);
+  border-radius:13px;
+  padding:15px;
+}
+
+.msg{
+  max-width:78%;
+  padding:11px 13px;
+  border-radius:14px;
+  margin:8px 0;
+  white-space:pre-wrap;
+  line-height:1.45;
+}
+
+.msg.user{
+  margin-left:auto;
+  background:#1e5c46;
+  color:#fff;
+}
+
+.msg.bot{
+  margin-right:auto;
+  background:#fff;
+  border:1px solid var(--line);
+}
+
+.chat-controls{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  margin-top:12px;
+}
+
+.modal-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(23,18,14,.58);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:22px;
+  z-index:100;
+}
+
+.modal-backdrop.open{
+  display:flex;
+}
+
+.modal{
+  width:100%;
+  max-width:760px;
+  max-height:92vh;
+  overflow-y:auto;
+  background:#fff;
+  border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+
+.modal-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  padding:20px 22px;
+  border-bottom:1px solid var(--line);
+}
+
+.modal-header h3{
+  margin:0;
+  font-family:Georgia,serif;
+  font-size:25px;
+}
+
+.modal-body{
+  padding:22px;
+}
+
+.modal-footer{
+  padding:16px 22px 22px;
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+}
+
+.close{
+  border:0;
+  background:transparent;
+  font-size:26px;
+  color:#756d63;
+}
+
+.checkbox-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+
+.checkbox-line{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:9px;
+}
+
+.checkbox-line input{
+  width:auto;
+}
+
+.notice{
+  border-radius:10px;
+  padding:12px 14px;
+  font-size:13px;
+  line-height:1.45;
+}
+
+.notice.info{
+  background:#edf5f8;
+  color:#315d6e;
+}
+
+.notice.warning{
+  background:#fbf2df;
+  color:#7f5d12;
+}
+
+.notice.success{
+  background:#edf6ef;
+  color:#2d7147;
+}
+
+.custom-result{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+  margin-top:16px;
+}
+
+.custom-result figure{
+  margin:0;
+}
+
+.custom-result img{
+  width:100%;
+  border-radius:12px;
+  border:1px solid var(--line);
+}
+
+.custom-result figcaption{
+  margin-top:7px;
+  font-weight:700;
+  font-size:13px;
+}
+
+@media(max-width:1000px){
+  .app{
+    grid-template-columns:1fr;
   }
-  if (typeof value === 'boolean') return value;
-  return !['false', '0', 'no', 'non', 'off'].includes(
-    String(value).trim().toLowerCase()
-  );
-}
 
-function samePath(a, b) {
-  return path.resolve(a) === path.resolve(b);
-}
+  .sidebar{
+    position:static;
+    height:auto;
+  }
 
-function fileExistsWithContent(filePath) {
-  try {
-    return fs.existsSync(filePath) && fs.statSync(filePath).size > 0;
-  } catch {
-    return false;
+  .sidebar-footer{
+    position:static;
+    margin-top:20px;
+  }
+
+  .nav{
+    flex-direction:row;
+    flex-wrap:wrap;
+  }
+
+  .main{
+    padding:28px 20px 60px;
+  }
+
+  .grid-2,
+  .grid-3{
+    grid-template-columns:1fr;
+  }
+
+  .custom-result{
+    grid-template-columns:1fr;
   }
 }
 
-function deleteFileIfExists(filePath) {
-  try {
-    if (filePath && fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (error) {
-    console.warn('⚠️ Suppression fichier impossible :', error.message);
+@media(max-width:650px){
+  .page-header{
+    flex-direction:column;
+  }
+
+  .actions{
+    justify-content:flex-start;
+  }
+
+  .week-row{
+    grid-template-columns:1fr 55px;
+  }
+
+  .week-row .time-input{
+    grid-column:span 1;
+  }
+
+  .checkbox-grid{
+    grid-template-columns:1fr;
   }
 }
 
-function storageIsWritable() {
-  const testFile = path.join(
-    DATA_DIR,
-    `.write-test-${process.pid}-${Date.now()}`
-  );
 
-  try {
-    fs.writeFileSync(testFile, 'ok', 'utf8');
-    fs.unlinkSync(testFile);
-    return true;
-  } catch {
-    return false;
+/* ==========================================================
+   MONDECO PREMIUM V6 — Design System
+   ========================================================== */
+:root{
+  --bg:#f6f3ef;
+  --bg-2:#fbf9f6;
+  --panel:#ffffff;
+  --sidebar:#11100f;
+  --sidebar-soft:#1d1b19;
+  --sidebar-line:#2d2926;
+  --text:#1a1715;
+  --muted:#776d66;
+  --line:#e7dfd8;
+  --line-strong:#d9cec5;
+  --accent:#ed1c24;
+  --accent-dark:#c9141b;
+  --accent-soft:#fff0f1;
+  --accent-soft-2:#fff8f8;
+  --green:#248453;
+  --green-soft:#edf8f1;
+  --red:#c53a34;
+  --red-soft:#fff0ef;
+  --yellow:#a97513;
+  --yellow-soft:#fff7e8;
+  --taupe:#a78e7c;
+  --shadow:0 18px 55px rgba(34,24,18,.07);
+  --shadow-soft:0 8px 26px rgba(34,24,18,.055);
+  --shadow-hover:0 22px 55px rgba(34,24,18,.11);
+  --radius:18px;
+  --radius-sm:12px;
+}
+
+html{scroll-behavior:smooth}
+
+body{
+  background:
+    radial-gradient(circle at 100% 0%, rgba(237,28,36,.045), transparent 30%),
+    radial-gradient(circle at 10% 90%, rgba(167,142,124,.06), transparent 34%),
+    var(--bg);
+  font-family:Inter,"Segoe UI",Roboto,Arial,sans-serif;
+  letter-spacing:-.01em;
+}
+
+::selection{background:rgba(237,28,36,.16);color:var(--text)}
+
+.app{grid-template-columns:286px minmax(0,1fr)}
+
+.sidebar{
+  background:
+    linear-gradient(180deg,#151311 0%,#0f0e0d 100%);
+  border-right:1px solid rgba(255,255,255,.05);
+  padding:26px 18px 22px;
+  overflow:hidden;
+}
+
+.sidebar:before{
+  content:"";
+  position:absolute;
+  width:220px;
+  height:220px;
+  left:-110px;
+  top:-80px;
+  border-radius:50%;
+  background:radial-gradient(circle,rgba(237,28,36,.15),transparent 68%);
+  pointer-events:none;
+}
+
+.brand{
+  position:relative;
+  padding:6px 12px 26px;
+  margin-bottom:8px;
+  border-bottom:1px solid var(--sidebar-line);
+}
+
+.brand-logo{
+  display:block;
+  width:185px;
+  max-width:100%;
+  height:auto;
+  object-fit:contain;
+}
+
+.brand-meta{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-top:13px;
+  color:#bdb2aa;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+
+.brand-meta:before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:#36a66b;
+  box-shadow:0 0 0 4px rgba(54,166,107,.12);
+}
+
+.nav{gap:6px;margin-top:10px}
+
+.nav button{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-height:48px;
+  padding:12px 13px;
+  border:1px solid transparent;
+  border-radius:13px;
+  color:#d9d1cb;
+  font-size:14px;
+  font-weight:650;
+  transition:all .18s ease;
+}
+
+.nav button .nav-icon{
+  width:20px;
+  height:20px;
+  display:grid;
+  place-items:center;
+  color:#9d9188;
+  flex:0 0 auto;
+  transition:.18s ease;
+}
+
+.nav button .nav-icon svg{
+  width:19px;
+  height:19px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
+.nav button:hover{
+  background:#1d1b19;
+  border-color:#2a2724;
+  color:#fff;
+  transform:translateX(2px);
+}
+
+.nav button:hover .nav-icon{color:#fff}
+
+.nav button.active{
+  background:linear-gradient(135deg,#ed1c24,#d9171f);
+  border-color:#ef343b;
+  color:#fff;
+  box-shadow:0 10px 24px rgba(237,28,36,.22);
+}
+
+.nav button.active:after{
+  content:"";
+  position:absolute;
+  right:10px;
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:#fff;
+  opacity:.88;
+}
+
+.nav button.active .nav-icon{color:#fff}
+
+.sidebar-footer{
+  left:18px;
+  right:18px;
+  bottom:20px;
+  padding-top:14px;
+  border-top:1px solid var(--sidebar-line);
+}
+
+.logout-btn{
+  border:1px solid #38322e;
+  color:#cfc5bd;
+  background:#171513;
+  border-radius:12px;
+  padding:12px 14px;
+  transition:.18s ease;
+}
+
+.logout-btn:hover{
+  color:#fff;
+  border-color:#5b4c45;
+  background:#211e1b;
+}
+
+.main{
+  padding:40px clamp(28px,4vw,66px) 72px;
+}
+
+.page-header{
+  align-items:center;
+  margin-bottom:26px;
+  padding-bottom:21px;
+  border-bottom:1px solid rgba(215,203,194,.75);
+}
+
+.page-title{
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:42px;
+  font-weight:700;
+  letter-spacing:-.035em;
+}
+
+.page-subtitle{
+  margin-top:7px;
+  max-width:760px;
+  color:#80746d;
+  font-size:15px;
+  line-height:1.55;
+}
+
+.btn{
+  min-height:42px;
+  border-radius:12px;
+  padding:10px 15px;
+  border-color:var(--line-strong);
+  background:rgba(255,255,255,.9);
+  box-shadow:0 3px 12px rgba(45,32,23,.025);
+  transition:all .18s ease;
+}
+
+.btn:hover{
+  transform:translateY(-1px);
+  background:#fff;
+  border-color:#cfc2b9;
+  box-shadow:0 8px 18px rgba(45,32,23,.075);
+}
+
+.btn.primary{
+  background:linear-gradient(135deg,#ed1c24 0%,#d8151d 100%);
+  border-color:#e21a22;
+  box-shadow:0 8px 20px rgba(237,28,36,.17);
+}
+
+.btn.primary:hover{
+  background:linear-gradient(135deg,#f12a31 0%,#c9141b 100%);
+  box-shadow:0 11px 26px rgba(237,28,36,.24);
+}
+
+.btn.danger{
+  background:#fff;
+  border-color:#efd1cf;
+  color:#b8332e;
+  box-shadow:none;
+}
+
+.btn.danger:hover{background:#fff1f0;border-color:#e7b6b2}
+
+.card{
+  border:1px solid rgba(224,214,206,.92);
+  border-radius:18px;
+  box-shadow:var(--shadow-soft);
+  background:rgba(255,255,255,.94);
+  backdrop-filter:blur(8px);
+}
+
+.card:hover{border-color:#ded1c7}
+
+.grid{gap:18px}
+
+.status-pill{
+  padding:8px 12px;
+  border:1px solid #d8eddf;
+  background:var(--green-soft);
+  color:#1f7c4b;
+  box-shadow:0 4px 14px rgba(36,132,83,.06);
+}
+
+.status-pill:before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:currentColor;
+  box-shadow:0 0 0 4px rgba(36,132,83,.10);
+}
+
+.status-pill.off{border-color:#f0cfcc;background:var(--red-soft);color:#b53a34}
+.status-pill.off:before{box-shadow:0 0 0 4px rgba(181,58,52,.10)}
+
+/* Dashboard premium */
+.dashboard-hero{
+  position:relative;
+  overflow:hidden;
+  display:flex;
+  justify-content:space-between;
+  gap:26px;
+  align-items:center;
+  margin-bottom:20px;
+  padding:26px 28px;
+  border:1px solid #eaded7;
+  border-radius:22px;
+  background:
+    radial-gradient(circle at 91% 8%,rgba(237,28,36,.10),transparent 28%),
+    linear-gradient(135deg,#ffffff 0%,#fffafa 100%);
+  box-shadow:var(--shadow);
+}
+
+.dashboard-hero:before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:22px;
+  bottom:22px;
+  width:4px;
+  border-radius:0 6px 6px 0;
+  background:var(--accent);
+}
+
+.dashboard-kicker{
+  margin-bottom:8px;
+  color:var(--accent);
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+}
+
+.dashboard-hero h2{
+  margin:0;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:34px;
+  letter-spacing:-.03em;
+}
+
+.dashboard-hero p{
+  margin:8px 0 0;
+  color:var(--muted);
+  line-height:1.55;
+}
+
+.dashboard-hero-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+
+.dashboard-stats{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:16px;
+  margin-bottom:18px;
+}
+
+.premium-stat{
+  position:relative;
+  overflow:hidden;
+  min-height:145px;
+  padding:20px 20px 18px;
+  transition:transform .18s ease,box-shadow .18s ease;
+}
+
+.premium-stat:hover{transform:translateY(-2px);box-shadow:var(--shadow-hover)}
+
+.premium-stat:after{
+  content:"";
+  position:absolute;
+  right:-26px;
+  bottom:-30px;
+  width:90px;
+  height:90px;
+  border-radius:50%;
+  background:rgba(237,28,36,.045);
+}
+
+.stat-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+}
+
+.stat-icon{
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  border-radius:11px;
+  background:var(--accent-soft);
+  color:var(--accent);
+}
+
+.stat-icon svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.stat-value{
+  margin-top:15px;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:36px;
+  line-height:1;
+  letter-spacing:-.035em;
+}
+
+.stat-label{
+  color:#877970;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+
+.stat-detail{margin-top:9px;color:#9a8d85;font-size:12px}
+
+.dashboard-columns{
+  display:grid;
+  grid-template-columns:minmax(0,1.45fr) minmax(320px,.75fr);
+  gap:18px;
+}
+
+.bot-status-card{padding:24px 24px 22px}
+.bot-status-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:20px}
+.bot-status-head h3,.quick-actions-card h3{margin:0;font-family:Georgia,"Times New Roman",serif;font-size:24px}
+.bot-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.status-item{padding:14px 15px;border:1px solid #eee5de;border-radius:14px;background:#fcfbf9}
+.status-item .label{color:#91847a;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+.status-item .value{margin-top:5px;font-size:14px;font-weight:750;color:#29231f}
+
+.quick-actions-card{padding:24px}
+.quick-actions-list{display:grid;gap:9px;margin-top:17px}
+.quick-action{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  width:100%;
+  border:1px solid #ece2da;
+  border-radius:13px;
+  background:#fcfaf8;
+  padding:12px 13px;
+  color:var(--text);
+  text-align:left;
+  font-weight:700;
+  transition:.18s ease;
+}
+.quick-action:hover{background:#fff5f5;border-color:#f0c9cb;color:#c8171e;transform:translateX(2px)}
+.quick-action .qa-left{display:flex;align-items:center;gap:10px}
+.quick-action .qa-icon{width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:#fff;border:1px solid #ebe1da;color:var(--accent)}
+.quick-action svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.quick-action .arrow{color:#b9aaa0;font-size:17px}
+
+.storage-card{margin-top:18px;padding:16px 18px}
+.storage-card .notice{margin:0}
+
+/* Formulaires premium */
+input,textarea,select{
+  border-color:#ded4cc;
+  border-radius:12px;
+  padding:11px 13px;
+  background:#fff;
+  outline:none;
+  transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+input:focus,textarea:focus,select:focus{
+  border-color:rgba(237,28,36,.52);
+  box-shadow:0 0 0 4px rgba(237,28,36,.075);
+  background:#fff;
+}
+
+label{color:#504740;font-size:12px;letter-spacing:.01em}
+.help{color:#95887f}
+
+.toolbar{
+  padding:12px 14px;
+  border:1px solid var(--line);
+  border-radius:15px;
+  background:rgba(255,255,255,.74);
+  box-shadow:0 5px 18px rgba(44,30,20,.035);
+}
+
+.search{max-width:520px}
+
+.table-wrap{
+  border-radius:16px;
+  border-color:#e6ddd6;
+  box-shadow:var(--shadow-soft);
+}
+
+th{
+  background:#faf8f5;
+  color:#84776e;
+  font-size:11px;
+  letter-spacing:.08em;
+}
+
+th,td{padding:14px 15px}
+tbody tr{transition:background .15s ease}
+tbody tr:hover{background:#fffafa}
+.product-thumb{width:82px;height:62px;border-radius:12px}
+
+.empty{
+  background:rgba(255,255,255,.42);
+  border-color:#dfd5ce;
+  border-radius:18px;
+}
+
+.instruction-card{
+  padding:20px 21px;
+  border-left:3px solid transparent;
+  transition:all .18s ease;
+}
+.instruction-card:hover{border-left-color:var(--accent);box-shadow:var(--shadow)}
+.instruction-title{font-size:16px}
+.instruction-content{color:#655a53}
+
+.setting-section{padding:22px}
+.setting-title{font-size:22px}
+.setting-option{
+  border-radius:13px;
+  background:#fcfbf9;
+  transition:.16s ease;
+}
+.setting-option:hover{border-color:#e7cacc;background:#fff9f9}
+.setting-option:has(input:checked){border-color:#efb8bb;background:#fff5f5;box-shadow:inset 3px 0 0 var(--accent)}
+.setting-option input[type="radio"]{accent-color:var(--accent)}
+.checkbox-line input{accent-color:var(--accent)}
+
+.switch{width:50px;height:28px}
+.slider{background:#cfc8c3}
+.slider:before{width:22px;height:22px}
+.switch input:checked + .slider{background:var(--accent)}
+.switch input:checked + .slider:before{transform:translateX(22px)}
+
+.notice{border:1px solid transparent;border-radius:12px}
+.notice.success{background:var(--green-soft);color:#23754a;border-color:#d9ecdf}
+.notice.info{background:#f2f6f8;color:#45636f;border-color:#dce7eb}
+.notice.warning{background:var(--yellow-soft);color:#7e5a15;border-color:#f0e0bc}
+
+.chat-box{
+  height:440px;
+  border-radius:16px;
+  background:
+    radial-gradient(circle at 10% 10%,rgba(237,28,36,.025),transparent 35%),
+    #f3f0ec;
+  border-color:#e3dad2;
+  padding:18px;
+}
+
+.msg{border-radius:16px;padding:12px 14px;box-shadow:0 4px 14px rgba(34,24,18,.04)}
+.msg.user{background:#191715;color:#fff;border-bottom-right-radius:5px}
+.msg.bot{background:#fff;color:#28211d;border:1px solid #e6ddd6;border-bottom-left-radius:5px}
+
+.modal-backdrop{backdrop-filter:blur(5px);background:rgba(14,12,11,.58)}
+.modal{border-radius:22px;border:1px solid rgba(255,255,255,.28)}
+.modal-header{padding:22px 24px;background:#fcfaf8}
+.modal-header h3{font-size:27px}
+.modal-body{padding:24px}
+.modal-footer{padding:18px 24px 24px;background:#fcfaf8;border-top:1px solid #eee5de}
+
+/* badge utilitaire */
+.premium-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:7px 10px;
+  border-radius:999px;
+  background:#fff;
+  border:1px solid #eaded7;
+  color:#7b6f67;
+  font-size:12px;
+  font-weight:750;
+}
+.premium-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+@media(max-width:1180px){
+  .dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-columns{grid-template-columns:1fr}
+}
+
+@media(max-width:1000px){
+  .app{grid-template-columns:1fr}
+  .sidebar{height:auto;position:relative;padding:18px}
+  .brand{padding:2px 8px 18px;margin-bottom:14px}
+  .brand-logo{width:155px}
+  .nav{flex-direction:row;overflow-x:auto;flex-wrap:nowrap;padding-bottom:3px}
+  .nav button{white-space:nowrap;min-width:max-content}
+  .sidebar-footer{position:static;margin-top:14px;padding-top:14px}
+  .main{padding:28px 20px 60px}
+  .dashboard-hero{align-items:flex-start;flex-direction:column}
+  .dashboard-hero-actions{justify-content:flex-start}
+}
+
+@media(max-width:700px){
+  .dashboard-stats{grid-template-columns:1fr}
+  .dashboard-hero{padding:22px}
+  .dashboard-hero h2{font-size:29px}
+  .bot-status-grid{grid-template-columns:1fr}
+  .page-title{font-size:34px}
+}
+
+
+/* ==========================================================
+   MONDECO PREMIUM V6.1
+   Logo plaque claire + astuces contextuelles
+   ========================================================== */
+
+.brand{
+  padding:4px 1px 24px !important;
+  margin-bottom:10px !important;
+}
+
+.brand-panel{
+  position:relative;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:112px;
+  padding:21px 18px 19px;
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:19px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(237,28,36,.075), transparent 34%),
+    linear-gradient(145deg,#fffdf9 0%,#f4eee7 100%);
+  box-shadow:
+    0 18px 40px rgba(0,0,0,.20),
+    inset 0 1px 0 rgba(255,255,255,.9);
+}
+
+.brand-panel::before{
+  content:"";
+  position:absolute;
+  left:18px;
+  right:18px;
+  top:0;
+  height:3px;
+  border-radius:0 0 10px 10px;
+  background:linear-gradient(90deg,transparent,#ed1c24 18%,#ed1c24 82%,transparent);
+  opacity:.92;
+}
+
+.brand-panel::after{
+  content:"MONDECO";
+  position:absolute;
+  right:-8px;
+  bottom:-14px;
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:42px;
+  font-weight:700;
+  letter-spacing:.08em;
+  color:rgba(29,24,20,.035);
+  pointer-events:none;
+}
+
+.brand-logo{
+  position:relative;
+  z-index:1;
+  width:190px !important;
+  max-width:94% !important;
+  filter:drop-shadow(0 3px 8px rgba(237,28,36,.08));
+}
+
+.brand-meta{
+  justify-content:center;
+  margin-top:14px !important;
+  color:#bfb3ab !important;
+  letter-spacing:.13em !important;
+}
+
+.brand-meta strong{
+  color:#f0e8e1;
+  font-weight:750;
+}
+
+.page-header{
+  flex-wrap:wrap;
+}
+
+.page-header::after{
+  flex:0 0 100%;
+  display:flex;
+  align-items:flex-start;
+  gap:9px;
+  margin-top:17px;
+  padding:11px 14px 11px 39px;
+  border:1px solid #eadfd6;
+  border-radius:12px;
+  background:
+    linear-gradient(90deg,rgba(237,28,36,.055),rgba(255,255,255,.72));
+  color:#695b52;
+  font-size:12.5px;
+  line-height:1.45;
+  font-weight:600;
+  position:relative;
+}
+
+.page-header::before{
+  content:"✦";
+  position:absolute;
+  left:13px;
+  bottom:31px;
+  z-index:2;
+  width:18px;
+  height:18px;
+  display:grid;
+  place-items:center;
+  border-radius:6px;
+  background:#fff;
+  color:#ed1c24;
+  box-shadow:0 3px 10px rgba(38,25,18,.07);
+  font-size:11px;
+}
+
+#page-home .page-header::after{
+  content:"Astuce MONDECO · Vérifiez ici l’état de l’IA, le stockage /data et les indicateurs clés avant une mise en production.";
+}
+
+#page-products .page-header::after{
+  content:"Astuce MONDECO · Une fiche produit précise (photo, dimensions, disponibilité, prix et liens) réduit fortement les réponses approximatives de l’agent.";
+}
+
+#page-instructions .page-header::after{
+  content:"Astuce MONDECO · Préférez une règle claire par instruction. Désactivez une règle plutôt que de la supprimer lorsque vous souhaitez la tester plus tard.";
+}
+
+#page-customization .page-header::after{
+  content:"Astuce MONDECO · Commencez par une seule modification visuelle (couleur ou tissu), puis ajoutez les changements de coin ou dimensions après validation.";
+}
+
+#page-test .page-header::after{
+  content:"Astuce MONDECO · Testez les questions sensibles avant WhatsApp : prix, disponibilité, dimensions, images clients et demandes de sur-mesure.";
+}
+
+#page-settings .page-header::after{
+  content:"Astuce MONDECO · Après chaque changement d’audience, d’horaires ou de comportement IA, enregistrez puis faites un test avec le numéro WhatsApp de test.";
+}
+
+.tip-inline{
+  margin-top:14px;
+  padding:12px 14px;
+  border:1px solid #eee3da;
+  border-radius:12px;
+  background:#fffaf5;
+  color:#74665c;
+  font-size:12px;
+  line-height:1.5;
+}
+
+.tip-inline b{
+  color:#2a211c;
+}
+
+@media(max-width:760px){
+  .brand-panel{
+    min-height:92px;
+    padding:17px 15px;
+  }
+  .brand-logo{
+    width:165px !important;
+  }
+  .page-header::before{
+    bottom:32px;
   }
 }
 
 
-function timestampId(date = new Date()) {
-  const pad = value => String(value).padStart(2, '0');
-  const ms = String(date.getMilliseconds()).padStart(3, '0');
+/* ==========================================================
+   MONDECO V6.2 — MINIMAL PREMIUM
+   Plus sobre, logo blanc, mobile réellement responsive
+   ========================================================== */
 
-  return (
-    `${date.getFullYear()}` +
-    `${pad(date.getMonth() + 1)}` +
-    `${pad(date.getDate())}-` +
-    `${pad(date.getHours())}` +
-    `${pad(date.getMinutes())}` +
-    `${pad(date.getSeconds())}-` +
-    ms
-  );
+:root{
+  --bg:#f7f4f0;
+  --panel:#fff;
+  --sidebar:#11100f;
+  --sidebar-soft:#1b1917;
+  --text:#1b1816;
+  --muted:#756c65;
+  --line:#e5ded8;
+  --line-strong:#d9d0c9;
+  --accent:#ed1c24;
+  --accent-dark:#ce151c;
+  --green:#248453;
+  --green-soft:#eef7f1;
+  --shadow:none;
+  --shadow-soft:none;
+  --shadow-hover:none;
+  --radius:14px;
 }
 
-function ensurePersistenceSafety() {
-  const persistentConfigured =
-    !samePath(DATA_DIR, APP_DIR);
+/* Fond beaucoup plus calme */
+body{
+  background:var(--bg) !important;
+  letter-spacing:-.008em;
+}
 
-  const mountPath = safeString(
-    process.env.RAILWAY_VOLUME_MOUNT_PATH
-  );
+/* Sidebar : noir simple, sans effets décoratifs */
+.app{
+  grid-template-columns:258px minmax(0,1fr);
+}
 
-  if (
-    IS_RAILWAY &&
-    PERSISTENCE_STRICT &&
-    !persistentConfigured
-  ) {
+.sidebar{
+  background:#11100f !important;
+  border-right:1px solid #24211f;
+  padding:24px 16px 20px;
+}
+
+.sidebar::before{
+  display:none !important;
+}
+
+/* Logo blanc directement sur le noir */
+.brand{
+  padding:3px 10px 22px !important;
+  margin:0 0 10px !important;
+  border-bottom:1px solid #2a2724 !important;
+}
+
+.brand-panel{
+  min-height:0 !important;
+  display:block !important;
+  padding:4px 0 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  background:transparent !important;
+  box-shadow:none !important;
+  overflow:visible !important;
+}
+
+.brand-panel::before,
+.brand-panel::after{
+  display:none !important;
+}
+
+.brand-logo{
+  width:178px !important;
+  max-width:92% !important;
+  filter:brightness(0) invert(1) !important;
+  opacity:.98;
+}
+
+.brand-meta{
+  justify-content:flex-start !important;
+  margin-top:13px !important;
+  color:#98908a !important;
+  font-size:9.5px !important;
+  letter-spacing:.12em !important;
+}
+
+.brand-meta strong{
+  color:#c9c2bc !important;
+  font-weight:700 !important;
+}
+
+/* Navigation plus légère */
+.nav{
+  gap:3px !important;
+  margin-top:8px !important;
+}
+
+.nav button{
+  min-height:46px;
+  padding:11px 12px !important;
+  border-radius:10px !important;
+  color:#cfc8c2 !important;
+  font-size:14px !important;
+  font-weight:650 !important;
+  background:transparent !important;
+  box-shadow:none !important;
+}
+
+.nav button:hover{
+  background:#1b1917 !important;
+  color:#fff !important;
+  transform:none !important;
+}
+
+.nav button.active{
+  background:var(--accent) !important;
+  color:#fff !important;
+  box-shadow:none !important;
+}
+
+.nav button.active::after{
+  display:none !important;
+}
+
+.nav-icon{
+  color:#8f8781 !important;
+}
+
+.nav button.active .nav-icon{
+  color:#fff !important;
+}
+
+.sidebar-footer{
+  left:16px !important;
+  right:16px !important;
+  bottom:18px !important;
+}
+
+.logout-btn{
+  border-color:#393430 !important;
+  color:#bbb2ab !important;
+  background:transparent !important;
+  box-shadow:none !important;
+}
+
+.logout-btn:hover{
+  background:#1a1816 !important;
+  color:#fff !important;
+  transform:none !important;
+}
+
+/* Zone principale plus calme */
+.main{
+  padding:38px 48px 64px;
+}
+
+.page-header{
+  margin-bottom:20px !important;
+  padding-bottom:16px !important;
+  border-bottom:1px solid var(--line) !important;
+}
+
+.page-title{
+  font-size:38px !important;
+  letter-spacing:-.035em !important;
+}
+
+.page-subtitle{
+  margin-top:7px !important;
+  max-width:700px;
+  font-size:14px !important;
+  line-height:1.5 !important;
+}
+
+/* Astuces : une simple ligne, plus de gros encart */
+.page-header::before{
+  display:none !important;
+}
+
+.page-header::after{
+  flex:0 0 100% !important;
+  margin-top:9px !important;
+  padding:0 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  background:transparent !important;
+  color:#9a8f87 !important;
+  font-size:11px !important;
+  line-height:1.4 !important;
+  font-weight:500 !important;
+  box-shadow:none !important;
+}
+
+#page-home .page-header::after,
+#page-customization .page-header::after{
+  display:none !important;
+}
+
+/* Cartes plates = plus premium et moins chargé */
+.card{
+  border:1px solid var(--line) !important;
+  border-radius:14px !important;
+  background:#fff !important;
+  box-shadow:none !important;
+  backdrop-filter:none !important;
+}
+
+.card:hover{
+  border-color:var(--line-strong) !important;
+  box-shadow:none !important;
+}
+
+/* Boutons sans dégradés */
+.btn{
+  min-height:40px !important;
+  padding:9px 14px !important;
+  border-radius:10px !important;
+  background:#fff !important;
+  border:1px solid var(--line-strong) !important;
+  box-shadow:none !important;
+  transition:background .15s ease,border-color .15s ease,color .15s ease !important;
+}
+
+.btn:hover{
+  transform:none !important;
+  background:#faf8f6 !important;
+  border-color:#cfc5bd !important;
+  box-shadow:none !important;
+}
+
+.btn.primary{
+  background:var(--accent) !important;
+  border-color:var(--accent) !important;
+  color:#fff !important;
+  box-shadow:none !important;
+}
+
+.btn.primary:hover{
+  background:var(--accent-dark) !important;
+  border-color:var(--accent-dark) !important;
+}
+
+.btn.danger{
+  background:#fff !important;
+  color:#b8322d !important;
+  border-color:#e7cbc8 !important;
+}
+
+/* Dashboard simplifié */
+.dashboard-hero{
+  margin-bottom:16px !important;
+  padding:22px 23px !important;
+  border-radius:14px !important;
+  border:1px solid var(--line) !important;
+  background:#fff !important;
+  box-shadow:none !important;
+}
+
+.dashboard-hero::before{
+  top:18px !important;
+  bottom:18px !important;
+  width:3px !important;
+}
+
+.dashboard-kicker{
+  margin-bottom:6px !important;
+  font-size:10px !important;
+}
+
+.dashboard-hero h2{
+  font-size:31px !important;
+}
+
+.dashboard-hero p{
+  max-width:680px;
+  font-size:13.5px !important;
+}
+
+.dashboard-hero-actions .premium-badge{
+  display:none !important;
+}
+
+.dashboard-stats{
+  grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+  gap:12px !important;
+  margin-bottom:14px !important;
+}
+
+/* Le canal est déjà connu : on enlève cette 4e carte de l'accueil */
+#page-home .dashboard-stats .premium-stat:nth-child(4){
+  display:none !important;
+}
+
+.premium-stat{
+  min-height:118px !important;
+  padding:17px !important;
+  transition:none !important;
+}
+
+.premium-stat:hover{
+  transform:none !important;
+  box-shadow:none !important;
+}
+
+.premium-stat::after{
+  display:none !important;
+}
+
+.stat-icon{
+  width:32px !important;
+  height:32px !important;
+  border-radius:9px !important;
+  background:#faf5f5 !important;
+}
+
+.stat-value{
+  margin-top:11px !important;
+  font-size:31px !important;
+}
+
+.stat-detail{
+  margin-top:6px !important;
+  font-size:11px !important;
+}
+
+.dashboard-columns{
+  gap:14px !important;
+}
+
+.bot-status-card,
+.quick-actions-card{
+  padding:19px !important;
+}
+
+.bot-status-head{
+  margin-bottom:14px !important;
+}
+
+.bot-status-head h3,
+.quick-actions-card h3{
+  font-size:21px !important;
+}
+
+.bot-status-head .premium-badge{
+  display:none !important;
+}
+
+.bot-status-grid{
+  gap:8px !important;
+}
+
+.status-item{
+  padding:11px 12px !important;
+  border-radius:10px !important;
+  background:#fbfaf8 !important;
+}
+
+.quick-actions-list{
+  gap:6px !important;
+  margin-top:12px !important;
+}
+
+.quick-action{
+  padding:10px 11px !important;
+  border-radius:10px !important;
+  background:#fff !important;
+  transition:none !important;
+}
+
+.quick-action:hover{
+  transform:none !important;
+  background:#faf8f6 !important;
+  color:var(--text) !important;
+  border-color:#d8cec6 !important;
+}
+
+.qa-icon{
+  background:#faf8f6 !important;
+}
+
+/* Formulaires et tableaux */
+.toolbar{
+  padding:10px 11px !important;
+  border-radius:12px !important;
+  background:#fff !important;
+  box-shadow:none !important;
+}
+
+.table-wrap{
+  border-radius:12px !important;
+  box-shadow:none !important;
+}
+
+tbody tr:hover{
+  background:#fbfaf8 !important;
+}
+
+.instruction-card{
+  padding:17px 18px !important;
+  border-left:0 !important;
+  transition:none !important;
+}
+
+.instruction-card:hover{
+  border-left:0 !important;
+  box-shadow:none !important;
+}
+
+.setting-section{
+  padding:19px !important;
+}
+
+.setting-title{
+  font-size:21px !important;
+}
+
+.setting-option{
+  padding:11px 12px !important;
+  border-radius:10px !important;
+  background:#fff !important;
+}
+
+.setting-option:hover{
+  background:#fbfaf8 !important;
+}
+
+.setting-option:has(input:checked){
+  background:#fff8f8 !important;
+  border-color:#efc2c4 !important;
+  box-shadow:inset 2px 0 0 var(--accent) !important;
+}
+
+.chat-box{
+  border-radius:12px !important;
+  background:#f4f1ed !important;
+  box-shadow:none !important;
+}
+
+.msg{
+  box-shadow:none !important;
+}
+
+.modal-backdrop{
+  backdrop-filter:blur(2px) !important;
+}
+
+.modal{
+  border-radius:16px !important;
+}
+
+/* Status : simple */
+.status-pill{
+  padding:6px 9px !important;
+  border-radius:999px !important;
+  box-shadow:none !important;
+}
+
+/* ==========================================================
+   MOBILE HEADER + DRAWER
+   ========================================================== */
+
+.mobile-topbar,
+.mobile-overlay{
+  display:none;
+}
+
+@media(max-width:900px){
+
+  body.mobile-menu-open{
+    overflow:hidden;
+  }
+
+  .app{
+    display:block !important;
+    min-height:100vh;
+  }
+
+  .mobile-topbar{
+    position:fixed;
+    z-index:120;
+    top:0;
+    left:0;
+    right:0;
+    height:66px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:15px;
+    padding:0 16px;
+    background:#11100f;
+    border-bottom:1px solid #272321;
+  }
+
+  .mobile-brand-logo{
+    display:block;
+    width:145px;
+    max-width:50vw;
+    height:auto;
+    filter:brightness(0) invert(1);
+  }
+
+  .mobile-menu-btn{
+    width:42px;
+    height:42px;
+    display:grid;
+    place-items:center;
+    border:1px solid #37322e;
+    border-radius:10px;
+    background:#191715;
+    color:#fff;
+    padding:0;
+  }
+
+  .mobile-menu-btn span,
+  .mobile-menu-btn::before,
+  .mobile-menu-btn::after{
+    content:"";
+    display:block;
+    width:18px;
+    height:1.5px;
+    border-radius:2px;
+    background:#fff;
+  }
+
+  .mobile-menu-btn{
+    gap:4px;
+  }
+
+  .mobile-overlay{
+    position:fixed;
+    z-index:109;
+    inset:0;
+    display:block;
+    background:rgba(0,0,0,.38);
+    opacity:0;
+    visibility:hidden;
+    transition:opacity .18s ease,visibility .18s ease;
+  }
+
+  body.mobile-menu-open .mobile-overlay{
+    opacity:1;
+    visibility:visible;
+  }
+
+  .sidebar{
+    position:fixed !important;
+    z-index:110;
+    top:0;
+    left:0;
+    width:min(84vw,320px);
+    height:100dvh !important;
+    padding:22px 16px 18px !important;
+    overflow-y:auto;
+    transform:translateX(-103%);
+    transition:transform .2s ease;
+    box-shadow:16px 0 45px rgba(0,0,0,.24);
+  }
+
+  body.mobile-menu-open .sidebar{
+    transform:translateX(0);
+  }
+
+  .sidebar .brand{
+    padding-top:4px !important;
+  }
+
+  .sidebar .brand-logo{
+    width:158px !important;
+  }
+
+  .nav{
+    flex-direction:column !important;
+    flex-wrap:nowrap !important;
+    overflow:visible !important;
+    padding-bottom:0 !important;
+  }
+
+  .nav button{
+    width:100% !important;
+    min-width:0 !important;
+    white-space:normal !important;
+  }
+
+  .sidebar-footer{
+    position:static !important;
+    margin-top:22px !important;
+    padding-top:16px !important;
+    border-top:1px solid #2b2724 !important;
+  }
+
+  .main{
+    padding:92px 20px 48px !important;
+  }
+
+  .page-header{
+    gap:14px !important;
+  }
+
+  .page-title{
+    font-size:32px !important;
+  }
+
+  .page-subtitle{
+    font-size:13.5px !important;
+  }
+
+  .page-header::after{
+    margin-top:6px !important;
+    font-size:10.5px !important;
+  }
+
+  .dashboard-hero{
+    padding:18px 19px !important;
+  }
+
+  .dashboard-hero h2{
+    font-size:27px !important;
+  }
+
+  .dashboard-stats{
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+    gap:8px !important;
+  }
+
+  .premium-stat{
+    min-height:101px !important;
+    padding:13px !important;
+  }
+
+  .stat-icon{
+    display:none !important;
+  }
+
+  .stat-value{
+    margin-top:8px !important;
+    font-size:27px !important;
+  }
+
+  .stat-detail{
+    display:none !important;
+  }
+
+  .bot-status-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+  }
+}
+
+@media(max-width:620px){
+
+  .main{
+    padding:84px 14px 38px !important;
+  }
+
+  .page-header{
+    display:block !important;
+    padding-bottom:14px !important;
+    margin-bottom:16px !important;
+  }
+
+  .page-title{
+    font-size:30px !important;
+    line-height:1.08 !important;
+  }
+
+  .page-subtitle{
+    margin-top:6px !important;
+    font-size:13px !important;
+  }
+
+  .actions{
+    margin-top:15px !important;
+    width:100%;
+    display:grid !important;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px !important;
+  }
+
+  .actions .btn{
+    width:100%;
+    min-width:0;
+    padding:9px 10px !important;
+    font-size:12.5px !important;
+  }
+
+  /* Instructions : 2 petits imports + CTA rouge pleine largeur */
+  #page-instructions .actions #addInstructionBtn{
+    grid-column:1/-1;
+  }
+
+  /* Paramètres : sauvegarde pleine largeur */
+  #page-settings .actions{
+    grid-template-columns:1fr;
+  }
+
+  .dashboard-hero{
+    display:block !important;
+    margin-bottom:12px !important;
+  }
+
+  .dashboard-hero-actions{
+    margin-top:13px;
+  }
+
+  .dashboard-stats{
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+  }
+
+  .premium-stat{
+    min-width:0;
+  }
+
+  .stat-label{
+    font-size:9px !important;
+    letter-spacing:.04em !important;
+  }
+
+  .stat-value{
+    font-size:25px !important;
+  }
+
+  .dashboard-columns{
+    grid-template-columns:1fr !important;
+  }
+
+  .bot-status-grid{
+    grid-template-columns:1fr 1fr !important;
+  }
+
+  .status-item{
+    padding:10px !important;
+  }
+
+  .status-item .label{
+    font-size:9px !important;
+  }
+
+  .status-item .value{
+    font-size:12px !important;
+  }
+
+  .card{
+    padding:15px !important;
+  }
+
+  .instruction-card{
+    display:block !important;
+  }
+
+  .instruction-actions{
+    margin-top:13px;
+    flex-wrap:wrap;
+  }
+
+  .custom-result{
+    grid-template-columns:1fr !important;
+  }
+
+  .chat-box{
+    height:360px !important;
+  }
+
+  .msg{
+    max-width:88% !important;
+  }
+
+  .modal-backdrop{
+    padding:10px !important;
+  }
+
+  .modal{
+    max-height:95dvh !important;
+    border-radius:14px !important;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer{
+    padding-left:16px !important;
+    padding-right:16px !important;
+  }
+}
+
+@media(max-width:390px){
+  .mobile-brand-logo{
+    width:132px;
+  }
+
+  .dashboard-stats{
+    gap:6px !important;
+  }
+
+  .premium-stat{
+    padding:11px 10px !important;
+  }
+
+  .stat-value{
+    font-size:23px !important;
+  }
+
+  .bot-status-grid{
+    grid-template-columns:1fr !important;
+  }
+}
+
+
+/* ==========================================================
+   V6.3 — Protection des données
+   ========================================================== */
+
+.data-protection-card .protection-status{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:14px 0;
+}
+
+.protection-chip{
+  padding:10px 11px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#fbfaf8;
+}
+
+.protection-chip .label{
+  display:block;
+  margin-bottom:3px;
+  color:#91867f;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+
+.protection-chip .value{
+  color:var(--text);
+  font-size:12px;
+  font-weight:750;
+}
+
+.backup-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:12px;
+}
+
+.backup-list{
+  margin-top:14px;
+}
+
+.backup-list select{
+  width:100%;
+}
+
+@media(max-width:620px){
+  .data-protection-card .protection-status{
+    grid-template-columns:1fr;
+  }
+
+  .backup-actions{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+
+  .backup-actions .btn{
+    width:100%;
+  }
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="mobile-topbar" aria-label="Navigation mobile">
+  <img class="mobile-brand-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASQAAABbCAMAAADtJAh+AAAACXBIWXMAAAsTAAALEwEAmpwYAAA7p2lUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNS42LWMwNjcgNzkuMTU3NzQ3LCAyMDE1LzAzLzMwLTIzOjQwOjQyICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgICAgICAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgICAgICAgICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgICAgICAgICAgIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPHhtcDpDcmVhdG9yVG9vbD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3htcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhtcDpDcmVhdGVEYXRlPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3htcDpDcmVhdGVEYXRlPgogICAgICAgICA8eG1wOk1ldGFkYXRhRGF0ZT4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC94bXA6TWV0YWRhdGFEYXRlPgogICAgICAgICA8eG1wOk1vZGlmeURhdGU+MjAyMC0xMi0wNFQxMDo1MjowMyswMTowMDwveG1wOk1vZGlmeURhdGU+CiAgICAgICAgIDx4bXBNTTpJbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC94bXBNTTpJbnN0YW5jZUlEPgogICAgICAgICA8eG1wTU06RG9jdW1lbnRJRD5hZG9iZTpkb2NpZDpwaG90b3Nob3A6NGQ2OWRjZDEtMzYxNi0xMWViLTgwNjctYjIxZWYyZjliMGMyPC94bXBNTTpEb2N1bWVudElEPgogICAgICAgICA8eG1wTU06T3JpZ2luYWxEb2N1bWVudElEPnhtcC5kaWQ6NWEyZDhkOGQtNzUxNS1mMDQ2LWFlZjAtODQwZGY5MDdjN2M4PC94bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ+CiAgICAgICAgIDx4bXBNTTpIaXN0b3J5PgogICAgICAgICAgICA8cmRmOlNlcT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+Y3JlYXRlZDwvc3RFdnQ6YWN0aW9uPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6aW5zdGFuY2VJRD54bXAuaWlkOjVhMmQ4ZDhkLTc1MTUtZjA0Ni1hZWYwLTg0MGRmOTA3YzdjODwvc3RFdnQ6aW5zdGFuY2VJRD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OndoZW4+MjAyMC0wNS0yMVQxMzo0ODowNiswMTowMDwvc3RFdnQ6d2hlbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OnNvZnR3YXJlQWdlbnQ+QWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpPC9zdEV2dDpzb2Z0d2FyZUFnZW50PgogICAgICAgICAgICAgICA8L3JkZjpsaT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+c2F2ZWQ8L3N0RXZ0OmFjdGlvbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0Omluc3RhbmNlSUQ+eG1wLmlpZDphNWZhOGMyNS1jYjU4LTkyNDgtYTFlNi0xOTI0ZDg1MGVlNWY8L3N0RXZ0Omluc3RhbmNlSUQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDp3aGVuPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3N0RXZ0OndoZW4+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpzb2Z0d2FyZUFnZW50PkFkb2JlIFBob3Rvc2hvcCBDQyAyMDE1IChXaW5kb3dzKTwvc3RFdnQ6c29mdHdhcmVBZ2VudD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OmNoYW5nZWQ+Lzwvc3RFdnQ6Y2hhbmdlZD4KICAgICAgICAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0iUmVzb3VyY2UiPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6YWN0aW9uPnNhdmVkPC9zdEV2dDphY3Rpb24+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDppbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC9zdEV2dDppbnN0YW5jZUlEPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6d2hlbj4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC9zdEV2dDp3aGVuPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6c29mdHdhcmVBZ2VudD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3N0RXZ0OnNvZnR3YXJlQWdlbnQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpjaGFuZ2VkPi88L3N0RXZ0OmNoYW5nZWQ+CiAgICAgICAgICAgICAgIDwvcmRmOmxpPgogICAgICAgICAgICA8L3JkZjpTZXE+CiAgICAgICAgIDwveG1wTU06SGlzdG9yeT4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgICAgPHBob3Rvc2hvcDpDb2xvck1vZGU+MzwvcGhvdG9zaG9wOkNvbG9yTW9kZT4KICAgICAgICAgPHRpZmY6T3JpZW50YXRpb24+MTwvdGlmZjpPcmllbnRhdGlvbj4KICAgICAgICAgPHRpZmY6WFJlc29sdXRpb24+NzIwMDAwLzEwMDAwPC90aWZmOlhSZXNvbHV0aW9uPgogICAgICAgICA8dGlmZjpZUmVzb2x1dGlvbj43MjAwMDAvMTAwMDA8L3RpZmY6WVJlc29sdXRpb24+CiAgICAgICAgIDx0aWZmOlJlc29sdXRpb25Vbml0PjI8L3RpZmY6UmVzb2x1dGlvblVuaXQ+CiAgICAgICAgIDxleGlmOkNvbG9yU3BhY2U+NjU1MzU8L2V4aWY6Q29sb3JTcGFjZT4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjI5MjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj45MTwvZXhpZjpQaXhlbFlEaW1lbnNpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+9Yhc8wAAAvdQTFRFR3BM7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7RwkS8mN9wAAAPx0Uk5TAM+EjNXAL26kutQ/iCEQh+/GdMVv88ELzuABMQTu/DnD2gL9Bd3C02sell1QjvQ6HxLnx+UXmQPKeFr3PiPNIBVWE7glhr5D9VUZ+iskDP4i1+23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" alt="MONDECO">
+  <button
+    class="mobile-menu-btn"
+    id="mobileMenuBtn"
+    type="button"
+    aria-label="Ouvrir le menu"
+    aria-expanded="false"
+  ><span></span></button>
+</div>
+<div class="mobile-overlay" id="mobileOverlay"></div>
+
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-panel">
+        <img class="brand-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASQAAABbCAMAAADtJAh+AAAACXBIWXMAAAsTAAALEwEAmpwYAAA7p2lUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNS42LWMwNjcgNzkuMTU3NzQ3LCAyMDE1LzAzLzMwLTIzOjQwOjQyICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgICAgICAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgICAgICAgICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgICAgICAgICAgIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPHhtcDpDcmVhdG9yVG9vbD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3htcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhtcDpDcmVhdGVEYXRlPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3htcDpDcmVhdGVEYXRlPgogICAgICAgICA8eG1wOk1ldGFkYXRhRGF0ZT4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC94bXA6TWV0YWRhdGFEYXRlPgogICAgICAgICA8eG1wOk1vZGlmeURhdGU+MjAyMC0xMi0wNFQxMDo1MjowMyswMTowMDwveG1wOk1vZGlmeURhdGU+CiAgICAgICAgIDx4bXBNTTpJbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC94bXBNTTpJbnN0YW5jZUlEPgogICAgICAgICA8eG1wTU06RG9jdW1lbnRJRD5hZG9iZTpkb2NpZDpwaG90b3Nob3A6NGQ2OWRjZDEtMzYxNi0xMWViLTgwNjctYjIxZWYyZjliMGMyPC94bXBNTTpEb2N1bWVudElEPgogICAgICAgICA8eG1wTU06T3JpZ2luYWxEb2N1bWVudElEPnhtcC5kaWQ6NWEyZDhkOGQtNzUxNS1mMDQ2LWFlZjAtODQwZGY5MDdjN2M4PC94bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ+CiAgICAgICAgIDx4bXBNTTpIaXN0b3J5PgogICAgICAgICAgICA8cmRmOlNlcT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+Y3JlYXRlZDwvc3RFdnQ6YWN0aW9uPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6aW5zdGFuY2VJRD54bXAuaWlkOjVhMmQ4ZDhkLTc1MTUtZjA0Ni1hZWYwLTg0MGRmOTA3YzdjODwvc3RFdnQ6aW5zdGFuY2VJRD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OndoZW4+MjAyMC0wNS0yMVQxMzo0ODowNiswMTowMDwvc3RFdnQ6d2hlbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OnNvZnR3YXJlQWdlbnQ+QWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpPC9zdEV2dDpzb2Z0d2FyZUFnZW50PgogICAgICAgICAgICAgICA8L3JkZjpsaT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+c2F2ZWQ8L3N0RXZ0OmFjdGlvbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0Omluc3RhbmNlSUQ+eG1wLmlpZDphNWZhOGMyNS1jYjU4LTkyNDgtYTFlNi0xOTI0ZDg1MGVlNWY8L3N0RXZ0Omluc3RhbmNlSUQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDp3aGVuPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3N0RXZ0OndoZW4+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpzb2Z0d2FyZUFnZW50PkFkb2JlIFBob3Rvc2hvcCBDQyAyMDE1IChXaW5kb3dzKTwvc3RFdnQ6c29mdHdhcmVBZ2VudD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OmNoYW5nZWQ+Lzwvc3RFdnQ6Y2hhbmdlZD4KICAgICAgICAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0iUmVzb3VyY2UiPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6YWN0aW9uPnNhdmVkPC9zdEV2dDphY3Rpb24+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDppbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC9zdEV2dDppbnN0YW5jZUlEPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6d2hlbj4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC9zdEV2dDp3aGVuPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6c29mdHdhcmVBZ2VudD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3N0RXZ0OnNvZnR3YXJlQWdlbnQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpjaGFuZ2VkPi88L3N0RXZ0OmNoYW5nZWQ+CiAgICAgICAgICAgICAgIDwvcmRmOmxpPgogICAgICAgICAgICA8L3JkZjpTZXE+CiAgICAgICAgIDwveG1wTU06SGlzdG9yeT4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgICAgPHBob3Rvc2hvcDpDb2xvck1vZGU+MzwvcGhvdG9zaG9wOkNvbG9yTW9kZT4KICAgICAgICAgPHRpZmY6T3JpZW50YXRpb24+MTwvdGlmZjpPcmllbnRhdGlvbj4KICAgICAgICAgPHRpZmY6WFJlc29sdXRpb24+NzIwMDAwLzEwMDAwPC90aWZmOlhSZXNvbHV0aW9uPgogICAgICAgICA8dGlmZjpZUmVzb2x1dGlvbj43MjAwMDAvMTAwMDA8L3RpZmY6WVJlc29sdXRpb24+CiAgICAgICAgIDx0aWZmOlJlc29sdXRpb25Vbml0PjI8L3RpZmY6UmVzb2x1dGlvblVuaXQ+CiAgICAgICAgIDxleGlmOkNvbG9yU3BhY2U+NjU1MzU8L2V4aWY6Q29sb3JTcGFjZT4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjI5MjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj45MTwvZXhpZjpQaXhlbFlEaW1lbnNpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+9Yhc8wAAAvdQTFRFR3BM7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7RwkS8mN9wAAAPx0Uk5TAM+EjNXAL26kutQ/iCEQh+/GdMVv88ELzuABMQTu/DnD2gL9Bd3C02sell1QjvQ6HxLnx+UXmQPKeFr3PiPNIBVWE7glhr5D9VUZ+iskDP4i1+23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" alt="MONDECO">
+      </div>
+      <div class="brand-meta"><strong>Agent WhatsApp</strong> • Centre de pilotage</div>
+    </div>
+
+    <nav class="nav">
+      <button class="active" data-page="home">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9 21v-7h6v7"/></svg></span>
+        <span>Accueil</span>
+      </button>
+      <button data-page="products">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 11V8a3 3 0 0 1 6 0v3"/><path d="M13 11V8a3 3 0 0 1 6 0v3"/><path d="M4 11h16v7H4z"/><path d="M6 18v3M18 18v3"/></svg></span>
+        <span>Produits</span>
+      </button>
+      <button data-page="instructions">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M8 4h11v16H5V7z"/><path d="M8 4v3H5"/><path d="M9 11h6M9 15h6"/></svg></span>
+        <span>Instructions IA</span>
+      </button>
+      <button data-page="customization">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.4a1.6 1.6 0 0 0 0-3.2h-.8a1.7 1.7 0 0 1 0-3.4H15a6 6 0 0 0 0-12z"/><circle cx="7.5" cy="10" r=".7"/><circle cx="9.5" cy="6.8" r=".7"/><circle cx="14" cy="6.5" r=".7"/></svg></span>
+        <span>Personnalisation</span>
+      </button>
+      <button data-page="test">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg></span>
+        <span>Discussion de test</span>
+      </button>
+      <button data-page="settings">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg></span>
+        <span>Paramètres</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="logout-btn" id="logoutBtn">
+        Se déconnecter
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ================================================== -->
+    <!-- ACCUEIL -->
+    <!-- ================================================== -->
+
+    <section id="page-home" class="page active">
+      <div class="dashboard-hero">
+        <div>
+          <div class="dashboard-kicker">MONDECO • Centre de pilotage</div>
+          <h2>Pilotez votre agent WhatsApp</h2>
+          <p>
+            Gérez votre catalogue, les connaissances de l’IA, les simulations client
+            et les règles de réponse depuis une interface unique.
+          </p>
+        </div>
+
+        <div class="dashboard-hero-actions">
+          <span id="homeAiBadge" class="status-pill">IA activée</span>
+          <span class="premium-badge"><span class="dot"></span> WhatsApp connecté</span>
+        </div>
+      </div>
+
+      <div class="dashboard-stats">
+        <div class="card premium-stat">
+          <div class="stat-top">
+            <div class="stat-label">Produits</div>
+            <div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M5 11V8a3 3 0 0 1 6 0v3"/><path d="M13 11V8a3 3 0 0 1 6 0v3"/><path d="M4 11h16v7H4z"/><path d="M6 18v3M18 18v3"/></svg></div>
+          </div>
+          <div class="stat-value" id="statProducts">0</div>
+          <div class="stat-detail">Références disponibles pour l’agent</div>
+        </div>
+
+        <div class="card premium-stat">
+          <div class="stat-top">
+            <div class="stat-label">Instructions actives</div>
+            <div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M8 4h11v16H5V7z"/><path d="M8 4v3H5"/><path d="M9 11h6M9 15h6"/></svg></div>
+          </div>
+          <div class="stat-value" id="statInstructions">0</div>
+          <div class="stat-detail">Règles actuellement envoyées à l’IA</div>
+        </div>
+
+        <div class="card premium-stat">
+          <div class="stat-top">
+            <div class="stat-label">Simulations</div>
+            <div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="m7 16 3-3 2 2 3-4 2 3"/><circle cx="9" cy="8" r="1"/></svg></div>
+          </div>
+          <div class="stat-value" id="statCustomizations">0</div>
+          <div class="stat-detail">Personnalisations visuelles enregistrées</div>
+        </div>
+
+        <div class="card premium-stat">
+          <div class="stat-top">
+            <div class="stat-label">Canal</div>
+            <div class="stat-icon"><svg viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4.1A8 8 0 1 1 20 11.5z"/><path d="M8.2 8.7c.5 2.6 2.4 4.5 5 5"/></svg></div>
+          </div>
+          <div class="stat-value" style="font-size:26px">WhatsApp</div>
+          <div class="stat-detail">Cloud API Meta • Production</div>
+        </div>
+      </div>
+
+      <div class="dashboard-columns">
+        <div class="card bot-status-card">
+          <div class="bot-status-head">
+            <h3>État du bot</h3>
+            <span class="premium-badge">Configuration active</span>
+          </div>
+
+          <div class="bot-status-grid">
+            <div class="status-item">
+              <div class="label">Audience</div>
+              <div class="value" id="homeAudience">Tout le monde</div>
+            </div>
+            <div class="status-item">
+              <div class="label">Disponibilité</div>
+              <div class="value" id="homeSchedule">Toujours disponible</div>
+            </div>
+            <div class="status-item">
+              <div class="label">Relance</div>
+              <div class="value" id="homeFollowUp">Désactivée</div>
+            </div>
+            <div class="status-item">
+              <div class="label">Images clients</div>
+              <div class="value" id="homeImages">Commercial</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card quick-actions-card">
+          <h3>Actions rapides</h3>
+          <div class="quick-actions-list">
+            <button class="quick-action" data-shortcut-page="products">
+              <span class="qa-left"><span class="qa-icon"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>Ajouter / gérer un produit</span>
+              <span class="arrow">›</span>
+            </button>
+            <button class="quick-action" data-shortcut-page="instructions">
+              <span class="qa-left"><span class="qa-icon"><svg viewBox="0 0 24 24"><path d="M8 4h11v16H5V7z"/><path d="M8 4v3H5"/></svg></span>Modifier les instructions IA</span>
+              <span class="arrow">›</span>
+            </button>
+            <button class="quick-action" data-shortcut-page="test">
+              <span class="qa-left"><span class="qa-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/></svg></span>Tester l’agent</span>
+              <span class="arrow">›</span>
+            </button>
+            <button class="quick-action" data-shortcut-page="settings">
+              <span class="qa-left"><span class="qa-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>Ouvrir les paramètres</span>
+              <span class="arrow">›</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card storage-card">
+        <div class="notice success" id="storageNotice">Vérification du stockage...</div>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- PRODUITS -->
+    <!-- ================================================== -->
+
+    <section id="page-products" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Produits</h2>
+          <p class="page-subtitle">
+            Gérez le catalogue utilisé par votre agent.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button class="btn" id="refreshProductsBtn">↻ Actualiser</button>
+          <button class="btn primary" id="addProductBtn">
+            + Ajouter un produit
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <input
+          id="productSearch"
+          class="search"
+          type="search"
+          placeholder="Rechercher un produit ou une catégorie..."
+        >
+
+        <strong id="productCountLabel">0 produit</strong>
+      </div>
+
+      <div id="productTableContainer"></div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- INSTRUCTIONS -->
+    <!-- ================================================== -->
+
+    <section id="page-instructions" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Instructions du bot</h2>
+          <p class="page-subtitle">
+            Chaque instruction est indépendante. Seules les instructions actives sont envoyées à l'IA.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button class="btn" id="importLegacyBtn">
+            Importer ancien texte
+          </button>
+
+          <button class="btn" id="importManyBtn">
+            Importer plusieurs
+          </button>
+
+          <button class="btn primary" id="addInstructionBtn">
+            + Ajouter une instruction
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong id="instructionCountLabel">0 instruction active</strong>
+      </div>
+
+      <div id="instructionList" style="margin-top:16px"></div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- PERSONNALISATION -->
+    <!-- ================================================== -->
+
+    <section id="page-customization" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Personnalisation client</h2>
+          <p class="page-subtitle">
+            Générez une simulation visuelle à partir d'un produit ou d'une photo.
+          </p>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <form id="customizationForm">
+            <div class="field">
+              <label>Produit MONDECO</label>
+              <select id="customProductId" name="productId">
+                <option value="">Image libre / autre</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Image de référence (optionnelle si produit avec photo)</label>
+              <input
+                id="customReferenceImage"
+                name="referenceImage"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+              >
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label>Couleur</label>
+                <input id="customColor" name="color" placeholder="Ex. beige clair">
+              </div>
+
+              <div class="field">
+                <label>Tissu / matière</label>
+                <input id="customFabric" name="fabric" placeholder="Ex. bouclé">
+              </div>
+            </div>
+
+            <div class="grid grid-2">
+              <div class="field">
+                <label>Dimensions souhaitées</label>
+                <input id="customDimensions" name="dimensions" placeholder="Ex. 300 × 240 cm">
+              </div>
+
+              <div class="field">
+                <label>Coin / orientation</label>
+                <select id="customCorner" name="corner">
+                  <option value="">Ne pas modifier</option>
+                  <option value="Coin à gauche">Coin à gauche</option>
+                  <option value="Coin à droite">Coin à droite</option>
+                  <option value="Inverser l'orientation actuelle">Inverser l'orientation actuelle</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Autres modifications</label>
+              <textarea
+                id="customNotes"
+                name="notes"
+                placeholder="Ex. garder exactement les pieds et les coutures..."
+              ></textarea>
+            </div>
+
+            <div class="notice warning">
+              Simulation visuelle non contractuelle. Prix, dimensions exactes, structure, faisabilité et délai doivent être confirmés par un commercial MONDECO.
+            </div>
+
+            <button
+              class="btn primary"
+              id="generateCustomizationBtn"
+              type="submit"
+              style="margin-top:14px"
+            >
+              ✨ Générer la simulation
+            </button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0">Résultat</h3>
+          <div id="customizationResult" class="empty">
+            <strong>Aucune simulation</strong>
+            Choisissez un produit ou une image puis lancez une simulation.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="toolbar">
+          <h3 style="margin:0">Historique</h3>
+          <button class="btn small" id="refreshCustomizationsBtn">
+            ↻ Actualiser
+          </button>
+        </div>
+
+        <div id="customizationHistory"></div>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- TEST -->
+    <!-- ================================================== -->
+
+    <section id="page-test" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Discussion de test</h2>
+          <p class="page-subtitle">
+            Testez l'agent avant d'utiliser les réponses sur WhatsApp.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="chatBox" class="chat-box"></div>
+
+        <div class="grid grid-2" style="margin-top:14px">
+          <div class="field">
+            <label>Image optionnelle</label>
+            <input
+              id="testImage"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+            >
+          </div>
+
+          <div class="field">
+            <label>Mode image</label>
+            <select id="testImageMode">
+              <option value="analysis">Analyse IA</option>
+              <option value="whatsapp">Simulation comportement WhatsApp</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="chat-controls">
+          <textarea
+            id="testMessage"
+            rows="2"
+            placeholder="Écrivez un message..."
+          ></textarea>
+
+          <button class="btn primary" id="sendTestBtn">
+            Envoyer
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- PARAMÈTRES -->
+    <!-- ================================================== -->
+
+    <section id="page-settings" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Paramètres</h2>
+          <p class="page-subtitle">
+            Contrôlez quand et à qui votre agent WhatsApp répond.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="saveSettingsBtn">
+            Enregistrer les paramètres
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+
+        <div>
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">Intelligence artificielle</h3>
+                <p class="setting-sub">
+                  Désactivez instantanément les réponses automatiques sans arrêter le webhook.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingAiEnabled" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <h3 class="setting-title">Audience</h3>
+            <p class="setting-sub">
+              Choisissez les conversations auxquelles l'IA peut répondre.
+            </p>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="all">
+              <div>
+                <strong>Tout le monde</strong>
+                <span>L'IA répond à toutes les discussions autorisées.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="new">
+              <div>
+                <strong>Nouveaux clients uniquement</strong>
+                <span>L'IA répond uniquement au premier message d'un nouveau numéro.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="ads">
+              <div>
+                <strong>Clients venant des publicités Meta</strong>
+                <span>L'IA répond lorsque le webhook contient une référence Click-to-WhatsApp Ads.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="audience" value="team">
+              <div>
+                <strong>Équipe MONDECO uniquement</strong>
+                <span>Mode test réservé aux numéros renseignés ci-dessous.</span>
+              </div>
+            </label>
+
+            <div class="field" style="margin-top:14px">
+              <label>Numéros équipe autorisés</label>
+              <textarea
+                id="settingTeamPhones"
+                placeholder="+216XXXXXXXX&#10;+216XXXXXXXX"
+              ></textarea>
+              <div class="help">
+                Un numéro par ligne. Utilisé uniquement si l'audience « Équipe MONDECO » est sélectionnée.
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <h3 class="setting-title">Images reçues sur WhatsApp</h3>
+            <p class="setting-sub">
+              Définissez la réaction de l'agent lorsqu'un client envoie une photo.
+            </p>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="commercial">
+              <div>
+                <strong>Transférer au commercial</strong>
+                <span>Aucune réponse IA automatique.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="analyze_only">
+              <div>
+                <strong>Analyser sans répondre</strong>
+                <span>L'IA analyse l'image en interne mais ne répond pas au client.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
+              <input type="radio" name="imageHandling" value="analyze_reply">
+              <div>
+                <strong>Analyser et répondre automatiquement</strong>
+                <span>À utiliser seulement après validation de la fiabilité de la vision.</span>
+              </div>
+            </label>
+          </div>
+
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">Intervention commerciale</h3>
+                <p class="setting-sub">
+                  Suspendre temporairement l'IA lorsqu'un message humain est détecté via un événement de coexistence.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingPauseHuman" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="field" style="margin-top:14px">
+              <label>Durée de pause</label>
+              <select id="settingHumanPauseMinutes">
+                <option value="30">30 minutes</option>
+                <option value="60">1 heure</option>
+                <option value="120">2 heures</option>
+                <option value="240">4 heures</option>
+                <option value="480">8 heures</option>
+                <option value="1440">24 heures</option>
+              </select>
+            </div>
+
+            <div class="notice info">
+              Pour une détection automatique des réponses commerciales en coexistence, Meta doit également envoyer le champ webhook correspondant aux messages sortants de l'application WhatsApp Business.
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="card setting-section">
+            <h3 class="setting-title">Calendrier</h3>
+            <p class="setting-sub">
+              Choisissez les heures durant lesquelles l'IA peut répondre.
+            </p>
+
+            <div class="field">
+              <label>Disponibilité</label>
+              <select id="settingScheduleMode">
+                <option value="always">Toujours disponible</option>
+                <option value="custom">Horaires personnalisés</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Fuseau horaire</label>
+              <input id="settingTimezone" value="Africa/Tunis">
+            </div>
+
+            <div id="weeklyScheduleBox">
+              <div id="weeklyRows"></div>
+
+              <div class="field" style="margin-top:14px">
+                <label>En dehors des horaires</label>
+                <select id="settingOutOfHours">
+                  <option value="none">Ne rien répondre</option>
+                  <option value="message">Envoyer un message d'absence</option>
+                  <option value="ai">Continuer avec l'IA</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>Message d'absence</label>
+                <textarea id="settingAbsenceMessage"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">À suivre</h3>
+                <p class="setting-sub">
+                  Relancer automatiquement un client qui ne répond plus.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingFollowUpEnabled" type="checkbox">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div id="followUpBox" style="margin-top:14px">
+              <div class="grid grid-2">
+                <div class="field">
+                  <label>Délai</label>
+                  <select id="settingFollowUpDelay">
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 heure</option>
+                    <option value="120">2 heures</option>
+                    <option value="240">4 heures</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label>Maximum</label>
+                  <select id="settingFollowUpMax">
+                    <option value="1">1 relance</option>
+                    <option value="2">2 relances</option>
+                    <option value="3">3 relances</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field">
+                <label>Message de relance</label>
+                <textarea id="settingFollowUpMessage"></textarea>
+              </div>
+
+              <div class="notice warning">
+                Pour rester dans une conversation client normale, gardez un délai de relance court. Les messages envoyés hors des fenêtres autorisées par WhatsApp peuvent nécessiter un modèle approuvé.
+              </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <h3 class="setting-title">Résumé actuel</h3>
+            <div id="settingsSummary" class="notice info">
+              Chargement...
+            </div>
+          </div>
+
+          <div class="card setting-section data-protection-card">
+            <h3 class="setting-title">Protection des données</h3>
+            <p class="setting-sub">
+              Produits, instructions, paramètres et images sont enregistrés sur le Volume Railway.
+              Une sauvegarde complète peut être créée et restaurée depuis cette page.
+            </p>
+
+            <div id="backupProtectionNotice" class="notice info">
+              Vérification de la protection...
+            </div>
+
+            <div class="protection-status">
+              <div class="protection-chip">
+                <span class="label">Stockage</span>
+                <span class="value" id="backupStorageStatus">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Dernière sauvegarde</span>
+                <span class="value" id="backupLastSnapshot">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Snapshots conservés</span>
+                <span class="value" id="backupSnapshotCount">—</span>
+              </div>
+
+              <div class="protection-chip">
+                <span class="label">Protection stricte</span>
+                <span class="value" id="backupStrictStatus">—</span>
+              </div>
+            </div>
+
+            <div class="backup-actions">
+              <button class="btn primary" id="createBackupBtn" type="button">
+                Créer une sauvegarde
+              </button>
+
+              <button class="btn" id="exportDataBtn" type="button">
+                Exporter les données JSON
+              </button>
+            </div>
+
+            <div class="backup-list">
+              <div class="field">
+                <label>Restaurer une sauvegarde complète</label>
+                <select id="backupSnapshotSelect">
+                  <option value="">Aucune sauvegarde disponible</option>
+                </select>
+                <div class="help">
+                  La restauration remet les JSON et les images dans l'état exact de la sauvegarde choisie.
+                  Une sauvegarde de sécurité est créée automatiquement avant toute restauration.
+                </div>
+              </div>
+
+              <button class="btn danger" id="restoreBackupBtn" type="button">
+                Restaurer la sauvegarde sélectionnée
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL PRODUIT -->
+<!-- ======================================================== -->
+
+<div class="modal-backdrop" id="productModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="productModalTitle">Ajouter un produit</h3>
+      <button class="close" data-close="productModal">×</button>
+    </div>
+
+    <form id="productForm">
+      <div class="modal-body">
+        <input type="hidden" id="productId">
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Nom du produit *</label>
+            <input id="productName" name="name" required>
+          </div>
+
+          <div class="field">
+            <label>Catégorie *</label>
+            <input id="productCategory" name="category" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Photo *</label>
+          <input
+            id="productImage"
+            name="image"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+          >
+          <div class="help">
+            JPG, PNG ou WEBP. Maximum 8 Mo.
+          </div>
+          <img id="productImagePreview" class="preview hidden" alt="Aperçu">
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Prix normal</label>
+            <input id="productPrice" name="price" placeholder="Ex. 4190">
+          </div>
+
+          <div class="field">
+            <label>Prix promotionnel</label>
+            <input id="productPromoPrice" name="promoPrice" placeholder="Ex. 3890">
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Disponibilité</label>
+            <select id="productAvailability" name="availability">
+              <option value="unknown">À confirmer</option>
+              <option value="in_stock">En stock</option>
+              <option value="on_order">Sur commande</option>
+              <option value="out_of_stock">Rupture</option>
+              <option value="clearance">Déstockage</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Dimensions</label>
+            <input id="productDimensions" name="dimensions">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Composition</label>
+          <textarea id="productComposition" name="composition"></textarea>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Couleurs disponibles</label>
+            <input id="productColors" name="colors">
+          </div>
+
+          <div class="field">
+            <label>Showrooms</label>
+            <input id="productShowrooms" name="showrooms">
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="field">
+            <label>Lien produit</label>
+            <input id="productUrl" name="productUrl" type="url">
+          </div>
+
+          <div class="field">
+            <label>Lien catégorie</label>
+            <input id="productCategoryUrl" name="categoryUrl" type="url">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Description</label>
+          <textarea id="productDescription" name="description"></textarea>
+        </div>
+
+        <div class="field">
+          <label>Personnalisation autorisée</label>
+
+          <div class="checkbox-grid">
+            <label class="checkbox-line">
+              <input id="productCustomColor" type="checkbox">
+              Couleur
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomFabric" type="checkbox">
+              Tissu
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomDimensions" type="checkbox">
+              Dimensions
+            </label>
+
+            <label class="checkbox-line">
+              <input id="productCustomCorner" type="checkbox">
+              Coin / orientation
+            </label>
+          </div>
+        </div>
+
+        <label class="checkbox-line">
+          <input id="productActive" type="checkbox" checked>
+          Produit actif et disponible pour l'IA
+        </label>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close="productModal">Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL INSTRUCTION -->
+<!-- ======================================================== -->
+
+<div class="modal-backdrop" id="instructionModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="instructionModalTitle">Ajouter une instruction</h3>
+      <button class="close" data-close="instructionModal">×</button>
+    </div>
+
+    <form id="instructionForm">
+      <div class="modal-body">
+        <input type="hidden" id="instructionId">
+
+        <div class="field">
+          <label>Titre *</label>
+          <input id="instructionTitle" required>
+        </div>
+
+        <div class="field">
+          <label>Instruction *</label>
+          <textarea id="instructionContent" required></textarea>
+        </div>
+
+        <label class="checkbox-line">
+          <input id="instructionActive" type="checkbox" checked>
+          Instruction active
+        </label>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close="instructionModal">Annuler</button>
+        <button type="submit" class="btn primary">Enregistrer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ======================================================== -->
+<!-- MODAL IMPORT -->
+<!-- ======================================================== -->
+
+<div class="modal-backdrop" id="importModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Importer plusieurs instructions</h3>
+      <button class="close" data-close="importModal">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="notice info">
+        Séparez les instructions par une ligne vide. La première ligne de chaque bloc devient le titre.
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <textarea
+          id="importText"
+          style="min-height:300px"
+          placeholder="Titre 1&#10;Contenu de l'instruction...&#10;&#10;Titre 2&#10;Autre instruction..."
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" data-close="importModal">Annuler</button>
+      <button class="btn primary" id="confirmImportBtn">Importer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/admin/api';
+
+let products = [];
+let instructions = [];
+let customizations = [];
+let settings = null;
+let productPreviewObjectUrl = null;
+
+const pages = [...document.querySelectorAll('.page')];
+const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
+
+function escapeHtml(value){
+  return String(value ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'","&#039;");
+}
+
+function showPage(name){
+  pages.forEach(page => {
+    page.classList.toggle(
+      'active',
+      page.id === `page-${name}`
+    );
+  });
+
+  navButtons.forEach(btn => {
+    btn.classList.toggle(
+      'active',
+      btn.dataset.page === name
+    );
+  });
+
+  if(name === 'home') refreshHome();
+  if(name === 'products') loadProducts();
+  if(name === 'instructions') loadInstructions();
+  if(name === 'customization'){
+    loadProducts().then(loadCustomizations);
+  }
+  if(name === 'settings') loadSettings();
+}
+
+navButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    showPage(btn.dataset.page);
+  });
+});
+
+async function apiFetch(url, options = {}){
+  const response = await fetch(url, options);
+
+  if(response.status === 401){
+    location.href = '/admin/login';
+    throw new Error('Session expirée.');
+  }
+
+  let data = null;
+
+  try{
+    data = await response.json();
+  }catch{
+    data = {};
+  }
+
+  if(!response.ok){
     throw new Error(
-      'STOCKAGE PERSISTANT OBLIGATOIRE : Railway est actif mais DATA_DIR pointe vers /app. ' +
-      'Montez un Volume sur /data et définissez DATA_DIR=/data.'
+      data?.error ||
+      `Erreur HTTP ${response.status}`
     );
   }
 
-  if (
-    IS_RAILWAY &&
-    PERSISTENCE_STRICT &&
-    mountPath &&
-    !(
-      samePath(DATA_DIR, mountPath) ||
-      path.resolve(DATA_DIR).startsWith(
-        path.resolve(mountPath) + path.sep
-      )
-    )
-  ) {
-    throw new Error(
-      `STOCKAGE PERSISTANT MAL CONFIGURÉ : DATA_DIR=${DATA_DIR} ` +
-      `mais le Volume Railway est monté sur ${mountPath}.`
-    );
-  }
-
-  if (!storageIsWritable()) {
-    throw new Error(
-      `Le dossier de données ${DATA_DIR} n'est pas accessible en écriture.`
-    );
-  }
+  return data;
 }
 
-function pruneFiles(directory, maxFiles) {
-  try {
-    if (!fs.existsSync(directory)) return;
+async function refreshHome(){
+  try{
+    const [stats, storage, currentSettings] = await Promise.all([
+      apiFetch(`${API}/stats`),
+      apiFetch(`${API}/storage-status`),
+      apiFetch(`${API}/settings`)
+    ]);
 
-    const files = fs
-      .readdirSync(directory)
-      .map(name => {
-        const fullPath = path.join(directory, name);
+    document.getElementById('statProducts').textContent =
+      stats.activeProductCount ?? stats.productCount ?? 0;
 
-        try {
-          const stat = fs.statSync(fullPath);
+    document.getElementById('statInstructions').textContent =
+      stats.activeInstructionsCount ?? 0;
 
-          return stat.isFile()
-            ? {
-                name,
-                fullPath,
-                mtimeMs: stat.mtimeMs
-              }
-            : null;
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    document.getElementById('statCustomizations').textContent =
+      stats.customizationCount ?? 0;
 
-    for (const file of files.slice(maxFiles)) {
-      try {
-        fs.unlinkSync(file.fullPath);
-      } catch (error) {
-        console.warn(
-          '⚠️ Nettoyage ancien backup impossible :',
-          error.message
-        );
-      }
+    const badge = document.getElementById('homeAiBadge');
+
+    badge.textContent =
+      currentSettings.aiEnabled
+        ? 'IA activée'
+        : 'IA désactivée';
+
+    badge.classList.toggle(
+      'off',
+      !currentSettings.aiEnabled
+    );
+
+    const audienceLabels = {
+      all:'Tout le monde',
+      new:'Nouveaux clients',
+      ads:'Publicités Meta',
+      team:'Équipe MONDECO'
+    };
+
+    document.getElementById('homeAudience').textContent =
+      audienceLabels[currentSettings.audience] || currentSettings.audience;
+
+    document.getElementById('homeSchedule').textContent =
+      currentSettings.schedule?.mode === 'custom'
+        ? 'Horaires personnalisés'
+        : 'Toujours disponible';
+
+    document.getElementById('homeFollowUp').textContent =
+      currentSettings.followUp?.enabled
+        ? `Après ${currentSettings.followUp.delayMinutes} min`
+        : 'Désactivée';
+
+    const imageLabels = {
+      commercial:'Commercial',
+      analyze_only:'Analyse interne',
+      analyze_reply:'Analyse + réponse'
+    };
+
+    document.getElementById('homeImages').textContent =
+      imageLabels[currentSettings.imageHandling] || currentSettings.imageHandling;
+
+    const storageNotice = document.getElementById('storageNotice');
+
+    if(storage.persistentConfigured && storage.writable){
+      storageNotice.className = 'notice success';
+      storageNotice.textContent =
+        `Stockage persistant actif : ${storage.dataDir}`;
+    }else{
+      storageNotice.className = 'notice warning';
+      storageNotice.textContent =
+        'Stockage persistant non configuré. Montez un Volume Railway sur /data et utilisez DATA_DIR=/data.';
     }
-  } catch (error) {
-    console.warn(
-      '⚠️ Nettoyage des backups impossible :',
-      error.message
-    );
+  }catch(error){
+    console.error(error);
   }
 }
 
-function backupJsonVersion(filePath) {
-  try {
-    if (!fileExistsWithContent(filePath)) return null;
+// ============================================================
+// MODALS
+// ============================================================
 
-    const baseName =
-      path.basename(filePath, path.extname(filePath));
+function openModal(id){
+  document.getElementById(id).classList.add('open');
+}
 
-    const ext =
-      path.extname(filePath) || '.json';
+function closeModal(id){
+  document.getElementById(id).classList.remove('open');
 
-    const targetDir =
-      path.join(JSON_BACKUPS_DIR, baseName);
+  if(id === 'productModal'){
+    resetProductForm();
+  }
 
-    fs.mkdirSync(targetDir, { recursive: true });
-
-    const backupPath =
-      path.join(
-        targetDir,
-        `${baseName}-${timestampId()}${ext}`
-      );
-
-    fs.copyFileSync(
-      filePath,
-      backupPath
-    );
-
-    pruneFiles(
-      targetDir,
-      MAX_JSON_BACKUPS_PER_FILE
-    );
-
-    return backupPath;
-  } catch (error) {
-    console.warn(
-      `⚠️ Backup versionné impossible pour ${path.basename(filePath)} :`,
-      error.message
-    );
-
-    return null;
+  if(id === 'instructionModal'){
+    resetInstructionForm();
   }
 }
 
-function copyDirectoryRecursive(sourceDir, targetDir) {
-  if (!fs.existsSync(sourceDir)) return;
+document.querySelectorAll('[data-close]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    closeModal(btn.dataset.close);
+  });
+});
 
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  const entries =
-    fs.readdirSync(
-      sourceDir,
-      { withFileTypes: true }
-    );
-
-  for (const entry of entries) {
-    const source =
-      path.join(sourceDir, entry.name);
-
-    const target =
-      path.join(targetDir, entry.name);
-
-    if (entry.isDirectory()) {
-      copyDirectoryRecursive(
-        source,
-        target
-      );
-    } else if (entry.isFile()) {
-      fs.copyFileSync(
-        source,
-        target
-      );
+document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+  backdrop.addEventListener('click', event => {
+    if(event.target === backdrop){
+      closeModal(backdrop.id);
     }
-  }
+  });
+});
+
+// ============================================================
+// PRODUITS
+// ============================================================
+
+async function loadProducts(){
+  products = await apiFetch(`${API}/products`);
+  renderProducts();
+  populateProductSelect();
 }
 
-function clearDirectory(directory) {
-  if (!fs.existsSync(directory)) {
-    fs.mkdirSync(
-      directory,
-      { recursive: true }
-    );
+function renderProducts(){
+  const term =
+    document.getElementById('productSearch')
+      .value
+      .trim()
+      .toLowerCase();
+
+  const filtered = products.filter(product => {
+    const haystack =
+      `${product.name || ''} ${product.category || ''}`.toLowerCase();
+
+    return !term || haystack.includes(term);
+  });
+
+  document.getElementById('productCountLabel').textContent =
+    `${products.length} produit${products.length > 1 ? 's' : ''}`;
+
+  const container =
+    document.getElementById('productTableContainer');
+
+  if(!filtered.length){
+    container.innerHTML = `
+      <div class="empty">
+        <strong>Aucun produit</strong>
+        Ajoutez votre premier produit ou modifiez votre recherche.
+      </div>
+    `;
     return;
   }
 
-  for (
-    const entry
-    of fs.readdirSync(
-      directory,
-      { withFileTypes: true }
-    )
-  ) {
-    const fullPath =
-      path.join(
-        directory,
-        entry.name
-      );
-
-    if (entry.isDirectory()) {
-      fs.rmSync(
-        fullPath,
-        {
-          recursive: true,
-          force: true
-        }
-      );
-    } else {
-      fs.unlinkSync(fullPath);
-    }
-  }
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Photo</th>
+            <th>Produit</th>
+            <th>Catégorie</th>
+            <th>Prix</th>
+            <th>Disponibilité</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.map(product => `
+            <tr>
+              <td>
+                ${product.image
+                  ? `<img class="product-thumb" src="${escapeHtml(product.image)}" alt="">`
+                  : '—'}
+              </td>
+              <td>
+                <strong>${escapeHtml(product.name)}</strong>
+              </td>
+              <td>${escapeHtml(product.category || '—')}</td>
+              <td>
+                ${product.promoPrice
+                  ? `<strong>${escapeHtml(product.promoPrice)} TND</strong><br><span style="color:#8b8177;text-decoration:line-through">${escapeHtml(product.price || '')} TND</span>`
+                  : product.price
+                    ? `${escapeHtml(product.price)} TND`
+                    : '—'}
+              </td>
+              <td>${escapeHtml(availabilityLabel(product.availability))}</td>
+              <td>
+                ${product.active !== false
+                  ? '<span class="status-pill">Actif</span>'
+                  : '<span class="status-pill off">Inactif</span>'}
+              </td>
+              <td>
+                <button class="btn small" onclick="editProduct('${product.id}')">Modifier</button>
+                <button class="btn small danger" onclick="deleteProduct('${product.id}')">Supprimer</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-function archiveFileBeforeDelete(filePath, category = 'files') {
-  try {
-    if (
-      !filePath ||
-      !fs.existsSync(filePath)
-    ) {
-      return null;
-    }
+function availabilityLabel(value){
+  const labels = {
+    in_stock:'En stock',
+    on_order:'Sur commande',
+    out_of_stock:'Rupture',
+    clearance:'Déstockage',
+    unknown:'À confirmer'
+  };
 
-    const targetDir =
-      path.join(
-        RECYCLE_DIR,
-        category
-      );
-
-    fs.mkdirSync(
-      targetDir,
-      { recursive: true }
-    );
-
-    const target =
-      path.join(
-        targetDir,
-        `${timestampId()}-${path.basename(filePath)}`
-      );
-
-    fs.copyFileSync(
-      filePath,
-      target
-    );
-
-    deleteFileIfExists(
-      filePath
-    );
-
-    return target;
-  } catch (error) {
-    console.warn(
-      '⚠️ Archivage avant suppression impossible :',
-      error.message
-    );
-
-    // Ne jamais bloquer une opération commerciale seulement
-    // parce que la copie de sécurité n'a pas pu être créée.
-    deleteFileIfExists(
-      filePath
-    );
-
-    return null;
-  }
+  return labels[value] || value || 'À confirmer';
 }
 
-function snapshotFiles() {
-  return [
-    {
-      source: PRODUCTS_PATH,
-      name: 'products.json'
-    },
-    {
-      source: INSTRUCTIONS_PATH,
-      name: 'instructions.json'
-    },
-    {
-      source: SETTINGS_PATH,
-      name: 'settings.json'
-    },
-    {
-      source: CUSTOMIZATIONS_PATH,
-      name: 'customization-requests.json'
-    }
-  ];
-}
+function resetProductForm(){
+  document.getElementById('productForm').reset();
+  document.getElementById('productId').value = '';
+  document.getElementById('productActive').checked = true;
+  document.getElementById('productAvailability').value = 'unknown';
+  document.getElementById('productModalTitle').textContent = 'Ajouter un produit';
+  document.getElementById('productImage').required = true;
 
-function snapshotMetadata(snapshotDir) {
-  const filePath =
-    path.join(
-      snapshotDir,
-      'snapshot-meta.json'
-    );
+  const preview = document.getElementById('productImagePreview');
 
-  try {
-    if (!fs.existsSync(filePath)) {
-      return {};
-    }
-
-    return JSON.parse(
-      fs.readFileSync(
-        filePath,
-        'utf8'
-      ) || '{}'
-    );
-  } catch {
-    return {};
-  }
-}
-
-function listFullSnapshots() {
-  if (!fs.existsSync(SNAPSHOTS_DIR)) {
-    return [];
+  if(productPreviewObjectUrl){
+    URL.revokeObjectURL(productPreviewObjectUrl);
+    productPreviewObjectUrl = null;
   }
 
-  return fs
-    .readdirSync(
-      SNAPSHOTS_DIR,
-      { withFileTypes: true }
-    )
-    .filter(entry => entry.isDirectory())
-    .map(entry => {
-      const fullPath =
-        path.join(
-          SNAPSHOTS_DIR,
-          entry.name
-        );
-
-      const stat =
-        fs.statSync(fullPath);
-
-      const meta =
-        snapshotMetadata(fullPath);
-
-      return {
-        id: entry.name,
-        createdAt:
-          meta.createdAt ||
-          stat.mtime.toISOString(),
-        reason:
-          meta.reason ||
-          'manual',
-        productCount:
-          Number(meta.productCount || 0),
-        instructionCount:
-          Number(meta.instructionCount || 0),
-        customizationCount:
-          Number(meta.customizationCount || 0)
-      };
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt) -
-        new Date(a.createdAt)
-    );
+  preview.src = '';
+  preview.classList.add('hidden');
 }
 
-function pruneFullSnapshots() {
-  const snapshots =
-    listFullSnapshots();
+document.getElementById('addProductBtn').addEventListener('click', () => {
+  resetProductForm();
+  openModal('productModal');
+});
 
-  for (
-    const snapshot
-    of snapshots.slice(
-      MAX_FULL_SNAPSHOTS
-    )
-  ) {
-    try {
-      fs.rmSync(
-        path.join(
-          SNAPSHOTS_DIR,
-          snapshot.id
-        ),
-        {
-          recursive: true,
-          force: true
-        }
-      );
-    } catch (error) {
-      console.warn(
-        '⚠️ Suppression ancien snapshot impossible :',
-        error.message
-      );
-    }
+document.getElementById('refreshProductsBtn').addEventListener('click', loadProducts);
+document.getElementById('productSearch').addEventListener('input', renderProducts);
+
+document.getElementById('productImage').addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  const preview = document.getElementById('productImagePreview');
+
+  if(!file){
+    preview.classList.add('hidden');
+    return;
   }
-}
 
-function createFullSnapshot(reason = 'manual') {
-  const id =
-    `snapshot-${timestampId()}`;
+  if(productPreviewObjectUrl){
+    URL.revokeObjectURL(productPreviewObjectUrl);
+  }
 
-  const snapshotDir =
-    path.join(
-      SNAPSHOTS_DIR,
+  productPreviewObjectUrl = URL.createObjectURL(file);
+  preview.src = productPreviewObjectUrl;
+  preview.classList.remove('hidden');
+});
+
+window.editProduct = function(id){
+  const product = products.find(item => item.id === id);
+  if(!product) return;
+
+  resetProductForm();
+
+  document.getElementById('productId').value = product.id;
+  document.getElementById('productName').value = product.name || '';
+  document.getElementById('productCategory').value = product.category || '';
+  document.getElementById('productPrice').value = product.price || '';
+  document.getElementById('productPromoPrice').value = product.promoPrice || '';
+  document.getElementById('productAvailability').value = product.availability || 'unknown';
+  document.getElementById('productDimensions').value = product.dimensions || '';
+  document.getElementById('productComposition').value = product.composition || '';
+  document.getElementById('productColors').value = product.colors || '';
+  document.getElementById('productShowrooms').value = product.showrooms || '';
+  document.getElementById('productUrl').value = product.productUrl || '';
+  document.getElementById('productCategoryUrl').value = product.categoryUrl || '';
+  document.getElementById('productDescription').value = product.description || '';
+  document.getElementById('productCustomColor').checked = product.customizableColor === true;
+  document.getElementById('productCustomFabric').checked = product.customizableFabric === true;
+  document.getElementById('productCustomDimensions').checked = product.customizableDimensions === true;
+  document.getElementById('productCustomCorner').checked = product.customizableCorner === true;
+  document.getElementById('productActive').checked = product.active !== false;
+  document.getElementById('productModalTitle').textContent = `Modifier ${product.name}`;
+  document.getElementById('productImage').required = !product.image;
+
+  if(product.image){
+    const preview = document.getElementById('productImagePreview');
+    preview.src = product.image;
+    preview.classList.remove('hidden');
+  }
+
+  openModal('productModal');
+};
+
+window.deleteProduct = async function(id){
+  const product = products.find(item => item.id === id);
+  if(!product) return;
+
+  if(!confirm(`Supprimer le produit « ${product.name} » ?`)){
+    return;
+  }
+
+  try{
+    await apiFetch(`${API}/products/${id}`, {
+      method:'DELETE'
+    });
+
+    await loadProducts();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+document.getElementById('productForm').addEventListener('submit', async event => {
+  event.preventDefault();
+
+  const id = document.getElementById('productId').value;
+  const formData = new FormData();
+
+  formData.append('name', document.getElementById('productName').value);
+  formData.append('category', document.getElementById('productCategory').value);
+  formData.append('price', document.getElementById('productPrice').value);
+  formData.append('promoPrice', document.getElementById('productPromoPrice').value);
+  formData.append('availability', document.getElementById('productAvailability').value);
+  formData.append('dimensions', document.getElementById('productDimensions').value);
+  formData.append('composition', document.getElementById('productComposition').value);
+  formData.append('colors', document.getElementById('productColors').value);
+  formData.append('showrooms', document.getElementById('productShowrooms').value);
+  formData.append('productUrl', document.getElementById('productUrl').value);
+  formData.append('categoryUrl', document.getElementById('productCategoryUrl').value);
+  formData.append('description', document.getElementById('productDescription').value);
+  formData.append('customizableColor', document.getElementById('productCustomColor').checked);
+  formData.append('customizableFabric', document.getElementById('productCustomFabric').checked);
+  formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked);
+  formData.append('customizableCorner', document.getElementById('productCustomCorner').checked);
+  formData.append('active', document.getElementById('productActive').checked);
+
+  const image = document.getElementById('productImage').files?.[0];
+
+  if(image){
+    formData.append('image', image);
+  }
+
+  try{
+    await apiFetch(
       id
-    );
-
-  fs.mkdirSync(
-    snapshotDir,
-    { recursive: true }
-  );
-
-  for (const item of snapshotFiles()) {
-    if (fs.existsSync(item.source)) {
-      fs.copyFileSync(
-        item.source,
-        path.join(
-          snapshotDir,
-          item.name
-        )
-      );
-    }
-  }
-
-  copyDirectoryRecursive(
-    UPLOADS_DIR,
-    path.join(
-      snapshotDir,
-      'uploads'
-    )
-  );
-
-  copyDirectoryRecursive(
-    CUSTOMIZATIONS_DIR,
-    path.join(
-      snapshotDir,
-      'customizations'
-    )
-  );
-
-  const products =
-    readJsonArray(
-      PRODUCTS_PATH,
-      'products.json'
-    );
-
-  const instructions =
-    readJsonArray(
-      INSTRUCTIONS_PATH,
-      'instructions.json'
-    );
-
-  const customizations =
-    readJsonArray(
-      CUSTOMIZATIONS_PATH,
-      'customization-requests.json'
-    );
-
-  const meta = {
-    id,
-    createdAt:
-      new Date().toISOString(),
-    reason:
-      safeString(reason) || 'manual',
-    productCount:
-      products.length,
-    instructionCount:
-      instructions.length,
-    customizationCount:
-      customizations.length
-  };
-
-  fs.writeFileSync(
-    path.join(
-      snapshotDir,
-      'snapshot-meta.json'
-    ),
-    JSON.stringify(
-      meta,
-      null,
-      2
-    ),
-    'utf8'
-  );
-
-  pruneFullSnapshots();
-
-  console.log(
-    `💾 Snapshot créé : ${id}`
-  );
-
-  return meta;
-}
-
-function restoreFullSnapshot(snapshotId) {
-  const safeId =
-    path.basename(
-      safeString(snapshotId)
-    );
-
-  if (!safeId) {
-    throw new Error(
-      'Sauvegarde invalide.'
-    );
-  }
-
-  const snapshotDir =
-    path.join(
-      SNAPSHOTS_DIR,
-      safeId
-    );
-
-  if (
-    !fs.existsSync(snapshotDir) ||
-    !fs.statSync(snapshotDir).isDirectory()
-  ) {
-    throw new Error(
-      'Sauvegarde introuvable.'
-    );
-  }
-
-  // Protection avant restauration.
-  createFullSnapshot(
-    `before-restore-${safeId}`
-  );
-
-  for (const item of snapshotFiles()) {
-    const source =
-      path.join(
-        snapshotDir,
-        item.name
-      );
-
-    if (fs.existsSync(source)) {
-      backupJsonVersion(
-        item.source
-      );
-
-      fs.copyFileSync(
-        source,
-        item.source
-      );
-    }
-  }
-
-  const snapshotUploads =
-    path.join(
-      snapshotDir,
-      'uploads'
-    );
-
-  if (fs.existsSync(snapshotUploads)) {
-    clearDirectory(
-      UPLOADS_DIR
-    );
-
-    copyDirectoryRecursive(
-      snapshotUploads,
-      UPLOADS_DIR
-    );
-  }
-
-  const snapshotCustomizations =
-    path.join(
-      snapshotDir,
-      'customizations'
-    );
-
-  if (
-    fs.existsSync(
-      snapshotCustomizations
-    )
-  ) {
-    clearDirectory(
-      CUSTOMIZATIONS_DIR
-    );
-
-    copyDirectoryRecursive(
-      snapshotCustomizations,
-      CUSTOMIZATIONS_DIR
-    );
-  }
-
-  markInstructionsMigrationDone();
-
-  console.log(
-    `♻️ Snapshot restauré : ${safeId}`
-  );
-
-  return snapshotMetadata(
-    snapshotDir
-  );
-}
-
-function createExternalDataExport() {
-  return {
-    exportVersion: 1,
-    createdAt:
-      new Date().toISOString(),
-    dataDir:
-      DATA_DIR,
-    products:
-      loadProducts(),
-    instructions:
-      loadInstructions(),
-    settings:
-      getBotSettings(),
-    customizations:
-      loadCustomizations(),
-    note:
-      'Cet export JSON contient les données structurées. Les images restent protégées dans le Volume et les snapshots complets /data/backups/snapshots.'
-  };
-}
-
-function ensureDailySnapshot() {
-  try {
-    const today =
-      new Date()
-        .toISOString()
-        .slice(0, 10);
-
-    const existsToday =
-      listFullSnapshots()
-        .some(snapshot =>
-          String(
-            snapshot.createdAt
-          ).slice(0, 10) === today
-        );
-
-    if (!existsToday) {
-      createFullSnapshot(
-        'automatic-daily'
-      );
-    }
-  } catch (error) {
-    console.warn(
-      '⚠️ Snapshot quotidien impossible :',
-      error.message
-    );
-  }
-}
-
-
-function writeJsonAtomic(filePath, data) {
-  const tempPath = `${filePath}.tmp`;
-  const backupPath = `${filePath}.bak`;
-
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-  if (fileExistsWithContent(filePath)) {
-    backupJsonVersion(filePath);
-
-    try {
-      fs.copyFileSync(filePath, backupPath);
-    } catch (error) {
-      console.warn('⚠️ Backup JSON impossible :', error.message);
-    }
-  }
-
-  fs.writeFileSync(
-    tempPath,
-    JSON.stringify(data, null, 2),
-    'utf8'
-  );
-
-  fs.renameSync(tempPath, filePath);
-}
-
-function readJsonArray(filePath, label) {
-  const backupPath = `${filePath}.bak`;
-
-  function read(candidate) {
-    if (!fileExistsWithContent(candidate)) return null;
-
-    const parsed = JSON.parse(
-      fs.readFileSync(candidate, 'utf8')
-    );
-
-    return Array.isArray(parsed) ? parsed : [];
-  }
-
-  try {
-    const data = read(filePath);
-    return data === null ? [] : data;
-  } catch (error) {
-    console.error(`❌ Lecture ${label} impossible :`, error.message);
-
-    try {
-      const backup = read(backupPath);
-      if (backup !== null) {
-        console.warn(`♻️ ${label} restauré depuis backup`);
-        return backup;
+        ? `${API}/products/${id}`
+        : `${API}/products`,
+      {
+        method: id ? 'PUT' : 'POST',
+        body: formData
       }
-    } catch (backupError) {
-      console.error(
-        `❌ Backup ${label} invalide :`,
-        backupError.message
-      );
-    }
+    );
 
-    return [];
+    closeModal('productModal');
+    await loadProducts();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
   }
-}
+});
 
-function copyFileIfTargetMissing(source, target, label) {
-  try {
-    if (samePath(source, target)) return false;
-    if (!fileExistsWithContent(source)) return false;
-    if (fileExistsWithContent(target)) return false;
+function populateProductSelect(){
+  const select = document.getElementById('customProductId');
+  if(!select) return;
 
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(source, target);
+  const current = select.value;
 
-    console.log(`✅ Migration ${label} vers ${target}`);
-    return true;
-  } catch (error) {
-    console.warn(`⚠️ Migration ${label} impossible :`, error.message);
-    return false;
+  select.innerHTML = `
+    <option value="">Image libre / autre</option>
+    ${products
+      .filter(product => product.active !== false)
+      .map(product => `
+        <option value="${escapeHtml(product.id)}">
+          ${escapeHtml(product.name)}
+        </option>
+      `)
+      .join('')}
+  `;
+
+  if(products.some(product => product.id === current)){
+    select.value = current;
   }
-}
-
-function copyMissingFiles(sourceDir, targetDir, label) {
-  try {
-    if (samePath(sourceDir, targetDir)) return 0;
-    if (!fs.existsSync(sourceDir)) return 0;
-
-    fs.mkdirSync(targetDir, { recursive: true });
-
-    let copied = 0;
-    const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-
-      const source = path.join(sourceDir, entry.name);
-      const target = path.join(targetDir, entry.name);
-
-      if (fs.existsSync(target)) continue;
-
-      fs.copyFileSync(source, target);
-      copied += 1;
-    }
-
-    if (copied > 0) {
-      console.log(`✅ ${copied} fichier(s) ${label} migré(s)`);
-    }
-
-    return copied;
-  } catch (error) {
-    console.warn(`⚠️ Migration ${label} impossible :`, error.message);
-    return 0;
-  }
-}
-
-function mimeTypeFromPath(filePath) {
-  const ext = path.extname(filePath || '').toLowerCase();
-
-  if (ext === '.png') return 'image/png';
-  if (ext === '.webp') return 'image/webp';
-  return 'image/jpeg';
-}
-
-function extensionFromMimeType(mimetype) {
-  if (mimetype === 'image/png') return '.png';
-  if (mimetype === 'image/webp') return '.webp';
-  return '.jpg';
-}
-
-// ============================================================
-// MIGRATION DONNÉES
-// ============================================================
-
-function migrateLegacyData() {
-  if (samePath(DATA_DIR, APP_DIR)) return;
-
-  copyFileIfTargetMissing(
-    LEGACY_PRODUCTS_PATH,
-    PRODUCTS_PATH,
-    'products.json'
-  );
-
-  copyFileIfTargetMissing(
-    LEGACY_CUSTOMIZATIONS_PATH,
-    CUSTOMIZATIONS_PATH,
-    'customization-requests.json'
-  );
-
-  copyMissingFiles(
-    LEGACY_UPLOADS_DIR,
-    UPLOADS_DIR,
-    'images produits'
-  );
-
-  copyMissingFiles(
-    LEGACY_CUSTOMIZATIONS_DIR,
-    CUSTOMIZATIONS_DIR,
-    'images personnalisations'
-  );
 }
 
 // ============================================================
 // INSTRUCTIONS
 // ============================================================
 
-function loadLegacyBusinessInfo() {
-  try {
-    if (!fs.existsSync(LEGACY_BUSINESS_INFO_PATH)) return '';
-    return fs.readFileSync(LEGACY_BUSINESS_INFO_PATH, 'utf8');
-  } catch (error) {
-    console.error('❌ business-info.txt :', error.message);
-    return '';
-  }
+async function loadInstructions(){
+  instructions = await apiFetch(`${API}/instructions`);
+  renderInstructions();
 }
 
-function parseInstructionBlocks(text) {
-  return safeString(text)
-    .split(/\n\s*\n+/)
-    .map(block => block.trim())
-    .filter(Boolean)
-    .map((block, index) => {
-      const lines = block
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
-
-      return {
-        title: lines[0] || `Instruction ${index + 1}`,
-        content:
-          lines.length > 1
-            ? lines.slice(1).join('\n')
-            : (lines[0] || '')
-      };
-    });
-}
-
-function createInstructionsFromLegacyBusinessInfo() {
-  const text = loadLegacyBusinessInfo().trim();
-  if (!text) return [];
-
-  const now = new Date().toISOString();
-
-  return parseInstructionBlocks(text).map(item => ({
-    id: crypto.randomUUID(),
-    title: item.title,
-    content: item.content,
-    active: true,
-    source: 'business-info.txt',
-    createdAt: now,
-    updatedAt: now
-  }));
-}
-
-function markInstructionsMigrationDone() {
-  try {
-    fs.writeFileSync(
-      INSTRUCTIONS_MIGRATION_MARKER,
-      new Date().toISOString(),
-      'utf8'
-    );
-  } catch (error) {
-    console.warn(
-      '⚠️ Impossible de créer le marqueur instructions :',
-      error.message
-    );
-  }
-}
-
-function initializePersistentInstructions() {
-  try {
-    // 1. /data/instructions.json existe déjà
-    if (fs.existsSync(INSTRUCTIONS_PATH)) {
-      try {
-        const parsed = JSON.parse(
-          fs.readFileSync(INSTRUCTIONS_PATH, 'utf8') || '[]'
-        );
-
-        if (Array.isArray(parsed)) {
-          if (parsed.length > 0) {
-            if (!fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)) {
-              markInstructionsMigrationDone();
-            }
-
-            console.log(
-              `📋 Instructions persistantes trouvées : ${parsed.length}`
-            );
-
-            return parsed;
-          }
-
-          if (
-            parsed.length === 0 &&
-            fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)
-          ) {
-            console.log(
-              '📋 instructions.json existe et contient 0 instruction.'
-            );
-            return [];
-          }
-        }
-      } catch (error) {
-        console.warn(
-          '⚠️ instructions.json invalide :',
-          error.message
-        );
-      }
-    }
-
-    // 2. Ancien instructions.json dans /app
-    if (
-      !samePath(LEGACY_INSTRUCTIONS_PATH, INSTRUCTIONS_PATH) &&
-      fileExistsWithContent(LEGACY_INSTRUCTIONS_PATH)
-    ) {
-      try {
-        const legacyInstructions = JSON.parse(
-          fs.readFileSync(LEGACY_INSTRUCTIONS_PATH, 'utf8')
-        );
-
-        if (
-          Array.isArray(legacyInstructions) &&
-          legacyInstructions.length > 0
-        ) {
-          writeJsonAtomic(
-            INSTRUCTIONS_PATH,
-            legacyInstructions
-          );
-
-          markInstructionsMigrationDone();
-
-          console.log(
-            `✅ ${legacyInstructions.length} instruction(s) migrée(s) depuis /app`
-          );
-
-          return legacyInstructions;
-        }
-      } catch (error) {
-        console.warn(
-          '⚠️ Ancien instructions.json invalide :',
-          error.message
-        );
-      }
-    }
-
-    // 3. Import business-info.txt une seule fois
-    if (!fs.existsSync(INSTRUCTIONS_MIGRATION_MARKER)) {
-      const imported =
-        createInstructionsFromLegacyBusinessInfo();
-
-      if (imported.length > 0) {
-        writeJsonAtomic(
-          INSTRUCTIONS_PATH,
-          imported
-        );
-
-        markInstructionsMigrationDone();
-
-        console.log(
-          `✅ Import automatique business-info.txt : ${imported.length} instruction(s)`
-        );
-
-        return imported;
-      }
-    }
-
-    // 4. Rien à importer
-    if (!fs.existsSync(INSTRUCTIONS_PATH)) {
-      writeJsonAtomic(INSTRUCTIONS_PATH, []);
-    }
-
-    return [];
-  } catch (error) {
-    console.error(
-      '❌ Initialisation instructions persistantes :',
-      error
-    );
-
-    return [];
-  }
-}
-
-function loadInstructions() {
-  if (!fs.existsSync(INSTRUCTIONS_PATH)) {
-    return initializePersistentInstructions();
-  }
-
-  return readJsonArray(
-    INSTRUCTIONS_PATH,
-    'instructions.json'
-  );
-}
-
-function saveInstructions(instructions) {
-  writeJsonAtomic(
-    INSTRUCTIONS_PATH,
-    instructions
-  );
-
-  markInstructionsMigrationDone();
-}
-
-function instructionFingerprint(title, content) {
-  return (
-    `${safeString(title).toLowerCase()}::` +
-    safeString(content).toLowerCase()
-  );
-}
-
-// ============================================================
-// PRODUITS
-// ============================================================
-
-function loadProducts() {
-  return readJsonArray(
-    PRODUCTS_PATH,
-    'products.json'
-  );
-}
-
-function saveProducts(products) {
-  writeJsonAtomic(
-    PRODUCTS_PATH,
-    products
-  );
-}
-
-function getLocalProductImagePath(product) {
-  if (!product) return null;
-
-  if (product.imageFilename) {
-    return path.join(
-      UPLOADS_DIR,
-      path.basename(product.imageFilename)
-    );
-  }
-
-  if (
-    safeString(product.image).includes('/admin/uploads/')
-  ) {
-    return path.join(
-      UPLOADS_DIR,
-      path.basename(product.image)
-    );
-  }
-
-  return null;
-}
-
-// ============================================================
-// PERSONNALISATIONS
-// ============================================================
-
-function loadCustomizations() {
-  return readJsonArray(
-    CUSTOMIZATIONS_PATH,
-    'customization-requests.json'
-  );
-}
-
-function saveCustomizations(items) {
-  writeJsonAtomic(
-    CUSTOMIZATIONS_PATH,
-    items
-  );
-}
-
-// ============================================================
-// PARAMÈTRES BOT
-// ============================================================
-
-const DEFAULT_SETTINGS = {
-  aiEnabled: true,
-
-  audience: 'all',
-
-  timezone: 'Africa/Tunis',
-
-  schedule: {
-    mode: 'always',
-
-    outOfHours: 'none',
-
-    absenceMessage:
-      'Merci pour votre message. Notre équipe MONDECO vous répondra dès que possible.',
-
-    weekly: {
-      mon: { enabled: true, start: '08:00', end: '19:00' },
-      tue: { enabled: true, start: '08:00', end: '19:00' },
-      wed: { enabled: true, start: '08:00', end: '19:00' },
-      thu: { enabled: true, start: '08:00', end: '19:00' },
-      fri: { enabled: true, start: '08:00', end: '19:00' },
-      sat: { enabled: true, start: '08:00', end: '19:00' },
-      sun: { enabled: true, start: '09:00', end: '18:00' }
-    }
-  },
-
-  followUp: {
-    enabled: false,
-    delayMinutes: 60,
-    maxFollowUps: 1,
-    message:
-      'Souhaitez-vous que je vous aide à choisir le modèle le plus adapté ? 😊'
-  },
-
-  imageHandling: 'commercial',
-
-  pauseWhenHumanReplies: true,
-
-  humanPauseMinutes: 120,
-
-  teamPhones: []
-};
-
-const ALLOWED_AUDIENCES = new Set([
-  'all',
-  'new',
-  'ads',
-  'team'
-]);
-
-const ALLOWED_OUT_OF_HOURS = new Set([
-  'none',
-  'message',
-  'ai'
-]);
-
-const ALLOWED_IMAGE_HANDLING = new Set([
-  'commercial',
-  'analyze_only',
-  'analyze_reply'
-]);
-
-const DAYS = [
-  'mon',
-  'tue',
-  'wed',
-  'thu',
-  'fri',
-  'sat',
-  'sun'
-];
-
-function validTime(value, fallback) {
-  const str = safeString(value);
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(str)
-    ? str
-    : fallback;
-}
-
-function clampInteger(value, min, max, fallback) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    return fallback;
-  }
-
-  return Math.max(
-    min,
-    Math.min(
-      max,
-      Math.round(number)
-    )
-  );
-}
-
-function normalizeSettings(input = {}) {
-  const source =
-    input &&
-    typeof input === 'object'
-      ? input
-      : {};
-
-  const sourceSchedule =
-    source.schedule &&
-    typeof source.schedule === 'object'
-      ? source.schedule
-      : {};
-
-  const sourceWeekly =
-    sourceSchedule.weekly &&
-    typeof sourceSchedule.weekly === 'object'
-      ? sourceSchedule.weekly
-      : {};
-
-  const weekly = {};
-
-  for (const day of DAYS) {
-    const fallback =
-      DEFAULT_SETTINGS.schedule.weekly[day];
-
-    const current =
-      sourceWeekly[day] &&
-      typeof sourceWeekly[day] === 'object'
-        ? sourceWeekly[day]
-        : {};
-
-    weekly[day] = {
-      enabled: parseBoolean(
-        current.enabled,
-        fallback.enabled
-      ),
-      start: validTime(
-        current.start,
-        fallback.start
-      ),
-      end: validTime(
-        current.end,
-        fallback.end
-      )
-    };
-  }
-
-  const audience =
-    ALLOWED_AUDIENCES.has(source.audience)
-      ? source.audience
-      : DEFAULT_SETTINGS.audience;
-
-  const outOfHours =
-    ALLOWED_OUT_OF_HOURS.has(
-      sourceSchedule.outOfHours
-    )
-      ? sourceSchedule.outOfHours
-      : DEFAULT_SETTINGS.schedule.outOfHours;
-
-  const imageHandling =
-    ALLOWED_IMAGE_HANDLING.has(
-      source.imageHandling
-    )
-      ? source.imageHandling
-      : DEFAULT_SETTINGS.imageHandling;
-
-  const followUp =
-    source.followUp &&
-    typeof source.followUp === 'object'
-      ? source.followUp
-      : {};
-
-  let teamPhones = [];
-
-  if (Array.isArray(source.teamPhones)) {
-    teamPhones = source.teamPhones;
-  } else if (typeof source.teamPhones === 'string') {
-    teamPhones = source.teamPhones.split(/[\n,;]+/);
-  }
-
-  teamPhones = [
-    ...new Set(
-      teamPhones
-        .map(normalizePhone)
-        .filter(Boolean)
-    )
-  ];
-
-  return {
-    aiEnabled: parseBoolean(
-      source.aiEnabled,
-      DEFAULT_SETTINGS.aiEnabled
-    ),
-
-    audience,
-
-    timezone:
-      safeString(source.timezone) ||
-      DEFAULT_SETTINGS.timezone,
-
-    schedule: {
-      mode:
-        sourceSchedule.mode === 'custom'
-          ? 'custom'
-          : 'always',
-
-      outOfHours,
-
-      absenceMessage:
-        safeString(
-          sourceSchedule.absenceMessage
-        ) ||
-        DEFAULT_SETTINGS.schedule.absenceMessage,
-
-      weekly
-    },
-
-    followUp: {
-      enabled: parseBoolean(
-        followUp.enabled,
-        DEFAULT_SETTINGS.followUp.enabled
-      ),
-
-      delayMinutes: clampInteger(
-        followUp.delayMinutes,
-        15,
-        1380,
-        DEFAULT_SETTINGS.followUp.delayMinutes
-      ),
-
-      maxFollowUps: clampInteger(
-        followUp.maxFollowUps,
-        1,
-        3,
-        DEFAULT_SETTINGS.followUp.maxFollowUps
-      ),
-
-      message:
-        safeString(followUp.message) ||
-        DEFAULT_SETTINGS.followUp.message
-    },
-
-    imageHandling,
-
-    pauseWhenHumanReplies: parseBoolean(
-      source.pauseWhenHumanReplies,
-      DEFAULT_SETTINGS.pauseWhenHumanReplies
-    ),
-
-    humanPauseMinutes: clampInteger(
-      source.humanPauseMinutes,
-      15,
-      1440,
-      DEFAULT_SETTINGS.humanPauseMinutes
-    ),
-
-    teamPhones
-  };
-}
-
-function initializeSettings() {
-  if (fs.existsSync(SETTINGS_PATH)) {
+function renderInstructions(){
+  const activeCount =
+    instructions.filter(item => item.active !== false).length;
+
+  document.getElementById('instructionCountLabel').textContent =
+    `${activeCount} instruction${activeCount > 1 ? 's' : ''} active${activeCount > 1 ? 's' : ''} • ${instructions.length} au total`;
+
+  const list = document.getElementById('instructionList');
+
+  if(!instructions.length){
+    list.innerHTML = `
+      <div class="empty">
+        <strong>Aucune instruction séparée</strong>
+        Ajoutez votre première instruction ou importez l'ancien texte.
+      </div>
+    `;
     return;
   }
 
-  writeJsonAtomic(
-    SETTINGS_PATH,
-    DEFAULT_SETTINGS
-  );
-
-  console.log(
-    `⚙️ Paramètres initialisés : ${SETTINGS_PATH}`
-  );
-}
-
-function getBotSettings() {
-  try {
-    if (!fs.existsSync(SETTINGS_PATH)) {
-      initializeSettings();
-    }
-
-    const parsed = JSON.parse(
-      fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
-    );
-
-    return normalizeSettings(parsed);
-  } catch (error) {
-    console.error(
-      '❌ Lecture settings.json :',
-      error.message
-    );
-
-    return normalizeSettings(DEFAULT_SETTINGS);
-  }
-}
-
-function saveBotSettings(settings) {
-  const normalized =
-    normalizeSettings(settings);
-
-  writeJsonAtomic(
-    SETTINGS_PATH,
-    normalized
-  );
-
-  return normalized;
-}
-
-// ============================================================
-// INITIALISATION
-// ============================================================
-
-ensurePersistenceSafety();
-migrateLegacyData();
-initializePersistentInstructions();
-initializeSettings();
-ensureDailySnapshot();
-
-console.log(
-  '💾 Stockage MONDECO :',
-  {
-    dataDir: DATA_DIR,
-    persistentConfigured:
-      DATA_DIR !== APP_DIR,
-    writable:
-      storageIsWritable()
-  }
-);
-
-if (IS_RAILWAY) {
-  console.log(
-    `🛡️ Persistence Guard : ${PERSISTENCE_STRICT ? 'ACTIF' : 'DÉSACTIVÉ'}`
-  );
-}
-
-// ============================================================
-// CONTEXTE IA
-// ============================================================
-
-function availabilityLabel(value) {
-  const labels = {
-    in_stock: 'En stock',
-    on_order: 'Sur commande',
-    out_of_stock: 'Rupture',
-    clearance: 'Déstockage',
-    unknown: 'À confirmer'
-  };
-
-  return (
-    labels[value] ||
-    safeString(value) ||
-    'À confirmer'
-  );
-}
-
-function productToContext(product) {
-  const lines = [];
-
-  lines.push(
-    `Produit : ${safeString(product.name)}`
-  );
-
-  if (product.category) {
-    lines.push(
-      `Catégorie : ${safeString(product.category)}`
-    );
-  }
-
-  if (product.price) {
-    lines.push(
-      `Prix normal : ${safeString(product.price)} TND`
-    );
-  }
-
-  if (product.promoPrice) {
-    lines.push(
-      `Prix promotionnel : ${safeString(product.promoPrice)} TND`
-    );
-  }
-
-  if (product.availability) {
-    lines.push(
-      `Disponibilité : ${availabilityLabel(product.availability)}`
-    );
-  }
-
-  if (product.dimensions) {
-    lines.push(
-      `Dimensions : ${safeString(product.dimensions)}`
-    );
-  }
-
-  if (product.composition) {
-    lines.push(
-      `Composition : ${safeString(product.composition)}`
-    );
-  }
-
-  if (product.colors) {
-    lines.push(
-      `Couleurs disponibles : ${safeString(product.colors)}`
-    );
-  }
-
-  if (product.showrooms) {
-    lines.push(
-      `Showrooms : ${safeString(product.showrooms)}`
-    );
-  }
-
-  if (product.productUrl) {
-    lines.push(
-      `Lien produit : ${safeString(product.productUrl)}`
-    );
-  }
-
-  if (product.categoryUrl) {
-    lines.push(
-      `Lien catégorie : ${safeString(product.categoryUrl)}`
-    );
-  }
-
-  const customizations = [];
-
-  if (product.customizableColor === true) {
-    customizations.push('couleur');
-  }
-
-  if (product.customizableFabric === true) {
-    customizations.push('tissu');
-  }
-
-  if (product.customizableDimensions === true) {
-    customizations.push('dimensions');
-  }
-
-  if (product.customizableCorner === true) {
-    customizations.push('coin/orientation');
-  }
-
-  if (customizations.length) {
-    lines.push(
-      `Personnalisation possible : ${customizations.join(', ')}`
-    );
-  }
-
-  if (product.description) {
-    lines.push(
-      `Description : ${safeString(product.description)}`
-    );
-  }
-
-  return lines.join('\n');
-}
-
-function getBusinessContext() {
-  const activeInstructions =
-    loadInstructions()
-      .filter(item => item.active !== false);
-
-  const instructionsText =
-    activeInstructions
-      .map((item, index) => {
-        return (
-          `${index + 1}. ${safeString(item.title)}\n` +
-          safeString(item.content)
-        );
-      })
-      .join('\n\n');
-
-  const activeProducts =
-    loadProducts()
-      .filter(product => product.active !== false);
-
-  const productsText =
-    activeProducts
-      .map((product, index) => {
-        return (
-          `--- PRODUIT ${index + 1} ---\n` +
-          productToContext(product)
-        );
-      })
-      .join('\n\n');
-
-  return [
-    instructionsText
-      ? `INSTRUCTIONS MONDECO\n\n${instructionsText}`
-      : '',
-
-    productsText
-      ? `CATALOGUE PRODUITS MONDECO\n\n${productsText}`
-      : ''
-  ]
-    .filter(Boolean)
-    .join(
-      '\n\n==================================================\n\n'
-    );
-}
-
-// ============================================================
-// AUTHENTIFICATION
-// ============================================================
-
-const sessions = new Map();
-
-const SESSION_DURATION =
-  24 * 60 * 60 * 1000;
-
-function parseCookies(header = '') {
-  const cookies = {};
-
-  for (const part of header.split(';')) {
-    const index = part.indexOf('=');
-    if (index === -1) continue;
-
-    const key =
-      part.slice(0, index).trim();
-
-    const value =
-      part.slice(index + 1).trim();
-
-    if (!key) continue;
-
-    try {
-      cookies[key] =
-        decodeURIComponent(value);
-    } catch {
-      cookies[key] = value;
-    }
-  }
-
-  return cookies;
-}
-
-function cleanupSessions() {
-  const now = Date.now();
-
-  for (const [token, expiresAt] of sessions.entries()) {
-    if (expiresAt <= now) {
-      sessions.delete(token);
-    }
-  }
-}
-
-function getSessionToken(req) {
-  return (
-    parseCookies(req.headers.cookie || '')
-      .mondeco_admin_session ||
-    ''
-  );
-}
-
-function isAuthenticated(req) {
-  cleanupSessions();
-
-  const token = getSessionToken(req);
-  if (!token) return false;
-
-  const expiresAt = sessions.get(token);
-
-  if (!expiresAt || expiresAt <= Date.now()) {
-    sessions.delete(token);
-    return false;
-  }
-
-  return true;
-}
-
-function requireAuth(req, res, next) {
-  if (isAuthenticated(req)) {
-    return next();
-  }
-
-  if (req.path.startsWith('/api/')) {
-    return res
-      .status(401)
-      .json({
-        error: 'Non authentifié'
-      });
-  }
-
-  return res.redirect('/admin/login');
-}
-
-function secureCookie(req) {
-  const forwardedProto =
-    safeString(
-      req.headers['x-forwarded-proto']
-    );
-
-  return (
-    forwardedProto === 'https' ||
-    Boolean(
-      process.env.RAILWAY_ENVIRONMENT_NAME
-    )
-  );
-}
-
-function renderLoginPage() {
-  return `
-<!doctype html>
-<html lang="fr">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#11100f">
-<title>MONDECO — Connexion</title>
-<style>
-*{box-sizing:border-box}
-:root{--bg:#f7f4f0;--card:#fff;--sidebar:#11100f;--text:#1b1816;--muted:#756c65;--line:#e5ded8;--accent:#ed1c24;--accent-dark:#cf161d}
-html,body{min-height:100%}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;font-family:Inter,"Segoe UI",Roboto,Arial,sans-serif;color:var(--text);background:var(--bg)}
-.login-wrap{width:min(940px,100%);display:grid;grid-template-columns:330px minmax(0,1fr);min-height:545px;overflow:hidden;border:1px solid var(--line);border-radius:20px;background:var(--card)}
-.brand-side{display:flex;flex-direction:column;justify-content:space-between;padding:34px 30px 30px;background:var(--sidebar);color:#fff}
-.brand-logo{display:block;width:185px;max-width:90%;height:auto;filter:brightness(0) invert(1)}
-.brand-kicker{margin-top:15px;color:#9f9791;font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.13em}
-.brand-copy{margin-top:auto;padding-top:42px}
-.brand-copy h1{margin:0 0 12px;font-family:Georgia,"Times New Roman",serif;font-size:31px;line-height:1.08;letter-spacing:-.03em}
-.brand-copy p{margin:0;max-width:260px;color:#bbb3ad;font-size:13px;line-height:1.58}
-.brand-foot{margin-top:30px;padding-top:16px;border-top:1px solid #2b2825;color:#77716c;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
-.form-side{display:flex;align-items:center;padding:48px clamp(34px,6vw,72px)}
-.form-box{width:100%;max-width:390px;margin:auto}
-.eyebrow{margin-bottom:10px;color:var(--accent);font-size:10px;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
-h2{margin:0;font-family:Georgia,"Times New Roman",serif;font-size:36px;line-height:1.1;letter-spacing:-.035em}
-.sub{margin:9px 0 27px;color:var(--muted);font-size:13.5px;line-height:1.55}
-label{display:block;margin-bottom:8px;color:#4f4640;font-size:12px;font-weight:750}
-.password-row{position:relative}
-input{width:100%;min-height:50px;padding:12px 46px 12px 14px;border:1px solid var(--line);border-radius:11px;outline:none;background:#fff;color:var(--text);font-size:15px;transition:border-color .15s ease,box-shadow .15s ease}
-input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
-.show-pass{position:absolute;top:50%;right:7px;width:36px;height:36px;margin:0;padding:0;transform:translateY(-50%);display:grid;place-items:center;border:0;border-radius:9px;background:transparent;color:#8d837b;cursor:pointer;font-size:14px}
-.show-pass:hover{background:#f7f4f0;color:#312a26}
-.submit-btn{width:100%;min-height:50px;margin-top:15px;border:0;border-radius:11px;background:var(--accent);color:#fff;font-size:14px;font-weight:800;cursor:pointer;transition:background .15s ease}
-.submit-btn:hover{background:var(--accent-dark)}
-.submit-btn:disabled{opacity:.65;cursor:wait}
-.err{display:none;margin-top:12px;padding:10px 11px;border:1px solid #efc8ca;border-radius:10px;background:#fff7f7;color:#aa2026;font-size:12px;line-height:1.45}
-.security-note{margin-top:20px;color:#92877f;font-size:11px;line-height:1.5}.security-note strong{color:#625951}
-.mobile-logo{display:none}
-@media(max-width:760px){body{display:block;min-height:100dvh;padding:0;background:#fff}.login-wrap{width:100%;min-height:100dvh;display:block;border:0;border-radius:0}.brand-side{display:none}.form-side{min-height:100dvh;align-items:flex-start;padding:calc(34px + env(safe-area-inset-top)) 22px calc(28px + env(safe-area-inset-bottom));background:#fff}.form-box{max-width:100%}.mobile-logo{display:block;width:162px;margin-bottom:54px;filter:none}h2{font-size:33px}.sub{margin-bottom:25px}}
-@media(max-width:390px){.form-side{padding-left:18px;padding-right:18px}.mobile-logo{width:150px;margin-bottom:46px}h2{font-size:31px}}
-</style>
-</head>
-<body>
-<div class="login-wrap">
-  <aside class="brand-side">
-    <div>
-      <img class="brand-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASQAAABbCAMAAADtJAh+AAAACXBIWXMAAAsTAAALEwEAmpwYAAA7p2lUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNS42LWMwNjcgNzkuMTU3NzQ3LCAyMDE1LzAzLzMwLTIzOjQwOjQyICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgICAgICAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgICAgICAgICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgICAgICAgICAgIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPHhtcDpDcmVhdG9yVG9vbD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3htcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhtcDpDcmVhdGVEYXRlPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3htcDpDcmVhdGVEYXRlPgogICAgICAgICA8eG1wOk1ldGFkYXRhRGF0ZT4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC94bXA6TWV0YWRhdGFEYXRlPgogICAgICAgICA8eG1wOk1vZGlmeURhdGU+MjAyMC0xMi0wNFQxMDo1MjowMyswMTowMDwveG1wOk1vZGlmeURhdGU+CiAgICAgICAgIDx4bXBNTTpJbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC94bXBNTTpJbnN0YW5jZUlEPgogICAgICAgICA8eG1wTU06RG9jdW1lbnRJRD5hZG9iZTpkb2NpZDpwaG90b3Nob3A6NGQ2OWRjZDEtMzYxNi0xMWViLTgwNjctYjIxZWYyZjliMGMyPC94bXBNTTpEb2N1bWVudElEPgogICAgICAgICA8eG1wTU06T3JpZ2luYWxEb2N1bWVudElEPnhtcC5kaWQ6NWEyZDhkOGQtNzUxNS1mMDQ2LWFlZjAtODQwZGY5MDdjN2M4PC94bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ+CiAgICAgICAgIDx4bXBNTTpIaXN0b3J5PgogICAgICAgICAgICA8cmRmOlNlcT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+Y3JlYXRlZDwvc3RFdnQ6YWN0aW9uPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6aW5zdGFuY2VJRD54bXAuaWlkOjVhMmQ4ZDhkLTc1MTUtZjA0Ni1hZWYwLTg0MGRmOTA3YzdjODwvc3RFdnQ6aW5zdGFuY2VJRD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OndoZW4+MjAyMC0wNS0yMVQxMzo0ODowNiswMTowMDwvc3RFdnQ6d2hlbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OnNvZnR3YXJlQWdlbnQ+QWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpPC9zdEV2dDpzb2Z0d2FyZUFnZW50PgogICAgICAgICAgICAgICA8L3JkZjpsaT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+c2F2ZWQ8L3N0RXZ0OmFjdGlvbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0Omluc3RhbmNlSUQ+eG1wLmlpZDphNWZhOGMyNS1jYjU4LTkyNDgtYTFlNi0xOTI0ZDg1MGVlNWY8L3N0RXZ0Omluc3RhbmNlSUQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDp3aGVuPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3N0RXZ0OndoZW4+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpzb2Z0d2FyZUFnZW50PkFkb2JlIFBob3Rvc2hvcCBDQyAyMDE1IChXaW5kb3dzKTwvc3RFdnQ6c29mdHdhcmVBZ2VudD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OmNoYW5nZWQ+Lzwvc3RFdnQ6Y2hhbmdlZD4KICAgICAgICAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0iUmVzb3VyY2UiPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6YWN0aW9uPnNhdmVkPC9zdEV2dDphY3Rpb24+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDppbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC9zdEV2dDppbnN0YW5jZUlEPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6d2hlbj4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC9zdEV2dDp3aGVuPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6c29mdHdhcmVBZ2VudD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3N0RXZ0OnNvZnR3YXJlQWdlbnQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpjaGFuZ2VkPi88L3N0RXZ0OmNoYW5nZWQ+CiAgICAgICAgICAgICAgIDwvcmRmOmxpPgogICAgICAgICAgICA8L3JkZjpTZXE+CiAgICAgICAgIDwveG1wTU06SGlzdG9yeT4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgICAgPHBob3Rvc2hvcDpDb2xvck1vZGU+MzwvcGhvdG9zaG9wOkNvbG9yTW9kZT4KICAgICAgICAgPHRpZmY6T3JpZW50YXRpb24+MTwvdGlmZjpPcmllbnRhdGlvbj4KICAgICAgICAgPHRpZmY6WFJlc29sdXRpb24+NzIwMDAwLzEwMDAwPC90aWZmOlhSZXNvbHV0aW9uPgogICAgICAgICA8dGlmZjpZUmVzb2x1dGlvbj43MjAwMDAvMTAwMDA8L3RpZmY6WVJlc29sdXRpb24+CiAgICAgICAgIDx0aWZmOlJlc29sdXRpb25Vbml0PjI8L3RpZmY6UmVzb2x1dGlvblVuaXQ+CiAgICAgICAgIDxleGlmOkNvbG9yU3BhY2U+NjU1MzU8L2V4aWY6Q29sb3JTcGFjZT4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjI5MjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj45MTwvZXhpZjpQaXhlbFlEaW1lbnNpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+9Yhc8wAAAvdQTFRFR3BM7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7RwkS8mN9wAAAPx0Uk5TAM+EjNXAL26kutQ/iCEQh+/GdMVv88ELzuABMQTu/DnD2gL9Bd3C02sell1QjvQ6HxLnx+UXmQPKeFr3PiPNIBVWE7glhr5D9VUZ+iskDP4i1+233zjMJ6Up4w6uu9k1PAos3vuDBm1+WR2R8kWmuan41qvssS03qtCcTrV3gU110fD56A9M4eoW6aBxikBU5kuNUw2XxKx8OzZXEUQIeqOa61tgdjCC9r1Bp3tomzNRy5IbWFyfoa9CvKIHyRQJsrYo3JgaR9u/Jn0YaXOJgNiT8dKoT2JnYcizlJ5flbA05ItlrUg9HFJ5cmTicIUujzJjkLRGnUpeakl/fj78cwAACkFJREFUeNrtm2dcFccaxl+kiZSIkYOASBeBgIA0RRERBIwNQcQoNmL32muM3VgTezd2jcaosdfYY/faU296T26Sm9xe5sM97uw5Z2Z3dmeW3Pttng/+OLPPzr77P3vemXlnBZCSkpKSkpKSkpKSkpKSkpKSkpKSkpKSkpKS+n+rbdjGsFSDY9mZvLOzA2BLb4Do9b+4u7vfndFsWFiBkbXVEXcjHWnNPCOh1YhL4+aFh2e4fTpoZm/jIHpPqzPRLSM8PL3eX5Pb3WZanhFi0X+Tvq3LrrO2vLy8RnZFLjn+lt4QeuOPnG4nBcKdiQCxyKmgyKINTGsHZKxBevvgpPZNSEt41TvsEKZVhZO+sR8Oi9abnl0tAmnHz9qW5mPKDm87sHT4gNjghGLvMR4VYzbqzqpEnGfp1zjY3QKg8XPUPeccCNVb65pAelnnbvij3lV5TN/rshy978odnQ0FCjD6BZXSDb18FpztT7Vcm7LD57LmtO3pP5r36+UG3j46SAj13fSbIO2LZ/s6RNC+Nh+yfY18NR2eG/kfLqPSjMDfUw3uQSfzda7UdWO/oFuqN1f1rRUkhN4YUHtI94ydVHL5eK6hbwbd46meKIzDKAD1e3CXTEZRn09mGn13XKES5NOlELNNAFIsI8y4geKQ6Jy0ztgYdJTw3TXpEZ2iurwP3yMOpPjHYKtDPKSo2tBqQz2JT01/gtuoGR9S9M/bExM/yXrsE0KEOXcDA1KLPX56JfdnZ/hnX2wwc2Bb/7DSGU3VlvmEL8t1qTNbD3n5tx04bTeR7CPJPscBXOljymhrif12XZBS0RoTcxZJqakdUDHqwYXkGg+7JY3Jdcb5mh5SA25quOg4+/MG3xI5tGikvclGZgyHr/vQNsS0YVaGM4ERZg+AV9Eqk6v2Qn8C8HRCGoDeNg0yEb1KQYLdRAMP0hN1rOP4Oh++pINUxGPk57hHP01Syx+BUFvXx3cdvsQ02hfs7OEgBQmOIZO5Vv1bQEIKWcsJ88wEGhL0CbIECeDmDcYjjyE9xbm4r+Px2Kc/NtPb9Xc31fc84/HwnacebEdBgov1DC97Ih5ISEWI+8CjLBoSPOdpDRLAAzXMd61CWojPW5DA8eWpidyLdTDzvpoVV1OQAH1v0NvXKI2ENBxFcCFNQo6BaS3+7gYb3psRJFiJwyyJtQbpFj5tZEdOiJuwr+tAg+FcTUwnaEifoctM+wWEp3UOSOc8BaaeU+IcU4CfHGltlUVI8CIO8wdLkLqo2WwyL8J5jFkTqUL1SfanIIEfO3HYxgMJqRPKFIC0BS1VITVUW4ahQouQtgQpUWZYgjQd39orvADbqRNWY8cd7HiBhgQ1Sxjefz0EClJ5pNByeHyeBhKMQNHWIMEQHGaxFUh4mrWQG18gnkZ1MZsbYkswDSkffa1faKA3KUiNS34nBOly7nkNJGhx3SIkCKe+SxFI/TDXZrzwhgs8cKexpxUNCf6JdNWOOOd8H0Mali5YZYpqqYUEY6ssQkrG45QFSDMUS8pgXnTvYQDm2T1K8YzSQIJybT0g+RHQkMa3F4R0wlMHaREaYg1SBL6VQgrSfrOrViuWKm50ZxWfzdy0XzGFaCFBV2+60EZkaQxp6i1BSEnXdZDs87zmliBl499bKQUpcbi/VjcdU+vQ5YrlY250bopvurmpB/6OdJAiyHk7hM7ZCRpIcdcEIXWqSNNBgpdRmhVI6kq1JV0FaGJc/hjeVfnoxQvurQmKj5Neg1PYkGDlcuJDn3WggXS7olAQ0uqoHnpIMCXIEqSPlCj/wi2VLKPy9tgCXnAJMYqxJ6/2YQAJQo44/zw+AbSQvKLyRfcHPFYwIEGIzQokd2p4q8stpC3FM6tYXmy98KqNNyu3GUHqiByFy8yxETpIG8sChCEdYkFqrB12TSG9okT5d2FIxTjVhnJzgeLLXcSx3TCCBF/GqNeopIsSCqSwvudFIY1jPknQ0/nbEID0B5yquZDaURWAdO4MoDNet/HWwDmGkKAaj/Lrp4Ie0rdx3QQZdcE5SVMZVxYEhcKQxlMzIwwpd3F9rUauUB1heJLMe0KgYK9ifJNjW24MKTtml/3fX0uuMiBF15wWhNSrQkmfgbMYiSZbFNJsav6MISVfCNAqzZGE8p9XLP240eHVy05zkz8yhgSt0VUIDdkFDEjg0UAQUqsovEZi+CPjBCGl4Xv+GwVpqNlV4xTLe9zoXld85gVW+5pcKbqwIcGDvvC2ruiNIZVPFIR00NMQEpSMEoO0DKeOfPFlySnFwo8RD5ucJVYfxeRpAAlsbqNj2ZC8l4vm7fXGkApQQyFIuKLUyMLarQFOStwt6RX6rRP9cxxDPrl6SGnd9RtxGFKAwA9eqSCnZBpDgg3oGwFICfhO9liAhIcttJ5b7ypRfLPNPHhodcw4PYRuW60nxYutcLep3z8bEnijAj4ktTTZ2Uo9qREuXHMnAUuoOghLqdhxGGoB6RoKFjBnO9ZFBpBgVAoX0iEcZVNLlckkfNJH/Cq8or0vcXCjd2oDCSaIpO6TjgHMCBJERXIgdcNDG1E4ENoI2IHPWiU2vqEPjI4nqu9tQK0gTX6yU8md0U7iQYpG7qaQ/BfjKEeDNUg71Ul4f6FJN0JfsQ8PQpqvyBok+8jI9c7dDjxIUIgXEwaQNs9Ro8y3CAkqkfE+SAFR035K9Y1mpY816kFX1d8iJOjKy92XXOUDY0jwHbppBCnAuU1PZlYxSKmOU4t069xj9cm950eqr2Kz1jf5sHpoQXStIfmrvxQjjUCudMhYljhV9GR9woDUqU53x42OAB2k6bxAS53vgb1P7c/8w9PedsD1OTPIYayi3svodNDR3oR4j8IqJPs0J9nEmEWuYFu0NHF2qLGvSTGk0B6nfX19v2k97ctPiNfzRoEeUt0IX4b2EcPULOf5Nckzjyqgzre+p45WROX1NVeN8/Uhk5RfXW8v72rX5clSkWVI0BxdMvRFkvzNIcHDxzBwKn7TLYVRAXkBGJAMVEwYpxPtMSHnbJH1XL2PI1LQZ3MI48JKW1O37kRDClWQtw4J2mZ0Zw8f88OnXgBhSAFoFzzCkBbr71tbZTGFtJR0Ho8xNm4l81elsS+vDfxGSADb0bpUncerPEWzSDeHZJ9PNJti8M7kB7pXeU0h0S9yd3rawNZkjz9lXGnUnzah1AoSeK2dd/HfZENs0uiFXx0FS5Ds05p4JqQyxvvfFiABDElnueq20XYaMZrl89HtfeUKQarI0rb0G18T/+nW0rCEq90ikvyqa66v6aw7K/0LTrdZCO7dt0MifyBzprRjWcvNIOm2h4KHzNZYFmcx95qKR5XQvtw3NutdfxarojH+Z0Lsd2t8AnPy3Ka65bRfydzFSurB63f3gOIf7Iu9M2X17PKY3WHM/vkGLw/6RdUzkkcZqxTbfGh5ugo/KCfxGcNF56Kkk/F7VUBl297vCFJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUlJSUv9z/RcQv3dk7wgjIAAAAABJRU5ErkJggg==" alt="MONDECO">
-      <div class="brand-kicker">Agent WhatsApp • Administration</div>
-    </div>
-    <div class="brand-copy">
-      <h1>Centre de pilotage MONDECO</h1>
-      <p>Gérez l’agent WhatsApp, les produits, les instructions et les paramètres depuis une interface unique.</p>
-    </div>
-    <div class="brand-foot">Accès réservé</div>
-  </aside>
-  <main class="form-side">
-    <div class="form-box">
-      <img class="mobile-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASQAAABbCAMAAADtJAh+AAAACXBIWXMAAAsTAAALEwEAmpwYAAA7p2lUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNS42LWMwNjcgNzkuMTU3NzQ3LCAyMDE1LzAzLzMwLTIzOjQwOjQyICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgICAgICAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgICAgICAgICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgICAgICAgICAgIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPHhtcDpDcmVhdG9yVG9vbD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3htcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhtcDpDcmVhdGVEYXRlPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3htcDpDcmVhdGVEYXRlPgogICAgICAgICA8eG1wOk1ldGFkYXRhRGF0ZT4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC94bXA6TWV0YWRhdGFEYXRlPgogICAgICAgICA8eG1wOk1vZGlmeURhdGU+MjAyMC0xMi0wNFQxMDo1MjowMyswMTowMDwveG1wOk1vZGlmeURhdGU+CiAgICAgICAgIDx4bXBNTTpJbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC94bXBNTTpJbnN0YW5jZUlEPgogICAgICAgICA8eG1wTU06RG9jdW1lbnRJRD5hZG9iZTpkb2NpZDpwaG90b3Nob3A6NGQ2OWRjZDEtMzYxNi0xMWViLTgwNjctYjIxZWYyZjliMGMyPC94bXBNTTpEb2N1bWVudElEPgogICAgICAgICA8eG1wTU06T3JpZ2luYWxEb2N1bWVudElEPnhtcC5kaWQ6NWEyZDhkOGQtNzUxNS1mMDQ2LWFlZjAtODQwZGY5MDdjN2M4PC94bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ+CiAgICAgICAgIDx4bXBNTTpIaXN0b3J5PgogICAgICAgICAgICA8cmRmOlNlcT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+Y3JlYXRlZDwvc3RFdnQ6YWN0aW9uPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6aW5zdGFuY2VJRD54bXAuaWlkOjVhMmQ4ZDhkLTc1MTUtZjA0Ni1hZWYwLTg0MGRmOTA3YzdjODwvc3RFdnQ6aW5zdGFuY2VJRD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OndoZW4+MjAyMC0wNS0yMVQxMzo0ODowNiswMTowMDwvc3RFdnQ6d2hlbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OnNvZnR3YXJlQWdlbnQ+QWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpPC9zdEV2dDpzb2Z0d2FyZUFnZW50PgogICAgICAgICAgICAgICA8L3JkZjpsaT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+c2F2ZWQ8L3N0RXZ0OmFjdGlvbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0Omluc3RhbmNlSUQ+eG1wLmlpZDphNWZhOGMyNS1jYjU4LTkyNDgtYTFlNi0xOTI0ZDg1MGVlNWY8L3N0RXZ0Omluc3RhbmNlSUQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDp3aGVuPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3N0RXZ0OndoZW4+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpzb2Z0d2FyZUFnZW50PkFkb2JlIFBob3Rvc2hvcCBDQyAyMDE1IChXaW5kb3dzKTwvc3RFdnQ6c29mdHdhcmVBZ2VudD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OmNoYW5nZWQ+Lzwvc3RFdnQ6Y2hhbmdlZD4KICAgICAgICAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0iUmVzb3VyY2UiPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6YWN0aW9uPnNhdmVkPC9zdEV2dDphY3Rpb24+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDppbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC9zdEV2dDppbnN0YW5jZUlEPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6d2hlbj4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC9zdEV2dDp3aGVuPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6c29mdHdhcmVBZ2VudD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3N0RXZ0OnNvZnR3YXJlQWdlbnQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpjaGFuZ2VkPi88L3N0RXZ0OmNoYW5nZWQ+CiAgICAgICAgICAgICAgIDwvcmRmOmxpPgogICAgICAgICAgICA8L3JkZjpTZXE+CiAgICAgICAgIDwveG1wTU06SGlzdG9yeT4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgICAgPHBob3Rvc2hvcDpDb2xvck1vZGU+MzwvcGhvdG9zaG9wOkNvbG9yTW9kZT4KICAgICAgICAgPHRpZmY6T3JpZW50YXRpb24+MTwvdGlmZjpPcmllbnRhdGlvbj4KICAgICAgICAgPHRpZmY6WFJlc29sdXRpb24+NzIwMDAwLzEwMDAwPC90aWZmOlhSZXNvbHV0aW9uPgogICAgICAgICA8dGlmZjpZUmVzb2x1dGlvbj43MjAwMDAvMTAwMDA8L3RpZmY6WVJlc29sdXRpb24+CiAgICAgICAgIDx0aWZmOlJlc29sdXRpb25Vbml0PjI8L3RpZmY6UmVzb2x1dGlvblVuaXQ+CiAgICAgICAgIDxleGlmOkNvbG9yU3BhY2U+NjU1MzU8L2V4aWY6Q29sb3JTcGFjZT4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjI5MjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj45MTwvZXhpZjpQaXhlbFlEaW1lbnNpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+9Yhc8wAAAvdQTFRFR3BM7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7RwkS8mN9wAAAPx0Uk5TAM+EjNXAL26kutQ/iCEQh+/GdMVv88ELzuABMQTu/DnD2gL9Bd3C02sell1QjvQ6HxLnx+UXmQPKeFr3PiPNIBVWE7glhr5D9VUZ+iskDP4i1+23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" alt="MONDECO">
-      <div class="eyebrow">Administration</div>
-      <h2>Connexion</h2>
-      <div class="sub">Entrez votre mot de passe administrateur pour continuer.</div>
-      <form id="form">
-        <label for="password">Mot de passe</label>
-        <div class="password-row">
-          <input id="password" type="password" required autofocus autocomplete="current-password" placeholder="Votre mot de passe">
-          <button class="show-pass" id="togglePassword" type="button" aria-label="Afficher ou masquer le mot de passe" title="Afficher / masquer">◉</button>
+  list.innerHTML = instructions.map(item => `
+    <div class="card instruction-card ${item.active === false ? 'inactive' : ''}">
+      <div>
+        <div class="instruction-title">
+          ${escapeHtml(item.title)}
+          ${item.active !== false
+            ? '<span class="status-pill" style="margin-left:8px">Active</span>'
+            : '<span class="status-pill off" style="margin-left:8px">Inactive</span>'}
         </div>
-        <button class="submit-btn" id="btn" type="submit">Se connecter</button>
-        <div id="err" class="err"></div>
-      </form>
-      <div class="security-note"><strong>Accès sécurisé.</strong> Utilisez le mot de passe défini dans Railway via <b>ADMIN_PASSWORD</b>.</div>
+
+        <div class="instruction-content">${escapeHtml(item.content)}</div>
+      </div>
+
+      <div class="instruction-actions">
+        <button
+          class="btn small"
+          onclick="toggleInstruction('${item.id}')"
+        >
+          ${item.active !== false ? 'Désactiver' : 'Activer'}
+        </button>
+
+        <button
+          class="btn small"
+          onclick="editInstruction('${item.id}')"
+        >
+          Modifier
+        </button>
+
+        <button
+          class="btn small danger"
+          onclick="deleteInstruction('${item.id}')"
+        >
+          Supprimer
+        </button>
+      </div>
     </div>
-  </main>
-</div>
-<script>
-const form=document.getElementById('form');
-const btn=document.getElementById('btn');
-const err=document.getElementById('err');
-const passwordInput=document.getElementById('password');
-const togglePassword=document.getElementById('togglePassword');
-togglePassword.addEventListener('click',()=>{const show=passwordInput.type==='password';passwordInput.type=show?'text':'password';togglePassword.textContent=show?'◌':'◉';});
-form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'Mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
-</script>
-</body>
-</html>
-`;
+  `).join('');
 }
 
-router.get('/login', (req, res) => {
-  if (isAuthenticated(req)) {
-    return res.redirect('/admin');
-  }
-
-  return res
-    .type('html')
-    .send(renderLoginPage());
-});
-
-router.post('/login', (req, res) => {
-  const password =
-    safeString(req.body?.password);
-
-  if (!password || password !== ADMIN_PASSWORD) {
-    return res
-      .status(401)
-      .json({
-        error: 'Mot de passe incorrect.'
-      });
-  }
-
-  const token =
-    crypto
-      .randomBytes(32)
-      .toString('hex');
-
-  sessions.set(
-    token,
-    Date.now() + SESSION_DURATION
-  );
-
-  const cookieParts = [
-    `mondeco_admin_session=${encodeURIComponent(token)}`,
-    'HttpOnly',
-    'SameSite=Lax',
-    'Path=/',
-    `Max-Age=${Math.floor(SESSION_DURATION / 1000)}`
-  ];
-
-  if (secureCookie(req)) {
-    cookieParts.push('Secure');
-  }
-
-  res.setHeader(
-    'Set-Cookie',
-    cookieParts.join('; ')
-  );
-
-  return res.json({
-    success: true
-  });
-});
-
-router.post('/logout', (req, res) => {
-  const token = getSessionToken(req);
-
-  if (token) {
-    sessions.delete(token);
-  }
-
-  const cookieParts = [
-    'mondeco_admin_session=',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Path=/',
-    'Max-Age=0'
-  ];
-
-  if (secureCookie(req)) {
-    cookieParts.push('Secure');
-  }
-
-  res.setHeader(
-    'Set-Cookie',
-    cookieParts.join('; ')
-  );
-
-  return res.json({
-    success: true
-  });
-});
-
-router.get('/', requireAuth, (req, res) => {
-  if (!fs.existsSync(ADMIN_HTML_PATH)) {
-    return res
-      .status(500)
-      .send('Admin.html introuvable.');
-  }
-
-  return res.sendFile(ADMIN_HTML_PATH);
-});
-
-// ============================================================
-// MULTER
-// ============================================================
-
-const ALLOWED_IMAGE_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp'
-]);
-
-function imageFileFilter(req, file, callback) {
-  if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
-    return callback(
-      new Error(
-        'Format image non accepté. Utilisez JPG, PNG ou WEBP.'
-      )
-    );
-  }
-
-  return callback(null, true);
+function resetInstructionForm(){
+  document.getElementById('instructionForm').reset();
+  document.getElementById('instructionId').value = '';
+  document.getElementById('instructionActive').checked = true;
+  document.getElementById('instructionModalTitle').textContent = 'Ajouter une instruction';
 }
 
-const productStorage =
-  multer.diskStorage({
-    destination(req, file, callback) {
-      callback(null, UPLOADS_DIR);
-    },
+document.getElementById('addInstructionBtn').addEventListener('click', () => {
+  resetInstructionForm();
+  openModal('instructionModal');
+});
 
-    filename(req, file, callback) {
-      const extension =
-        extensionFromMimeType(file.mimetype);
+window.editInstruction = function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
 
-      callback(
-        null,
-        `product-${Date.now()}-${crypto.randomUUID()}${extension}`
-      );
-    }
-  });
+  resetInstructionForm();
 
-const productUpload =
-  multer({
-    storage: productStorage,
+  document.getElementById('instructionId').value = item.id;
+  document.getElementById('instructionTitle').value = item.title || '';
+  document.getElementById('instructionContent').value = item.content || '';
+  document.getElementById('instructionActive').checked = item.active !== false;
+  document.getElementById('instructionModalTitle').textContent = 'Modifier l’instruction';
 
-    limits: {
-      fileSize: 8 * 1024 * 1024
-    },
+  openModal('instructionModal');
+};
 
-    fileFilter: imageFileFilter
-  });
+window.toggleInstruction = async function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
 
-const memoryUpload =
-  multer({
-    storage: multer.memoryStorage(),
+  try{
+    await apiFetch(`${API}/instructions/${id}`, {
+      method:'PUT',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({
+        active: !(item.active !== false)
+      })
+    });
 
-    limits: {
-      fileSize: 8 * 1024 * 1024
-    },
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+};
 
-    fileFilter: imageFileFilter
-  });
+window.deleteInstruction = async function(id){
+  const item = instructions.find(x => x.id === id);
+  if(!item) return;
 
-function multerSingle(upload, fieldName) {
-  return (req, res, next) => {
-    upload.single(fieldName)(
-      req,
-      res,
-      error => {
-        if (!error) return next();
+  if(!confirm(`Supprimer l'instruction « ${item.title} » ?`)){
+    return;
+  }
 
-        if (error instanceof multer.MulterError) {
-          if (error.code === 'LIMIT_FILE_SIZE') {
-            return res
-              .status(400)
-              .json({
-                error:
-                  'Image trop volumineuse. Maximum 8 Mo.'
-              });
-          }
+  try{
+    await apiFetch(`${API}/instructions/${id}`, {
+      method:'DELETE'
+    });
 
-          return res
-            .status(400)
-            .json({
-              error: error.message
-            });
-        }
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }
+};
 
-        return res
-          .status(400)
-          .json({
-            error:
-              error.message ||
-              'Image invalide.'
-          });
-      }
-    );
+document.getElementById('instructionForm').addEventListener('submit', async event => {
+  event.preventDefault();
+
+  const id = document.getElementById('instructionId').value;
+
+  const payload = {
+    title: document.getElementById('instructionTitle').value,
+    content: document.getElementById('instructionContent').value,
+    active: document.getElementById('instructionActive').checked
   };
-}
 
-const uploadProductImage =
-  multerSingle(productUpload, 'image');
-
-const uploadTestImage =
-  multerSingle(memoryUpload, 'image');
-
-const uploadCustomizationImage =
-  multerSingle(memoryUpload, 'referenceImage');
-
-// ============================================================
-// SERVIR IMAGES
-// ============================================================
-
-router.get(
-  '/uploads/:filename',
-  requireAuth,
-  (req, res) => {
-    const filename =
-      path.basename(req.params.filename || '');
-
-    if (!filename) return res.sendStatus(404);
-
-    const filePath =
-      path.join(UPLOADS_DIR, filename);
-
-    if (!fs.existsSync(filePath)) {
-      return res.sendStatus(404);
-    }
-
-    return res.sendFile(filePath);
-  }
-);
-
-router.get(
-  '/customizations/:filename',
-  requireAuth,
-  (req, res) => {
-    const filename =
-      path.basename(req.params.filename || '');
-
-    if (!filename) return res.sendStatus(404);
-
-    const filePath =
-      path.join(
-        CUSTOMIZATIONS_DIR,
-        filename
-      );
-
-    if (!fs.existsSync(filePath)) {
-      return res.sendStatus(404);
-    }
-
-    return res.sendFile(filePath);
-  }
-);
-
-// ============================================================
-// API PRODUITS
-// ============================================================
-
-router.get(
-  '/api/products',
-  requireAuth,
-  (req, res) => {
-    return res.json(loadProducts());
-  }
-);
-
-router.post(
-  '/api/products',
-  requireAuth,
-  uploadProductImage,
-  (req, res) => {
-    try {
-      const name =
-        safeString(req.body?.name);
-
-      const category =
-        safeString(req.body?.category);
-
-      if (!name) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-
-        return res
-          .status(400)
-          .json({
-            error:
-              'Le nom du produit est obligatoire.'
-          });
+  try{
+    await apiFetch(
+      id
+        ? `${API}/instructions/${id}`
+        : `${API}/instructions`,
+      {
+        method: id ? 'PUT' : 'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify(payload)
       }
-
-      if (!category) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-
-        return res
-          .status(400)
-          .json({
-            error:
-              'La catégorie est obligatoire.'
-          });
-      }
-
-      if (!req.file) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'La photo du produit est obligatoire.'
-          });
-      }
-
-      const now =
-        new Date().toISOString();
-
-      const product = {
-        id: crypto.randomUUID(),
-        name,
-        category,
-
-        price:
-          safeString(req.body?.price),
-
-        promoPrice:
-          safeString(req.body?.promoPrice),
-
-        availability:
-          safeString(req.body?.availability) ||
-          'unknown',
-
-        dimensions:
-          safeString(req.body?.dimensions),
-
-        composition:
-          safeString(req.body?.composition),
-
-        colors:
-          safeString(req.body?.colors),
-
-        showrooms:
-          safeString(req.body?.showrooms),
-
-        productUrl:
-          safeString(req.body?.productUrl),
-
-        categoryUrl:
-          safeString(req.body?.categoryUrl),
-
-        description:
-          safeString(req.body?.description),
-
-        customizableColor:
-          parseBoolean(
-            req.body?.customizableColor,
-            false
-          ),
-
-        customizableFabric:
-          parseBoolean(
-            req.body?.customizableFabric,
-            false
-          ),
-
-        customizableDimensions:
-          parseBoolean(
-            req.body?.customizableDimensions,
-            false
-          ),
-
-        customizableCorner:
-          parseBoolean(
-            req.body?.customizableCorner,
-            false
-          ),
-
-        active:
-          parseBoolean(
-            req.body?.active,
-            true
-          ),
-
-        image:
-          `/admin/uploads/${req.file.filename}`,
-
-        imageFilename:
-          req.file.filename,
-
-        createdAt: now,
-        updatedAt: now
-      };
-
-      const products = loadProducts();
-      products.push(product);
-
-      try {
-        saveProducts(products);
-      } catch (error) {
-        deleteFileIfExists(req.file.path);
-        throw error;
-      }
-
-      return res
-        .status(201)
-        .json(product);
-    } catch (error) {
-      console.error(
-        '❌ Ajout produit :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Impossible d’ajouter le produit.'
-        });
-    }
-  }
-);
-
-router.put(
-  '/api/products/:id',
-  requireAuth,
-  uploadProductImage,
-  (req, res) => {
-    try {
-      const products = loadProducts();
-
-      const index =
-        products.findIndex(
-          item => item.id === req.params.id
-        );
-
-      if (index === -1) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-
-        return res
-          .status(404)
-          .json({
-            error: 'Produit introuvable.'
-          });
-      }
-
-      const current = products[index];
-
-      const oldImagePath =
-        getLocalProductImagePath(current);
-
-      const name =
-        req.body?.name !== undefined
-          ? safeString(req.body.name)
-          : safeString(current.name);
-
-      const category =
-        req.body?.category !== undefined
-          ? safeString(req.body.category)
-          : safeString(current.category);
-
-      if (!name) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-
-        return res
-          .status(400)
-          .json({
-            error:
-              'Le nom ne peut pas être vide.'
-          });
-      }
-
-      if (!category) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-
-        return res
-          .status(400)
-          .json({
-            error:
-              'La catégorie ne peut pas être vide.'
-          });
-      }
-
-      if (!req.file && !current.image) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Ce produit n’a pas de photo. Ajoutez une image.'
-          });
-      }
-
-      const updated = {
-        ...current,
-        name,
-        category,
-
-        price:
-          req.body?.price !== undefined
-            ? safeString(req.body.price)
-            : safeString(current.price),
-
-        promoPrice:
-          req.body?.promoPrice !== undefined
-            ? safeString(req.body.promoPrice)
-            : safeString(current.promoPrice),
-
-        availability:
-          req.body?.availability !== undefined
-            ? safeString(req.body.availability)
-            : (
-              safeString(current.availability) ||
-              'unknown'
-            ),
-
-        dimensions:
-          req.body?.dimensions !== undefined
-            ? safeString(req.body.dimensions)
-            : safeString(current.dimensions),
-
-        composition:
-          req.body?.composition !== undefined
-            ? safeString(req.body.composition)
-            : safeString(current.composition),
-
-        colors:
-          req.body?.colors !== undefined
-            ? safeString(req.body.colors)
-            : safeString(current.colors),
-
-        showrooms:
-          req.body?.showrooms !== undefined
-            ? safeString(req.body.showrooms)
-            : safeString(current.showrooms),
-
-        productUrl:
-          req.body?.productUrl !== undefined
-            ? safeString(req.body.productUrl)
-            : safeString(current.productUrl),
-
-        categoryUrl:
-          req.body?.categoryUrl !== undefined
-            ? safeString(req.body.categoryUrl)
-            : safeString(current.categoryUrl),
-
-        description:
-          req.body?.description !== undefined
-            ? safeString(req.body.description)
-            : safeString(current.description),
-
-        customizableColor:
-          req.body?.customizableColor !== undefined
-            ? parseBoolean(
-                req.body.customizableColor,
-                false
-              )
-            : (
-              current.customizableColor === true
-            ),
-
-        customizableFabric:
-          req.body?.customizableFabric !== undefined
-            ? parseBoolean(
-                req.body.customizableFabric,
-                false
-              )
-            : (
-              current.customizableFabric === true
-            ),
-
-        customizableDimensions:
-          req.body?.customizableDimensions !== undefined
-            ? parseBoolean(
-                req.body.customizableDimensions,
-                false
-              )
-            : (
-              current.customizableDimensions === true
-            ),
-
-        customizableCorner:
-          req.body?.customizableCorner !== undefined
-            ? parseBoolean(
-                req.body.customizableCorner,
-                false
-              )
-            : (
-              current.customizableCorner === true
-            ),
-
-        active:
-          req.body?.active !== undefined
-            ? parseBoolean(
-                req.body.active,
-                true
-              )
-            : (
-              current.active !== false
-            ),
-
-        updatedAt:
-          new Date().toISOString()
-      };
-
-      if (req.file) {
-        updated.image =
-          `/admin/uploads/${req.file.filename}`;
-
-        updated.imageFilename =
-          req.file.filename;
-      }
-
-      products[index] = updated;
-
-      try {
-        saveProducts(products);
-      } catch (error) {
-        if (req.file) {
-          deleteFileIfExists(req.file.path);
-        }
-        throw error;
-      }
-
-      if (
-        req.file &&
-        oldImagePath &&
-        oldImagePath !== req.file.path
-      ) {
-        archiveFileBeforeDelete(oldImagePath, 'product-images');
-      }
-
-      return res.json(updated);
-    } catch (error) {
-      console.error(
-        '❌ Modification produit :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Impossible de modifier le produit.'
-        });
-    }
-  }
-);
-
-router.delete(
-  '/api/products/:id',
-  requireAuth,
-  (req, res) => {
-    try {
-      const products = loadProducts();
-
-      const product =
-        products.find(
-          item => item.id === req.params.id
-        );
-
-      if (!product) {
-        return res
-          .status(404)
-          .json({
-            error: 'Produit introuvable.'
-          });
-      }
-
-      saveProducts(
-        products.filter(
-          item => item.id !== req.params.id
-        )
-      );
-
-      const imagePath =
-        getLocalProductImagePath(product);
-
-      if (imagePath) {
-        archiveFileBeforeDelete(imagePath, 'product-images');
-      }
-
-      return res.json({
-        success: true
-      });
-    } catch (error) {
-      console.error(
-        '❌ Suppression produit :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de supprimer le produit.'
-        });
-    }
-  }
-);
-
-// ============================================================
-// API INSTRUCTIONS
-// ============================================================
-
-router.get(
-  '/api/instructions',
-  requireAuth,
-  (req, res) => {
-    return res.json(loadInstructions());
-  }
-);
-
-router.post(
-  '/api/instructions',
-  requireAuth,
-  (req, res) => {
-    try {
-      const title =
-        safeString(req.body?.title);
-
-      const content =
-        safeString(req.body?.content);
-
-      if (!title) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Le titre est obligatoire.'
-          });
-      }
-
-      if (!content) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'L’instruction est obligatoire.'
-          });
-      }
-
-      const now =
-        new Date().toISOString();
-
-      const instruction = {
-        id: crypto.randomUUID(),
-        title,
-        content,
-        active: parseBoolean(
-          req.body?.active,
-          true
-        ),
-        createdAt: now,
-        updatedAt: now
-      };
-
-      const instructions =
-        loadInstructions();
-
-      instructions.push(instruction);
-
-      saveInstructions(instructions);
-
-      return res
-        .status(201)
-        .json(instruction);
-    } catch (error) {
-      console.error(
-        '❌ Ajout instruction :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible d’ajouter l’instruction.'
-        });
-    }
-  }
-);
-
-router.put(
-  '/api/instructions/:id',
-  requireAuth,
-  (req, res) => {
-    try {
-      const instructions =
-        loadInstructions();
-
-      const index =
-        instructions.findIndex(
-          item => item.id === req.params.id
-        );
-
-      if (index === -1) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Instruction introuvable.'
-          });
-      }
-
-      const current =
-        instructions[index];
-
-      const title =
-        req.body?.title !== undefined
-          ? safeString(req.body.title)
-          : safeString(current.title);
-
-      const content =
-        req.body?.content !== undefined
-          ? safeString(req.body.content)
-          : safeString(current.content);
-
-      if (!title) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Le titre ne peut pas être vide.'
-          });
-      }
-
-      if (!content) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'L’instruction ne peut pas être vide.'
-          });
-      }
-
-      instructions[index] = {
-        ...current,
-        title,
-        content,
-
-        active:
-          req.body?.active !== undefined
-            ? parseBoolean(
-                req.body.active,
-                true
-              )
-            : (
-              current.active !== false
-            ),
-
-        updatedAt:
-          new Date().toISOString()
-      };
-
-      saveInstructions(instructions);
-
-      return res.json(
-        instructions[index]
-      );
-    } catch (error) {
-      console.error(
-        '❌ Modification instruction :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de modifier l’instruction.'
-        });
-    }
-  }
-);
-
-router.delete(
-  '/api/instructions/:id',
-  requireAuth,
-  (req, res) => {
-    try {
-      const instructions =
-        loadInstructions();
-
-      const exists =
-        instructions.some(
-          item => item.id === req.params.id
-        );
-
-      if (!exists) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Instruction introuvable.'
-          });
-      }
-
-      saveInstructions(
-        instructions.filter(
-          item => item.id !== req.params.id
-        )
-      );
-
-      return res.json({
-        success: true
-      });
-    } catch (error) {
-      console.error(
-        '❌ Suppression instruction :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de supprimer l’instruction.'
-        });
-    }
-  }
-);
-
-router.post(
-  '/api/instructions/import',
-  requireAuth,
-  (req, res) => {
-    try {
-      const text =
-        safeString(req.body?.text);
-
-      if (!text) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Aucune instruction à importer.'
-          });
-      }
-
-      const incoming =
-        parseInstructionBlocks(text);
-
-      const instructions =
-        loadInstructions();
-
-      const fingerprints =
-        new Set(
-          instructions.map(
-            item =>
-              instructionFingerprint(
-                item.title,
-                item.content
-              )
-          )
-        );
-
-      let imported = 0;
-      let duplicates = 0;
-
-      for (const item of incoming) {
-        const fingerprint =
-          instructionFingerprint(
-            item.title,
-            item.content
-          );
-
-        if (fingerprints.has(fingerprint)) {
-          duplicates += 1;
-          continue;
-        }
-
-        const now =
-          new Date().toISOString();
-
-        instructions.push({
-          id: crypto.randomUUID(),
-          title: item.title,
-          content: item.content,
-          active: true,
-          createdAt: now,
-          updatedAt: now
-        });
-
-        fingerprints.add(fingerprint);
-        imported += 1;
-      }
-
-      saveInstructions(instructions);
-
-      return res.json({
-        success: true,
-        imported,
-        duplicates,
-        total: instructions.length
-      });
-    } catch (error) {
-      console.error(
-        '❌ Import instructions :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible d’importer les instructions.'
-        });
-    }
-  }
-);
-
-router.post(
-  '/api/instructions/import-legacy',
-  requireAuth,
-  (req, res) => {
-    try {
-      const legacyText =
-        loadLegacyBusinessInfo().trim();
-
-      if (!legacyText) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'business-info.txt est vide ou introuvable.'
-          });
-      }
-
-      const incoming =
-        parseInstructionBlocks(legacyText);
-
-      const instructions =
-        loadInstructions();
-
-      const fingerprints =
-        new Set(
-          instructions.map(
-            item =>
-              instructionFingerprint(
-                item.title,
-                item.content
-              )
-          )
-        );
-
-      let imported = 0;
-      let duplicates = 0;
-
-      for (const item of incoming) {
-        const fingerprint =
-          instructionFingerprint(
-            item.title,
-            item.content
-          );
-
-        if (fingerprints.has(fingerprint)) {
-          duplicates += 1;
-          continue;
-        }
-
-        const now =
-          new Date().toISOString();
-
-        instructions.push({
-          id: crypto.randomUUID(),
-          title: item.title,
-          content: item.content,
-          active: true,
-          source: 'business-info.txt',
-          createdAt: now,
-          updatedAt: now
-        });
-
-        fingerprints.add(fingerprint);
-        imported += 1;
-      }
-
-      saveInstructions(instructions);
-
-      return res.json({
-        success: true,
-        imported,
-        duplicates,
-        total: instructions.length
-      });
-    } catch (error) {
-      console.error(
-        '❌ Import business-info.txt :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible d’importer business-info.txt.'
-        });
-    }
-  }
-);
-
-// ============================================================
-// API PARAMÈTRES
-// ============================================================
-
-router.get(
-  '/api/settings',
-  requireAuth,
-  (req, res) => {
-    return res.json(
-      getBotSettings()
     );
+
+    closeModal('instructionModal');
+    await loadInstructions();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
   }
-);
+});
 
-router.put(
-  '/api/settings',
-  requireAuth,
-  (req, res) => {
-    try {
-      const saved =
-        saveBotSettings(
-          req.body || {}
-        );
-
-      return res.json({
-        success: true,
-        settings: saved
-      });
-    } catch (error) {
-      console.error(
-        '❌ Sauvegarde paramètres :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de sauvegarder les paramètres.'
-        });
-    }
+document.getElementById('importLegacyBtn').addEventListener('click', async () => {
+  if(!confirm('Importer les blocs de business-info.txt qui ne sont pas encore présents ?')){
+    return;
   }
-);
 
+  try{
+    const data = await apiFetch(`${API}/instructions/import-legacy`, {
+      method:'POST'
+    });
 
-// ============================================================
-// API SAUVEGARDES / RESTAURATION
-// ============================================================
-
-router.get(
-  '/api/backups',
-  requireAuth,
-  (req, res) => {
-    try {
-      return res.json({
-        snapshots:
-          listFullSnapshots(),
-        maxSnapshots:
-          MAX_FULL_SNAPSHOTS
-      });
-    } catch (error) {
-      console.error(
-        '❌ Liste sauvegardes :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de lire les sauvegardes.'
-        });
-    }
-  }
-);
-
-router.get(
-  '/api/backups/status',
-  requireAuth,
-  (req, res) => {
-    try {
-      const snapshots =
-        listFullSnapshots();
-
-      return res.json({
-        dataDir:
-          DATA_DIR,
-        persistentConfigured:
-          !samePath(DATA_DIR, APP_DIR),
-        writable:
-          storageIsWritable(),
-        persistenceStrict:
-          PERSISTENCE_STRICT,
-        railwayVolumeMountPath:
-          process.env.RAILWAY_VOLUME_MOUNT_PATH ||
-          null,
-        backupDirectory:
-          BACKUPS_DIR,
-        snapshotCount:
-          snapshots.length,
-        lastSnapshot:
-          snapshots[0] || null,
-        maxSnapshots:
-          MAX_FULL_SNAPSHOTS,
-        jsonBackupLimit:
-          MAX_JSON_BACKUPS_PER_FILE
-      });
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de vérifier les sauvegardes.'
-        });
-    }
-  }
-);
-
-router.post(
-  '/api/backups',
-  requireAuth,
-  (req, res) => {
-    try {
-      const snapshot =
-        createFullSnapshot(
-          safeString(
-            req.body?.reason
-          ) ||
-          'manual'
-        );
-
-      return res
-        .status(201)
-        .json({
-          success:
-            true,
-          snapshot
-        });
-    } catch (error) {
-      console.error(
-        '❌ Création sauvegarde :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Impossible de créer la sauvegarde.'
-        });
-    }
-  }
-);
-
-router.post(
-  '/api/backups/:id/restore',
-  requireAuth,
-  (req, res) => {
-    try {
-      const restored =
-        restoreFullSnapshot(
-          req.params.id
-        );
-
-      return res.json({
-        success:
-          true,
-        restored
-      });
-    } catch (error) {
-      console.error(
-        '❌ Restauration sauvegarde :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Impossible de restaurer la sauvegarde.'
-        });
-    }
-  }
-);
-
-router.get(
-  '/api/export-data',
-  requireAuth,
-  (req, res) => {
-    try {
-      const data =
-        createExternalDataExport();
-
-      const filename =
-        `mondeco-data-${timestampId()}.json`;
-
-      res.setHeader(
-        'Content-Type',
-        'application/json; charset=utf-8'
-      );
-
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename="${filename}"`
-      );
-
-      return res.send(
-        JSON.stringify(
-          data,
-          null,
-          2
-        )
-      );
-    } catch (error) {
-      console.error(
-        '❌ Export données :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible d’exporter les données.'
-        });
-    }
-  }
-);
-
-// ============================================================
-// DISCUSSION DE TEST
-// ============================================================
-
-let chatHandler = null;
-let imageChatHandler = null;
-
-function setChatHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error(
-      'setChatHandler attend une fonction.'
+    alert(
+      `${data.imported} instruction(s) importée(s), ${data.duplicates} doublon(s).`
     );
+
+    await loadInstructions();
+  }catch(error){
+    alert(error.message);
   }
+});
 
-  chatHandler = fn;
-}
+document.getElementById('importManyBtn').addEventListener('click', () => {
+  document.getElementById('importText').value = '';
+  openModal('importModal');
+});
 
-function setImageChatHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error(
-      'setImageChatHandler attend une fonction.'
+document.getElementById('confirmImportBtn').addEventListener('click', async () => {
+  const text = document.getElementById('importText').value;
+
+  try{
+    const data = await apiFetch(`${API}/instructions/import`, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({text})
+    });
+
+    closeModal('importModal');
+
+    alert(
+      `${data.imported} instruction(s) importée(s), ${data.duplicates} doublon(s).`
     );
+
+    await loadInstructions();
+  }catch(error){
+    alert(error.message);
   }
-
-  imageChatHandler = fn;
-}
-
-router.post(
-  '/api/test-chat',
-  requireAuth,
-  async (req, res) => {
-    try {
-      if (!chatHandler) {
-        return res
-          .status(503)
-          .json({
-            error:
-              'Le bot IA n’est pas encore connecté.'
-          });
-      }
-
-      const message =
-        safeString(req.body?.message);
-
-      if (!message) {
-        return res
-          .status(400)
-          .json({
-            error: 'Message vide.'
-          });
-      }
-
-      const reply =
-        await chatHandler(
-          'admin-test-session',
-          message
-        );
-
-      return res.json({ reply });
-    } catch (error) {
-      console.error(
-        '❌ Test chat texte :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Erreur pendant la réponse IA.'
-        });
-    }
-  }
-);
-
-router.post(
-  '/api/test-chat-image',
-  requireAuth,
-  uploadTestImage,
-  async (req, res) => {
-    try {
-      if (!req.file) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Ajoutez une image à analyser.'
-          });
-      }
-
-      const mode =
-        safeString(req.body?.mode) ||
-        'analysis';
-
-      const message =
-        safeString(req.body?.message) ||
-        'Analyse cette image et explique ce que tu vois.';
-
-      if (mode === 'whatsapp') {
-        return res.json({
-          reply:
-            'Simulation WhatsApp : image reçue. Aucune réponse automatique ne serait envoyée au client ; un commercial doit reprendre la conversation.',
-          action:
-            'commercial_required'
-        });
-      }
-
-      if (!imageChatHandler) {
-        return res
-          .status(503)
-          .json({
-            error:
-              'L’analyse d’image IA n’est pas encore connectée.'
-          });
-      }
-
-      const reply =
-        await imageChatHandler(
-          'admin-test-session',
-          message,
-          {
-            buffer: req.file.buffer,
-            mimetype: req.file.mimetype,
-            originalname: req.file.originalname,
-            size: req.file.size
-          }
-        );
-
-      return res.json({
-        reply,
-        action: 'vision_analysis'
-      });
-    } catch (error) {
-      console.error(
-        '❌ Test chat image :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Erreur pendant l’analyse de l’image.'
-        });
-    }
-  }
-);
+});
 
 // ============================================================
 // PERSONNALISATION
 // ============================================================
 
-let customizationHandler = null;
-
-function setCustomizationHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error(
-      'setCustomizationHandler attend une fonction.'
-    );
-  }
-
-  customizationHandler = fn;
+async function loadCustomizations(){
+  customizations = await apiFetch(`${API}/customizations`);
+  renderCustomizations();
 }
 
-function buildCustomizationWarnings(product, request) {
-  const warnings = [];
+function renderCustomizations(){
+  const container = document.getElementById('customizationHistory');
 
-  if (!product) {
-    warnings.push(
-      'Image libre : identification, prix et faisabilité à confirmer par un commercial.'
-    );
-
-    return warnings;
+  if(!customizations.length){
+    container.innerHTML = `
+      <div class="empty">
+        <strong>Aucune simulation enregistrée</strong>
+        Les simulations générées apparaîtront ici.
+      </div>
+    `;
+    return;
   }
 
-  if (
-    request.color &&
-    product.customizableColor !== true
-  ) {
-    warnings.push(
-      'Le changement de couleur n’est pas confirmé comme option catalogue.'
-    );
-  }
-
-  if (
-    request.fabric &&
-    product.customizableFabric !== true
-  ) {
-    warnings.push(
-      'Le changement de tissu n’est pas confirmé comme option catalogue.'
-    );
-  }
-
-  if (
-    request.dimensions &&
-    product.customizableDimensions !== true
-  ) {
-    warnings.push(
-      'Le changement de dimensions doit être validé par un commercial.'
-    );
-  }
-
-  if (
-    request.corner &&
-    product.customizableCorner !== true
-  ) {
-    warnings.push(
-      'Le changement de coin/orientation doit être validé par un commercial.'
-    );
-  }
-
-  return warnings;
+  container.innerHTML = `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Produit</th>
+            <th>Demande</th>
+            <th>Statut</th>
+            <th>Date</th>
+            <th>Résultat</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${customizations.map(item => `
+            <tr>
+              <td><strong>${escapeHtml(item.productName || 'Image libre')}</strong></td>
+              <td>
+                ${[
+                  item.request?.color,
+                  item.request?.fabric,
+                  item.request?.dimensions,
+                  item.request?.corner
+                ].filter(Boolean).map(escapeHtml).join(' • ') || '—'}
+              </td>
+              <td>${escapeHtml(customStatusLabel(item.status))}</td>
+              <td>${escapeHtml(formatDate(item.createdAt))}</td>
+              <td>
+                ${item.resultImage
+                  ? `<a href="${escapeHtml(item.resultImage)}" target="_blank">Voir</a>`
+                  : '—'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-router.get(
-  '/api/customizations',
-  requireAuth,
-  (req, res) => {
-    const items =
-      loadCustomizations()
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt || 0) -
-            new Date(a.createdAt || 0)
-        );
+function customStatusLabel(status){
+  const map = {
+    simulation_generated:'Simulation générée',
+    awaiting_validation:'À valider',
+    approved:'Validée',
+    sent_to_client:'Envoyée au client',
+    rejected:'Non faisable / refusée'
+  };
 
-    return res.json(items);
+  return map[status] || status || '—';
+}
+
+function formatDate(value){
+  if(!value) return '—';
+
+  try{
+    return new Date(value).toLocaleString('fr-FR');
+  }catch{
+    return value;
   }
-);
+}
 
-router.post(
-  '/api/customizations/generate',
-  requireAuth,
-  uploadCustomizationImage,
-  async (req, res) => {
-    try {
-      if (!customizationHandler) {
-        return res
-          .status(503)
-          .json({
-            error:
-              'Le moteur de simulation visuelle n’est pas connecté.'
-          });
-      }
+document.getElementById('refreshCustomizationsBtn').addEventListener('click', loadCustomizations);
 
-      const products = loadProducts();
+async function resizeReferenceImage(sourceBlob, filename = 'reference.jpg'){
+  const bitmap = await createImageBitmap(sourceBlob);
 
-      const productId =
-        safeString(req.body?.productId);
+  const max = 500;
+  const scale = Math.min(
+    1,
+    max / bitmap.width,
+    max / bitmap.height
+  );
 
-      const product =
-        productId
-          ? products.find(
-              item => item.id === productId
-            )
-          : null;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
 
-      if (productId && !product) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Produit sélectionné introuvable.'
-          });
-      }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
 
-      const request = {
-        customerName:
-          safeString(req.body?.customerName),
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
 
-        customerPhone:
-          safeString(req.body?.customerPhone),
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      result => result ? resolve(result) : reject(new Error('Compression image impossible.')),
+      'image/jpeg',
+      .9
+    );
+  });
 
-        color:
-          safeString(req.body?.color),
+  return new File(
+    [blob],
+    filename.replace(/\.[^.]+$/, '') + '-ai.jpg',
+    {type:'image/jpeg'}
+  );
+}
 
-        fabric:
-          safeString(req.body?.fabric),
+document.getElementById('customizationForm').addEventListener('submit', async event => {
+  event.preventDefault();
 
-        dimensions:
-          safeString(req.body?.dimensions),
+  const button = document.getElementById('generateCustomizationBtn');
+  const oldText = button.textContent;
 
-        corner:
-          safeString(req.body?.corner),
+  button.disabled = true;
+  button.textContent = 'Génération...';
 
-        notes:
-          safeString(req.body?.notes)
-      };
+  try{
+    const formData = new FormData();
 
-      const hasModification =
-        Boolean(
-          request.color ||
-          request.fabric ||
-          request.dimensions ||
-          request.corner ||
-          request.notes
-        );
+    const selectedProductId = document.getElementById('customProductId').value;
 
-      if (!hasModification) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Indiquez au moins une modification à simuler.'
-          });
-      }
+    formData.append('productId', selectedProductId);
+    formData.append('color', document.getElementById('customColor').value);
+    formData.append('fabric', document.getElementById('customFabric').value);
+    formData.append('dimensions', document.getElementById('customDimensions').value);
+    formData.append('corner', document.getElementById('customCorner').value);
+    formData.append('notes', document.getElementById('customNotes').value);
 
-      let sourceImage = null;
-      let sourceImageUrl = '';
+    const uploadedFile = document.getElementById('customReferenceImage').files?.[0];
 
-      if (req.file) {
-        sourceImage = {
-          buffer: req.file.buffer,
-          mimetype: req.file.mimetype,
-          originalname:
-            req.file.originalname ||
-            'reference.jpg',
-          size: req.file.size
-        };
-      } else if (product) {
-        const localPath =
-          getLocalProductImagePath(product);
+    let referenceFile = null;
 
-        if (
-          !localPath ||
-          !fs.existsSync(localPath)
-        ) {
-          return res
-            .status(400)
-            .json({
-              error:
-                'La photo du produit est introuvable. Ajoutez une image de référence.'
-            });
+    if(uploadedFile){
+      referenceFile = await resizeReferenceImage(
+        uploadedFile,
+        uploadedFile.name
+      );
+    }else if(selectedProductId){
+      const product = products.find(item => item.id === selectedProductId);
+
+      if(product?.image){
+        const response = await fetch(product.image);
+
+        if(!response.ok){
+          throw new Error('Impossible de charger la photo du produit.');
         }
 
-        sourceImage = {
-          buffer:
-            fs.readFileSync(localPath),
+        const blob = await response.blob();
 
-          mimetype:
-            mimeTypeFromPath(localPath),
-
-          originalname:
-            path.basename(localPath),
-
-          size:
-            fs.statSync(localPath).size
-        };
-
-        sourceImageUrl =
-          safeString(product.image);
-      }
-
-      if (!sourceImage) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Sélectionnez un produit avec photo ou ajoutez une image de référence.'
-          });
-      }
-
-      function outputDimension(value, fallback) {
-        const number = Number(value);
-
-        if (!Number.isFinite(number)) {
-          return fallback;
-        }
-
-        return Math.max(
-          256,
-          Math.min(
-            1920,
-            Math.round(number)
-          )
+        referenceFile = await resizeReferenceImage(
+          blob,
+          `${product.name || 'produit'}.jpg`
         );
       }
-
-      const simulation =
-        await customizationHandler({
-          product,
-          request,
-          sourceImage,
-
-          outputWidth:
-            outputDimension(
-              req.body?.outputWidth,
-              1024
-            ),
-
-          outputHeight:
-            outputDimension(
-              req.body?.outputHeight,
-              768
-            )
-        });
-
-      if (!simulation?.imageBuffer) {
-        throw new Error(
-          'Le moteur image n’a retourné aucune simulation.'
-        );
-      }
-
-      const id =
-        crypto.randomUUID();
-
-      const now =
-        new Date().toISOString();
-
-      let sourceFilename = '';
-
-      if (req.file) {
-        sourceFilename =
-          `custom-source-${Date.now()}-${id}` +
-          extensionFromMimeType(
-            sourceImage.mimetype
-          );
-
-        fs.writeFileSync(
-          path.join(
-            CUSTOMIZATIONS_DIR,
-            sourceFilename
-          ),
-          sourceImage.buffer
-        );
-
-        sourceImageUrl =
-          `/admin/customizations/${sourceFilename}`;
-      }
-
-      const resultFilename =
-        `custom-result-${Date.now()}-${id}` +
-        extensionFromMimeType(
-          simulation.mimeType ||
-          'image/jpeg'
-        );
-
-      fs.writeFileSync(
-        path.join(
-          CUSTOMIZATIONS_DIR,
-          resultFilename
-        ),
-        simulation.imageBuffer
-      );
-
-      const item = {
-        id,
-
-        productId:
-          product?.id || '',
-
-        productName:
-          safeString(product?.name) ||
-          'Image libre',
-
-        customerName:
-          request.customerName,
-
-        customerPhone:
-          request.customerPhone,
-
-        request,
-
-        warnings:
-          buildCustomizationWarnings(
-            product,
-            request
-          ),
-
-        analysis:
-          safeString(simulation.analysis),
-
-        sourceImage:
-          sourceImageUrl,
-
-        sourceFilename,
-
-        resultImage:
-          `/admin/customizations/${resultFilename}`,
-
-        resultFilename,
-
-        status:
-          'simulation_generated',
-
-        requiresCommercialValidation:
-          true,
-
-        createdAt: now,
-        updatedAt: now
-      };
-
-      const items = loadCustomizations();
-      items.push(item);
-      saveCustomizations(items);
-
-      return res
-        .status(201)
-        .json(item);
-    } catch (error) {
-      console.error(
-        '❌ Personnalisation :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            error.message ||
-            'Impossible de générer la simulation.'
-        });
     }
-  }
-);
 
-router.put(
-  '/api/customizations/:id/status',
-  requireAuth,
-  (req, res) => {
-    try {
-      const allowed =
-        new Set([
-          'simulation_generated',
-          'awaiting_validation',
-          'approved',
-          'sent_to_client',
-          'rejected'
-        ]);
-
-      const status =
-        safeString(req.body?.status);
-
-      if (!allowed.has(status)) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Statut non valide.'
-          });
-      }
-
-      const items =
-        loadCustomizations();
-
-      const index =
-        items.findIndex(
-          item => item.id === req.params.id
-        );
-
-      if (index === -1) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Demande introuvable.'
-          });
-      }
-
-      items[index] = {
-        ...items[index],
-        status,
-        updatedAt:
-          new Date().toISOString()
-      };
-
-      saveCustomizations(items);
-
-      return res.json(
-        items[index]
-      );
-    } catch (error) {
-      console.error(
-        '❌ Statut personnalisation :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de modifier le statut.'
-        });
+    if(referenceFile){
+      formData.append('referenceImage', referenceFile);
     }
+
+    const item = await apiFetch(`${API}/customizations/generate`, {
+      method:'POST',
+      body:formData
+    });
+
+    const result = document.getElementById('customizationResult');
+
+    result.className = '';
+
+    result.innerHTML = `
+      <div class="custom-result">
+        <figure>
+          ${item.sourceImage
+            ? `<img src="${escapeHtml(item.sourceImage)}" alt="Référence">`
+            : '<div class="empty">Référence catalogue</div>'}
+          <figcaption>Référence</figcaption>
+        </figure>
+
+        <figure>
+          <img src="${escapeHtml(item.resultImage)}" alt="Simulation">
+          <figcaption>Simulation IA</figcaption>
+        </figure>
+      </div>
+
+      ${item.analysis
+        ? `<div class="notice info" style="margin-top:14px">${escapeHtml(item.analysis)}</div>`
+        : ''}
+
+      ${(item.warnings || []).length
+        ? `<div class="notice warning" style="margin-top:10px">${item.warnings.map(escapeHtml).join('<br>')}</div>`
+        : ''}
+    `;
+
+    await loadCustomizations();
+    await refreshHome();
+  }catch(error){
+    alert(error.message);
+  }finally{
+    button.disabled = false;
+    button.textContent = oldText;
   }
-);
+});
 
-router.delete(
-  '/api/customizations/:id',
-  requireAuth,
-  (req, res) => {
-    try {
-      const items =
-        loadCustomizations();
+// ============================================================
+// DISCUSSION TEST
+// ============================================================
 
-      const item =
-        items.find(
-          entry =>
-            entry.id === req.params.id
-        );
+function addChatMessage(role, text){
+  const box = document.getElementById('chatBox');
 
-      if (!item) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Demande introuvable.'
-          });
-      }
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
 
-      saveCustomizations(
-        items.filter(
-          entry =>
-            entry.id !== req.params.id
-        )
-      );
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
 
-      if (item.resultFilename) {
-        archiveFileBeforeDelete(
-          path.join(
-            CUSTOMIZATIONS_DIR,
-            path.basename(
-              item.resultFilename
-            )
-          ),
-          'customization-images'
-        );
-      }
+document.getElementById('sendTestBtn').addEventListener('click', async () => {
+  const message = document.getElementById('testMessage').value.trim();
+  const image = document.getElementById('testImage').files?.[0];
+  const mode = document.getElementById('testImageMode').value;
 
-      if (item.sourceFilename) {
-        archiveFileBeforeDelete(
-          path.join(
-            CUSTOMIZATIONS_DIR,
-            path.basename(
-              item.sourceFilename
-            )
-          ),
-          'customization-images'
-        );
-      }
+  if(!message && !image){
+    return;
+  }
 
-      return res.json({
-        success: true
+  addChatMessage('user', message || '[Image envoyée]');
+
+  const button = document.getElementById('sendTestBtn');
+  button.disabled = true;
+  button.textContent = '...';
+
+  try{
+    let data;
+
+    if(image){
+      const formData = new FormData();
+      formData.append('image', image);
+      formData.append('message', message);
+      formData.append('mode', mode);
+
+      data = await apiFetch(`${API}/test-chat-image`, {
+        method:'POST',
+        body:formData
       });
-    } catch (error) {
-      console.error(
-        '❌ Suppression personnalisation :',
-        error
-      );
+    }else{
+      data = await apiFetch(`${API}/test-chat`, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({message})
+      });
+    }
 
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de supprimer la demande.'
-        });
+    addChatMessage('bot', data.reply || 'Réponse vide.');
+    document.getElementById('testMessage').value = '';
+    document.getElementById('testImage').value = '';
+  }catch(error){
+    addChatMessage('bot', `Erreur : ${error.message}`);
+  }finally{
+    button.disabled = false;
+    button.textContent = 'Envoyer';
+  }
+});
+
+// ============================================================
+// PARAMÈTRES
+// ============================================================
+
+const dayMeta = [
+  ['mon','Lundi'],
+  ['tue','Mardi'],
+  ['wed','Mercredi'],
+  ['thu','Jeudi'],
+  ['fri','Vendredi'],
+  ['sat','Samedi'],
+  ['sun','Dimanche']
+];
+
+function buildWeeklyRows(){
+  const container = document.getElementById('weeklyRows');
+
+  container.innerHTML = dayMeta.map(([key,label]) => `
+    <div class="week-row">
+      <strong>${label}</strong>
+
+      <label style="margin:0;display:flex;align-items:center;gap:6px">
+        <input
+          type="checkbox"
+          id="week-${key}-enabled"
+        >
+        ON
+      </label>
+
+      <input
+        class="time-input"
+        type="time"
+        id="week-${key}-start"
+      >
+
+      <input
+        class="time-input"
+        type="time"
+        id="week-${key}-end"
+      >
+    </div>
+  `).join('');
+}
+
+buildWeeklyRows();
+
+async function loadSettings(){
+  settings = await apiFetch(`${API}/settings`);
+  await loadBackupProtection();
+
+  document.getElementById('settingAiEnabled').checked =
+    settings.aiEnabled === true;
+
+  const audience =
+    document.querySelector(
+      `input[name="audience"][value="${settings.audience}"]`
+    );
+
+  if(audience) audience.checked = true;
+
+  document.getElementById('settingTeamPhones').value =
+    (settings.teamPhones || []).join('\n');
+
+  document.getElementById('settingScheduleMode').value =
+    settings.schedule?.mode || 'always';
+
+  document.getElementById('settingTimezone').value =
+    settings.timezone || 'Africa/Tunis';
+
+  document.getElementById('settingOutOfHours').value =
+    settings.schedule?.outOfHours || 'none';
+
+  document.getElementById('settingAbsenceMessage').value =
+    settings.schedule?.absenceMessage || '';
+
+  for(const [key] of dayMeta){
+    const day =
+      settings.schedule?.weekly?.[key] || {};
+
+    document.getElementById(`week-${key}-enabled`).checked =
+      day.enabled !== false;
+
+    document.getElementById(`week-${key}-start`).value =
+      day.start || '08:00';
+
+    document.getElementById(`week-${key}-end`).value =
+      day.end || '19:00';
+  }
+
+  document.getElementById('settingFollowUpEnabled').checked =
+    settings.followUp?.enabled === true;
+
+  document.getElementById('settingFollowUpDelay').value =
+    String(settings.followUp?.delayMinutes || 60);
+
+  document.getElementById('settingFollowUpMax').value =
+    String(settings.followUp?.maxFollowUps || 1);
+
+  document.getElementById('settingFollowUpMessage').value =
+    settings.followUp?.message || '';
+
+  const imageHandling =
+    document.querySelector(
+      `input[name="imageHandling"][value="${settings.imageHandling}"]`
+    );
+
+  if(imageHandling) imageHandling.checked = true;
+
+  document.getElementById('settingPauseHuman').checked =
+    settings.pauseWhenHumanReplies === true;
+
+  document.getElementById('settingHumanPauseMinutes').value =
+    String(settings.humanPauseMinutes || 120);
+
+  updateSettingsVisibility();
+  renderSettingsSummary();
+}
+
+function updateSettingsVisibility(){
+  const custom =
+    document.getElementById('settingScheduleMode').value === 'custom';
+
+  document.getElementById('weeklyScheduleBox').classList.toggle(
+    'hidden',
+    !custom
+  );
+
+  document.getElementById('followUpBox').classList.toggle(
+    'hidden',
+    !document.getElementById('settingFollowUpEnabled').checked
+  );
+}
+
+document.getElementById('settingScheduleMode').addEventListener('change', updateSettingsVisibility);
+document.getElementById('settingFollowUpEnabled').addEventListener('change', updateSettingsVisibility);
+
+function collectSettings(){
+  const weekly = {};
+
+  for(const [key] of dayMeta){
+    weekly[key] = {
+      enabled:
+        document.getElementById(`week-${key}-enabled`).checked,
+
+      start:
+        document.getElementById(`week-${key}-start`).value || '08:00',
+
+      end:
+        document.getElementById(`week-${key}-end`).value || '19:00'
+    };
+  }
+
+  return {
+    aiEnabled:
+      document.getElementById('settingAiEnabled').checked,
+
+    audience:
+      document.querySelector('input[name="audience"]:checked')?.value || 'all',
+
+    timezone:
+      document.getElementById('settingTimezone').value.trim() || 'Africa/Tunis',
+
+    schedule:{
+      mode:
+        document.getElementById('settingScheduleMode').value,
+
+      outOfHours:
+        document.getElementById('settingOutOfHours').value,
+
+      absenceMessage:
+        document.getElementById('settingAbsenceMessage').value,
+
+      weekly
+    },
+
+    followUp:{
+      enabled:
+        document.getElementById('settingFollowUpEnabled').checked,
+
+      delayMinutes:
+        Number(document.getElementById('settingFollowUpDelay').value),
+
+      maxFollowUps:
+        Number(document.getElementById('settingFollowUpMax').value),
+
+      message:
+        document.getElementById('settingFollowUpMessage').value
+    },
+
+    imageHandling:
+      document.querySelector('input[name="imageHandling"]:checked')?.value || 'commercial',
+
+    pauseWhenHumanReplies:
+      document.getElementById('settingPauseHuman').checked,
+
+    humanPauseMinutes:
+      Number(document.getElementById('settingHumanPauseMinutes').value),
+
+    teamPhones:
+      document.getElementById('settingTeamPhones').value
+  };
+}
+
+function renderSettingsSummary(){
+  if(!settings) return;
+
+  const audienceLabels = {
+    all:'Tout le monde',
+    new:'Nouveaux clients uniquement',
+    ads:'Clients venant des publicités Meta',
+    team:'Équipe MONDECO uniquement'
+  };
+
+  const imageLabels = {
+    commercial:'Transfert commercial',
+    analyze_only:'Analyse interne sans réponse',
+    analyze_reply:'Analyse + réponse automatique'
+  };
+
+  const lines = [
+    `IA : ${settings.aiEnabled ? 'Activée' : 'Désactivée'}`,
+    `Audience : ${audienceLabels[settings.audience] || settings.audience}`,
+    `Calendrier : ${settings.schedule?.mode === 'custom' ? 'Horaires personnalisés' : 'Toujours disponible'}`,
+    `Relance : ${settings.followUp?.enabled ? `Après ${settings.followUp.delayMinutes} min` : 'Désactivée'}`,
+    `Images : ${imageLabels[settings.imageHandling] || settings.imageHandling}`,
+    `Pause commerciale : ${settings.pauseWhenHumanReplies ? `${settings.humanPauseMinutes} min` : 'Désactivée'}`
+  ];
+
+  document.getElementById('settingsSummary').innerHTML =
+    lines.map(escapeHtml).join('<br>');
+}
+
+document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
+  const button = document.getElementById('saveSettingsBtn');
+  const old = button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Enregistrement...';
+
+  try{
+    const data = await apiFetch(`${API}/settings`, {
+      method:'PUT',
+      headers:{
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify(
+        collectSettings()
+      )
+    });
+
+    settings = data.settings;
+    renderSettingsSummary();
+    await refreshHome();
+
+    alert('Paramètres enregistrés.');
+  }catch(error){
+    alert(error.message);
+  }finally{
+    button.disabled = false;
+    button.textContent = old;
+  }
+});
+
+
+// ============================================================
+// PROTECTION DES DONNÉES / BACKUPS
+// ============================================================
+
+let backupState = null;
+
+function formatBackupDate(value){
+  if(!value) return 'Aucune';
+
+  try{
+    return new Intl.DateTimeFormat('fr-FR',{
+      dateStyle:'short',
+      timeStyle:'short'
+    }).format(new Date(value));
+  }catch{
+    return value;
+  }
+}
+
+async function loadBackupProtection(){
+  try{
+    const [status, list] = await Promise.all([
+      apiFetch(`${API}/backups/status`),
+      apiFetch(`${API}/backups`)
+    ]);
+
+    backupState = {
+      status,
+      snapshots:list.snapshots || []
+    };
+
+    const notice =
+      document.getElementById('backupProtectionNotice');
+
+    const storageOk =
+      status.persistentConfigured &&
+      status.writable;
+
+    notice.className =
+      `notice ${storageOk ? 'success' : 'warning'}`;
+
+    notice.textContent =
+      storageOk
+        ? `Protection active : données persistantes sur ${status.dataDir}.`
+        : 'Attention : stockage persistant non confirmé. Ne saisissez pas de nouvelles données avant correction.';
+
+    document.getElementById('backupStorageStatus').textContent =
+      storageOk
+        ? `${status.dataDir} • actif`
+        : 'À vérifier';
+
+    document.getElementById('backupLastSnapshot').textContent =
+      status.lastSnapshot
+        ? formatBackupDate(status.lastSnapshot.createdAt)
+        : 'Aucune';
+
+    document.getElementById('backupSnapshotCount').textContent =
+      `${status.snapshotCount || 0} / ${status.maxSnapshots || 20}`;
+
+    document.getElementById('backupStrictStatus').textContent =
+      status.persistenceStrict
+        ? 'Activée'
+        : 'Désactivée';
+
+    const select =
+      document.getElementById('backupSnapshotSelect');
+
+    const snapshots =
+      list.snapshots || [];
+
+    if(!snapshots.length){
+      select.innerHTML =
+        '<option value="">Aucune sauvegarde disponible</option>';
+    }else{
+      select.innerHTML =
+        '<option value="">Choisir une sauvegarde...</option>' +
+        snapshots.map(snapshot => {
+          const detail =
+            `${formatBackupDate(snapshot.createdAt)} • ` +
+            `${snapshot.productCount || 0} produits • ` +
+            `${snapshot.instructionCount || 0} instructions`;
+
+          return `
+            <option value="${escapeHtml(snapshot.id)}">
+              ${escapeHtml(detail)}
+            </option>
+          `;
+        }).join('');
+    }
+
+  }catch(error){
+    const notice =
+      document.getElementById('backupProtectionNotice');
+
+    if(notice){
+      notice.className =
+        'notice warning';
+
+      notice.textContent =
+        `Impossible de vérifier les sauvegardes : ${error.message}`;
     }
   }
-);
+}
+
+document.getElementById('createBackupBtn').addEventListener('click', async () => {
+  const button =
+    document.getElementById('createBackupBtn');
+
+  const old =
+    button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Sauvegarde...';
+
+  try{
+    const result =
+      await apiFetch(`${API}/backups`,{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          reason:'manual-admin'
+        })
+      });
+
+    alert(
+      `Sauvegarde créée : ${result.snapshot?.id || 'OK'}`
+    );
+
+    await loadBackupProtection();
+
+  }catch(error){
+    alert(error.message);
+
+  }finally{
+    button.disabled = false;
+    button.textContent = old;
+  }
+});
+
+document.getElementById('exportDataBtn').addEventListener('click', () => {
+  window.location.href =
+    `${API}/export-data`;
+});
+
+document.getElementById('restoreBackupBtn').addEventListener('click', async () => {
+  const select =
+    document.getElementById('backupSnapshotSelect');
+
+  const snapshotId =
+    select.value;
+
+  if(!snapshotId){
+    alert('Choisissez une sauvegarde à restaurer.');
+    return;
+  }
+
+  const ok = confirm(
+    'Restaurer cette sauvegarde ?\\n\\n' +
+    'Les produits, instructions, paramètres et images actuels seront remplacés par ceux de cette sauvegarde. ' +
+    'Une sauvegarde de sécurité de l’état actuel sera créée automatiquement.'
+  );
+
+  if(!ok) return;
+
+  const button =
+    document.getElementById('restoreBackupBtn');
+
+  const old =
+    button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Restauration...';
+
+  try{
+    await apiFetch(
+      `${API}/backups/${encodeURIComponent(snapshotId)}/restore`,
+      {
+        method:'POST'
+      }
+    );
+
+    alert(
+      'Sauvegarde restaurée avec succès. L’interface va être rechargée.'
+    );
+
+    location.reload();
+
+  }catch(error){
+    alert(error.message);
+
+    button.disabled = false;
+    button.textContent = old;
+  }
+});
+
 
 // ============================================================
-// STATUS / STATS
+// LOGOUT / INIT
 // ============================================================
 
-router.get(
-  '/api/storage-status',
-  requireAuth,
-  (req, res) => {
-    return res.json({
-      dataDir: DATA_DIR,
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  try{
+    await fetch('/admin/logout', {
+      method:'POST'
+    });
+  }finally{
+    location.href = '/admin/login';
+  }
+});
 
-      persistentConfigured:
-        DATA_DIR !== APP_DIR,
+(async function init(){
+  try{
+    await Promise.all([
+      loadProducts(),
+      loadInstructions(),
+      refreshHome()
+    ]);
+  }catch(error){
+    console.error(error);
+  }
+})();
 
-      railwayVolumeMountPath:
-        process.env.RAILWAY_VOLUME_MOUNT_PATH ||
-        null,
 
-      dataDirEnv:
-        process.env.DATA_DIR ||
-        null,
+// Navigation depuis les actions rapides du tableau de bord
+for (const shortcut of document.querySelectorAll('[data-shortcut-page]')) {
+  shortcut.addEventListener('click', () => {
+    const target = shortcut.dataset.shortcutPage;
+    const navButton = document.querySelector(`.nav button[data-page="${target}"]`);
+    if (navButton) navButton.click();
+  });
+}
 
-      writable:
-        storageIsWritable(),
+</script>
 
-      productsFile:
-        fs.existsSync(PRODUCTS_PATH),
 
-      instructionsFile:
-        fs.existsSync(INSTRUCTIONS_PATH),
+<script>
+(function () {
+  const menuBtn = document.getElementById('mobileMenuBtn');
+  const overlay = document.getElementById('mobileOverlay');
+  const navButtons = document.querySelectorAll('.nav button[data-page]');
+  const logoutButton = document.getElementById('logoutBtn');
 
-      settingsFile:
-        fs.existsSync(SETTINGS_PATH),
+  function setMenu(open) {
+    document.body.classList.toggle('mobile-menu-open', open);
+    if (menuBtn) {
+      menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      menuBtn.setAttribute('aria-label', open ? 'Fermer le menu' : 'Ouvrir le menu');
+    }
+  }
 
-      instructionMigrationDone:
-        fs.existsSync(
-          INSTRUCTIONS_MIGRATION_MARKER
-        ),
-
-      customizationsFile:
-        fs.existsSync(
-          CUSTOMIZATIONS_PATH
-        ),
-
-      uploadsDirectory:
-        fs.existsSync(UPLOADS_DIR),
-
-      customizationsDirectory:
-        fs.existsSync(CUSTOMIZATIONS_DIR),
-
-      backupsDirectory:
-        fs.existsSync(BACKUPS_DIR),
-
-      persistenceStrict:
-        PERSISTENCE_STRICT,
-
-      snapshotCount:
-        listFullSnapshots().length,
-
-      lastSnapshot:
-        listFullSnapshots()[0] || null,
-
-      recommendedRailwayMountPath:
-        '/data',
-
-      recommendedDataDir:
-        '/data'
+  if (menuBtn) {
+    menuBtn.addEventListener('click', function () {
+      setMenu(!document.body.classList.contains('mobile-menu-open'));
     });
   }
-);
 
-router.get(
-  '/api/stats',
-  requireAuth,
-  (req, res) => {
-    const products = loadProducts();
-    const instructions = loadInstructions();
-    const customizations = loadCustomizations();
-    const settings = getBotSettings();
+  if (overlay) {
+    overlay.addEventListener('click', function () {
+      setMenu(false);
+    });
+  }
 
-    return res.json({
-      productCount:
-        products.length,
-
-      activeProductCount:
-        products.filter(
-          product =>
-            product.active !== false
-        ).length,
-
-      productsWithImages:
-        products.filter(
-          product =>
-            Boolean(product.image)
-        ).length,
-
-      instructionsCount:
-        instructions.length,
-
-      activeInstructionsCount:
-        instructions.filter(
-          instruction =>
-            instruction.active !== false
-        ).length,
-
-      customizationCount:
-        customizations.length,
-
-      aiEnabled:
-        settings.aiEnabled,
-
-      audience:
-        settings.audience,
-
-      instructionMigrationDone:
-        fs.existsSync(
-          INSTRUCTIONS_MIGRATION_MARKER
-        ),
-
-      legacyBusinessInfoAvailable:
-        Boolean(
-          loadLegacyBusinessInfo().trim()
-        ),
-
-      storage: {
-        dataDir: DATA_DIR,
-        persistentConfigured:
-          DATA_DIR !== APP_DIR,
-        writable:
-          storageIsWritable()
+  navButtons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      if (window.innerWidth <= 900) {
+        setMenu(false);
       }
     });
+  });
+
+  if (logoutButton) {
+    logoutButton.addEventListener('click', function () {
+      setMenu(false);
+    });
   }
-);
 
-// ============================================================
-// EXPORTS
-// ============================================================
+  window.addEventListener('resize', function () {
+    if (window.innerWidth > 900) {
+      setMenu(false);
+    }
+  });
 
-module.exports = {
-  adminRouter: router,
-  getBusinessContext,
-  getBotSettings,
-  setChatHandler,
-  setImageChatHandler,
-  setCustomizationHandler
-};
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      setMenu(false);
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
