@@ -1820,6 +1820,289 @@ function detectExplicitProductName(
   }
 }
 
+
+function contextFieldValue(
+  block,
+  label
+) {
+  const escapedLabel =
+    safeString(label)
+      .replace(
+        /[.*+?^${}()|[\]\\]/g,
+        '\\$&'
+      );
+
+  const match =
+    safeString(block).match(
+      new RegExp(
+        `^${escapedLabel}\\s*:\\s*(.+)$`,
+        'mi'
+      )
+    );
+
+  return match
+    ? safeString(match[1])
+    : '';
+}
+
+function getProductCommercialInfo(
+  productName
+) {
+  const wanted =
+    normalizeForSearch(
+      productName
+    );
+
+  if (!wanted) {
+    return null;
+  }
+
+  try {
+    const rawContext =
+      getBusinessContext() ||
+      '';
+
+    const {
+      productBlocks
+    } =
+      splitBusinessContext(
+        rawContext
+      );
+
+    const block =
+      productBlocks.find(
+        item =>
+          normalizeForSearch(
+            productNameFromContextBlock(
+              item
+            )
+          ) === wanted
+      );
+
+    if (!block) {
+      return null;
+    }
+
+    return {
+      name:
+        productNameFromContextBlock(
+          block
+        ),
+
+      category:
+        contextFieldValue(
+          block,
+          'Catégorie'
+        ),
+
+      normalPrice:
+        contextFieldValue(
+          block,
+          'Prix normal'
+        ),
+
+      promoPrice:
+        contextFieldValue(
+          block,
+          'Prix promotionnel'
+        ),
+
+      categoryUrl:
+        contextFieldValue(
+          block,
+          'Lien catégorie'
+        ),
+
+      productUrl:
+        contextFieldValue(
+          block,
+          'Lien produit'
+        )
+    };
+  } catch (error) {
+    console.warn(
+      '⚠️ Lecture informations commerciales produit :',
+      error.message
+    );
+
+    return null;
+  }
+}
+
+function normalizePriceForDisplay(
+  value
+) {
+  return safeString(value)
+    .replace(
+      /\\s*(TND|DT)\\s*$/i,
+      ''
+    )
+    .trim();
+}
+
+function replyContainsPrice(
+  reply,
+  price
+) {
+  const normalizedPrice =
+    normalizePriceForDisplay(
+      price
+    );
+
+  if (!normalizedPrice) {
+    return false;
+  }
+
+  const compactReply =
+    safeString(reply)
+      .replace(
+        /[\\s.,]/g,
+        ''
+      )
+      .toLowerCase();
+
+  const compactPrice =
+    normalizedPrice
+      .replace(
+        /[\\s.,]/g,
+        ''
+      )
+      .toLowerCase();
+
+  return (
+    compactPrice &&
+    compactReply.includes(
+      compactPrice
+    )
+  );
+}
+
+function ensureCommercialProductFormat(
+  reply,
+  productInfo
+) {
+  const cleanReply =
+    safeString(reply);
+
+  if (
+    !cleanReply ||
+    !productInfo
+  ) {
+    return cleanReply;
+  }
+
+  const normalPrice =
+    normalizePriceForDisplay(
+      productInfo.normalPrice
+    );
+
+  const promoPrice =
+    normalizePriceForDisplay(
+      productInfo.promoPrice
+    );
+
+  const effectivePrice =
+    promoPrice ||
+    normalPrice;
+
+  const hasEffectivePrice =
+    replyContainsPrice(
+      cleanReply,
+      effectivePrice
+    );
+
+  const categoryUrl =
+    safeString(
+      productInfo.categoryUrl
+    );
+
+  const hasCategoryUrl =
+    categoryUrl &&
+    cleanReply.includes(
+      categoryUrl
+    );
+
+  const additions = [];
+
+  if (
+    effectivePrice &&
+    !hasEffectivePrice
+  ) {
+    if (
+      promoPrice &&
+      normalPrice &&
+      promoPrice !== normalPrice
+    ) {
+      additions.push(
+        `Prix promotionnel : *${promoPrice} DT* au lieu de ${normalPrice} DT.`
+      );
+    } else {
+      additions.push(
+        `Prix : *${effectivePrice} DT*.`
+      );
+    }
+  }
+
+  if (
+    categoryUrl &&
+    !hasCategoryUrl
+  ) {
+    const categoryLabel =
+      safeString(
+        productInfo.category
+      );
+
+    additions.push(
+      (
+        categoryLabel
+          ? `Découvrez aussi nos autres modèles ${categoryLabel} :`
+          : 'Découvrez aussi nos autres modèles :'
+      ) +
+      `\\n${categoryUrl}`
+    );
+  }
+
+  if (!additions.length) {
+    return cleanReply;
+  }
+
+  return (
+    cleanReply +
+    '\\n\\n' +
+    additions.join(
+      '\\n\\n'
+    )
+  ).trim();
+}
+
+function detectProductFromAdReferral(
+  referral
+) {
+  if (
+    !referral ||
+    typeof referral !== 'object'
+  ) {
+    return '';
+  }
+
+  const text =
+    [
+      referral.headline,
+      referral.body
+    ]
+      .map(safeString)
+      .filter(Boolean)
+      .join(' ');
+
+  if (!text) {
+    return '';
+  }
+
+  return detectExplicitProductName(
+    text
+  );
+}
+
 function isAdReferralRecent(
   referral,
   maxHours = 72
@@ -2155,6 +2438,10 @@ RÈGLES :
 - Si le client écrit clairement en arabe ou en tunisien, tu peux répondre dans la même langue.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
 - Si le client nomme explicitement un produit (exemple : « salon Fiona »), réponds sur CE produit précis. Ne remplace jamais sa réponse par le prix d'un pack, d'une chambre ou d'un autre ensemble qui contient ce produit, sauf si le client demande explicitement ce pack.
+- FORMAT COMMERCIAL OBLIGATOIRE : dès qu'un produit précis est identifié et que son prix existe dans le contexte, affiche clairement le prix dans la réponse.
+- Si un prix promotionnel existe, affiche le prix promotionnel et le prix normal.
+- Dès qu'un produit précis est identifié et que « Lien catégorie » existe dans sa fiche, termine toujours la réponse par une invitation courte à découvrir les autres modèles de la catégorie, puis affiche le lien catégorie sur une ligne séparée.
+- Ne remplace jamais le lien catégorie par un lien inventé. Utilise uniquement « Lien catégorie » fourni dans le contexte.
 - Une publicité Meta sert seulement à comprendre une demande vague. Dès que le client nomme explicitement un produit, le produit nommé est prioritaire sur la publicité d'origine.
 - Si le client pose ensuite une question courte comme « dimensions ? », « disponible ? » ou « prix ? », conserve le dernier produit explicitement demandé comme sujet actif.
 - Si le client demande « toutes les adresses », « vos adresses », « tous les showrooms » ou une formulation équivalente, donne toutes les adresses disponibles dans l'instruction pertinente, sans en omettre une et sans renvoyer vers un commercial pour une adresse déjà présente.
@@ -2761,9 +3048,26 @@ async function generateReply(
         ?.activeProductName
     );
 
+  const storedAdReferral =
+    conversationState
+      ?.adReferral ||
+    null;
+
+  const adProductName =
+    !explicitProductName &&
+    !previousActiveProduct &&
+    isAdReferralRecent(
+      storedAdReferral
+    )
+      ? detectProductFromAdReferral(
+          storedAdReferral
+        )
+      : '';
+
   const activeProductName =
     explicitProductName ||
-    previousActiveProduct;
+    previousActiveProduct ||
+    adProductName;
 
   // Une demande qui nomme clairement un produit constitue une
   // nouvelle référence fiable. On évite que l'ancien historique
@@ -2788,9 +3092,13 @@ async function generateReply(
         );
 
   if (
-    explicitProductName &&
+    activeProductName &&
     !String(userId).startsWith(
       'admin-test-'
+    ) &&
+    (
+      explicitProductName ||
+      adProductName
     )
   ) {
     updateConversationState(
@@ -2798,7 +3106,7 @@ async function generateReply(
       current => ({
         ...current,
         activeProductName:
-          explicitProductName,
+          activeProductName,
         activeProductUpdatedAt:
           new Date().toISOString()
       })
@@ -2817,11 +3125,6 @@ async function generateReply(
       `🎯 Nouveau produit explicite pour ${userId} : ${explicitProductName}`
     );
   }
-
-  const storedAdReferral =
-    conversationState
-      ?.adReferral ||
-    null;
 
   // Une pub n'est utilisée que pour une demande ambiguë. Si le
   // client écrit « salon Fiona », Fiona gagne toujours.
@@ -2861,7 +3164,7 @@ async function generateReply(
     }
   ];
 
-  const reply =
+  let reply =
     await callAIChat(
       {
         messages,
@@ -2876,6 +3179,19 @@ async function generateReply(
         vision:
           false
       }
+    );
+
+  const productInfo =
+    activeProductName
+      ? getProductCommercialInfo(
+          activeProductName
+        )
+      : null;
+
+  reply =
+    ensureCommercialProductFormat(
+      reply,
+      productInfo
     );
 
   addHistoryMessage(
