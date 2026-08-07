@@ -1580,11 +1580,11 @@ function buildExactProductReply(userText, facts) {
     if (currentPrice) {
       if (hasPromo) {
         lines.push(
-          `${facts.name} سعرها الحالي ${facts.promoPrice} DT بدل ${facts.price} DT.`
+          `${facts.name} سعرها الحالي ${facts.promoPrice} دينار بدل ${facts.price} دينار.`
         );
       } else {
         lines.push(
-          `سعر ${facts.name} هو ${currentPrice} DT.`
+          `سعر ${facts.name} هو ${currentPrice} دينار.`
         );
       }
     } else {
@@ -2311,6 +2311,35 @@ async function callAIChat(
   );
 }
 
+// ============================================================
+// V6.17.3 — FORMAT WHATSAPP ARABE / TUNISIEN
+// - Pas de Markdown ** visible dans WhatsApp
+// - Les prix arabes sont affichés en « دينار » et non DT/TND/T
+// ============================================================
+function normalizeCustomerReplyFormat(reply, userText = '') {
+  let text = safeString(reply);
+
+  if (!text) return '';
+
+  // WhatsApp utilise *texte* pour le gras, alors que les modèles IA
+  // produisent souvent **texte**. On retire ces marqueurs pour garder
+  // une réponse propre et naturelle.
+  text = text
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1');
+
+  if (containsArabic(userText)) {
+    // Exemples corrigés : « 3090 T », « 3090 DT », « 3090 TND »
+    // deviennent tous « 3090 دينار ».
+    text = text.replace(
+      /(\d[\d\s.,]*)\s*(?:TND|DT|T)(?=\s|[.,!?؛،]|$)/gi,
+      (_, amount) => `${safeString(amount).trim()} دينار`
+    );
+  }
+
+  return text.trim();
+}
+
 async function generateReply(
   userId,
   userText
@@ -2331,7 +2360,10 @@ async function generateReply(
     const exactProduct = findExplicitProductFacts(cleanText);
 
     if (exactProduct) {
-      const groundedReply = buildExactProductReply(cleanText, exactProduct);
+      const groundedReply = normalizeCustomerReplyFormat(
+        buildExactProductReply(cleanText, exactProduct),
+        cleanText
+      );
 
       if (groundedReply) {
         addHistoryMessage(userId, 'user', cleanText);
@@ -2369,7 +2401,7 @@ async function generateReply(
     }
   ];
 
-  const reply =
+  let reply =
     await callAIChat(
       {
         messages,
@@ -2382,6 +2414,11 @@ async function generateReply(
           false
       }
     );
+
+  reply = normalizeCustomerReplyFormat(
+    reply,
+    cleanText
+  );
 
   addHistoryMessage(
     userId,
