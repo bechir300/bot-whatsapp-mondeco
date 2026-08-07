@@ -1377,6 +1377,256 @@ function splitBusinessContext(
   };
 }
 
+
+// ============================================================
+// V6.17.2 — ANCRAGE PRODUIT EXACT
+// Empêche l'IA de renommer un modèle ou de tronquer son prix.
+// Pour un message produit court / prix, on retrouve d'abord la fiche
+// exacte dans le contexte MONDECO puis on construit une réponse sûre.
+// ============================================================
+
+const GENERIC_PRODUCT_TOKENS = new Set([
+  'salon','canape','canapee','chambre','table','lit','bureau','pack',
+  'meuble','meubles','chaise','chaises','armoire','coiffeuse','fauteuil',
+  'prix','tarif','promo','promotion','tnd','dt'
+]);
+
+const PRODUCT_ARABIC_ALIASES = new Map([
+  ['دنيا', 'donia'],
+  ['دونيا', 'donia'],
+  ['فيونا', 'fiona'],
+  ['لارا', 'lara'],
+  ['تياغو', 'tiago'],
+  ['اوبرا', 'opera'],
+  ['أوبرا', 'opera'],
+  ['اوبيرا', 'opera'],
+  ['أوبيرا', 'opera']
+]);
+
+function parseProductFactsFromBlock(block) {
+  const text = safeString(block);
+  const pick = (label) => {
+    const re = new RegExp(`^${label}\\s*:\\s*(.+)$`, 'mi');
+    const match = text.match(re);
+    return match ? safeString(match[1]) : '';
+  };
+
+  return {
+    block: text,
+    name: pick('Produit'),
+    category: pick('Catégorie'),
+    price: pick('Prix normal'),
+    promoPrice: pick('Prix promotionnel'),
+    availability: pick('Disponibilité'),
+    dimensions: pick('Dimensions'),
+    productUrl: pick('Lien produit'),
+    categoryUrl: pick('Lien catégorie')
+  };
+}
+
+function productNameTokens(name) {
+  return normalizeForSearch(name)
+    .split(' ')
+    .filter(token =>
+      token.length >= 3 &&
+      !GENERIC_PRODUCT_TOKENS.has(token)
+    );
+}
+
+function messageDistinctiveTokens(userText) {
+  const normalized = normalizeForSearch(userText);
+  const result = new Set();
+
+  for (const token of normalized.split(' ')) {
+    if (
+      token.length >= 3 &&
+      !GENERIC_PRODUCT_TOKENS.has(token) &&
+      !['صالة','صالون','بقداش','قداش','السوم','الثمن'].includes(token)
+    ) {
+      result.add(token);
+    }
+
+    if (PRODUCT_ARABIC_ALIASES.has(token)) {
+      result.add(PRODUCT_ARABIC_ALIASES.get(token));
+    }
+
+    if (containsArabic(token)) {
+      const latin = arabicToLatin(token);
+      if (latin.length >= 3) result.add(latin);
+    }
+  }
+
+  return [...result];
+}
+
+function findExplicitProductFacts(userText) {
+  let rawContext = '';
+
+  try {
+    rawContext = getBusinessContext() || '';
+  } catch (error) {
+    console.error('❌ Recherche produit exact :', error.message);
+    return null;
+  }
+
+  if (!rawContext) return null;
+
+  const { productBlocks } = splitBusinessContext(rawContext);
+  const queryTokens = messageDistinctiveTokens(userText);
+
+  if (!queryTokens.length) return null;
+
+  const candidates = [];
+
+  for (const block of productBlocks) {
+    const facts = parseProductFactsFromBlock(block);
+    if (!facts.name) continue;
+
+    const nameTokens = productNameTokens(facts.name);
+    if (!nameTokens.length) continue;
+
+    let score = 0;
+    let bestDistance = 99;
+
+    for (const q of queryTokens) {
+      for (const n of nameTokens) {
+        if (q === n) {
+          score += 30;
+          bestDistance = 0;
+          continue;
+        }
+
+        if (n.includes(q) || q.includes(n)) {
+          score += 18;
+          bestDistance = Math.min(bestDistance, Math.abs(n.length - q.length));
+          continue;
+        }
+
+        const maxLen = Math.max(q.length, n.length);
+        const threshold = maxLen >= 7 ? 2 : 1;
+        const distance = editDistance(q, n);
+
+        if (distance <= threshold) {
+          score += 12 - (distance * 2);
+          bestDistance = Math.min(bestDistance, distance);
+        }
+      }
+    }
+
+    if (score > 0) {
+      candidates.push({ facts, score, bestDistance });
+    }
+  }
+
+  candidates.sort((a, b) =>
+    b.score - a.score ||
+    a.bestDistance - b.bestDistance ||
+    b.facts.name.length - a.facts.name.length
+  );
+
+  const best = candidates[0];
+  const second = candidates[1];
+
+  if (!best || best.score < 10) return null;
+
+  // Évite les choix ambigus entre deux produits proches.
+  if (
+    second &&
+    second.score === best.score &&
+    second.bestDistance === best.bestDistance
+  ) {
+    return null;
+  }
+
+  return best.facts;
+}
+
+function isSimpleProductFactRequest(userText) {
+  const text = normalizeForSearch(userText);
+  if (!text) return false;
+
+  // Ces intentions ont leurs propres traitements / réponses IA.
+  const excluded = [
+    'photo','image','تصويرة','تصويره','صورة',
+    'showroom','adresse','magasin','وين','فين','العنوان','عنوان',
+    'dimension','dimensions','mesure','مقاس','قياس',
+    'livraison','توصيل','paiement','دفع','credit'
+  ];
+
+  if (excluded.some(term => text.includes(term))) {
+    return false;
+  }
+
+  const priceIntent = [
+    'prix','tarif','بقداش','قداش','السوم','الثمن'
+  ].some(term => text.includes(term));
+
+  const wordCount = text.split(' ').filter(Boolean).length;
+
+  return priceIntent || wordCount <= 4;
+}
+
+function buildExactProductReply(userText, facts) {
+  if (!facts?.name) return '';
+
+  const isArabic = containsArabic(userText);
+  const currentPrice = facts.promoPrice || facts.price;
+  const hasPromo = Boolean(facts.promoPrice && facts.price);
+  const link = facts.categoryUrl || facts.productUrl || '';
+
+  if (isArabic) {
+    const lines = ['عسلامة 🌸', ''];
+
+    if (currentPrice) {
+      if (hasPromo) {
+        lines.push(
+          `${facts.name} سعرها الحالي ${facts.promoPrice} DT بدل ${facts.price} DT.`
+        );
+      } else {
+        lines.push(
+          `سعر ${facts.name} هو ${currentPrice} DT.`
+        );
+      }
+    } else {
+      lines.push(
+        `بالنسبة لـ ${facts.name}، السعر موش متوفر في المعلومات الحالية. التجاري متاع MONDECO ينجم يأكدلك السعر.`
+      );
+    }
+
+    if (link) {
+      lines.push('', 'تشوف بقية الموديلات والتفاصيل هنا:', link);
+    }
+
+    lines.push('', 'تحب نعطيك زادة المقاسات والتوفر في أقرب showroom؟');
+    return lines.join('\n');
+  }
+
+  const lines = ['Bonjour 👋', ''];
+
+  if (currentPrice) {
+    if (hasPromo) {
+      lines.push(
+        `${facts.name} est actuellement à ${facts.promoPrice} DT au lieu de ${facts.price} DT.`
+      );
+    } else {
+      lines.push(
+        `Le prix de ${facts.name} est de ${currentPrice} DT.`
+      );
+    }
+  } else {
+    lines.push(
+      `Le prix de ${facts.name} n’est pas disponible dans nos informations actuelles. Un commercial MONDECO peut vous le confirmer.`
+    );
+  }
+
+  if (link) {
+    lines.push('', 'Découvrez les autres modèles et détails ici :', link);
+  }
+
+  lines.push('', 'Souhaitez-vous aussi les dimensions ou la disponibilité en showroom ?');
+  return lines.join('\n');
+}
+
 function buildSmartBusinessContext(
   userText
 ) {
@@ -1603,6 +1853,8 @@ RÈGLES :
 - Une demande showroom doit contenir une intention de lieu/adresse (ex. وين، فين، العنوان, adresse, showroom, magasin ou une ville).
 - Si un nom de modèle accompagne une demande de prix, traite d'abord le produit et son prix avant toute information showroom.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
+- Copie toujours le NOM DU PRODUIT et le PRIX exactement comme ils apparaissent dans la fiche MONDECO ; ne traduis, ne renomme et ne raccourcis jamais un nom ou un nombre.
+- Si un lien catégorie est présent dans la fiche, termine la réponse produit avec ce lien.
 
 ==================================================
 CONTEXTE MONDECO PERTINENT
@@ -2070,6 +2322,24 @@ async function generateReply(
     throw new Error(
       'Message utilisateur vide.'
     );
+  }
+
+  // Pour une demande courte clairement liée à un produit,
+  // répondre avec les données exactes du catalogue avant de solliciter l'IA.
+  // Cela empêche les erreurs du type « Donia » -> « Dina » et les prix tronqués.
+  if (isSimpleProductFactRequest(cleanText)) {
+    const exactProduct = findExplicitProductFacts(cleanText);
+
+    if (exactProduct) {
+      const groundedReply = buildExactProductReply(cleanText, exactProduct);
+
+      if (groundedReply) {
+        addHistoryMessage(userId, 'user', cleanText);
+        addHistoryMessage(userId, 'assistant', groundedReply);
+        console.log(`✅ Réponse produit ancrée : ${exactProduct.name}`);
+        return groundedReply;
+      }
+    }
   }
 
   const history =
