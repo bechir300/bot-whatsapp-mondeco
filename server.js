@@ -27,6 +27,8 @@ const {
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
+  setCallActionHandler,
+  recordWhatsAppCallEvent,
   createCommercialCorrectionCandidate
 } = require('./Admin');
 
@@ -3558,6 +3560,220 @@ async function generateCustomizationSimulation({
 }
 
 // ============================================================
+// V6.19 — WHATSAPP BUSINESS CALLING API (AUDIO)
+// ============================================================
+
+async function callMetaCallingApi({
+  action,
+  callId = '',
+  sdp = '',
+  phoneNumberId = ''
+}) {
+  const targetPhoneNumberId =
+    safeString(phoneNumberId) ||
+    PHONE_NUMBER_ID;
+
+  if (!WHATSAPP_TOKEN) {
+    throw new Error(
+      'WHATSAPP_TOKEN manquant.'
+    );
+  }
+
+  if (!targetPhoneNumberId) {
+    throw new Error(
+      'PHONE_NUMBER_ID manquant.'
+    );
+  }
+
+  const baseUrl =
+    `https://graph.facebook.com/${META_API_VERSION}/${targetPhoneNumberId}`;
+
+  if (action === 'get_settings') {
+    const response = await fetch(
+      `${baseUrl}/settings`,
+      {
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_TOKEN}`
+        }
+      }
+    );
+
+    const data = await response.json()
+      .catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        data?.error?.message ||
+        `Meta Calling settings HTTP ${response.status}`
+      );
+    }
+
+    return data;
+  }
+
+  const body = {
+    messaging_product: 'whatsapp',
+    action
+  };
+
+  if (callId) {
+    body.call_id = callId;
+  }
+
+  if (
+    ['pre_accept', 'accept'].includes(action)
+  ) {
+    body.session = {
+      sdp_type: 'answer',
+      sdp: safeString(sdp)
+        .replace(/\r?\n/g, '\r\n')
+    };
+  }
+
+  const response = await fetch(
+    `${baseUrl}/calls`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type':
+          'application/json'
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  const data = await response.json()
+    .catch(() => ({}));
+
+  if (!response.ok) {
+    console.error(
+      '❌ Meta Calling API :',
+      JSON.stringify(data)
+    );
+
+    throw new Error(
+      data?.error?.message ||
+      `Meta Calling API HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+function callWebhookEventName(call) {
+  return safeString(
+    call?.event ||
+    call?.status ||
+    call?.state
+  ).toLowerCase();
+}
+
+async function processWhatsAppCalls(value) {
+  const incomingPhoneNumberId =
+    safeString(
+      value?.metadata?.phone_number_id
+    );
+
+  if (
+    PHONE_NUMBER_ID &&
+    incomingPhoneNumberId &&
+    incomingPhoneNumberId !== PHONE_NUMBER_ID
+  ) {
+    console.log(
+      '☎️ Appel autre numéro ignoré.'
+    );
+    return;
+  }
+
+  const calls = Array.isArray(value?.calls)
+    ? value.calls
+    : [];
+
+  for (const call of calls) {
+    const event = callWebhookEventName(call);
+    const saved = recordWhatsAppCallEvent(
+      call,
+      {
+        phoneNumberId:
+          incomingPhoneNumberId ||
+          PHONE_NUMBER_ID
+      }
+    );
+
+    if (!saved) {
+      continue;
+    }
+
+    const contact = normalizePhone(
+      call?.from || saved.from
+    );
+
+    console.log(
+      '☎️ ÉVÉNEMENT APPEL WHATSAPP :',
+      event || 'inconnu',
+      '| id :',
+      saved.id,
+      '| client :',
+      contact || 'inconnu'
+    );
+
+    if (
+      contact &&
+      ['connect', 'ringing', 'incoming'].includes(event)
+    ) {
+      updateConversationState(
+        contact,
+        current => ({
+          ...current,
+          commercialAttention: true,
+          commercialAttentionReason:
+            saved.mediaType === 'video'
+              ? 'Appel vidéo entrant — non pris en charge'
+              : 'Appel WhatsApp entrant',
+          priority: true,
+          unread: true,
+          lastCustomerAt:
+            new Date().toISOString()
+        })
+      );
+
+      logConversation({
+        contact,
+        incoming:
+          saved.mediaType === 'video'
+            ? '📹 Appel vidéo WhatsApp entrant'
+            : '☎️ Appel audio WhatsApp entrant',
+        action:
+          saved.mediaType === 'video'
+            ? 'video_call_incoming'
+            : 'voice_call_incoming',
+        call_id: saved.id,
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
+    }
+
+    if (
+      contact &&
+      ['terminate', 'terminated', 'ended', 'completed'].includes(event)
+    ) {
+      logConversation({
+        contact,
+        incoming: '☎️ Appel WhatsApp terminé',
+        action: 'voice_call_ended',
+        call_id: saved.id,
+        duration: saved.duration || 0,
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
+    }
+  }
+}
+
+// ============================================================
 // CONNECTION ADMIN
 // ============================================================
 
@@ -3566,6 +3782,11 @@ setImageChatHandler(generateVisionReply);
 
 setCustomizationHandler(
   generateCustomizationSimulation
+);
+
+setCallActionHandler(
+  async payload =>
+    callMetaCallingApi(payload)
 );
 
 setCommercialSendHandler(
@@ -4701,6 +4922,11 @@ async function processWhatsAppWebhook(body) {
         continue;
       }
 
+      if (field === 'calls') {
+        await processWhatsAppCalls(value);
+        continue;
+      }
+
       if (field !== 'messages') {
         console.log(
           `ℹ️ Champ ignoré : ${field}`
@@ -5625,7 +5851,8 @@ app.listen(
       '✅ Admin : /admin'
     );
     console.log(
-      '✅ Webhook : /webhook'
+      '✅ Webhook : /webhook',
+      '☎️ Calling API : V6.19 audio entrant (si Meta Calling est activé)'
     );
     console.log(
       '✅ Debug logs : /debug-log'
