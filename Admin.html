@@ -3773,6 +3773,138 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.15 — Réponses rapides plus claires
+   ========================================================== */
+.quick-reply-box{
+  margin-bottom:7px;
+  padding:8px 9px;
+  border:1px solid #e5ddd5;
+  border-radius:11px;
+  background:#fbfaf8;
+}
+.quick-reply-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:7px;
+}
+.quick-reply-head > div{
+  min-width:0;
+}
+.quick-reply-head strong{
+  display:block;
+  font-size:11px;
+  color:#11100f;
+}
+.quick-reply-head span{
+  display:block;
+  margin-top:2px;
+  color:#766f68;
+  font-size:9px;
+}
+.quick-reply-save-btn{
+  flex:0 0 auto;
+  min-height:32px;
+  padding:0 10px;
+  border:1px solid #11100f;
+  border-radius:9px;
+  background:#11100f;
+  color:#fff;
+  font-size:9.5px;
+  font-weight:900;
+  cursor:pointer;
+}
+.quick-reply-save-btn:hover{
+  opacity:.9;
+}
+.quick-reply-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:7px;
+  align-items:center;
+}
+.quick-reply-row select{
+  width:100%;
+  min-height:36px;
+  height:36px;
+  padding:0 10px;
+  border:1px solid #d9d1c9;
+  border-radius:9px;
+  background:#fff;
+  color:#11100f;
+  font-size:10.5px;
+  font-weight:700;
+}
+.quick-reply-delete-btn{
+  min-height:36px;
+  padding:0 10px;
+  border:1px solid #e2d8d0;
+  border-radius:9px;
+  background:#fff;
+  color:#8b1f24;
+  font-size:9.5px;
+  font-weight:800;
+  cursor:pointer;
+}
+.quick-reply-delete-btn:hover{
+  background:#fff4f4;
+  border-color:#efc7ca;
+}
+.quick-reply-shortcuts{
+  margin-top:6px;
+  color:#77716a;
+  font-size:8.8px;
+}
+.quick-reply-shortcuts code{
+  display:inline-block;
+  margin-left:3px;
+  padding:2px 5px;
+  border:1px solid #e1dbd4;
+  border-radius:6px;
+  background:#fff;
+  color:#4f4a45;
+  font-family:inherit;
+  font-size:8.5px;
+}
+
+/* Désactive l'ancien layout smart-keyboard dans ce composer */
+.inbox-composer .smart-keyboard,
+.inbox-composer .smart-keyboard-help{
+  display:none !important;
+}
+
+/* En mode compact, cacher toute la zone réponses rapides */
+.inbox-composer.is-compact .quick-reply-box,
+.inbox-composer.is-compact textarea,
+.inbox-composer.is-compact .composer-file-name{
+  display:none !important;
+}
+
+@media(max-width:760px){
+  .quick-reply-head{
+    align-items:flex-start;
+  }
+  .quick-reply-save-btn{
+    padding:0 8px;
+    font-size:9px;
+  }
+  .quick-reply-row{
+    grid-template-columns:1fr;
+  }
+  .quick-reply-delete-btn{
+    width:100%;
+  }
+}
+
+
+.quick-reply-box.quick-reply-applied{
+  border-color:#8fc9a8;
+  background:#f1faf5;
+  box-shadow:0 0 0 2px rgba(60,150,100,.08);
+}
 </style>
 </head>
 
@@ -4048,7 +4180,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.14</span>
+                <span class="inbox-version">V6.15</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
             </div>
@@ -6466,33 +6598,45 @@ function buildConversationComposer(
         </button>
       </div>
 
-      <div class="smart-keyboard">
-        <select
-          id="conversationQuickReplySelect"
-          onchange="applyConversationQuickReply(this.value)"
-        >
-          <option value="">⚡ Réponses rapides</option>
-        </select>
+      <div class="quick-reply-box">
+        <div class="quick-reply-head">
+          <div>
+            <strong>⚡ Réponses rapides</strong>
+            <span>Choisissez une réponse enregistrée pour l’insérer automatiquement.</span>
+          </div>
 
-        <button
-          class="btn small"
-          type="button"
-          onclick="saveConversationQuickReply()"
-        >
-          💾 Enregistrer
-        </button>
+          <button
+            class="quick-reply-save-btn"
+            type="button"
+            onclick="saveConversationQuickReply()"
+            title="Enregistrer le texte actuellement écrit comme nouvelle réponse rapide"
+          >
+            ＋ Enregistrer une réponse
+          </button>
+        </div>
 
-        <button
-          class="btn small"
-          type="button"
-          onclick="deleteConversationQuickReply()"
-        >
-          🗑️ Supprimer
-        </button>
-      </div>
+        <div class="quick-reply-row">
+          <select
+            id="conversationQuickReplySelect"
+            onchange="applyConversationQuickReply(this.value)"
+            aria-label="Choisir une réponse rapide"
+          >
+            <option value="">Choisir une réponse enregistrée…</option>
+          </select>
 
-      <div class="smart-keyboard-help">
-        /showroom · /devis · /ville · /dimensions
+          <button
+            class="quick-reply-delete-btn"
+            type="button"
+            onclick="deleteConversationQuickReply()"
+            title="Supprimer la réponse rapide sélectionnée"
+          >
+            🗑 Supprimer
+          </button>
+        </div>
+
+        <div class="quick-reply-shortcuts">
+          Raccourcis : <code>/showroom</code> <code>/devis</code> <code>/ville</code> <code>/dimensions</code>
+        </div>
       </div>
 
       <textarea
@@ -7185,7 +7329,7 @@ function populateConversationQuickReplySelect(){
   if(!select) return;
 
   select.innerHTML =
-    `<option value="">⚡ Réponses rapides</option>` +
+    `<option value="">Choisir une réponse enregistrée…</option>` +
     quickReplies
       .filter(item => item.active !== false)
       .map(item => `
@@ -7219,6 +7363,25 @@ window.applyConversationQuickReply = function(id){
     textarea.value.length,
     textarea.value.length
   );
+
+  const box =
+    document.querySelector(
+      '.quick-reply-box'
+    );
+
+  if(box){
+    box.classList.add(
+      'quick-reply-applied'
+    );
+
+    setTimeout(
+      () =>
+        box.classList.remove(
+          'quick-reply-applied'
+        ),
+      700
+    );
+  }
 };
 
 window.saveConversationQuickReply = async function(){
