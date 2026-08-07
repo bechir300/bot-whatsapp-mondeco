@@ -1281,12 +1281,18 @@ function extractContextTerms(userText) {
     if (
       term.includes('showroom') ||
       term.includes('magasin') ||
-      term.includes('adresse')
+      term.includes('adresse') ||
+      term.includes('localisation') ||
+      term.includes('location')
     ) {
       [
         'showroom',
+        'showrooms',
         'adresse',
+        'adresses',
+        'localisation',
         'magasin',
+        'magasins',
         'soukra',
         'ezzahra',
         'nabeul',
@@ -1494,17 +1500,40 @@ function splitBusinessContext(
   productSection =
     productSection.trim();
 
-  const instructionBlocks =
-    instructionSection
-      ? instructionSection
+  let instructionBlocks = [];
+
+  if (instructionSection) {
+    if (
+      instructionSection.includes(
+        '--- INSTRUCTION '
+      )
+    ) {
+      instructionBlocks =
+        instructionSection
+          .split(
+            /(?=--- INSTRUCTION \d+ ---)/
+          )
+          .map(item =>
+            item.trim()
+          )
+          .filter(item =>
+            item.startsWith(
+              '--- INSTRUCTION'
+            )
+          );
+    } else {
+      // Compatibilité avec les anciennes versions.
+      instructionBlocks =
+        instructionSection
           .split(
             /\n\s*\n(?=\d+\.\s)/
           )
           .map(item =>
             item.trim()
           )
-          .filter(Boolean)
-      : [];
+          .filter(Boolean);
+    }
+  }
 
   const productBlocks =
     productSection
@@ -1596,64 +1625,79 @@ function buildSmartBusinessContext(
           a.index - b.index
       );
 
-  const selectedInstructionIndexes =
-    new Set();
-
-  // Conserve quelques règles générales,
-  // même si la question est très courte.
-  for (
-    let index = 0;
-    index <
-      Math.min(
-        4,
-        instructionBlocks.length
+  const relevantInstructions =
+    scoredInstructions
+      .filter(item =>
+        item.score > 0
+      )
+      .slice(
+        0,
+        MAX_INSTRUCTION_BLOCKS
       );
-    index += 1
-  ) {
-    selectedInstructionIndexes.add(
-      index
-    );
-  }
 
-  for (
-    const item
-    of scoredInstructions
-  ) {
-    if (
-      item.score <= 0 &&
-      terms.length > 0
-    ) {
-      continue;
-    }
-
-    selectedInstructionIndexes.add(
-      item.index
-    );
-
-    if (
-      selectedInstructionIndexes.size >=
-      MAX_INSTRUCTION_BLOCKS
-    ) {
-      break;
-    }
-  }
-
-  const orderedInstructions =
-    [
-      ...selectedInstructionIndexes
-    ]
-      .sort(
-        (a, b) => a - b
+  const relevantIndexes =
+    new Set(
+      relevantInstructions.map(
+        item =>
+          item.index
       )
+    );
+
+  const generalInstructions =
+    instructionBlocks
       .map(
-        index =>
-          instructionBlocks[index]
+        (
+          block,
+          index
+        ) => ({
+          block,
+          index
+        })
       )
-      .filter(Boolean);
+      .filter(item =>
+        !relevantIndexes.has(
+          item.index
+        )
+      )
+      .slice(
+        0,
+        Math.max(
+          0,
+          Math.min(
+            3,
+            MAX_INSTRUCTION_BLOCKS -
+            relevantInstructions.length
+          )
+        )
+      );
+
+  let instructionCandidates;
+
+  if (terms.length > 0) {
+    // Les instructions réellement liées à la question passent
+    // toujours avant les règles générales afin de ne jamais être
+    // exclues par le budget de contexte.
+    instructionCandidates = [
+      ...relevantInstructions.map(
+        item =>
+          item.block
+      ),
+      ...generalInstructions.map(
+        item =>
+          item.block
+      )
+    ];
+  } else {
+    instructionCandidates =
+      instructionBlocks.slice(
+        0,
+        MAX_INSTRUCTION_BLOCKS
+      );
+  }
 
   const limitedInstructions =
     takeBlocksWithinBudget(
-      orderedInstructions,
+      instructionCandidates,
       MAX_INSTRUCTION_CONTEXT_CHARS
     );
 
@@ -1771,6 +1815,8 @@ RÈGLES :
 - Réponds principalement en français.
 - Si le client écrit clairement en arabe ou en tunisien, tu peux répondre dans la même langue.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
+- Si le client demande « toutes les adresses », « vos adresses », « tous les showrooms » ou une formulation équivalente, donne toutes les adresses disponibles dans l'instruction pertinente, sans en omettre une et sans renvoyer vers un commercial pour une adresse déjà présente.
+- Si le client demande l'adresse d'un showroom précis et que cette adresse figure dans le contexte, réponds directement avec cette adresse.
 - Si un CONTEXTE PUBLICITAIRE META est fourni, comprends que les messages courts du client peuvent faire référence au produit présenté dans cette publicité.
 - Ne traite jamais le texte publicitaire comme une source autoritative de prix ou de disponibilité : vérifie toujours ces informations dans le catalogue MONDECO.
 
