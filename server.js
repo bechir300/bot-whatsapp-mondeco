@@ -1648,7 +1648,16 @@ const GENERIC_PRODUCT_NAME_WORDS =
     'angle',
     'junior',
     'premium',
-    'modele',
+    'fille',
+    'garcon',
+    'enfant',
+    'enfants',
+    'adulte',
+    'adultes',
+    'ensemble',
+    'complet',
+    'complete',
+    'collection',
     'modele'
   ]);
 
@@ -1737,6 +1746,32 @@ function findExplicitProductMatch(
       distinctive.filter(token =>
         queryTokens.has(token)
       );
+
+    const typeWords = [
+      'salon',
+      'chambre',
+      'lit',
+      'table',
+      'bureau',
+      'chaise',
+      'fauteuil',
+      'canape',
+      'pack',
+      'meuble',
+      'coin',
+      'angle'
+    ];
+
+    for (const typeWord of typeWords) {
+      if (
+        queryTokens.has(typeWord) &&
+        normalizedName
+          .split(' ')
+          .includes(typeWord)
+      ) {
+        score += 80;
+      }
+    }
 
     if (
       distinctive.length > 0 &&
@@ -1907,6 +1942,12 @@ function getProductCommercialInfo(
           'Prix promotionnel'
         ),
 
+      availability:
+        contextFieldValue(
+          block,
+          'Disponibilité'
+        ),
+
       categoryUrl:
         contextFieldValue(
           block,
@@ -1921,7 +1962,7 @@ function getProductCommercialInfo(
     };
   } catch (error) {
     console.warn(
-      '⚠️ Lecture informations commerciales produit :',
+      '⚠️ Informations commerciales produit :',
       error.message
     );
 
@@ -1929,7 +1970,7 @@ function getProductCommercialInfo(
   }
 }
 
-function normalizePriceForDisplay(
+function cleanPriceValue(
   value
 ) {
   return safeString(value)
@@ -1940,20 +1981,33 @@ function normalizePriceForDisplay(
     .trim();
 }
 
+function compactPriceValue(
+  value
+) {
+  return cleanPriceValue(
+    value
+  )
+    .replace(
+      /[\\s.,]/g,
+      ''
+    )
+    .toLowerCase();
+}
+
 function replyContainsPrice(
   reply,
   price
 ) {
-  const normalizedPrice =
-    normalizePriceForDisplay(
+  const wanted =
+    compactPriceValue(
       price
     );
 
-  if (!normalizedPrice) {
+  if (!wanted) {
     return false;
   }
 
-  const compactReply =
+  const replyCompact =
     safeString(reply)
       .replace(
         /[\\s.,]/g,
@@ -1961,43 +2015,60 @@ function replyContainsPrice(
       )
       .toLowerCase();
 
-  const compactPrice =
-    normalizedPrice
-      .replace(
-        /[\\s.,]/g,
-        ''
-      )
-      .toLowerCase();
-
-  return (
-    compactPrice &&
-    compactReply.includes(
-      compactPrice
-    )
+  return replyCompact.includes(
+    wanted
   );
+}
+
+function removeFalseUnknownPriceSentences(
+  reply
+) {
+  let text =
+    safeString(reply);
+
+  const patterns = [
+    /(?:Le\\s+)?prix[^.!?\\n]{0,180}(?:n['’]\\s*est\\s*pas\\s*disponible|n['’]\\s*est\\s*pas\\s*connu|est\\s*indisponible|n['’]\\s*appara[iî]t\\s*pas)[^.!?\\n]*[.!?]?/gi,
+    /Un\\s+commercial\\s+MONDECO[^.!?\\n]{0,180}(?:confirmer|tarif|prix)[^.!?\\n]*[.!?]?/gi,
+    /(?:tarif|prix)[^.!?\\n]{0,120}(?:à\\s*confirmer|a\\s*confirmer)[^.!?\\n]*[.!?]?/gi
+  ];
+
+  for (const pattern of patterns) {
+    text =
+      text.replace(
+        pattern,
+        ''
+      );
+  }
+
+  return text
+    .replace(
+      /\\n{3,}/g,
+      '\\n\\n'
+    )
+    .trim();
 }
 
 function ensureCommercialProductFormat(
   reply,
   productInfo
 ) {
-  const cleanReply =
+  let text =
     safeString(reply);
 
   if (
-    !cleanReply ||
+    !text ||
     !productInfo
   ) {
-    return cleanReply;
+    return text;
   }
 
   const normalPrice =
-    normalizePriceForDisplay(
+    cleanPriceValue(
       productInfo.normalPrice
     );
 
   const promoPrice =
-    normalizePriceForDisplay(
+    cleanPriceValue(
       productInfo.promoPrice
     );
 
@@ -2005,33 +2076,31 @@ function ensureCommercialProductFormat(
     promoPrice ||
     normalPrice;
 
-  const hasEffectivePrice =
-    replyContainsPrice(
-      cleanReply,
-      effectivePrice
-    );
-
-  const categoryUrl =
-    safeString(
-      productInfo.categoryUrl
-    );
-
-  const hasCategoryUrl =
-    categoryUrl &&
-    cleanReply.includes(
-      categoryUrl
-    );
+  if (effectivePrice) {
+    text =
+      removeFalseUnknownPriceSentences(
+        text
+      );
+  }
 
   const additions = [];
 
   if (
     effectivePrice &&
-    !hasEffectivePrice
+    !replyContainsPrice(
+      text,
+      effectivePrice
+    )
   ) {
     if (
       promoPrice &&
       normalPrice &&
-      promoPrice !== normalPrice
+      compactPriceValue(
+        promoPrice
+      ) !==
+      compactPriceValue(
+        normalPrice
+      )
     ) {
       additions.push(
         `Prix promotionnel : *${promoPrice} DT* au lieu de ${normalPrice} DT.`
@@ -2043,36 +2112,50 @@ function ensureCommercialProductFormat(
     }
   }
 
+  const categoryUrl =
+    safeString(
+      productInfo.categoryUrl
+    );
+
   if (
     categoryUrl &&
-    !hasCategoryUrl
+    !text.includes(
+      categoryUrl
+    )
   ) {
-    const categoryLabel =
-      safeString(
-        productInfo.category
-      );
-
     additions.push(
-      (
-        categoryLabel
-          ? `Découvrez aussi nos autres modèles ${categoryLabel} :`
-          : 'Découvrez aussi nos autres modèles :'
-      ) +
-      `\\n${categoryUrl}`
+      `Vous pouvez aussi découvrir nos autres modèles ici :\\n${categoryUrl}`
     );
   }
 
-  if (!additions.length) {
-    return cleanReply;
-  }
+  const result =
+    [
+      text,
+      ...additions
+    ]
+      .filter(Boolean)
+      .join(
+        '\\n\\n'
+      )
+      .replace(
+        /\\\\n/g,
+        '\\n'
+      )
+      .replace(
+        /\\b(TND|DT)\\s+DT\\b/gi,
+        'DT'
+      )
+      .replace(
+        /\\bTND\\s+TND\\b/gi,
+        'TND'
+      )
+      .replace(
+        /\\n{3,}/g,
+        '\\n\\n'
+      )
+      .trim();
 
-  return (
-    cleanReply +
-    '\\n\\n' +
-    additions.join(
-      '\\n\\n'
-    )
-  ).trim();
+  return result;
 }
 
 function detectProductFromAdReferral(
@@ -2295,56 +2378,48 @@ function buildSmartBusinessContext(
       MAX_INSTRUCTION_CONTEXT_CHARS
     );
 
-  const scoredProducts =
-    productBlocks
-      .map(
-        (
-          block,
-          index
-        ) => {
-          const blockName =
-            productNameFromContextBlock(
-              block
-            );
+  let scoredProducts;
 
-          const explicitBoost =
-            explicitProduct &&
-            normalizeForSearch(
-              blockName
-            ) ===
-            normalizeForSearch(
-              explicitProduct.name
-            )
-              ? 10000
-              : 0;
-
-          return {
+  if (explicitProduct) {
+    // Si le client nomme un produit, on n'envoie QUE sa fiche.
+    // Cela empêche un pack ou un autre produit contenant le même
+    // mot d'influencer Gemini.
+    scoredProducts = [
+      explicitProduct.block
+    ];
+  } else {
+    scoredProducts =
+      productBlocks
+        .map(
+          (
+            block,
+            index
+          ) => ({
             block,
             index,
             score:
-              explicitBoost +
               scoreContextBlock(
                 block,
                 terms
               )
-          };
-        }
-      )
-      .filter(item =>
-        item.score > 0
-      )
-      .sort(
-        (a, b) =>
-          b.score - a.score ||
-          a.index - b.index
-      )
-      .slice(
-        0,
-        MAX_PRODUCT_BLOCKS
-      )
-      .map(item =>
-        item.block
-      );
+          })
+        )
+        .filter(item =>
+          item.score > 0
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            a.index - b.index
+        )
+        .slice(
+          0,
+          MAX_PRODUCT_BLOCKS
+        )
+        .map(item =>
+          item.block
+        );
+  }
 
   const limitedProducts =
     takeBlocksWithinBudget(
@@ -2438,10 +2513,11 @@ RÈGLES :
 - Si le client écrit clairement en arabe ou en tunisien, tu peux répondre dans la même langue.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
 - Si le client nomme explicitement un produit (exemple : « salon Fiona »), réponds sur CE produit précis. Ne remplace jamais sa réponse par le prix d'un pack, d'une chambre ou d'un autre ensemble qui contient ce produit, sauf si le client demande explicitement ce pack.
-- FORMAT COMMERCIAL OBLIGATOIRE : dès qu'un produit précis est identifié et que son prix existe dans le contexte, affiche clairement le prix dans la réponse.
-- Si un prix promotionnel existe, affiche le prix promotionnel et le prix normal.
-- Dès qu'un produit précis est identifié et que « Lien catégorie » existe dans sa fiche, termine toujours la réponse par une invitation courte à découvrir les autres modèles de la catégorie, puis affiche le lien catégorie sur une ligne séparée.
-- Ne remplace jamais le lien catégorie par un lien inventé. Utilise uniquement « Lien catégorie » fourni dans le contexte.
+- Dès qu'un produit précis est identifié, si son prix existe dans sa fiche, affiche toujours ce prix clairement dans la réponse, même si la question porte aussi sur les dimensions, la disponibilité ou la composition.
+- Si un prix promotionnel existe, affiche le prix promotionnel et distingue le prix normal.
+- Dès qu'un produit précis est identifié et que sa fiche contient « Lien catégorie », termine toujours par une courte invitation à découvrir les autres modèles, puis le lien catégorie sur une ligne séparée.
+- N'invente jamais de lien. Utilise uniquement le « Lien catégorie » de la fiche produit.
+- Si la fiche du produit contient un prix, il est interdit de dire que le prix est inconnu ou qu'un commercial doit le confirmer.
 - Une publicité Meta sert seulement à comprendre une demande vague. Dès que le client nomme explicitement un produit, le produit nommé est prioritaire sur la publicité d'origine.
 - Si le client pose ensuite une question courte comme « dimensions ? », « disponible ? » ou « prix ? », conserve le dernier produit explicitement demandé comme sujet actif.
 - Si le client demande « toutes les adresses », « vos adresses », « tous les showrooms » ou une formulation équivalente, donne toutes les adresses disponibles dans l'instruction pertinente, sans en omettre une et sans renvoyer vers un commercial pour une adresse déjà présente.
