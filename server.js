@@ -5093,7 +5093,8 @@ setCommercialSendHandler(
     text,
     question,
     file = null,
-    mediaKind = ''
+    mediaKind = '',
+    actor = null
   }) => {
     const cleanPhone =
       normalizePhone(phone);
@@ -5150,7 +5151,33 @@ setCommercialSendHandler(
         commercialAttentionReason: '',
         imageNeedsCommercial: false,
         lastCommercialAt:
-          new Date().toISOString()
+          new Date().toISOString(),
+        lastCommercialUserId:
+          safeString(
+            actor?.id
+          ),
+        lastCommercialName:
+          safeString(
+            actor?.name
+          ),
+        lastCommercialEmail:
+          safeString(
+            actor?.email
+          ),
+        assignedTo:
+          safeString(
+            actor?.name
+          ) ||
+          safeString(
+            current.assignedTo
+          ),
+        assignedUserId:
+          safeString(
+            actor?.id
+          ) ||
+          safeString(
+            current.assignedUserId
+          )
       })
     );
 
@@ -5182,6 +5209,22 @@ setCommercialSendHandler(
         'commercial_reply',
       source:
         'commercial_admin',
+      commercial_user_id:
+        safeString(
+          actor?.id
+        ),
+      commercial_user_name:
+        safeString(
+          actor?.name
+        ),
+      commercial_user_email:
+        safeString(
+          actor?.email
+        ),
+      commercial_user_role:
+        safeString(
+          actor?.role
+        ),
       attachment_type:
         attachment?.kind ||
         undefined,
