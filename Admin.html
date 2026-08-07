@@ -3905,6 +3905,247 @@ tbody tr:hover{
   background:#f1faf5;
   box-shadow:0 0 0 2px rgba(60,150,100,.08);
 }
+
+/* ==========================================================
+   MONDECO V6.16 — Comptes équipe / rôles / rapports
+   ========================================================== */
+.sidebar-user{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  margin-bottom:10px;
+  padding:9px;
+  border:1px solid #2c2926;
+  border-radius:11px;
+  background:#171513;
+}
+.sidebar-user-avatar{
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  flex:0 0 34px;
+  border-radius:50%;
+  background:#fff;
+  color:#11100f;
+  font-size:12px;
+  font-weight:900;
+}
+.sidebar-user-info{
+  min-width:0;
+}
+.sidebar-user-info strong,
+.sidebar-user-info span{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.sidebar-user-info strong{
+  color:#fff;
+  font-size:10.5px;
+}
+.sidebar-user-info span{
+  margin-top:2px;
+  color:#a79f98;
+  font-size:8.5px;
+}
+.team-date-field{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:0;
+  font-size:10px;
+  font-weight:800;
+}
+.team-date-field input{
+  min-height:36px;
+  width:auto;
+}
+.team-summary-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+  margin-bottom:14px;
+}
+.team-stat-card{
+  padding:16px;
+}
+.team-stat-card span{
+  display:block;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:750;
+}
+.team-stat-card strong{
+  display:block;
+  margin-top:7px;
+  font-size:28px;
+  line-height:1;
+}
+.team-ranking-card{
+  margin-bottom:14px;
+}
+.team-card-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:13px;
+}
+.team-card-head h3{
+  margin:0;
+  font-size:15px;
+}
+.team-card-head p{
+  margin:4px 0 0;
+  color:var(--muted);
+  font-size:10.5px;
+  line-height:1.45;
+}
+.team-ranking-table{
+  width:100%;
+  border-collapse:collapse;
+}
+.team-ranking-table th,
+.team-ranking-table td{
+  padding:10px 8px;
+  border-bottom:1px solid var(--line);
+  text-align:left;
+  font-size:10.5px;
+}
+.team-ranking-table th{
+  color:var(--muted);
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.team-rank{
+  width:38px;
+  font-size:17px !important;
+  font-weight:900;
+}
+.team-rank.top-1{color:#b78300}
+.team-rank.top-2{color:#6f747a}
+.team-rank.top-3{color:#a86837}
+.team-user-list{
+  display:grid;
+  gap:8px;
+}
+.team-user-row{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr) auto;
+  align-items:center;
+  gap:10px;
+  padding:10px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:#fff;
+}
+.team-user-avatar{
+  width:40px;
+  height:40px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:#11100f;
+  color:#fff;
+  font-size:11px;
+  font-weight:900;
+}
+.team-user-main{
+  min-width:0;
+}
+.team-user-main strong,
+.team-user-main span{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.team-user-main strong{
+  font-size:11px;
+}
+.team-user-main span{
+  margin-top:2px;
+  color:var(--muted);
+  font-size:9px;
+}
+.team-user-actions{
+  display:flex;
+  gap:5px;
+}
+.team-role-pill{
+  display:inline-flex !important;
+  width:max-content;
+  margin-top:5px !important;
+  padding:3px 6px;
+  border-radius:999px;
+  background:#f0ece7;
+  color:#4e4944 !important;
+  font-size:8px !important;
+  font-weight:900;
+}
+.team-role-pill.admin{
+  background:#11100f;
+  color:#fff !important;
+}
+.team-role-pill.editor{
+  background:#eaf4ff;
+  color:#1c5c98 !important;
+}
+.team-role-pill.commercial{
+  background:#edf8f1;
+  color:#197343 !important;
+}
+.team-user-row.inactive{
+  opacity:.55;
+}
+.team-user-form{
+  display:grid;
+  gap:10px;
+}
+.role-help{
+  display:grid;
+  gap:7px;
+  margin:2px 0 4px;
+  padding:10px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#faf8f5;
+}
+.role-help div{
+  display:grid;
+  gap:2px;
+}
+.role-help strong{
+  font-size:9.5px;
+}
+.role-help span{
+  color:var(--muted);
+  font-size:8.8px;
+  line-height:1.4;
+}
+@media(max-width:980px){
+  .team-summary-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+@media(max-width:620px){
+  .team-summary-grid{
+    grid-template-columns:1fr 1fr;
+  }
+  .team-management-grid{
+    grid-template-columns:1fr !important;
+  }
+  .team-user-row{
+    grid-template-columns:36px minmax(0,1fr);
+  }
+  .team-user-actions{
+    grid-column:1 / -1;
+  }
+}
+
 </style>
 </head>
 
@@ -3970,9 +4211,21 @@ tbody tr:hover{
         <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg></span>
         <span>Paramètres</span>
       </button>
+      <button data-page="team">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 20c.5-4 2.4-6 5.5-6s5 2 5.5 6"/><path d="M14 15c3.6-.4 5.8 1.3 6.5 5"/></svg></span>
+        <span>Équipe & rapports</span>
+      </button>
     </nav>
 
     <div class="sidebar-footer">
+      <div class="sidebar-user" id="sidebarUser">
+        <div class="sidebar-user-avatar" id="sidebarUserAvatar">M</div>
+        <div class="sidebar-user-info">
+          <strong id="sidebarUserName">Compte MONDECO</strong>
+          <span id="sidebarUserRole">—</span>
+        </div>
+      </div>
+
       <button class="logout-btn" id="logoutBtn">
         Se déconnecter
       </button>
@@ -4180,7 +4433,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.15</span>
+                <span class="inbox-version">V6.16</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
             </div>
@@ -4680,7 +4933,7 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             <button class="btn" id="wooCopyWebhookBtn" type="button">
               Copier l'URL webhook
             </button>
-            <button class="btn" id="wooInstallWebhooksBtn" type="button">
+            <button class="btn admin-only-control" id="wooInstallWebhooksBtn" type="button">
               Installer les webhooks
             </button>
           </div>
@@ -5031,6 +5284,139 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
       </div>
     </section>
 
+    <!-- ================================================== -->
+    <!-- ÉQUIPE & RAPPORTS -->
+    <!-- ================================================== -->
+
+    <section id="page-team" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Équipe & rapports</h2>
+          <p class="page-subtitle">
+            Gérez les accès de l’équipe MONDECO et suivez l’activité commerciale quotidienne.
+          </p>
+        </div>
+
+        <div class="actions">
+          <label class="team-date-field">
+            <span>Rapport du</span>
+            <input id="teamReportDate" type="date">
+          </label>
+
+          <button class="btn" id="refreshTeamReportBtn" type="button">
+            ↻ Actualiser
+          </button>
+        </div>
+      </div>
+
+      <div class="team-summary-grid">
+        <div class="card team-stat-card">
+          <span>Réponses commerciales</span>
+          <strong id="teamStatReplies">0</strong>
+        </div>
+
+        <div class="card team-stat-card">
+          <span>Conversations traitées</span>
+          <strong id="teamStatConversations">0</strong>
+        </div>
+
+        <div class="card team-stat-card">
+          <span>Commerciaux actifs</span>
+          <strong id="teamStatActive">0</strong>
+        </div>
+
+        <div class="card team-stat-card">
+          <span>Fichiers envoyés</span>
+          <strong id="teamStatFiles">0</strong>
+        </div>
+      </div>
+
+      <div class="card team-ranking-card">
+        <div class="team-card-head">
+          <div>
+            <h3>Classement commercial du jour</h3>
+            <p>
+              Classement basé sur les réponses envoyées depuis l’application MONDECO.
+            </p>
+          </div>
+
+          <span class="badge" id="teamReportDateLabel">Aujourd’hui</span>
+        </div>
+
+        <div id="teamRankingContainer" class="table-wrap">
+          <div class="empty">
+            Chargement du rapport...
+          </div>
+        </div>
+
+        <div id="teamReportWarning" class="notice warning hidden" style="margin-top:12px"></div>
+      </div>
+
+      <div class="grid grid-2 team-management-grid">
+        <div class="card">
+          <div class="team-card-head">
+            <div>
+              <h3>Comptes de l’équipe</h3>
+              <p>
+                Chaque personne se connecte avec son e-mail personnel.
+              </p>
+            </div>
+          </div>
+
+          <div id="teamUsersContainer">
+            <div class="empty">Chargement...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="team-card-head">
+            <div>
+              <h3>Ajouter un membre</h3>
+              <p>
+                Choisissez le rôle selon les responsabilités de la personne.
+              </p>
+            </div>
+          </div>
+
+          <form id="teamUserForm" class="team-user-form">
+            <div class="field">
+              <label>Nom complet</label>
+              <input id="teamUserName" required placeholder="Ex. Sarah Karoui">
+            </div>
+
+            <div class="field">
+              <label>Adresse e-mail</label>
+              <input id="teamUserEmail" type="email" required placeholder="sarah@mondeco.tn">
+            </div>
+
+            <div class="field">
+              <label>Rôle</label>
+              <select id="teamUserRole">
+                <option value="commercial">Commercial</option>
+                <option value="editor">Éditeur</option>
+                <option value="admin">Administrateur</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Mot de passe initial</label>
+              <input id="teamUserPassword" type="password" minlength="8" required placeholder="Minimum 8 caractères">
+            </div>
+
+            <div class="role-help">
+              <div><strong>Commercial</strong><span>Conversations, réponses rapides, fichiers, notifications.</span></div>
+              <div><strong>Éditeur</strong><span>Commercial + produits, WooCommerce, instructions, corrections et suivi.</span></div>
+              <div><strong>Administrateur</strong><span>Accès complet, équipe, paramètres, sauvegardes et rapports.</span></div>
+            </div>
+
+            <button class="btn primary" id="createTeamUserBtn" type="submit">
+              Créer le compte
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -5261,6 +5647,9 @@ let commercialCorrections = [];
 let selectedConversationData = null;
 let wooStatus = null;
 let productPreviewObjectUrl = null;
+let currentUser = null;
+let teamUsers = [];
+let teamReport = null;
 
 const pages = [...document.querySelectorAll('.page')];
 const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
@@ -5274,7 +5663,170 @@ function escapeHtml(value){
     .replaceAll("'","&#039;");
 }
 
+
+const PAGE_ROLES = {
+  home:
+    ['admin','editor'],
+  products:
+    ['admin','editor'],
+  woocommerce:
+    ['admin','editor'],
+  instructions:
+    ['admin','editor'],
+  conversations:
+    ['admin','editor','commercial'],
+  corrections:
+    ['admin','editor'],
+  customization:
+    ['admin','editor'],
+  test:
+    ['admin','editor'],
+  settings:
+    ['admin'],
+  team:
+    ['admin']
+};
+
+function roleCanOpenPage(
+  pageName
+){
+  if(!currentUser){
+    return false;
+  }
+
+  const allowed =
+    PAGE_ROLES[
+      pageName
+    ] || [];
+
+  return allowed.includes(
+    currentUser.role
+  );
+}
+
+function userInitials(
+  name,
+  email
+){
+  const source =
+    String(
+      name ||
+      email ||
+      'M'
+    )
+      .trim();
+
+  const parts =
+    source
+      .split(/\s+/)
+      .filter(Boolean);
+
+  if(parts.length >= 2){
+    return (
+      parts[0][0] +
+      parts[1][0]
+    )
+      .toUpperCase();
+  }
+
+  return source
+    .slice(0,2)
+    .toUpperCase();
+}
+
+function applyRoleAccess(){
+  navButtons.forEach(
+    button => {
+      const page =
+        button.dataset.page;
+
+      button.classList.toggle(
+        'hidden',
+        !roleCanOpenPage(
+          page
+        )
+      );
+    }
+  );
+
+  pages.forEach(
+    page => {
+      const pageName =
+        page.id.replace(
+          /^page-/,
+          ''
+        );
+
+      if(
+        !roleCanOpenPage(
+          pageName
+        )
+      ){
+        page.classList.remove(
+          'active'
+        );
+      }
+    }
+  );
+
+  const nameEl =
+    document.getElementById(
+      'sidebarUserName'
+    );
+
+  const roleEl =
+    document.getElementById(
+      'sidebarUserRole'
+    );
+
+  const avatarEl =
+    document.getElementById(
+      'sidebarUserAvatar'
+    );
+
+  if(nameEl){
+    nameEl.textContent =
+      currentUser?.name ||
+      currentUser?.email ||
+      'MONDECO';
+  }
+
+  if(roleEl){
+    roleEl.textContent =
+      `${currentUser?.roleLabel || currentUser?.role || ''} • ${currentUser?.email || ''}`;
+  }
+
+  if(avatarEl){
+    avatarEl.textContent =
+      userInitials(
+        currentUser?.name,
+        currentUser?.email
+      );
+  }
+
+  document
+    .querySelectorAll(
+      '.admin-only-control'
+    )
+    .forEach(
+      element =>
+        element.classList.toggle(
+          'hidden',
+          currentUser?.role !==
+            'admin'
+        )
+    );
+}
+
 function showPage(name){
+  if(
+    !roleCanOpenPage(
+      name
+    )
+  ){
+    return;
+  }
+
   pages.forEach(page => {
     page.classList.toggle(
       'active',
@@ -5308,6 +5860,7 @@ function showPage(name){
     loadProducts().then(loadCustomizations);
   }
   if(name === 'settings') loadSettings();
+  if(name === 'team') loadTeamAdmin();
 }
 
 navButtons.forEach(btn => {
@@ -6538,15 +7091,44 @@ function renderThreadMessage(
   entry,
   commercial = false
 ){
-  if(!text){
+  if(
+    !text &&
+    !entry?.attachment_name
+  ){
     return '';
   }
+
+  const commercialName =
+    String(
+      entry?.commercial_user_name ||
+      entry?.commercial_user_email ||
+      ''
+    )
+      .trim();
+
+  const commercialRole =
+    String(
+      entry?.commercial_user_role ||
+      ''
+    )
+      .trim();
+
+  const commercialRoleLabel =
+    commercialRole === 'admin'
+      ? 'Administrateur'
+      : commercialRole === 'editor'
+        ? 'Éditeur'
+        : 'Commercial';
 
   const label =
     type === 'incoming'
       ? 'Client'
       : commercial
-        ? 'Commercial MONDECO'
+        ? (
+            commercialName
+              ? `${commercialRoleLabel} MONDECO • ${commercialName}`
+              : `${commercialRoleLabel} MONDECO`
+          )
         : 'Agent MONDECO';
 
   return `
@@ -6555,9 +7137,15 @@ function renderThreadMessage(
         <div class="inbox-message-label">
           ${label}
         </div>
-        <div class="inbox-bubble">
-          ${escapeHtml(text)}
-        </div>
+        ${
+          text
+            ? `
+              <div class="inbox-bubble">
+                ${escapeHtml(text)}
+              </div>
+            `
+            : ''
+        }
         ${
           entry.attachment_name &&
           type !== 'incoming'
@@ -7063,11 +7651,18 @@ window.assignConversation = async function(contact){
       ?.assignedTo ||
     '';
 
-  const assignedTo =
-    prompt(
-      'Affecter cette conversation à :',
-      current
-    );
+  let assignedTo =
+    currentUser?.role ===
+      'commercial'
+      ? (
+          currentUser?.name ||
+          currentUser?.email ||
+          ''
+        )
+      : prompt(
+          'Affecter cette conversation à :',
+          current
+        );
 
   if(assignedTo === null){
     return;
@@ -7099,23 +7694,13 @@ window.assignConversation = async function(contact){
 };
 
 window.takeOverConversation = async function(contact){
-  let assignedTo =
+  const assignedTo =
+    currentUser?.name ||
+    currentUser?.email ||
     selectedConversationData
       ?.state
       ?.assignedTo ||
     '';
-
-  if(!assignedTo){
-    assignedTo =
-      prompt(
-        'Nom du commercial qui prend la conversation :',
-        ''
-      );
-
-    if(assignedTo === null){
-      return;
-    }
-  }
 
   try{
     await apiFetch(
@@ -9556,6 +10141,595 @@ document.getElementById('restoreBackupBtn').addEventListener('click', async () =
 });
 
 
+
+// ============================================================
+// ÉQUIPE / RÔLES / RAPPORTS
+// ============================================================
+
+function tunisDateKey(){
+  try{
+    return new Intl.DateTimeFormat(
+      'en-CA',
+      {
+        timeZone:'Africa/Tunis',
+        year:'numeric',
+        month:'2-digit',
+        day:'2-digit'
+      }
+    )
+      .format(
+        new Date()
+      );
+  }catch{
+    return new Date()
+      .toISOString()
+      .slice(
+        0,
+        10
+      );
+  }
+}
+
+async function loadTeamUsers(){
+  teamUsers =
+    await apiFetch(
+      `${API}/users`
+    );
+
+  renderTeamUsers();
+
+  return teamUsers;
+}
+
+function renderTeamUsers(){
+  const container =
+    document.getElementById(
+      'teamUsersContainer'
+    );
+
+  if(!container){
+    return;
+  }
+
+  if(!teamUsers.length){
+    container.innerHTML = `
+      <div class="empty">
+        Aucun compte utilisateur.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="team-user-list">
+      ${teamUsers.map(user => {
+        const initials =
+          userInitials(
+            user.name,
+            user.email
+          );
+
+        return `
+          <div class="team-user-row ${user.active ? '' : 'inactive'}">
+            <div class="team-user-avatar">
+              ${escapeHtml(initials)}
+            </div>
+
+            <div class="team-user-main">
+              <strong>${escapeHtml(user.name || user.email)}</strong>
+              <span>${escapeHtml(user.email)}</span>
+              <span class="team-role-pill ${escapeHtml(user.role)}">
+                ${escapeHtml(user.roleLabel || user.role)}
+                ${user.active ? '' : ' • Désactivé'}
+              </span>
+            </div>
+
+            <div class="team-user-actions">
+              <button
+                class="btn small"
+                type="button"
+                onclick="editTeamUser('${escapeHtml(user.id)}')"
+              >
+                Modifier
+              </button>
+
+              <button
+                class="btn small"
+                type="button"
+                onclick="resetTeamUserPassword('${escapeHtml(user.id)}')"
+              >
+                Mot de passe
+              </button>
+
+              <button
+                class="btn small"
+                type="button"
+                onclick="toggleTeamUserActive('${escapeHtml(user.id)}', ${user.active ? 'false' : 'true'})"
+              >
+                ${user.active ? 'Désactiver' : 'Activer'}
+              </button>
+
+              ${
+                currentUser?.id !== user.id
+                  ? `
+                    <button
+                      class="btn small danger"
+                      type="button"
+                      onclick="deleteTeamUser('${escapeHtml(user.id)}')"
+                    >
+                      Supprimer
+                    </button>
+                  `
+                  : ''
+              }
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+window.editTeamUser = async function(id){
+  const user =
+    teamUsers.find(
+      item =>
+        item.id === id
+    );
+
+  if(!user){
+    return;
+  }
+
+  const name =
+    prompt(
+      'Nom complet :',
+      user.name || ''
+    );
+
+  if(name === null){
+    return;
+  }
+
+  const email =
+    prompt(
+      'Adresse e-mail :',
+      user.email || ''
+    );
+
+  if(email === null){
+    return;
+  }
+
+  const role =
+    prompt(
+      'Rôle : admin, editor ou commercial',
+      user.role || 'commercial'
+    );
+
+  if(role === null){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/users/${encodeURIComponent(id)}`,
+      {
+        method:'PUT',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          name:
+            name.trim(),
+          email:
+            email.trim(),
+          role:
+            role.trim()
+              .toLowerCase()
+        })
+      }
+    );
+
+    await loadTeamUsers();
+    await loadTeamReport();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.resetTeamUserPassword = async function(id){
+  const password =
+    prompt(
+      'Nouveau mot de passe (minimum 8 caractères) :',
+      ''
+    );
+
+  if(password === null){
+    return;
+  }
+
+  if(password.length < 8){
+    alert(
+      'Le mot de passe doit contenir au moins 8 caractères.'
+    );
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/users/${encodeURIComponent(id)}`,
+      {
+        method:'PUT',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          password
+        })
+      }
+    );
+
+    alert(
+      'Mot de passe modifié. Les anciennes sessions de ce compte ont été fermées.'
+    );
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.toggleTeamUserActive = async function(
+  id,
+  active
+){
+  try{
+    await apiFetch(
+      `${API}/users/${encodeURIComponent(id)}`,
+      {
+        method:'PUT',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          active:
+            active === true
+        })
+      }
+    );
+
+    await loadTeamUsers();
+    await loadTeamReport();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.deleteTeamUser = async function(id){
+  const user =
+    teamUsers.find(
+      item =>
+        item.id === id
+    );
+
+  if(
+    !confirm(
+      `Supprimer le compte ${user?.name || user?.email || ''} ?`
+    )
+  ){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/users/${encodeURIComponent(id)}`,
+      {
+        method:'DELETE'
+      }
+    );
+
+    await loadTeamUsers();
+    await loadTeamReport();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+function renderTeamReport(
+  report
+){
+  teamReport =
+    report;
+
+  const summary =
+    report?.summary ||
+    {};
+
+  const setText =
+    (
+      id,
+      value
+    ) => {
+      const el =
+        document.getElementById(id);
+
+      if(el){
+        el.textContent =
+          String(
+            value ?? 0
+          );
+      }
+    };
+
+  setText(
+    'teamStatReplies',
+    summary.totalReplies
+  );
+
+  setText(
+    'teamStatConversations',
+    summary.totalConversations
+  );
+
+  setText(
+    'teamStatActive',
+    summary.activeCommercials
+  );
+
+  setText(
+    'teamStatFiles',
+    summary.filesSent
+  );
+
+  const dateLabel =
+    document.getElementById(
+      'teamReportDateLabel'
+    );
+
+  if(dateLabel){
+    dateLabel.textContent =
+      report?.date ||
+      '—';
+  }
+
+  const warning =
+    document.getElementById(
+      'teamReportWarning'
+    );
+
+  if(warning){
+    const unattributed =
+      Number(
+        summary.unattributedReplies ||
+        0
+      );
+
+    warning.classList.toggle(
+      'hidden',
+      unattributed <= 0
+    );
+
+    warning.textContent =
+      unattributed > 0
+        ? `${unattributed} réponse(s) de cette journée ne peuvent pas être attribuées à un compte. Les réponses envoyées avant V6.16 restent dans l’historique mais sans nom d’utilisateur.`
+        : '';
+  }
+
+  const container =
+    document.getElementById(
+      'teamRankingContainer'
+    );
+
+  if(!container){
+    return;
+  }
+
+  const ranking =
+    Array.isArray(
+      report?.ranking
+    )
+      ? report.ranking
+      : [];
+
+  if(!ranking.length){
+    container.innerHTML = `
+      <div class="empty">
+        Aucun commercial créé pour le moment.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="team-ranking-table">
+      <thead>
+        <tr>
+          <th>Rang</th>
+          <th>Commercial</th>
+          <th>Réponses</th>
+          <th>Conversations</th>
+          <th>Fichiers</th>
+          <th>Première réponse</th>
+          <th>Dernière réponse</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        ${ranking.map(item => `
+          <tr>
+            <td class="team-rank ${item.replies > 0 && item.rank <= 3 ? `top-${item.rank}` : ''}">
+              ${
+                Number(item.replies || 0) <= 0
+                  ? '—'
+                  : item.rank === 1
+                    ? '🥇'
+                    : item.rank === 2
+                      ? '🥈'
+                      : item.rank === 3
+                        ? '🥉'
+                        : `#${item.rank}`
+              }
+            </td>
+
+            <td>
+              <strong>${escapeHtml(item.name || item.email)}</strong>
+              <div class="help">${escapeHtml(item.email)}</div>
+            </td>
+
+            <td><strong>${Number(item.replies || 0)}</strong></td>
+            <td>${Number(item.conversations || 0)}</td>
+            <td>${Number(item.files || 0)}</td>
+            <td>${escapeHtml(item.firstReplyTime || '—')}</td>
+            <td>${escapeHtml(item.lastReplyTime || '—')}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function loadTeamReport(){
+  const dateInput =
+    document.getElementById(
+      'teamReportDate'
+    );
+
+  const date =
+    dateInput?.value ||
+    tunisDateKey();
+
+  if(
+    dateInput &&
+    !dateInput.value
+  ){
+    dateInput.value =
+      date;
+  }
+
+  const report =
+    await apiFetch(
+      `${API}/reports/commercial-daily?date=${encodeURIComponent(date)}`
+    );
+
+  renderTeamReport(
+    report
+  );
+
+  return report;
+}
+
+async function loadTeamAdmin(){
+  if(
+    currentUser?.role !==
+    'admin'
+  ){
+    return;
+  }
+
+  await Promise.all([
+    loadTeamUsers(),
+    loadTeamReport()
+  ]);
+}
+
+document
+  .getElementById(
+    'refreshTeamReportBtn'
+  )
+  ?.addEventListener(
+    'click',
+    loadTeamReport
+  );
+
+document
+  .getElementById(
+    'teamReportDate'
+  )
+  ?.addEventListener(
+    'change',
+    loadTeamReport
+  );
+
+document
+  .getElementById(
+    'teamUserForm'
+  )
+  ?.addEventListener(
+    'submit',
+    async event => {
+      event.preventDefault();
+
+      const button =
+        document.getElementById(
+          'createTeamUserBtn'
+        );
+
+      const old =
+        button?.textContent ||
+        'Créer le compte';
+
+      if(button){
+        button.disabled =
+          true;
+        button.textContent =
+          'Création...';
+      }
+
+      try{
+        await apiFetch(
+          `${API}/users`,
+          {
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json'
+            },
+            body:JSON.stringify({
+              name:
+                document
+                  .getElementById(
+                    'teamUserName'
+                  )
+                  .value
+                  .trim(),
+              email:
+                document
+                  .getElementById(
+                    'teamUserEmail'
+                  )
+                  .value
+                  .trim(),
+              role:
+                document
+                  .getElementById(
+                    'teamUserRole'
+                  )
+                  .value,
+              password:
+                document
+                  .getElementById(
+                    'teamUserPassword'
+                  )
+                  .value
+            })
+          }
+        );
+
+        event.target.reset();
+
+        await loadTeamUsers();
+        await loadTeamReport();
+      }catch(error){
+        alert(error.message);
+      }finally{
+        if(button){
+          button.disabled =
+            false;
+          button.textContent =
+            old;
+        }
+      }
+    }
+  );
+
 // ============================================================
 // LOGOUT / INIT
 // ============================================================
@@ -9572,12 +10746,22 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
 
 (async function init(){
   try{
-    await Promise.all([
-      loadProducts(),
-      loadInstructions(),
-      loadWooCommerceStatus(),
-      refreshHome()
-    ]);
+    currentUser =
+      await apiFetch(
+        `${API}/me`
+      );
+
+    applyRoleAccess();
+
+    const defaultPage =
+      currentUser?.role ===
+        'commercial'
+        ? 'conversations'
+        : 'home';
+
+    showPage(
+      defaultPage
+    );
   }catch(error){
     console.error(error);
   }
