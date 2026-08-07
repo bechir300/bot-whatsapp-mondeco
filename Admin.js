@@ -28,6 +28,7 @@ const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
+const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
@@ -1935,6 +1936,7 @@ initializeSettings();
 migrateSecureImageModeV676();
 initializeQuickReplies();
 initializeUsers();
+syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
 console.log(
@@ -2368,6 +2370,140 @@ function initializeUsers() {
   console.log(
     `👤 Compte administrateur initial créé : ${ADMIN_EMAIL}`
   );
+}
+
+
+function adminEnvironmentFingerprint() {
+  return crypto
+    .createHash('sha256')
+    .update(
+      `${ADMIN_EMAIL}\n${ADMIN_PASSWORD}`,
+      'utf8'
+    )
+    .digest('hex');
+}
+
+function syncBootstrapAdminFromEnvironment() {
+  const fingerprint =
+    adminEnvironmentFingerprint();
+
+  let previousFingerprint =
+    '';
+
+  try {
+    if (
+      fs.existsSync(
+        ADMIN_ENV_SYNC_PATH
+      )
+    ) {
+      previousFingerprint =
+        safeString(
+          fs.readFileSync(
+            ADMIN_ENV_SYNC_PATH,
+            'utf8'
+          )
+        ).trim();
+    }
+  } catch (error) {
+    console.warn(
+      '⚠️ Lecture empreinte identifiants admin :',
+      error.message
+    );
+  }
+
+  if (
+    previousFingerprint &&
+    previousFingerprint ===
+      fingerprint
+  ) {
+    return;
+  }
+
+  const users =
+    loadUsers();
+
+  const now =
+    new Date().toISOString();
+
+  const credentials =
+    hashUserPassword(
+      ADMIN_PASSWORD
+    );
+
+  const index =
+    users.findIndex(
+      user =>
+        normalizeEmail(
+          user.email
+        ) ===
+        ADMIN_EMAIL
+    );
+
+  if (index >= 0) {
+    users[index] = {
+      ...users[index],
+      email:
+        ADMIN_EMAIL,
+      role:
+        'admin',
+      active:
+        true,
+      passwordSalt:
+        credentials.salt,
+      passwordHash:
+        credentials.hash,
+      updatedAt:
+        now
+    };
+
+    console.log(
+      `🔐 Identifiants administrateur Railway synchronisés : ${ADMIN_EMAIL}`
+    );
+  } else {
+    users.push({
+      id:
+        crypto.randomUUID(),
+      name:
+        'Administrateur MONDECO',
+      email:
+        ADMIN_EMAIL,
+      role:
+        'admin',
+      active:
+        true,
+      passwordSalt:
+        credentials.salt,
+      passwordHash:
+        credentials.hash,
+      createdAt:
+        now,
+      updatedAt:
+        now,
+      lastLoginAt:
+        null
+    });
+
+    console.log(
+      `🔐 Nouvel administrateur Railway créé : ${ADMIN_EMAIL}`
+    );
+  }
+
+  saveUsers(
+    users
+  );
+
+  try {
+    fs.writeFileSync(
+      ADMIN_ENV_SYNC_PATH,
+      fingerprint,
+      'utf8'
+    );
+  } catch (error) {
+    console.warn(
+      '⚠️ Sauvegarde empreinte identifiants admin :',
+      error.message
+    );
+  }
 }
 
 function findUserById(id) {
@@ -3051,6 +3187,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <img class="mobile-logo" src="${MONDECO_LOGO_DATA_URL}" alt="MONDECO">
       <div class="eyebrow">Administration</div>
       <h2>Connexion</h2>
+      <div style="margin:-14px 0 18px;color:#7b756f;font-size:11px;font-weight:800">MONDECO V6.16.1</div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
         <label for="email">Adresse e-mail</label>
