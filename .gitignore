@@ -1,5 +1,6 @@
-# MONDECO - code only in GitHub
+# MONDECO — code only in GitHub
 node_modules/
+
 .env
 .env.*
 
@@ -9,6 +10,12 @@ instructions.json
 settings.json
 customization-requests.json
 conversation-log.json
+conversation-state.json
+commercial-corrections.json
+quick-replies.json
+users.json
+woocommerce-sync.json
+showrooms-site-cache.json
 
 uploads/
 customizations/
@@ -17,6 +24,7 @@ backups/
 *.bak
 *.tmp
 .instructions-migration-done
+.secure-image-v676-migration-done
 
 # OS / editor
 .DS_Store
