@@ -1894,8 +1894,9 @@ function getBusinessContext() {
     activeInstructions
       .map((item, index) => {
         return (
-          `${index + 1}. ${safeString(item.title)}\n` +
-          safeString(item.content)
+          `--- INSTRUCTION ${index + 1} ---\n` +
+          `Titre : ${safeString(item.title)}\n` +
+          `Contenu :\n${safeString(item.content)}`
         );
       })
       .join('\n\n');
