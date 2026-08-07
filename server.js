@@ -3285,6 +3285,505 @@ async function generateReply(
   return reply;
 }
 
+
+// ============================================================
+// CAPTURES D'ÉCRAN — IDENTIFICATION SÉCURISÉE
+// ============================================================
+
+const SAFE_UNKNOWN_IMAGE_REPLY =
+  'Merci pour votre capture. Je n’arrive pas à identifier le modèle avec suffisamment de certitude. Un conseiller MONDECO va vérifier la photo et vous répondre rapidement.';
+
+
+function parseJsonFromAI(
+  value
+) {
+  const raw =
+    safeString(value);
+
+  if (!raw) {
+    return null;
+  }
+
+  const withoutFences =
+    raw
+      .replace(
+        /^```(?:json)?\s*/i,
+        ''
+      )
+      .replace(
+        /\s*```$/i,
+        ''
+      )
+      .trim();
+
+  try {
+    return JSON.parse(
+      withoutFences
+    );
+  } catch {
+    const start =
+      withoutFences.indexOf(
+        '{'
+      );
+
+    const end =
+      withoutFences.lastIndexOf(
+        '}'
+      );
+
+    if (
+      start >= 0 &&
+      end > start
+    ) {
+      try {
+        return JSON.parse(
+          withoutFences.slice(
+            start,
+            end + 1
+          )
+        );
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+}
+
+function getActiveProductBlocksForVision() {
+  try {
+    const rawContext =
+      getBusinessContext() ||
+      '';
+
+    return splitBusinessContext(
+      rawContext
+    ).productBlocks;
+  } catch (error) {
+    console.warn(
+      '⚠️ Catalogue pour capture :',
+      error.message
+    );
+
+    return [];
+  }
+}
+
+function visibleTextContainsCandidate(
+  visibleText,
+  candidate
+) {
+  const haystack =
+    normalizeForSearch(
+      visibleText
+    );
+
+  const needle =
+    normalizeForSearch(
+      candidate
+    );
+
+  return Boolean(
+    haystack &&
+    needle &&
+    haystack.includes(
+      needle
+    )
+  );
+}
+
+async function analyzeImageTextSecurely(
+  image
+) {
+  if (
+    !image?.buffer ||
+    !image?.mimetype
+  ) {
+    throw new Error(
+      'Image invalide pour analyse sécurisée.'
+    );
+  }
+
+  const imageDataUrl =
+    `data:${image.mimetype};base64,${image.buffer.toString('base64')}`;
+
+  const extractionPrompt = `
+Tu es un module d'extraction visuelle pour MONDECO.
+
+BUT :
+Lire une capture d'écran ou une image envoyée par un client.
+Tu ne dois PAS identifier un modèle de meuble uniquement par son apparence.
+Tu dois seulement relever ce qui est explicitement écrit et lisible dans l'image.
+
+RÈGLES ABSOLUES :
+- Ne devine jamais un nom de produit à partir de la forme ou du style du meuble.
+- "primary_product_text" doit être un nom/modèle réellement visible sous forme de texte dans l'image.
+- Si aucun nom de produit/modèle n'est clairement lisible, mets primary_product_text à "".
+- visible_text doit reprendre uniquement le texte utile réellement lisible.
+- confidence = "high" seulement si le nom du produit est nettement lisible.
+- confidence = "medium" si partiellement lisible.
+- confidence = "low" si incertain.
+- Ne donne aucun prix et ne réponds pas au client.
+- Réponds UNIQUEMENT avec un objet JSON valide, sans markdown.
+
+FORMAT :
+{
+  "is_screenshot": true,
+  "visible_text": "...",
+  "primary_product_text": "...",
+  "primary_product_is_explicit": true,
+  "confidence": "high",
+  "reason": "Nom clairement visible dans le texte de la capture."
+}
+`.trim();
+
+  const raw =
+    await callAIChat(
+      {
+        messages: [
+          {
+            role:
+              'system',
+            content:
+              extractionPrompt
+          },
+          {
+            role:
+              'user',
+            content: [
+              {
+                type:
+                  'text',
+                text:
+                  'Extrais uniquement les informations visuelles demandées.'
+              },
+              {
+                type:
+                  'image_url',
+                image_url: {
+                  url:
+                    imageDataUrl
+                }
+              }
+            ]
+          }
+        ],
+
+        max_completion_tokens:
+          500,
+
+        thinking_level:
+          'low'
+      },
+      {
+        vision:
+          true
+      }
+    );
+
+  const parsed =
+    parseJsonFromAI(
+      raw
+    );
+
+  if (!parsed) {
+    throw new Error(
+      'Analyse image non structurée.'
+    );
+  }
+
+  const confidence =
+    ['high', 'medium', 'low']
+      .includes(
+        safeString(
+          parsed.confidence
+        ).toLowerCase()
+      )
+      ? safeString(
+          parsed.confidence
+        ).toLowerCase()
+      : 'low';
+
+  return {
+    isScreenshot:
+      parsed.is_screenshot ===
+        true,
+
+    visibleText:
+      safeString(
+        parsed.visible_text
+      ).slice(
+        0,
+        2500
+      ),
+
+    primaryProductText:
+      safeString(
+        parsed.primary_product_text
+      ).slice(
+        0,
+        250
+      ),
+
+    primaryProductIsExplicit:
+      parsed.primary_product_is_explicit ===
+        true,
+
+    confidence,
+
+    reason:
+      safeString(
+        parsed.reason
+      ).slice(
+        0,
+        500
+      )
+  };
+}
+
+function verifySecureImageProduct(
+  caption,
+  analysis
+) {
+  const productBlocks =
+    getActiveProductBlocksForVision();
+
+  if (!productBlocks.length) {
+    return {
+      verified:
+        false,
+      reason:
+        'Catalogue produit indisponible.'
+    };
+  }
+
+  const cleanCaption =
+    safeString(
+      caption
+    );
+
+  if (cleanCaption) {
+    const captionMatch =
+      findExplicitProductMatch(
+        cleanCaption,
+        productBlocks
+      );
+
+    if (captionMatch) {
+      return {
+        verified:
+          true,
+        productName:
+          captionMatch.name,
+        source:
+          'caption',
+        reason:
+          'Produit nommé explicitement dans le message du client.'
+      };
+    }
+  }
+
+  if (
+    !analysis ||
+    analysis.confidence !==
+      'high' ||
+    analysis.primaryProductIsExplicit !==
+      true ||
+    !analysis.primaryProductText
+  ) {
+    return {
+      verified:
+        false,
+      reason:
+        analysis?.reason ||
+        'Nom de produit non lisible avec certitude.'
+    };
+  }
+
+  if (
+    !visibleTextContainsCandidate(
+      analysis.visibleText,
+      analysis.primaryProductText
+    )
+  ) {
+    return {
+      verified:
+        false,
+      reason:
+        'Le nom proposé ne peut pas être confirmé dans le texte visible.'
+    };
+  }
+
+  const match =
+    findExplicitProductMatch(
+      analysis.primaryProductText,
+      productBlocks
+    );
+
+  if (!match) {
+    return {
+      verified:
+        false,
+      reason:
+        'Le texte visible ne correspond pas de façon unique à un produit actif du catalogue.'
+    };
+  }
+
+  const distinctive =
+    distinctiveProductTokens(
+      match.name
+    );
+
+  const candidateTokens =
+    new Set(
+      normalizeForSearch(
+        analysis.primaryProductText
+      ).split(' ')
+    );
+
+  const hasDistinctiveEvidence =
+    distinctive.length > 0 &&
+    distinctive.some(token =>
+      candidateTokens.has(
+        token
+      )
+    );
+
+  if (
+    distinctive.length > 0 &&
+    !hasDistinctiveEvidence
+  ) {
+    return {
+      verified:
+        false,
+      reason:
+        'Le nom visible ne contient pas assez d’éléments distinctifs pour confirmer le modèle.'
+    };
+  }
+
+  return {
+    verified:
+      true,
+    productName:
+      match.name,
+    source:
+      'visible_text',
+    reason:
+      'Nom du modèle lisible dans l’image et correspondance unique dans le catalogue.'
+  };
+}
+
+async function generateSecureImageResult(
+  userId,
+  caption,
+  image
+) {
+  const cleanCaption =
+    safeString(
+      caption
+    );
+
+  const captionProduct =
+    cleanCaption
+      ? detectExplicitProductName(
+          cleanCaption
+        )
+      : '';
+
+  let analysis = null;
+
+  if (!captionProduct) {
+    analysis =
+      await analyzeImageTextSecurely(
+        image
+      );
+  }
+
+  const verification =
+    verifySecureImageProduct(
+      cleanCaption,
+      analysis
+    );
+
+  if (!verification.verified) {
+    return {
+      verified:
+        false,
+      productName:
+        '',
+      analysis,
+      reason:
+        verification.reason ||
+        'Identification insuffisamment fiable.'
+    };
+  }
+
+  const productName =
+    verification.productName;
+
+  const question =
+    cleanCaption ||
+    `Je souhaite les informations principales sur ${productName} : prix, disponibilité et informations utiles.`;
+
+  const reply =
+    await generateReply(
+      userId,
+      `${productName}. ${question}`
+    );
+
+  return {
+    verified:
+      true,
+    productName,
+    analysis,
+    reason:
+      verification.reason,
+    reply
+  };
+}
+
+async function generateImageTestReply(
+  userId,
+  userText,
+  image,
+  mode = 'analysis'
+) {
+  if (
+    safeString(mode) !==
+    'whatsapp'
+  ) {
+    return generateVisionReply(
+      userId,
+      userText,
+      image
+    );
+  }
+
+  const result =
+    await generateSecureImageResult(
+      userId,
+      userText,
+      image
+    );
+
+  if (!result.verified) {
+    return (
+      `Message envoyé au client :\n${SAFE_UNKNOWN_IMAGE_REPLY}` +
+      (
+        result.reason
+          ? `\n\nDiagnostic interne : ${result.reason}`
+          : ''
+      )
+    );
+  }
+
+  return (
+    `✅ Produit vérifié : ${result.productName}\n\n` +
+    result.reply
+  );
+}
+
 // ============================================================
 // VISION
 // ============================================================
@@ -3936,75 +4435,119 @@ async function generateCustomizationSimulation({
 // ============================================================
 
 setChatHandler(generateReply);
-setImageChatHandler(generateVisionReply);
+setImageChatHandler(generateImageTestReply);
 
 setCustomizationHandler(
   generateCustomizationSimulation
 );
 
 setCommercialSendHandler(
-  async ({ phone, text, question }) => {
+  async ({
+    phone,
+    text,
+    question,
+    file = null,
+    mediaKind = ''
+  }) => {
     const cleanPhone =
       normalizePhone(phone);
 
     const cleanText =
       safeString(text);
 
-    if (!cleanPhone || !cleanText) {
+    if (
+      !cleanPhone ||
+      (!cleanText && !file)
+    ) {
       throw new Error(
-        'Numéro client ou message commercial manquant.'
+        'Numéro client ou contenu commercial manquant.'
       );
     }
 
-    const metaResult =
-      await sendWhatsAppMessage(
-        cleanPhone,
-        cleanText
-      );
+    let metaResult = null;
+    let attachment = null;
+
+    if (file) {
+      attachment =
+        await sendWhatsAppCommercialMedia(
+          cleanPhone,
+          file,
+          mediaKind,
+          cleanText
+        );
+
+      metaResult =
+        attachment.metaResult;
+    } else {
+      metaResult =
+        await sendWhatsAppMessage(
+          cleanPhone,
+          cleanText
+        );
+    }
 
     const settings =
       getBotSettings();
 
-    if (
-      settings.pauseWhenHumanReplies
-    ) {
+    if (settings.pauseWhenHumanReplies) {
       markHumanTakeover(
         cleanPhone,
         settings
       );
     }
 
+    updateConversationState(
+      cleanPhone,
+      current => ({
+        ...current,
+        commercialAttention: false,
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
+        lastCommercialAt:
+          new Date().toISOString()
+      })
+    );
+
     const state =
-      getConversationState(
-        cleanPhone
-      );
+      getConversationState(cleanPhone);
 
     const customerQuestion =
       safeString(question) ||
-      safeString(
-        state?.lastCustomerText
-      );
+      safeString(state?.lastCustomerText);
 
-    createCommercialCorrectionCandidate({
-      phone:
-        cleanPhone,
-      question:
-        customerQuestion,
-      commercialReply:
-        cleanText,
-      source:
-        'admin_commercial_reply'
-    });
+    if (cleanText) {
+      createCommercialCorrectionCandidate({
+        phone: cleanPhone,
+        question: customerQuestion,
+        commercialReply: cleanText,
+        source:
+          file
+            ? 'admin_commercial_media'
+            : 'admin_commercial_reply'
+      });
+    }
 
     logConversation({
-      contact:
-        cleanPhone,
+      contact: cleanPhone,
       reply:
-        cleanText,
+        cleanText ||
+        undefined,
       action:
         'commercial_reply',
       source:
         'commercial_admin',
+      attachment_type:
+        attachment?.kind ||
+        undefined,
+      attachment_name:
+        attachment?.filename ||
+        undefined,
+      attachment_mime:
+        attachment?.mimetype ||
+        undefined,
+      attachment_media_id:
+        attachment?.mediaId ||
+        undefined,
       meta_message_id:
         metaResult
           ?.messages
@@ -4023,7 +4566,14 @@ setCommercialSendHandler(
           ?.messages
           ?.[0]
           ?.id ||
-        null
+        null,
+      attachment:
+        attachment
+          ? {
+              kind: attachment.kind,
+              filename: attachment.filename
+            }
+          : null
     };
   }
 );
@@ -4156,6 +4706,271 @@ async function sendWhatsAppMessage(
   );
 
   return data;
+}
+
+
+async function uploadWhatsAppMedia(file) {
+  if (!WHATSAPP_TOKEN) {
+    throw new Error(
+      'WHATSAPP_TOKEN manquant.'
+    );
+  }
+
+  if (!PHONE_NUMBER_ID) {
+    throw new Error(
+      'PHONE_NUMBER_ID manquant.'
+    );
+  }
+
+  if (!file?.buffer || !file?.mimetype) {
+    throw new Error(
+      'Fichier média invalide.'
+    );
+  }
+
+  const filename =
+    path
+      .basename(
+        safeString(file.originalname) ||
+        `fichier-${Date.now()}`
+      )
+      .slice(0, 180);
+
+  const form =
+    new FormData();
+
+  form.append(
+    'messaging_product',
+    'whatsapp'
+  );
+
+  form.append(
+    'file',
+    new Blob(
+      [file.buffer],
+      {
+        type: file.mimetype
+      }
+    ),
+    filename
+  );
+
+  const url =
+    `https://graph.facebook.com/${META_API_VERSION}/` +
+    `${PHONE_NUMBER_ID}/media`;
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_TOKEN}`
+        },
+        body: form
+      }
+    );
+
+  let data = {};
+
+  try {
+    data =
+      await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error(
+      '❌ Upload média Meta :',
+      JSON.stringify(data)
+    );
+
+    throw new Error(
+      data?.error?.message ||
+      `Erreur upload média HTTP ${response.status}`
+    );
+  }
+
+  const mediaId =
+    safeString(data?.id);
+
+  if (!mediaId) {
+    throw new Error(
+      'Meta n’a pas retourné d’identifiant média.'
+    );
+  }
+
+  return {
+    mediaId,
+    filename
+  };
+}
+
+async function sendWhatsAppMediaById(
+  to,
+  {
+    mediaId,
+    kind,
+    filename,
+    caption = ''
+  }
+) {
+  const cleanRecipient =
+    normalizePhone(to);
+
+  if (!cleanRecipient || !mediaId) {
+    throw new Error(
+      'Destinataire ou média WhatsApp manquant.'
+    );
+  }
+
+  const type =
+    kind === 'image'
+      ? 'image'
+      : 'document';
+
+  const mediaPayload = {
+    id: mediaId
+  };
+
+  const cleanCaption =
+    safeString(caption);
+
+  if (
+    cleanCaption &&
+    cleanCaption.length <= 900
+  ) {
+    mediaPayload.caption =
+      cleanCaption;
+  }
+
+  if (
+    type === 'document' &&
+    filename
+  ) {
+    mediaPayload.filename =
+      filename;
+  }
+
+  const url =
+    `https://graph.facebook.com/${META_API_VERSION}/` +
+    `${PHONE_NUMBER_ID}/messages`;
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization:
+            `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type':
+            'application/json'
+        },
+        body:
+          JSON.stringify({
+            messaging_product:
+              'whatsapp',
+            recipient_type:
+              'individual',
+            to:
+              cleanRecipient,
+            type,
+            [type]:
+              mediaPayload
+          })
+      }
+    );
+
+  let data = {};
+
+  try {
+    data =
+      await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error(
+      '❌ Envoi média WhatsApp :',
+      JSON.stringify(data)
+    );
+
+    throw new Error(
+      data?.error?.message ||
+      `Erreur média WhatsApp HTTP ${response.status}`
+    );
+  }
+
+  const acceptedMessageId =
+    safeString(
+      data?.messages?.[0]?.id
+    );
+
+  if (acceptedMessageId) {
+    rememberBotSentMessageId(
+      acceptedMessageId
+    );
+  }
+
+  return data;
+}
+
+async function sendWhatsAppCommercialMedia(
+  to,
+  file,
+  mediaKind,
+  text = ''
+) {
+  const kind =
+    mediaKind === 'image' ||
+    safeString(file?.mimetype)
+      .startsWith('image/')
+      ? 'image'
+      : 'document';
+
+  const uploaded =
+    await uploadWhatsAppMedia(file);
+
+  const cleanText =
+    safeString(text);
+
+  if (cleanText.length > 900) {
+    await sendWhatsAppMessage(
+      to,
+      cleanText
+    );
+  }
+
+  const metaResult =
+    await sendWhatsAppMediaById(
+      to,
+      {
+        mediaId:
+          uploaded.mediaId,
+        kind,
+        filename:
+          uploaded.filename,
+        caption:
+          cleanText.length <= 900
+            ? cleanText
+            : ''
+      }
+    );
+
+  return {
+    metaResult,
+    mediaId:
+      uploaded.mediaId,
+    filename:
+      uploaded.filename,
+    mimetype:
+      safeString(file?.mimetype),
+    kind
+  };
 }
 
 // ============================================================
@@ -4746,6 +5561,53 @@ function handleHumanMessageEcho(value) {
   }
 }
 
+
+function replyNeedsCommercialAttention(reply) {
+  const text =
+    normalizeForSearch(reply);
+
+  if (!text) {
+    return false;
+  }
+
+  const patterns = [
+    'je n arrive pas a verifier',
+    'je ne peux pas verifier',
+    'je ne peux pas confirmer',
+    'information n est pas disponible',
+    'informations actuelles',
+    'prix n est pas disponible',
+    'tarif n est pas disponible',
+    'un commercial mondeco pourra',
+    'un conseiller mondeco va verifier',
+    'a confirmer par un commercial',
+    'doit etre confirme par un commercial'
+  ];
+
+  return patterns.some(
+    pattern =>
+      text.includes(pattern)
+  );
+}
+
+function markCommercialAttention(
+  phone,
+  reason
+) {
+  updateConversationState(
+    phone,
+    current => ({
+      ...current,
+      commercialAttention:
+        true,
+      commercialAttentionReason:
+        safeString(reason),
+      commercialAttentionAt:
+        new Date().toISOString()
+    })
+  );
+}
+
 // ============================================================
 // MESSAGE CLIENT
 // ============================================================
@@ -4935,6 +5797,17 @@ async function processSingleMessage(message) {
         '✅ RÉPONSE IA :',
         reply
       );
+
+      if (
+        replyNeedsCommercialAttention(
+          reply
+        )
+      ) {
+        markCommercialAttention(
+          from,
+          'La réponse IA indique qu’une information doit être vérifiée par un commercial.'
+        );
+      }
     } catch (error) {
       console.error(
         '❌ Impossible de générer la réponse :',
@@ -4943,6 +5816,11 @@ async function processSingleMessage(message) {
 
       const fallbackReply =
         'Merci pour votre message. Je n’arrive pas à vérifier cette information automatiquement pour le moment. Un conseiller MONDECO pourra reprendre votre demande.';
+
+      markCommercialAttention(
+        from,
+        'L’agent n’a pas pu générer une réponse fiable.'
+      );
 
       let fallbackSent =
         false;
@@ -5018,6 +5896,11 @@ async function processSingleMessage(message) {
         'reply'
       );
 
+      const needsCommercialAttention =
+        replyNeedsCommercialAttention(
+          reply
+        );
+
       logConversation({
         message_id:
           messageId ||
@@ -5030,6 +5913,11 @@ async function processSingleMessage(message) {
           userText,
 
         reply,
+
+        action:
+          needsCommercialAttention
+            ? 'ai_needs_commercial'
+            : undefined,
 
         source:
           conversationSourceForMessage(
@@ -5094,6 +5982,11 @@ async function processSingleMessage(message) {
     '➡️ Commercial requis.'
   );
 
+  markCommercialAttention(
+    from,
+    `Message ${messageType || 'média'} à traiter par un commercial.`
+  );
+
   logConversation({
     message_id:
       messageId ||
@@ -5128,7 +6021,7 @@ async function processWhatsAppImage(
 ) {
   const imageHandling =
     settings.imageHandling ||
-    'commercial';
+    'secure_catalog';
 
   if (
     imageHandling ===
@@ -5136,6 +6029,19 @@ async function processWhatsAppImage(
   ) {
     console.log(
       '🖼️ Image client → commercial requis.'
+    );
+
+    updateConversationState(
+      from,
+      current => ({
+        ...current,
+        imageNeedsCommercial:
+          true,
+        lastImageProduct:
+          '',
+        lastImageReason:
+          'Mode commercial manuel.'
+      })
     );
 
     logConversation({
@@ -5171,6 +6077,87 @@ async function processWhatsAppImage(
     console.log(
       '⚠️ Image WhatsApp sans media ID.'
     );
+
+    if (
+      imageHandling ===
+      'secure_catalog'
+    ) {
+      let fallbackSent =
+        false;
+
+      try {
+        await sendWhatsAppMessage(
+          from,
+          SAFE_UNKNOWN_IMAGE_REPLY
+        );
+
+        markBotMessage(
+          from,
+          'image_fallback'
+        );
+
+        fallbackSent =
+          true;
+      } catch (sendError) {
+        console.error(
+          '❌ Envoi fallback image sans media ID :',
+          sendError.message
+        );
+      }
+
+      updateConversationState(
+        from,
+        current => ({
+          ...current,
+          commercialAttention:
+            true,
+          commercialAttentionReason:
+            'Image reçue : intervention commerciale requise.',
+          commercialAttentionAt:
+            new Date().toISOString(),
+          imageNeedsCommercial:
+            true,
+          lastImageProduct:
+            '',
+          lastImageReason:
+            'Image reçue sans media ID exploitable.',
+          activeProductName:
+            '',
+          activeProductUpdatedAt:
+            null
+        })
+      );
+
+      logConversation({
+        message_id:
+          message?.id ||
+          null,
+
+        contact:
+          from,
+
+        type:
+          'image',
+
+        action:
+          'secure_image_commercial_required',
+
+        image_reason:
+          'Image reçue sans media ID exploitable.',
+
+        reply:
+          fallbackSent
+            ? SAFE_UNKNOWN_IMAGE_REPLY
+            : undefined,
+
+        reply_sent:
+          fallbackSent,
+
+        time:
+          new Date().toISOString()
+      });
+    }
+
     return;
   }
 
@@ -5184,6 +6171,159 @@ async function processWhatsAppImage(
       safeString(
         message?.image?.caption
       );
+
+    if (
+      imageHandling ===
+      'secure_catalog'
+    ) {
+      const result =
+        await generateSecureImageResult(
+          from,
+          caption,
+          image
+        );
+
+      if (
+        !result.verified
+      ) {
+        console.log(
+          '🛡️ Capture non identifiée avec certitude → réponse neutre + commercial.'
+        );
+
+        updateConversationState(
+          from,
+          current => ({
+            ...current,
+            commercialAttention:
+              true,
+            commercialAttentionReason:
+              'Capture inconnue : intervention commerciale requise.',
+            commercialAttentionAt:
+              new Date().toISOString(),
+            imageNeedsCommercial:
+              true,
+            lastImageProduct:
+              '',
+            lastImageReason:
+              result.reason ||
+              'Identification incertaine.',
+            activeProductName:
+              '',
+            activeProductUpdatedAt:
+              null
+          })
+        );
+
+        await sendWhatsAppMessage(
+          from,
+          SAFE_UNKNOWN_IMAGE_REPLY
+        );
+
+        markBotMessage(
+          from,
+          'image_fallback'
+        );
+
+        logConversation({
+          message_id:
+            message?.id ||
+            null,
+
+          contact:
+            from,
+
+          type:
+            'image',
+
+          action:
+            'secure_image_commercial_required',
+
+          image_product:
+            result
+              ?.analysis
+              ?.primaryProductText ||
+            '',
+
+          image_reason:
+            result.reason ||
+            'Identification incertaine.',
+
+          reply:
+            SAFE_UNKNOWN_IMAGE_REPLY,
+
+          reply_sent:
+            true,
+
+          time:
+            new Date().toISOString()
+        });
+
+        return;
+      }
+
+      await sendWhatsAppMessage(
+        from,
+        result.reply
+      );
+
+      markBotMessage(
+        from,
+        'image_reply'
+      );
+
+      updateConversationState(
+        from,
+        current => ({
+          ...current,
+          imageNeedsCommercial:
+            false,
+          lastImageProduct:
+            result.productName,
+          lastImageReason:
+            result.reason,
+          activeProductName:
+            result.productName,
+          activeProductUpdatedAt:
+            new Date().toISOString()
+        })
+      );
+
+      logConversation({
+        message_id:
+          message?.id ||
+          null,
+
+        contact:
+          from,
+
+        type:
+          'image',
+
+        action:
+          'secure_image_verified',
+
+        image_product:
+          result.productName,
+
+        image_reason:
+          result.reason,
+
+        reply:
+          result.reply,
+
+        reply_sent:
+          true,
+
+        time:
+          new Date().toISOString()
+      });
+
+      console.log(
+        `✅ Capture sécurisée → ${result.productName}`
+      );
+
+      return;
+    }
 
     const analysis =
       await generateVisionReply(
@@ -5271,6 +6411,63 @@ async function processWhatsAppImage(
       error.message
     );
 
+    let fallbackSent =
+      false;
+
+    if (
+      imageHandling ===
+      'secure_catalog'
+    ) {
+      try {
+        await sendWhatsAppMessage(
+          from,
+          SAFE_UNKNOWN_IMAGE_REPLY
+        );
+
+        markBotMessage(
+          from,
+          'image_fallback'
+        );
+
+        fallbackSent =
+          true;
+      } catch (sendError) {
+        console.error(
+          '❌ Envoi fallback après erreur image :',
+          sendError.message
+        );
+      }
+    }
+
+    updateConversationState(
+      from,
+      current => ({
+        ...current,
+        commercialAttention:
+          true,
+        commercialAttentionReason:
+          'Erreur d’analyse image : intervention commerciale requise.',
+        commercialAttentionAt:
+          new Date().toISOString(),
+        imageNeedsCommercial:
+          true,
+        lastImageProduct:
+          '',
+        lastImageReason:
+          error.message,
+        activeProductName:
+          imageHandling ===
+            'secure_catalog'
+            ? ''
+            : current.activeProductName,
+        activeProductUpdatedAt:
+          imageHandling ===
+            'secure_catalog'
+            ? null
+            : current.activeProductUpdatedAt
+      })
+    );
+
     logConversation({
       message_id:
         message?.id ||
@@ -5283,13 +6480,21 @@ async function processWhatsAppImage(
         'image',
 
       action:
-        'image_analysis_error',
+        imageHandling ===
+          'secure_catalog'
+          ? 'secure_image_analysis_error'
+          : 'image_analysis_error',
 
       error:
         error.message,
 
+      reply:
+        fallbackSent
+          ? SAFE_UNKNOWN_IMAGE_REPLY
+          : undefined,
+
       reply_sent:
-        false,
+        fallbackSent,
 
       time:
         new Date().toISOString()
