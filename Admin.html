@@ -4279,6 +4279,96 @@ tbody tr:hover{
 }
 
 </style>
+
+<style>
+/* ============================================================
+   MONDECO V6.18 — Messages vocaux
+   ============================================================ */
+.voice-recorder-btn{
+  position:relative;
+  min-width:86px;
+}
+.voice-recorder-btn.recording{
+  background:#ed1c24 !important;
+  color:#fff !important;
+  border-color:#ed1c24 !important;
+}
+.voice-recorder-btn.recording::before{
+  content:'';
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:#fff;
+  display:inline-block;
+  margin-right:6px;
+  animation:voicePulse 1s infinite;
+}
+@keyframes voicePulse{
+  0%,100%{opacity:1;transform:scale(1)}
+  50%{opacity:.35;transform:scale(.75)}
+}
+.voice-recorder-status{
+  display:none;
+  align-items:center;
+  gap:8px;
+  flex:1 1 100%;
+  padding:8px 10px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:#fff;
+  font-size:12px;
+}
+.voice-recorder-status.active{
+  display:flex;
+}
+.voice-recorder-status audio{
+  width:min(320px,100%);
+  height:34px;
+}
+.voice-recorder-time{
+  font-weight:700;
+  min-width:44px;
+}
+.voice-recorder-remove{
+  border:0;
+  background:transparent;
+  cursor:pointer;
+  font-size:16px;
+}
+.inbox-voice-card{
+  min-width:min(330px,75vw);
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(0,0,0,.08);
+  background:rgba(255,255,255,.7);
+}
+.inbox-voice-card audio{
+  width:100%;
+  max-width:320px;
+  height:38px;
+}
+.inbox-voice-transcript{
+  margin-top:8px;
+  font-size:12px;
+  line-height:1.45;
+  white-space:pre-wrap;
+}
+.inbox-voice-transcript strong{
+  display:block;
+  margin-bottom:3px;
+  font-size:11px;
+  color:var(--muted);
+}
+@media (max-width:700px){
+  .voice-recorder-btn{
+    min-width:0;
+  }
+  .voice-recorder-status{
+    width:100%;
+  }
+}
+</style>
+
 </head>
 
 <body>
@@ -6652,6 +6742,15 @@ let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
 let notificationAudioContext = null;
 
+// V6.18 — enregistrement vocal commercial
+let conversationVoiceRecorder = null;
+let conversationVoiceStream = null;
+let conversationVoiceChunks = [];
+let conversationVoiceFile = null;
+let conversationVoiceObjectUrl = '';
+let conversationVoiceStartedAt = 0;
+let conversationVoiceTimer = null;
+
 
 async function loadConversations(){
   try{
@@ -6707,6 +6806,10 @@ function actionLabel(action){
     ai_error_no_reply:'Erreur IA — sans réponse',
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
+    commercial_voice_reply:'Message vocal commercial',
+    voice_transcribed_and_replied:'Vocal transcrit + réponse IA',
+    voice_transcribed_commercial_required:'Vocal transcrit • commercial requis',
+    voice_commercial_required:'Vocal à écouter',
     product_image_sent:'Image produit envoyée',
     product_image_unavailable:'Image produit indisponible',
     product_image_need_name:'Nom produit demandé',
@@ -7234,7 +7337,8 @@ function renderThreadMessage(
 ){
   if(
     !text &&
-    !entry?.attachment_name
+    !entry?.attachment_name &&
+    !entry?.audio_url
   ){
     return '';
   }
@@ -7279,7 +7383,11 @@ function renderThreadMessage(
           ${label}
         </div>
         ${
-          text
+          text &&
+          !(
+            entry?.type === 'audio' &&
+            entry?.transcription
+          )
             ? `
               <div class="inbox-bubble">
                 ${escapeHtml(text)}
@@ -7288,14 +7396,50 @@ function renderThreadMessage(
             : ''
         }
         ${
-          entry.attachment_name &&
-          type !== 'incoming'
+          entry.audio_url
             ? `
-              <div class="inbox-attachment">
-                ${entry.attachment_type === 'image' ? '📷' : '📎'}
-                ${escapeHtml(entry.attachment_name)}
+              <div class="inbox-voice-card">
+                <audio
+                  controls
+                  preload="metadata"
+                  src="${escapeHtml(entry.audio_url)}"
+                ></audio>
+                ${
+                  entry.transcription
+                    ? `
+                      <div class="inbox-voice-transcript">
+                        <strong>Transcription</strong>
+                        ${escapeHtml(entry.transcription)}
+                      </div>
+                    `
+                    : ''
+                }
               </div>
             `
+            : ''
+        }
+        ${
+          entry.attachment_name &&
+          type !== 'incoming'
+            ? (
+                entry.attachment_type === 'audio' &&
+                entry.attachment_url
+                  ? `
+                    <div class="inbox-voice-card">
+                      <audio
+                        controls
+                        preload="metadata"
+                        src="${escapeHtml(entry.attachment_url)}"
+                      ></audio>
+                    </div>
+                  `
+                  : `
+                    <div class="inbox-attachment">
+                      ${entry.attachment_type === 'image' ? '📷' : entry.attachment_type === 'audio' ? '🎙️' : '📎'}
+                      ${escapeHtml(entry.attachment_name)}
+                    </div>
+                  `
+              )
             : ''
         }
         <div class="inbox-message-meta">
@@ -7408,12 +7552,47 @@ function buildConversationComposer(
           >
         </label>
 
+        <button
+          class="btn small voice-recorder-btn"
+          id="conversationVoiceBtn"
+          type="button"
+          onclick="toggleConversationVoiceRecording()"
+          title="Enregistrer un message vocal"
+        >
+          🎙 Vocal
+        </button>
+
         <span
           id="conversationAttachmentName"
           class="composer-file-name"
         >
           Aucun fichier sélectionné
         </span>
+
+        <div
+          id="conversationVoiceStatus"
+          class="voice-recorder-status"
+        >
+          <span
+            id="conversationVoiceTime"
+            class="voice-recorder-time"
+          >
+            00:00
+          </span>
+          <audio
+            id="conversationVoicePreview"
+            controls
+            preload="metadata"
+          ></audio>
+          <button
+            class="voice-recorder-remove"
+            type="button"
+            onclick="clearConversationVoiceRecording()"
+            title="Supprimer le vocal"
+          >
+            🗑
+          </button>
+        </div>
 
         <button
           class="btn primary"
@@ -8345,7 +8524,470 @@ function applyStoredComposerMode(){
   }
 }
 
+
+function voiceMimeCandidate(){
+  if(
+    typeof MediaRecorder ===
+      'undefined'
+  ){
+    return null;
+  }
+
+  const candidates = [
+    {
+      mime:
+        'audio/ogg;codecs=opus',
+      extension:
+        'ogg'
+    },
+    {
+      mime:
+        'audio/mp4',
+      extension:
+        'm4a'
+    },
+    {
+      mime:
+        'audio/aac',
+      extension:
+        'aac'
+    },
+    {
+      mime:
+        'audio/mpeg',
+      extension:
+        'mp3'
+    }
+  ];
+
+  return candidates.find(
+    candidate =>
+      typeof MediaRecorder.isTypeSupported !==
+        'function' ||
+      MediaRecorder.isTypeSupported(
+        candidate.mime
+      )
+  ) || null;
+}
+
+function formatVoiceDuration(
+  seconds
+){
+  const safe =
+    Math.max(
+      0,
+      Number(
+        seconds ||
+        0
+      )
+    );
+
+  const minutes =
+    Math.floor(
+      safe /
+      60
+    );
+
+  const rest =
+    Math.floor(
+      safe %
+      60
+    );
+
+  return `${String(minutes).padStart(2,'0')}:${String(rest).padStart(2,'0')}`;
+}
+
+function updateConversationVoiceUi(){
+  const button =
+    document.getElementById(
+      'conversationVoiceBtn'
+    );
+
+  const status =
+    document.getElementById(
+      'conversationVoiceStatus'
+    );
+
+  const time =
+    document.getElementById(
+      'conversationVoiceTime'
+    );
+
+  const preview =
+    document.getElementById(
+      'conversationVoicePreview'
+    );
+
+  const recording =
+    conversationVoiceRecorder &&
+    conversationVoiceRecorder.state ===
+      'recording';
+
+  if(button){
+    button.classList.toggle(
+      'recording',
+      Boolean(
+        recording
+      )
+    );
+
+    button.textContent =
+      recording
+        ? '⏹ Arrêter'
+        : conversationVoiceFile
+          ? '🎙 Refaire'
+          : '🎙 Vocal';
+  }
+
+  if(status){
+    status.classList.toggle(
+      'active',
+      Boolean(
+        recording ||
+        conversationVoiceFile
+      )
+    );
+  }
+
+  if(time){
+    if(recording){
+      const elapsed =
+        Math.floor(
+          (
+            Date.now() -
+            conversationVoiceStartedAt
+          ) /
+          1000
+        );
+
+      time.textContent =
+        formatVoiceDuration(
+          elapsed
+        );
+    }else if(
+      conversationVoiceFile
+    ){
+      time.textContent =
+        'Prêt';
+    }else{
+      time.textContent =
+        '00:00';
+    }
+  }
+
+  if(
+    preview &&
+    conversationVoiceObjectUrl
+  ){
+    preview.src =
+      conversationVoiceObjectUrl;
+  }else if(preview){
+    preview.removeAttribute(
+      'src'
+    );
+    preview.load();
+  }
+
+  const label =
+    document.getElementById(
+      'conversationAttachmentName'
+    );
+
+  if(
+    label &&
+    conversationVoiceFile
+  ){
+    label.textContent =
+      'Vocal prêt à envoyer';
+  }
+}
+
+window.clearConversationVoiceRecording = function(){
+  try{
+    if(
+      conversationVoiceRecorder &&
+      conversationVoiceRecorder.state ===
+        'recording'
+    ){
+      conversationVoiceRecorder.stop();
+    }
+  }catch{}
+
+  if(
+    conversationVoiceStream
+  ){
+    for(
+      const track
+      of conversationVoiceStream.getTracks()
+    ){
+      try{
+        track.stop();
+      }catch{}
+    }
+  }
+
+  if(
+    conversationVoiceObjectUrl
+  ){
+    try{
+      URL.revokeObjectURL(
+        conversationVoiceObjectUrl
+      );
+    }catch{}
+  }
+
+  if(
+    conversationVoiceTimer
+  ){
+    clearInterval(
+      conversationVoiceTimer
+    );
+  }
+
+  conversationVoiceRecorder =
+    null;
+
+  conversationVoiceStream =
+    null;
+
+  conversationVoiceChunks =
+    [];
+
+  conversationVoiceFile =
+    null;
+
+  conversationVoiceObjectUrl =
+    '';
+
+  conversationVoiceStartedAt =
+    0;
+
+  conversationVoiceTimer =
+    null;
+
+  updateConversationVoiceUi();
+
+  const label =
+    document.getElementById(
+      'conversationAttachmentName'
+    );
+
+  if(label){
+    label.textContent =
+      'Aucun fichier sélectionné';
+  }
+};
+
+window.toggleConversationVoiceRecording = async function(){
+  if(
+    conversationVoiceRecorder &&
+    conversationVoiceRecorder.state ===
+      'recording'
+  ){
+    conversationVoiceRecorder.stop();
+    return;
+  }
+
+  window.clearConversationVoiceRecording();
+
+  if(
+    !navigator
+      .mediaDevices
+      ?.getUserMedia
+  ){
+    alert(
+      'Le micro n’est pas disponible dans ce navigateur.'
+    );
+    return;
+  }
+
+  const candidate =
+    voiceMimeCandidate();
+
+  if(!candidate){
+    alert(
+      'Ce navigateur ne peut pas enregistrer dans un format audio compatible WhatsApp. Essayez Safari/Chrome à jour ou envoyez un fichier audio.'
+    );
+    return;
+  }
+
+  try{
+    conversationVoiceStream =
+      await navigator
+        .mediaDevices
+        .getUserMedia({
+          audio:{
+            echoCancellation:
+              true,
+            noiseSuppression:
+              true,
+            autoGainControl:
+              true
+          }
+        });
+
+    conversationVoiceChunks =
+      [];
+
+    conversationVoiceRecorder =
+      new MediaRecorder(
+        conversationVoiceStream,
+        {
+          mimeType:
+            candidate.mime,
+          audioBitsPerSecond:
+            64000
+        }
+      );
+
+    conversationVoiceRecorder.addEventListener(
+      'dataavailable',
+      event => {
+        if(
+          event.data &&
+          event.data.size >
+            0
+        ){
+          conversationVoiceChunks.push(
+            event.data
+          );
+        }
+      }
+    );
+
+    conversationVoiceRecorder.addEventListener(
+      'stop',
+      () => {
+        try{
+          for(
+            const track
+            of conversationVoiceStream
+              ?.getTracks?.() ||
+            []
+          ){
+            track.stop();
+          }
+        }catch{}
+
+        conversationVoiceStream =
+          null;
+
+        if(
+          conversationVoiceTimer
+        ){
+          clearInterval(
+            conversationVoiceTimer
+          );
+          conversationVoiceTimer =
+            null;
+        }
+
+        const blob =
+          new Blob(
+            conversationVoiceChunks,
+            {
+              type:
+                candidate.mime
+            }
+          );
+
+        conversationVoiceChunks =
+          [];
+
+        if(
+          !blob.size
+        ){
+          alert(
+            'Aucun son enregistré.'
+          );
+          conversationVoiceRecorder =
+            null;
+          updateConversationVoiceUi();
+          return;
+        }
+
+        const baseMime =
+          candidate.mime
+            .split(';')[0];
+
+        conversationVoiceFile =
+          new File(
+            [
+              blob
+            ],
+            `vocal-mondeco-${Date.now()}.${candidate.extension}`,
+            {
+              type:
+                baseMime
+            }
+          );
+
+        conversationVoiceObjectUrl =
+          URL.createObjectURL(
+            blob
+          );
+
+        conversationVoiceRecorder =
+          null;
+
+        updateConversationVoiceUi();
+      }
+    );
+
+    conversationVoiceRecorder.start(
+      250
+    );
+
+    conversationVoiceStartedAt =
+      Date.now();
+
+    conversationVoiceTimer =
+      setInterval(
+        updateConversationVoiceUi,
+        500
+      );
+
+    // Un vocal remplace les autres pièces jointes.
+    for(const id of [
+      'conversationDocumentFile',
+      'conversationCameraFile',
+      'conversationImageFile'
+    ]){
+      const input =
+        document.getElementById(
+          id
+        );
+
+      if(input){
+        input.value =
+          '';
+      }
+    }
+
+    updateConversationVoiceUi();
+  }catch(error){
+    window.clearConversationVoiceRecording();
+
+    alert(
+      error?.name ===
+        'NotAllowedError'
+        ? 'Autorisez l’accès au micro pour enregistrer un vocal.'
+        : `Impossible d’utiliser le micro : ${error.message || error}`
+    );
+  }
+};
+
 window.selectConversationAttachment = function(input, type){
+  if(
+    conversationVoiceFile ||
+    (
+      conversationVoiceRecorder &&
+      conversationVoiceRecorder.state === 'recording'
+    )
+  ){
+    window.clearConversationVoiceRecording();
+  }
+
   const ids = [
     'conversationDocumentFile',
     'conversationCameraFile',
@@ -8379,6 +9021,7 @@ window.sendConversationCommercialReply = async function(contact){
     String(textEl?.value || '').trim();
 
   const file =
+    conversationVoiceFile ||
     document.getElementById('conversationCameraFile')?.files?.[0] ||
     document.getElementById('conversationImageFile')?.files?.[0] ||
     document.getElementById('conversationDocumentFile')?.files?.[0] ||
@@ -8464,6 +9107,12 @@ window.sendConversationCommercialReply = async function(contact){
           })
         }
       );
+    }
+
+    if(
+      conversationVoiceFile
+    ){
+      window.clearConversationVoiceRecording();
     }
 
     await loadConversations();
