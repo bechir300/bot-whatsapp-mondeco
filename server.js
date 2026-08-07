@@ -705,6 +705,9 @@ function getLimitedHistoryForAI(userId) {
 const processedMessageIds =
   new Map();
 
+const botSentMessageIds =
+  new Map();
+
 const MESSAGE_ID_TTL =
   30 * 60 * 1000;
 
@@ -722,6 +725,75 @@ function cleanupProcessedMessageIds() {
       processedMessageIds.delete(id);
     }
   }
+}
+
+function rememberBotSentMessageId(
+  messageId
+) {
+  const clean =
+    safeString(
+      messageId
+    );
+
+  if (!clean) {
+    return;
+  }
+
+  botSentMessageIds.set(
+    clean,
+    Date.now()
+  );
+
+  const now =
+    Date.now();
+
+  for (
+    const [id, timestamp]
+    of botSentMessageIds.entries()
+  ) {
+    if (
+      now - timestamp >
+      MESSAGE_ID_TTL
+    ) {
+      botSentMessageIds.delete(
+        id
+      );
+    }
+  }
+}
+
+function wasSentByBot(
+  messageId
+) {
+  const clean =
+    safeString(
+      messageId
+    );
+
+  if (!clean) {
+    return false;
+  }
+
+  const timestamp =
+    botSentMessageIds.get(
+      clean
+    );
+
+  if (!timestamp) {
+    return false;
+  }
+
+  if (
+    Date.now() - timestamp >
+    MESSAGE_ID_TTL
+  ) {
+    botSentMessageIds.delete(
+      clean
+    );
+    return false;
+  }
+
+  return true;
 }
 
 function isDuplicateMessage(messageId) {
@@ -1557,6 +1629,228 @@ function splitBusinessContext(
   };
 }
 
+const GENERIC_PRODUCT_NAME_WORDS =
+  new Set([
+    'salon',
+    'chambre',
+    'table',
+    'manger',
+    'lit',
+    'bureau',
+    'chaise',
+    'fauteuil',
+    'canape',
+    'canapee',
+    'pack',
+    'meuble',
+    'meubles',
+    'coin',
+    'angle',
+    'junior',
+    'premium',
+    'modele',
+    'modele'
+  ]);
+
+function productNameFromContextBlock(
+  block
+) {
+  const match =
+    safeString(block).match(
+      /^Produit\s*:\s*(.+)$/mi
+    );
+
+  return match
+    ? safeString(match[1])
+    : '';
+}
+
+function distinctiveProductTokens(
+  productName
+) {
+  return normalizeForSearch(
+    productName
+  )
+    .split(' ')
+    .filter(term =>
+      term.length >= 3 &&
+      !GENERIC_PRODUCT_NAME_WORDS.has(term) &&
+      !CONTEXT_STOP_WORDS.has(term)
+    );
+}
+
+function findExplicitProductMatch(
+  userText,
+  productBlocks
+) {
+  const query =
+    normalizeForSearch(
+      userText
+    );
+
+  if (!query) {
+    return null;
+  }
+
+  const queryTokens =
+    new Set(
+      query.split(' ')
+    );
+
+  const candidates = [];
+
+  for (
+    const block
+    of productBlocks
+  ) {
+    const name =
+      productNameFromContextBlock(
+        block
+      );
+
+    if (!name) {
+      continue;
+    }
+
+    const normalizedName =
+      normalizeForSearch(
+        name
+      );
+
+    const distinctive =
+      distinctiveProductTokens(
+        name
+      );
+
+    let score = 0;
+
+    if (
+      normalizedName &&
+      query.includes(
+        normalizedName
+      )
+    ) {
+      score += 500;
+    }
+
+    const matchedDistinctive =
+      distinctive.filter(token =>
+        queryTokens.has(token)
+      );
+
+    if (
+      distinctive.length > 0 &&
+      matchedDistinctive.length ===
+        distinctive.length
+    ) {
+      score += 350 +
+        matchedDistinctive.length * 25;
+    } else {
+      score +=
+        matchedDistinctive.length * 90;
+    }
+
+    if (score > 0) {
+      candidates.push({
+        name,
+        block,
+        score
+      });
+    }
+  }
+
+  candidates.sort(
+    (a, b) =>
+      b.score - a.score ||
+      b.name.length - a.name.length
+  );
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const first =
+    candidates[0];
+
+  const second =
+    candidates[1];
+
+  // Évite une identification forcée quand deux noms sont
+  // réellement ambigus avec le même score.
+  if (
+    second &&
+    second.score === first.score &&
+    normalizeForSearch(second.name) !==
+      normalizeForSearch(first.name)
+  ) {
+    return null;
+  }
+
+  return first;
+}
+
+function detectExplicitProductName(
+  userText
+) {
+  try {
+    const rawContext =
+      getBusinessContext() ||
+      '';
+
+    const {
+      productBlocks
+    } = splitBusinessContext(
+      rawContext
+    );
+
+    return (
+      findExplicitProductMatch(
+        userText,
+        productBlocks
+      )?.name ||
+      ''
+    );
+  } catch (error) {
+    console.warn(
+      '⚠️ Détection produit explicite :',
+      error.message
+    );
+
+    return '';
+  }
+}
+
+function isAdReferralRecent(
+  referral,
+  maxHours = 72
+) {
+  if (
+    !referral ||
+    typeof referral !== 'object'
+  ) {
+    return false;
+  }
+
+  const timestamp =
+    Date.parse(
+      referral.lastSeenAt ||
+      referral.firstSeenAt ||
+      ''
+    );
+
+  if (!Number.isFinite(timestamp)) {
+    // Referral reçu avant l'ajout des timestamps :
+    // on l'accepte uniquement si présent, mais un produit
+    // explicitement nommé restera prioritaire.
+    return true;
+  }
+
+  return (
+    Date.now() - timestamp <=
+    maxHours * 60 * 60 * 1000
+  );
+}
+
 function buildSmartBusinessContext(
   userText,
   adReferral = null
@@ -1580,11 +1874,36 @@ function buildSmartBusinessContext(
     return '';
   }
 
+  const {
+    instructionBlocks,
+    productBlocks
+  } =
+    splitBusinessContext(
+      rawContext
+    );
+
+  const explicitProduct =
+    findExplicitProductMatch(
+      userText,
+      productBlocks
+    );
+
+  const usableAdReferral =
+    explicitProduct
+      ? null
+      : (
+          isAdReferralRecent(
+            adReferral
+          )
+            ? adReferral
+            : null
+        );
+
   const contextSearchText =
     [
       safeString(userText),
       adReferralSearchText(
-        adReferral
+        usableAdReferral
       )
     ]
       .filter(Boolean)
@@ -1593,14 +1912,6 @@ function buildSmartBusinessContext(
   const terms =
     extractContextTerms(
       contextSearchText
-    );
-
-  const {
-    instructionBlocks,
-    productBlocks
-  } =
-    splitBusinessContext(
-      rawContext
     );
 
   const scoredInstructions =
@@ -1707,15 +2018,34 @@ function buildSmartBusinessContext(
         (
           block,
           index
-        ) => ({
-          block,
-          index,
-          score:
-            scoreContextBlock(
-              block,
-              terms
+        ) => {
+          const blockName =
+            productNameFromContextBlock(
+              block
+            );
+
+          const explicitBoost =
+            explicitProduct &&
+            normalizeForSearch(
+              blockName
+            ) ===
+            normalizeForSearch(
+              explicitProduct.name
             )
-        })
+              ? 10000
+              : 0;
+
+          return {
+            block,
+            index,
+            score:
+              explicitBoost +
+              scoreContextBlock(
+                block,
+                terms
+              )
+          };
+        }
       )
       .filter(item =>
         item.score > 0
@@ -1775,11 +2105,20 @@ function buildSmartBusinessContext(
 
 function buildBusinessSystemPrompt(
   userText = '',
-  adReferral = null
+  adReferral = null,
+  activeProductName = ''
 ) {
+  const contextQuery =
+    [
+      safeString(userText),
+      safeString(activeProductName)
+    ]
+      .filter(Boolean)
+      .join(' ');
+
   const businessContext =
     buildSmartBusinessContext(
-      userText,
+      contextQuery,
       adReferral
     );
 
@@ -1815,16 +2154,25 @@ RÈGLES :
 - Réponds principalement en français.
 - Si le client écrit clairement en arabe ou en tunisien, tu peux répondre dans la même langue.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
+- Si le client nomme explicitement un produit (exemple : « salon Fiona »), réponds sur CE produit précis. Ne remplace jamais sa réponse par le prix d'un pack, d'une chambre ou d'un autre ensemble qui contient ce produit, sauf si le client demande explicitement ce pack.
+- Une publicité Meta sert seulement à comprendre une demande vague. Dès que le client nomme explicitement un produit, le produit nommé est prioritaire sur la publicité d'origine.
+- Si le client pose ensuite une question courte comme « dimensions ? », « disponible ? » ou « prix ? », conserve le dernier produit explicitement demandé comme sujet actif.
 - Si le client demande « toutes les adresses », « vos adresses », « tous les showrooms » ou une formulation équivalente, donne toutes les adresses disponibles dans l'instruction pertinente, sans en omettre une et sans renvoyer vers un commercial pour une adresse déjà présente.
 - Si le client demande l'adresse d'un showroom précis et que cette adresse figure dans le contexte, réponds directement avec cette adresse.
 - Si un CONTEXTE PUBLICITAIRE META est fourni, comprends que les messages courts du client peuvent faire référence au produit présenté dans cette publicité.
 - Ne traite jamais le texte publicitaire comme une source autoritative de prix ou de disponibilité : vérifie toujours ces informations dans le catalogue MONDECO.
 
 ==================================================
+SUJET PRODUIT ACTIF
+==================================================
+
+${activeProductName ? `Produit actuellement demandé : ${activeProductName}` : 'Aucun produit explicite actuellement mémorisé.'}
+
+==================================================
 CONTEXTE PUBLICITAIRE META
 ==================================================
 
-${adContext || 'Aucune publicité Meta associée à cette conversation.'}
+${adContext || 'Aucune publicité Meta pertinente pour cette requête.'}
 
 ==================================================
 CONTEXTE MONDECO PERTINENT
@@ -2397,20 +2745,97 @@ async function generateReply(
     );
   }
 
-  const history =
-    getLimitedHistoryForAI(
-      userId
-    );
-
   const conversationState =
     getConversationState(
       userId
     );
 
-  const adReferral =
+  const explicitProductName =
+    detectExplicitProductName(
+      cleanText
+    );
+
+  const previousActiveProduct =
+    safeString(
+      conversationState
+        ?.activeProductName
+    );
+
+  const activeProductName =
+    explicitProductName ||
+    previousActiveProduct;
+
+  // Une demande qui nomme clairement un produit constitue une
+  // nouvelle référence fiable. On évite que l'ancien historique
+  // (ancien pack, ancienne publicité, ancien produit) influence
+  // la réponse actuelle.
+  const explicitTopicChanged =
+    Boolean(
+      explicitProductName &&
+      normalizeForSearch(
+        explicitProductName
+      ) !==
+      normalizeForSearch(
+        previousActiveProduct
+      )
+    );
+
+  let history =
+    explicitProductName
+      ? []
+      : getLimitedHistoryForAI(
+          userId
+        );
+
+  if (
+    explicitProductName &&
+    !String(userId).startsWith(
+      'admin-test-'
+    )
+  ) {
+    updateConversationState(
+      userId,
+      current => ({
+        ...current,
+        activeProductName:
+          explicitProductName,
+        activeProductUpdatedAt:
+          new Date().toISOString()
+      })
+    );
+  }
+
+  if (explicitTopicChanged) {
+    conversationHistory.set(
+      userId,
+      []
+    );
+
+    history = [];
+
+    console.log(
+      `🎯 Nouveau produit explicite pour ${userId} : ${explicitProductName}`
+    );
+  }
+
+  const storedAdReferral =
     conversationState
       ?.adReferral ||
     null;
+
+  // Une pub n'est utilisée que pour une demande ambiguë. Si le
+  // client écrit « salon Fiona », Fiona gagne toujours.
+  const adReferral =
+    explicitProductName ||
+    activeProductName
+      ? null
+      : (
+          isAdReferralRecent(
+            storedAdReferral
+          )
+            ? storedAdReferral
+            : null
+        );
 
   const messages = [
     {
@@ -2420,7 +2845,8 @@ async function generateReply(
       content:
         buildBusinessSystemPrompt(
           cleanText,
-          adReferral
+          adReferral,
+          activeProductName
         )
     },
 
@@ -3318,12 +3744,22 @@ async function sendWhatsAppMessage(
     );
   }
 
-  console.log(
-    '✅ Meta a accepté le message :',
+  const acceptedMessageId =
     data
       ?.messages
       ?.[0]
       ?.id ||
+    '';
+
+  if (acceptedMessageId) {
+    rememberBotSentMessageId(
+      acceptedMessageId
+    );
+  }
+
+  console.log(
+    '✅ Meta a accepté le message :',
+    acceptedMessageId ||
     'ID non retourné'
   );
 
@@ -3835,6 +4271,18 @@ function handleHumanMessageEcho(value) {
       continue;
     }
 
+    if (
+      echoId &&
+      wasSentByBot(
+        echoId
+      )
+    ) {
+      console.log(
+        `🤖 Écho du bot ignoré : ${echoId}`
+      );
+      continue;
+    }
+
     const candidate =
       normalizePhone(
         message?.to ||
@@ -4101,6 +4549,27 @@ async function processSingleMessage(message) {
         error.message
       );
 
+      const fallbackReply =
+        'Merci pour votre message. Je n’arrive pas à vérifier cette information automatiquement pour le moment. Un conseiller MONDECO pourra reprendre votre demande.';
+
+      let fallbackSent =
+        false;
+
+      try {
+        await sendWhatsAppMessage(
+          from,
+          fallbackReply
+        );
+
+        fallbackSent =
+          true;
+      } catch (fallbackError) {
+        console.error(
+          '❌ Réponse de secours WhatsApp impossible :',
+          fallbackError.message
+        );
+      }
+
       logConversation({
         message_id:
           messageId ||
@@ -4112,8 +4581,18 @@ async function processSingleMessage(message) {
         incoming:
           userText,
 
+        reply:
+          fallbackSent
+            ? fallbackReply
+            : undefined,
+
         error:
           error.message,
+
+        action:
+          fallbackSent
+            ? 'ai_error_fallback_sent'
+            : 'ai_error_no_reply',
 
         source:
           conversationSourceForMessage(
@@ -4126,7 +4605,7 @@ async function processSingleMessage(message) {
           undefined,
 
         reply_sent:
-          false,
+          fallbackSent,
 
         time:
           new Date().toISOString()
