@@ -23,6 +23,7 @@ const DATA_DIR = (
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
+const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-migration-done');
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
@@ -1469,7 +1470,7 @@ const DEFAULT_SETTINGS = {
       'Souhaitez-vous que je vous aide à choisir le modèle le plus adapté ? 😊'
   },
 
-  imageHandling: 'commercial',
+  imageHandling: 'secure_catalog',
 
   pauseWhenHumanReplies: true,
 
@@ -1493,6 +1494,7 @@ const ALLOWED_OUT_OF_HOURS = new Set([
 
 const ALLOWED_IMAGE_HANDLING = new Set([
   'commercial',
+  'secure_catalog',
   'analyze_only',
   'analyze_reply'
 ]);
@@ -1705,6 +1707,65 @@ function initializeSettings() {
   );
 }
 
+
+function migrateSecureImageModeV676() {
+  if (
+    fs.existsSync(
+      SECURE_IMAGE_MIGRATION_MARKER
+    )
+  ) {
+    return;
+  }
+
+  try {
+    if (
+      fs.existsSync(
+        SETTINGS_PATH
+      )
+    ) {
+      const parsed =
+        JSON.parse(
+          fs.readFileSync(
+            SETTINGS_PATH,
+            'utf8'
+          ) || '{}'
+        );
+
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        parsed.imageHandling ===
+          'commercial'
+      ) {
+        parsed.imageHandling =
+          'secure_catalog';
+
+        writeJsonAtomic(
+          SETTINGS_PATH,
+          normalizeSettings(
+            parsed
+          )
+        );
+
+        console.log(
+          '🖼️ Mode images migré vers Capture intelligente sécurisée.'
+        );
+      }
+    }
+
+    fs.writeFileSync(
+      SECURE_IMAGE_MIGRATION_MARKER,
+      new Date().toISOString(),
+      'utf8'
+    );
+  } catch (error) {
+    console.warn(
+      '⚠️ Migration mode image V6.7.6 :',
+      error.message
+    );
+  }
+}
+
 function getBotSettings() {
   try {
     if (!fs.existsSync(SETTINGS_PATH)) {
@@ -1746,6 +1807,7 @@ ensurePersistenceSafety();
 migrateLegacyData();
 initializePersistentInstructions();
 initializeSettings();
+migrateSecureImageModeV676();
 ensureDailySnapshot();
 
 console.log(
@@ -2230,6 +2292,28 @@ const ALLOWED_IMAGE_TYPES = new Set([
   'image/webp'
 ]);
 
+
+const ALLOWED_COMMERCIAL_MEDIA_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+]);
+
+function commercialMediaFileFilter(req, file, callback) {
+  if (!ALLOWED_COMMERCIAL_MEDIA_TYPES.has(file.mimetype)) {
+    return callback(
+      new Error(
+        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG ou WEBP.'
+      )
+    );
+  }
+
+  return callback(null, true);
+}
+
 function imageFileFilter(req, file, callback) {
   if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
     return callback(
@@ -2281,6 +2365,18 @@ const memoryUpload =
     fileFilter: imageFileFilter
   });
 
+
+const commercialMediaUpload =
+  multer({
+    storage: multer.memoryStorage(),
+
+    limits: {
+      fileSize: 20 * 1024 * 1024
+    },
+
+    fileFilter: commercialMediaFileFilter
+  });
+
 function multerSingle(upload, fieldName) {
   return (req, res, next) => {
     upload.single(fieldName)(
@@ -2326,6 +2422,42 @@ const uploadTestImage =
 
 const uploadCustomizationImage =
   multerSingle(memoryUpload, 'referenceImage');
+
+
+const uploadCommercialMedia = (req, res, next) => {
+  commercialMediaUpload.single('file')(
+    req,
+    res,
+    error => {
+      if (!error) return next();
+
+      if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+          return res
+            .status(400)
+            .json({
+              error:
+                'Fichier trop volumineux. Maximum 20 Mo.'
+            });
+        }
+
+        return res
+          .status(400)
+          .json({
+            error: error.message
+          });
+      }
+
+      return res
+        .status(400)
+        .json({
+          error:
+            error.message ||
+            'Fichier invalide.'
+        });
+    }
+  );
+};
 
 // ============================================================
 // SERVIR IMAGES
@@ -2734,6 +2866,41 @@ function mapWooCommerceProduct(product) {
       .join(' / ') ||
     'WooCommerce';
 
+  const primaryCategory =
+    categories.find(
+      item =>
+        safeString(
+          item?.slug
+        ) &&
+        ![
+          'uncategorized',
+          'non-classe',
+          'non-classee'
+        ].includes(
+          normalizeWooLookup(
+            item?.slug
+          ).replace(
+            /\s+/g,
+            '-'
+          )
+        )
+    ) ||
+    categories.find(
+      item =>
+        safeString(
+          item?.slug
+        )
+    ) ||
+    null;
+
+  const categoryUrl =
+    primaryCategory?.slug
+      ? (
+          `${WOOCOMMERCE_URL}/categorie-produit/` +
+          `${encodeURIComponent(safeString(primaryCategory.slug))}/`
+        )
+      : '';
+
   const colors =
     wooAttributeValue(
       product,
@@ -2869,6 +3036,8 @@ function mapWooCommerceProduct(product) {
       safeString(
         product?.permalink
       ),
+
+    categoryUrl,
 
     description:
       htmlToPlainText(
@@ -3093,6 +3262,12 @@ function mergeWooProduct(
         current?.productUrl
       ),
 
+    categoryUrl:
+      remote.categoryUrl ||
+      safeString(
+        current?.categoryUrl
+      ),
+
     description:
       remote.description ||
       safeString(
@@ -3184,7 +3359,7 @@ function createLocalProductFromWoo(
       remote.productUrl,
 
     categoryUrl:
-      '',
+      remote.categoryUrl,
 
     description:
       remote.description,
@@ -6225,6 +6400,89 @@ router.post(
   }
 );
 
+
+router.post(
+  '/api/commercial/send-media',
+  requireAuth,
+  uploadCommercialMedia,
+  async (req, res) => {
+    try {
+      if (!commercialSendHandler) {
+        return res
+          .status(503)
+          .json({
+            error:
+              'L’envoi WhatsApp commercial n’est pas encore connecté.'
+          });
+      }
+
+      const phone =
+        normalizePhone(req.body?.phone);
+
+      const text =
+        safeString(req.body?.text);
+
+      const question =
+        safeString(req.body?.question);
+
+      if (!phone) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Numéro client obligatoire.'
+          });
+      }
+
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ajoutez un PDF, un document Word ou une photo.'
+          });
+      }
+
+      const mediaKind =
+        req.file.mimetype.startsWith('image/')
+          ? 'image'
+          : 'document';
+
+      const result =
+        await commercialSendHandler({
+          phone,
+          text,
+          question,
+          mediaKind,
+          file: {
+            buffer: req.file.buffer,
+            mimetype: req.file.mimetype,
+            originalname: req.file.originalname,
+            size: req.file.size
+          }
+        });
+
+      return res.json({
+        success: true,
+        ...(result && typeof result === 'object' ? result : {})
+      });
+    } catch (error) {
+      console.error(
+        '❌ Envoi média commercial :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            error.message ||
+            'Impossible d’envoyer le fichier au client.'
+        });
+    }
+  }
+);
+
 router.post(
   '/api/test-chat',
   requireAuth,
@@ -6297,15 +6555,6 @@ router.post(
         safeString(req.body?.message) ||
         'Analyse cette image et explique ce que tu vois.';
 
-      if (mode === 'whatsapp') {
-        return res.json({
-          reply:
-            'Simulation WhatsApp : image reçue. Aucune réponse automatique ne serait envoyée au client ; un commercial doit reprendre la conversation.',
-          action:
-            'commercial_required'
-        });
-      }
-
       if (!imageChatHandler) {
         return res
           .status(503)
@@ -6324,12 +6573,16 @@ router.post(
             mimetype: req.file.mimetype,
             originalname: req.file.originalname,
             size: req.file.size
-          }
+          },
+          mode
         );
 
       return res.json({
         reply,
-        action: 'vision_analysis'
+        action:
+          mode === 'whatsapp'
+            ? 'secure_image_simulation'
+            : 'vision_analysis'
       });
     } catch (error) {
       console.error(
@@ -6919,6 +7172,13 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         adBody: safeString(state?.adReferral?.body),
         adSourceId: safeString(state?.adReferral?.sourceId),
         adSourceUrl: safeString(state?.adReferral?.sourceUrl),
+        imageNeedsCommercial: Boolean(state.imageNeedsCommercial),
+        lastImageProduct: safeString(state?.lastImageProduct),
+        lastImageReason: safeString(state?.lastImageReason),
+        commercialAttention: Boolean(state.commercialAttention),
+        commercialAttentionReason: safeString(state?.commercialAttentionReason),
+        lastCustomerAt: safeString(state?.lastCustomerAt),
+        lastInboundType: safeString(state?.lastInboundType),
         humanPaused: Boolean(state.humanPaused),
         awaitingResponse: Boolean(state.awaitingResponse),
         followUpsSent: Number(state.followUpsSent || 0)
@@ -6952,6 +7212,133 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     return res.status(500).json({ error: 'Impossible de lire cette conversation.' });
   }
 });
+
+
+router.get(
+  '/api/notifications',
+  requireAuth,
+  (req, res) => {
+    try {
+      const sinceRaw =
+        safeString(req.query?.since);
+
+      const sinceMs =
+        Date.parse(sinceRaw);
+
+      const minTime =
+        Number.isFinite(sinceMs)
+          ? sinceMs
+          : Date.now();
+
+      const urgentActions =
+        new Set([
+          'ai_needs_commercial',
+          'ai_error_fallback_sent',
+          'ai_error_no_reply',
+          'commercial_required',
+          'secure_image_commercial_required',
+          'secure_image_analysis_error',
+          'image_analysis_error'
+        ]);
+
+      const events =
+        loadWhatsAppLog()
+          .filter(entry => {
+            const timeMs =
+              Date.parse(entry?.time || '');
+
+            if (
+              !Number.isFinite(timeMs) ||
+              timeMs <= minTime
+            ) {
+              return false;
+            }
+
+            const source =
+              safeString(entry?.source);
+
+            const action =
+              safeString(entry?.action);
+
+            if (
+              source.startsWith('commercial') ||
+              action === 'commercial_reply' ||
+              action === 'automatic_followup'
+            ) {
+              return false;
+            }
+
+            return Boolean(
+              safeString(entry?.incoming) ||
+              safeString(entry?.type)
+            );
+          })
+          .slice(-80)
+          .map(entry => {
+            const action =
+              safeString(entry?.action);
+
+            const type =
+              safeString(entry?.type) ||
+              'text';
+
+            let preview =
+              safeString(entry?.incoming);
+
+            if (!preview) {
+              if (type === 'image') {
+                preview =
+                  'Photo / capture reçue';
+              } else if (type === 'document') {
+                preview =
+                  'Document reçu';
+              } else {
+                preview =
+                  `Nouveau message ${type}`;
+              }
+            }
+
+            return {
+              id:
+                safeString(entry?.message_id) ||
+                `${safeString(entry?.contact)}-${safeString(entry?.time)}`,
+
+              contact:
+                safeString(entry?.contact),
+
+              time:
+                safeString(entry?.time),
+
+              preview:
+                preview.slice(0, 180),
+
+              action,
+
+              urgent:
+                urgentActions.has(action)
+            };
+          });
+
+      return res.json({
+        serverTime:
+          new Date().toISOString(),
+        events
+      });
+    } catch (error) {
+      console.error(
+        '❌ Notifications Admin :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de lire les notifications.'
+        });
+    }
+  }
+);
 
 // ============================================================
 // STATUS / STATS
@@ -6990,6 +7377,11 @@ router.get(
       woocommerceSyncFile:
         fs.existsSync(
           WOOCOMMERCE_SYNC_PATH
+        ),
+
+      secureImageMigrationDone:
+        fs.existsSync(
+          SECURE_IMAGE_MIGRATION_MARKER
         ),
 
       instructionMigrationDone:
