@@ -2791,6 +2791,779 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.11 — Inbox commerciale style Meta
+   ========================================================== */
+.inbox-page{
+  padding:0 !important;
+}
+.inbox-shell{
+  height:calc(100vh - 32px);
+  min-height:680px;
+  display:grid;
+  grid-template-columns:330px minmax(420px,1fr) 300px;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#fff;
+}
+.inbox-left,
+.inbox-center,
+.inbox-right{
+  min-width:0;
+  min-height:0;
+}
+.inbox-left{
+  display:flex;
+  flex-direction:column;
+  border-right:1px solid var(--line);
+  background:#fff;
+}
+.inbox-left-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:16px 14px 10px;
+}
+.inbox-left-head h2{
+  margin:0;
+  font-size:20px;
+}
+.inbox-mini-sub{
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+}
+.inbox-head-actions{
+  display:flex;
+  gap:6px;
+}
+.icon-btn{
+  position:relative;
+  width:36px;
+  height:36px;
+  display:grid;
+  place-items:center;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#fff;
+  cursor:pointer;
+}
+.icon-btn:hover{
+  background:var(--surface-2);
+}
+.inbox-search-wrap{
+  padding:0 12px 8px;
+}
+.inbox-search{
+  width:100%;
+  height:38px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:0 12px;
+  background:var(--surface);
+}
+.inbox-filters{
+  display:flex;
+  gap:5px;
+  overflow-x:auto;
+  padding:0 12px 10px;
+  scrollbar-width:none;
+}
+.inbox-filters::-webkit-scrollbar{
+  display:none;
+}
+.inbox-filter{
+  flex:0 0 auto;
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:7px 10px;
+  background:#fff;
+  color:var(--text);
+  font-size:10px;
+  font-weight:800;
+  cursor:pointer;
+}
+.inbox-filter span{
+  margin-left:4px;
+  color:var(--muted);
+}
+.inbox-filter.active{
+  background:#11100f;
+  border-color:#11100f;
+  color:#fff;
+}
+.inbox-filter.active span{
+  color:#fff;
+}
+.inbox-list-meta{
+  padding:0 14px 8px;
+  color:var(--muted);
+  font-size:10px;
+}
+.inbox-conversation-list{
+  flex:1;
+  overflow:auto;
+  border-top:1px solid var(--line);
+}
+.inbox-conversation-item{
+  width:100%;
+  display:grid;
+  grid-template-columns:44px minmax(0,1fr) auto;
+  gap:10px;
+  align-items:start;
+  padding:12px;
+  border:0;
+  border-bottom:1px solid var(--line);
+  background:#fff;
+  text-align:left;
+  cursor:pointer;
+}
+.inbox-conversation-item:hover{
+  background:#faf8f5;
+}
+.inbox-conversation-item.selected{
+  background:#f4f0eb;
+  box-shadow:inset 3px 0 0 #ed1c24;
+}
+.inbox-conversation-item.urgent:not(.selected){
+  box-shadow:inset 3px 0 0 #ed1c24;
+}
+.inbox-avatar{
+  width:42px;
+  height:42px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:#11100f;
+  color:#fff;
+  font-weight:900;
+  font-size:13px;
+}
+.inbox-avatar.ad{
+  background:#ed1c24;
+}
+.inbox-item-main{
+  min-width:0;
+}
+.inbox-item-name-row{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  min-width:0;
+}
+.inbox-item-name{
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12px;
+  font-weight:900;
+}
+.inbox-item-preview{
+  margin-top:3px;
+  color:#4c4945;
+  font-size:11px;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.inbox-item-tags{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  margin-top:6px;
+}
+.inbox-tag{
+  display:inline-flex;
+  align-items:center;
+  min-height:18px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#f0ece7;
+  color:#56514b;
+  font-size:8.5px;
+  font-weight:900;
+}
+.inbox-tag.red{
+  background:#fff0f1;
+  color:#c9151d;
+}
+.inbox-tag.green{
+  background:#edf8f1;
+  color:#187842;
+}
+.inbox-item-side{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:6px;
+  color:var(--muted);
+  font-size:9px;
+}
+.inbox-unread{
+  min-width:20px;
+  height:20px;
+  display:grid;
+  place-items:center;
+  padding:0 5px;
+  border-radius:999px;
+  background:#ed1c24;
+  color:#fff;
+  font-weight:900;
+}
+.inbox-priority-star{
+  color:#ed1c24;
+  font-size:13px;
+}
+.inbox-center{
+  display:flex;
+  flex-direction:column;
+  background:#f7f5f2;
+}
+.inbox-conversation-header{
+  min-height:66px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:10px 14px;
+  border-bottom:1px solid var(--line);
+  background:#fff;
+}
+.inbox-header-left{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.inbox-header-identity{
+  min-width:0;
+}
+.inbox-header-name{
+  font-size:13px;
+  font-weight:900;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.inbox-header-sub{
+  margin-top:2px;
+  color:var(--muted);
+  font-size:9.5px;
+}
+.inbox-header-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+.inbox-header-btn{
+  border:1px solid var(--line);
+  border-radius:9px;
+  padding:7px 9px;
+  background:#fff;
+  font-size:10px;
+  font-weight:800;
+  cursor:pointer;
+}
+.inbox-header-btn.active{
+  border-color:#ed1c24;
+  color:#ed1c24;
+}
+.inbox-header-btn.takeover{
+  background:#11100f;
+  border-color:#11100f;
+  color:#fff;
+}
+.inbox-header-btn.ai{
+  background:#edf8f1;
+  border-color:#cce8d7;
+  color:#176d3d;
+}
+.inbox-mobile-back{
+  display:none;
+}
+.inbox-thread{
+  flex:1;
+  overflow:auto;
+  padding:18px;
+}
+.inbox-thread-empty{
+  display:grid;
+  place-items:center;
+}
+.inbox-empty-state{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:180px;
+  color:var(--muted);
+  text-align:center;
+  font-size:11px;
+}
+.inbox-empty-state.compact{
+  min-height:130px;
+  padding:20px;
+}
+.inbox-empty-icon{
+  font-size:30px;
+}
+.inbox-thread-date{
+  width:max-content;
+  margin:12px auto;
+  padding:4px 8px;
+  border-radius:999px;
+  background:#ece8e2;
+  color:#6b665f;
+  font-size:8.5px;
+}
+.inbox-message-row{
+  display:flex;
+  margin:8px 0;
+}
+.inbox-message-row.incoming{
+  justify-content:flex-start;
+}
+.inbox-message-row.bot,
+.inbox-message-row.commercial{
+  justify-content:flex-end;
+}
+.inbox-message-wrap{
+  max-width:min(76%,680px);
+}
+.inbox-message-label{
+  margin:0 5px 4px;
+  color:var(--muted);
+  font-size:8.5px;
+}
+.inbox-message-row.bot .inbox-message-label,
+.inbox-message-row.commercial .inbox-message-label{
+  text-align:right;
+}
+.inbox-bubble{
+  padding:10px 12px;
+  border-radius:14px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font-size:12px;
+  line-height:1.45;
+  box-shadow:0 1px 1px rgba(0,0,0,.04);
+}
+.inbox-message-row.incoming .inbox-bubble{
+  background:#fff;
+  border:1px solid var(--line);
+  border-bottom-left-radius:4px;
+}
+.inbox-message-row.bot .inbox-bubble{
+  background:#e9f4ee;
+  border:1px solid #d1e7da;
+  border-bottom-right-radius:4px;
+}
+.inbox-message-row.commercial .inbox-bubble{
+  background:#1677f2;
+  color:#fff;
+  border-bottom-right-radius:4px;
+}
+.inbox-message-meta{
+  margin-top:3px;
+  color:var(--muted);
+  font-size:8px;
+}
+.inbox-message-row.bot .inbox-message-meta,
+.inbox-message-row.commercial .inbox-message-meta{
+  text-align:right;
+}
+.inbox-attachment{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-top:5px;
+  padding:7px 9px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#fff;
+  color:#111;
+  font-size:10px;
+  font-weight:800;
+}
+.inbox-ad-context{
+  max-width:720px;
+  margin:10px auto 14px;
+  padding:10px 12px;
+  border:1px solid #d9d3cc;
+  border-radius:12px;
+  background:#fff;
+  font-size:10px;
+}
+.inbox-composer{
+  position:sticky;
+  bottom:0;
+  margin:0;
+  padding:10px 12px 12px;
+  border-top:1px solid var(--line);
+  background:#fff;
+}
+.inbox-composer textarea{
+  min-height:72px;
+  max-height:150px;
+  resize:vertical;
+}
+.inbox-right{
+  overflow:auto;
+  border-left:1px solid var(--line);
+  background:#fff;
+}
+.inbox-profile-card{
+  padding:18px 16px;
+  text-align:center;
+  border-bottom:1px solid var(--line);
+}
+.inbox-profile-card .inbox-avatar{
+  width:58px;
+  height:58px;
+  margin:0 auto 10px;
+  font-size:17px;
+}
+.inbox-profile-name{
+  font-size:14px;
+  font-weight:900;
+}
+.inbox-profile-phone{
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+}
+.inbox-panel-section{
+  padding:14px;
+  border-bottom:1px solid var(--line);
+}
+.inbox-panel-title{
+  margin-bottom:9px;
+  color:var(--muted);
+  font-size:9px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.inbox-info-row{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  margin:7px 0;
+  font-size:10px;
+}
+.inbox-info-row span:first-child{
+  color:var(--muted);
+}
+.inbox-info-row strong{
+  text-align:right;
+}
+.inbox-panel-actions{
+  display:grid;
+  gap:7px;
+}
+.inbox-panel-actions .btn{
+  width:100%;
+  justify-content:center;
+}
+.inbox-alert{
+  padding:9px 10px;
+  border-radius:9px;
+  background:#fff0f1;
+  color:#a81017;
+  font-size:10px;
+  line-height:1.4;
+}
+.inbox-empty-header{
+  color:var(--muted);
+  font-size:11px;
+}
+@media(max-width:1180px){
+  .inbox-shell{
+    grid-template-columns:300px minmax(400px,1fr);
+  }
+  .inbox-right{
+    display:none;
+  }
+}
+@media(max-width:760px){
+  .inbox-shell{
+    height:calc(100vh - 18px);
+    min-height:0;
+    grid-template-columns:1fr;
+  }
+  .inbox-left{
+    border-right:0;
+  }
+  .inbox-center{
+    display:none;
+  }
+  .inbox-page.has-selection .inbox-left{
+    display:none;
+  }
+  .inbox-page.has-selection .inbox-center{
+    display:flex;
+  }
+  .inbox-mobile-back{
+    display:inline-grid;
+  }
+  .inbox-conversation-header{
+    padding:8px 9px;
+  }
+  .inbox-header-actions{
+    gap:4px;
+  }
+  .inbox-header-btn{
+    padding:6px 7px;
+    font-size:9px;
+  }
+  .inbox-thread{
+    padding:12px 9px;
+  }
+  .inbox-message-wrap{
+    max-width:88%;
+  }
+}
+
+
+/* ==========================================================
+   MONDECO V6.12 — Inbox claire / lisible
+   ========================================================== */
+#page-conversations{
+  margin:-18px -24px -40px !important;
+}
+#page-conversations .inbox-shell{
+  height:calc(100vh - 84px) !important;
+  min-height:720px !important;
+  grid-template-columns:340px minmax(520px,1fr) 320px !important;
+  border-radius:14px !important;
+  box-shadow:0 8px 32px rgba(24,20,17,.07);
+}
+.inbox-title-line{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.inbox-title-line h2{
+  font-size:22px !important;
+}
+.inbox-version{
+  display:inline-flex;
+  align-items:center;
+  min-height:22px;
+  padding:2px 7px;
+  border-radius:999px;
+  background:#11100f;
+  color:#fff;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.04em;
+}
+.inbox-mini-sub{
+  font-size:11px !important;
+}
+.inbox-search{
+  height:42px !important;
+  font-size:12px !important;
+}
+.inbox-filter{
+  min-height:31px;
+  padding:7px 11px !important;
+  font-size:10.5px !important;
+}
+.inbox-list-meta{
+  font-size:10.5px !important;
+}
+.inbox-conversation-item{
+  min-height:78px;
+  grid-template-columns:48px minmax(0,1fr) auto !important;
+  gap:11px !important;
+  padding:13px 12px !important;
+}
+.inbox-avatar{
+  width:46px !important;
+  height:46px !important;
+  font-size:14px !important;
+}
+.inbox-item-name{
+  font-size:13px !important;
+}
+.inbox-item-preview{
+  margin-top:4px !important;
+  font-size:11.5px !important;
+}
+.inbox-item-side{
+  font-size:9.5px !important;
+}
+.inbox-tag{
+  font-size:9px !important;
+}
+.inbox-conversation-header{
+  min-height:74px !important;
+  padding:10px 16px !important;
+}
+.inbox-header-name{
+  font-size:14px !important;
+}
+.inbox-header-sub{
+  font-size:10px !important;
+}
+.inbox-header-btn{
+  min-height:34px;
+  padding:8px 10px !important;
+  font-size:10px !important;
+}
+.inbox-thread{
+  padding:22px 24px 130px !important;
+  background:
+    radial-gradient(circle at top left,rgba(237,28,36,.025),transparent 280px),
+    #f7f5f2;
+}
+.inbox-message-row{
+  margin:11px 0 !important;
+}
+.inbox-message-wrap{
+  max-width:min(70%,720px) !important;
+}
+.inbox-message-label{
+  font-size:9.5px !important;
+  font-weight:800;
+}
+.inbox-bubble{
+  padding:12px 14px !important;
+  font-size:14px !important;
+  line-height:1.5 !important;
+}
+.inbox-message-meta{
+  font-size:8.5px !important;
+}
+.inbox-message-row.incoming .inbox-bubble{
+  background:#fff !important;
+}
+.inbox-message-row.bot .inbox-bubble{
+  background:#eef8f2 !important;
+  border-color:#d4e9dc !important;
+}
+.inbox-message-row.commercial .inbox-bubble{
+  background:#1473e6 !important;
+}
+.inbox-ad-context{
+  padding:12px 14px !important;
+  font-size:11px !important;
+}
+.inbox-composer{
+  position:sticky !important;
+  bottom:-1px !important;
+  z-index:8;
+  padding:12px 14px 14px !important;
+  box-shadow:0 -8px 26px rgba(24,20,17,.06);
+}
+.inbox-composer textarea{
+  min-height:82px !important;
+  font-size:13px !important;
+  line-height:1.45 !important;
+}
+.smart-keyboard{
+  grid-template-columns:minmax(240px,1fr) auto auto !important;
+}
+.smart-keyboard select{
+  min-height:38px;
+  font-size:11px;
+}
+.smart-keyboard-help{
+  font-size:10px !important;
+}
+.conversation-composer-actions{
+  gap:8px !important;
+}
+.conversation-composer-actions .btn{
+  min-height:36px;
+}
+.inbox-right{
+  background:#fbfaf8 !important;
+}
+.inbox-profile-card{
+  padding:22px 16px !important;
+  background:#fff;
+}
+.inbox-profile-card .inbox-avatar{
+  width:66px !important;
+  height:66px !important;
+  font-size:18px !important;
+}
+.inbox-profile-name{
+  font-size:15px !important;
+}
+.inbox-profile-phone{
+  font-size:11px !important;
+}
+.inbox-panel-section{
+  padding:15px !important;
+}
+.inbox-panel-title{
+  font-size:9.5px !important;
+}
+.inbox-info-row{
+  font-size:11px !important;
+}
+.inbox-alert{
+  font-size:11px !important;
+}
+.inbox-live-dot{
+  width:8px;
+  height:8px;
+  display:inline-block;
+  border-radius:50%;
+  background:#21a05a;
+  margin-right:5px;
+}
+.inbox-status-line{
+  display:flex;
+  align-items:center;
+  margin-top:3px;
+  color:#5f5a54;
+  font-size:9.5px;
+}
+.inbox-thread-loading{
+  opacity:.55;
+  pointer-events:none;
+}
+@media(max-width:1380px){
+  #page-conversations .inbox-shell{
+    grid-template-columns:310px minmax(480px,1fr) 285px !important;
+  }
+}
+@media(max-width:1180px){
+  #page-conversations .inbox-shell{
+    grid-template-columns:300px minmax(460px,1fr) !important;
+  }
+}
+@media(max-width:760px){
+  #page-conversations{
+    margin:-10px -12px -30px !important;
+  }
+  #page-conversations .inbox-shell{
+    height:calc(100vh - 70px) !important;
+    min-height:0 !important;
+    grid-template-columns:1fr !important;
+  }
+  .inbox-message-wrap{
+    max-width:88% !important;
+  }
+  .inbox-bubble{
+    font-size:13.5px !important;
+  }
+  .smart-keyboard{
+    grid-template-columns:1fr !important;
+  }
+}
+
 </style>
 </head>
 
@@ -3059,41 +3832,86 @@ tbody tr:hover{
     <!-- CONVERSATIONS -->
     <!-- ================================================== -->
 
-    <section id="page-conversations" class="page">
-      <div class="page-header">
-        <div>
-          <h2 class="page-title">Conversations</h2>
-          <p class="page-subtitle">
-            Historique des échanges WhatsApp entre le bot et vos clients.
-          </p>
-        </div>
+    <section id="page-conversations" class="page inbox-page">
+      <div class="inbox-shell">
+        <aside class="inbox-left">
+          <div class="inbox-left-head">
+            <div>
+              <div class="inbox-title-line">
+                <h2>Messages</h2>
+                <span class="inbox-version">V6.12</span>
+              </div>
+              <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
+            </div>
 
-        <div class="actions">
-          <button class="btn" id="enableNotificationsBtn" type="button">
-            🔔 Notifications
-            <span id="notificationHeaderCount" class="notification-count hidden">0</span>
-          </button>
-          <button class="btn" id="refreshConversationsBtn">↻ Actualiser</button>
-        </div>
-      </div>
+            <div class="inbox-head-actions">
+              <button class="icon-btn" id="enableNotificationsBtn" type="button" title="Notifications">
+                🔔
+                <span id="notificationHeaderCount" class="notification-count hidden">0</span>
+              </button>
+              <button class="icon-btn" id="refreshConversationsBtn" type="button" title="Actualiser">↻</button>
+            </div>
+          </div>
 
-      <div class="toolbar">
-        <input
-          id="conversationSearch"
-          class="search"
-          type="search"
-          placeholder="Rechercher un numéro..."
-        >
-        <strong id="conversationCountLabel">0 conversation</strong>
-      </div>
+          <div class="inbox-search-wrap">
+            <input
+              id="conversationSearch"
+              class="inbox-search"
+              type="search"
+              placeholder="Rechercher client, numéro, publicité..."
+            >
+          </div>
 
-      <div id="conversationListContainer"></div>
+          <div class="inbox-filters" id="conversationFilters">
+            <button class="inbox-filter active" data-filter="all">
+              Tous <span id="filterCountAll">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="unread">
+              Non lus <span id="filterCountUnread">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="priority">
+              Priorité <span id="filterCountPriority">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="commercial">
+              Commercial <span id="filterCountCommercial">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="ads">
+              Publicités <span id="filterCountAds">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="resolved">
+              Terminées <span id="filterCountResolved">0</span>
+            </button>
+          </div>
 
-      <div class="card" id="conversationDetailCard" style="margin-top:16px">
-        <div id="conversationDetail" class="empty">
-          <strong>Aucune conversation sélectionnée</strong>
-          Cliquez sur un contact dans la liste ci-dessus pour voir le détail des échanges.
-        </div>
+          <div class="inbox-list-meta">
+            <strong id="conversationCountLabel">0 conversation</strong>
+          </div>
+
+          <div id="conversationListContainer" class="inbox-conversation-list"></div>
+        </aside>
+
+        <main class="inbox-center">
+          <div id="inboxConversationHeader" class="inbox-conversation-header">
+            <div class="inbox-empty-header">
+              Sélectionnez une conversation
+            </div>
+          </div>
+
+          <div id="conversationDetail" class="inbox-thread inbox-thread-empty">
+            <div class="inbox-empty-state">
+              <div class="inbox-empty-icon">💬</div>
+              <strong>Aucune conversation sélectionnée</strong>
+              <span>Choisissez un client à gauche pour afficher la discussion.</span>
+            </div>
+          </div>
+        </main>
+
+        <aside id="inboxCustomerPanel" class="inbox-right">
+          <div class="inbox-empty-state compact">
+            <strong>Fiche client</strong>
+            <span>Les informations du client apparaîtront ici.</span>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -4790,219 +5608,638 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
 
 let conversations = [];
 let quickReplies = [];
+let conversationFilter = 'all';
+let selectedConversationContact = '';
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
 let notificationAudioContext = null;
 
+
 async function loadConversations(){
-  conversations = await apiFetch(`${API}/conversations`);
-  renderConversationsList();
+  try{
+    conversations =
+      await apiFetch(
+        `${API}/conversations`
+      );
+
+    renderConversationsList();
+
+    if(
+      selectedConversationContact &&
+      conversations.some(
+        item =>
+          item.contact ===
+          selectedConversationContact
+      )
+    ){
+      updateConversationFilterCounts();
+    }
+  }catch(error){
+    const container =
+      document.getElementById(
+        'conversationListContainer'
+      );
+
+    if(container){
+      container.innerHTML = `
+        <div class="empty">
+          <strong>Impossible de charger les conversations</strong>
+          ${escapeHtml(error.message)}
+        </div>
+      `;
+    }
+  }
 }
 
 function actionLabel(action){
   const map = {
-    ai_disabled:'IA désactivée',
     human_pause:'Pause commerciale',
-    audience:'Hors audience',
+    ai_disabled:'IA désactivée',
+    audience:'Audience exclue',
     outside_hours:'Hors horaires',
-    outside_hours_message:'Message d\u2019absence envoyé',
     commercial_required:'Commercial requis',
     secure_image_verified:'Capture vérifiée',
     secure_image_commercial_required:'Capture à vérifier',
     secure_image_analysis_error:'Erreur capture',
-    image_analyzed_only:'Image analysée (sans réponse)',
-    image_analyzed_and_replied:'Image analysée et répondue',
-    image_analysis_error:'Erreur analyse image',
+    image_analysis_error:'Erreur image',
+    image_analyzed_only:'Image analysée',
+    image_analyzed_and_replied:'Image analysée + réponse',
+    ai_needs_commercial:'Commercial requis',
+    ai_error_fallback_sent:'Erreur IA — relais commercial',
+    ai_error_no_reply:'Erreur IA — sans réponse',
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
-    ai_needs_commercial:'À vérifier par commercial',
-    ai_error_fallback_sent:'Erreur IA — commercial',
-    ai_error_no_reply:'Erreur IA — sans réponse'
+    product_image_sent:'Image produit envoyée',
+    product_image_unavailable:'Image produit indisponible',
+    product_image_need_name:'Nom produit demandé',
+    welcome_menu:'Menu de bienvenue',
+    showroom_reply:'Showroom',
+    showroom_list:'Liste showrooms'
   };
-  return map[action] || action || '—';
-}
 
-function conversationStatusBadges(item){
-  const badges = [];
-  if(item.humanPaused) badges.push('<span class="status-pill off">Pause commerciale</span>');
-  if(item.awaitingResponse) badges.push('<span class="status-pill">En attente client</span>');
-  if(item.imageNeedsCommercial) badges.push('<span class="status-pill off">Capture à vérifier</span>');
-  if(item.commercialAttention) badges.push('<span class="status-pill off">Commercial requis</span>');
-  if(item.hasAdReferral || String(item.lastSource || '').startsWith('meta_ad')){
-    badges.push('<span class="premium-badge"><span class="dot"></span> Pub Meta</span>');
-  }
-  if(item.lastAction && item.lastAction !== 'ok'){
-    badges.push(`<span class="status-pill off">${escapeHtml(actionLabel(item.lastAction))}</span>`);
-  }
-  return badges.join(' ');
+  return map[action] || action || '';
 }
 
 function formatDate(value){
   if(!value) return '—';
 
   try{
-    return new Date(value).toLocaleString('fr-FR');
+    return new Date(value)
+      .toLocaleString(
+        'fr-FR',
+        {
+          day:'2-digit',
+          month:'2-digit',
+          hour:'2-digit',
+          minute:'2-digit'
+        }
+      );
   }catch{
     return value;
   }
 }
 
+function formatShortTime(value){
+  if(!value) return '';
+
+  try{
+    const date =
+      new Date(value);
+
+    const today =
+      new Date();
+
+    if(
+      date.toDateString() ===
+      today.toDateString()
+    ){
+      return date.toLocaleTimeString(
+        'fr-FR',
+        {
+          hour:'2-digit',
+          minute:'2-digit'
+        }
+      );
+    }
+
+    return date.toLocaleDateString(
+      'fr-FR',
+      {
+        day:'2-digit',
+        month:'2-digit'
+      }
+    );
+  }catch{
+    return '';
+  }
+}
+
+function conversationDisplayName(item){
+  return (
+    String(
+      item?.profileName ||
+      ''
+    ).trim() ||
+    `+${String(item?.contact || '')}`
+  );
+}
+
+function conversationInitials(item){
+  const name =
+    conversationDisplayName(item)
+      .replace(/^\+/, '')
+      .trim();
+
+  if(!name) return 'M';
+
+  const words =
+    name.split(/\s+/)
+      .filter(Boolean);
+
+  if(words.length >= 2){
+    return (
+      words[0][0] +
+      words[1][0]
+    )
+      .toUpperCase();
+  }
+
+  return name
+    .slice(0,2)
+    .toUpperCase();
+}
+
+function conversationMatchesFilter(item){
+  if(
+    conversationFilter ===
+    'resolved'
+  ){
+    return item.resolved === true;
+  }
+
+  if(item.resolved){
+    return false;
+  }
+
+  if(
+    conversationFilter ===
+    'unread'
+  ){
+    return Number(
+      item.unreadCount ||
+      0
+    ) > 0;
+  }
+
+  if(
+    conversationFilter ===
+    'priority'
+  ){
+    return item.priority === true;
+  }
+
+  if(
+    conversationFilter ===
+    'commercial'
+  ){
+    return Boolean(
+      item.commercialAttention ||
+      item.imageNeedsCommercial
+    );
+  }
+
+  if(
+    conversationFilter ===
+    'ads'
+  ){
+    return item.hasAdReferral === true;
+  }
+
+  return true;
+}
+
+function updateConversationFilterCounts(){
+  const open =
+    conversations.filter(
+      item =>
+        !item.resolved
+    );
+
+  const counts = {
+    all:
+      open.length,
+    unread:
+      open.filter(
+        item =>
+          Number(
+            item.unreadCount ||
+            0
+          ) > 0
+      ).length,
+    priority:
+      open.filter(
+        item =>
+          item.priority
+      ).length,
+    commercial:
+      open.filter(
+        item =>
+          item.commercialAttention ||
+          item.imageNeedsCommercial
+      ).length,
+    ads:
+      open.filter(
+        item =>
+          item.hasAdReferral
+      ).length,
+    resolved:
+      conversations.filter(
+        item =>
+          item.resolved
+      ).length
+  };
+
+  const mapping = {
+    filterCountAll:'all',
+    filterCountUnread:'unread',
+    filterCountPriority:'priority',
+    filterCountCommercial:'commercial',
+    filterCountAds:'ads',
+    filterCountResolved:'resolved'
+  };
+
+  for(
+    const [id,key]
+    of Object.entries(mapping)
+  ){
+    const el =
+      document.getElementById(id);
+
+    if(el){
+      el.textContent =
+        String(
+          counts[key] ||
+          0
+        );
+    }
+  }
+
+  const unreadTotal =
+    counts.unread;
+
+  conversationNotificationUnread =
+    Math.max(
+      conversationNotificationUnread,
+      unreadTotal
+    );
+
+  updateNotificationBadges();
+}
+
+function conversationListTags(item){
+  const tags = [];
+
+  if(
+    item.commercialAttention ||
+    item.imageNeedsCommercial
+  ){
+    tags.push(
+      '<span class="inbox-tag red">⚠️ Commercial requis</span>'
+    );
+  }
+
+  if(item.humanPaused || item.manualTakeover){
+    tags.push(
+      '<span class="inbox-tag green">👤 Pris en charge</span>'
+    );
+  }
+
+  if(item.hasAdReferral){
+    tags.push(
+      '<span class="inbox-tag">📣 Publicité</span>'
+    );
+  }
+
+  if(item.assignedTo){
+    tags.push(
+      `<span class="inbox-tag">${escapeHtml(item.assignedTo)}</span>`
+    );
+  }
+
+  return tags.join('');
+}
+
 function renderConversationsList(){
-  const term = document.getElementById('conversationSearch').value.trim().toLowerCase();
-  const filtered = conversations.filter(item => {
-    if(!term) return true;
+  updateConversationFilterCounts();
 
-    return [
-      item.contact,
-      item.lastIncoming,
-      item.adHeadline,
-      item.adBody,
-      item.adSourceId
-    ]
-      .map(value => String(value || '').toLowerCase())
-      .some(value => value.includes(term));
-  });
+  const search =
+    String(
+      document
+        .getElementById(
+          'conversationSearch'
+        )
+        ?.value ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
 
-  document.getElementById('conversationCountLabel').textContent =
-    `${conversations.length} conversation${conversations.length > 1 ? 's' : ''}`;
+  const filtered =
+    conversations
+      .filter(
+        conversationMatchesFilter
+      )
+      .filter(item => {
+        if(!search){
+          return true;
+        }
 
-  const container = document.getElementById('conversationListContainer');
+        return [
+          item.contact,
+          item.profileName,
+          item.lastIncoming,
+          item.lastReply,
+          item.adHeadline,
+          item.adBody,
+          item.adSourceId,
+          item.assignedTo,
+          item.activeProductName
+        ]
+          .map(
+            value =>
+              String(
+                value ||
+                ''
+              )
+                .toLowerCase()
+          )
+          .some(
+            value =>
+              value.includes(
+                search
+              )
+          );
+      });
+
+  const label =
+    document.getElementById(
+      'conversationCountLabel'
+    );
+
+  if(label){
+    label.textContent =
+      `${filtered.length} conversation${filtered.length > 1 ? 's' : ''}`;
+  }
+
+  const container =
+    document.getElementById(
+      'conversationListContainer'
+    );
+
+  if(!container){
+    return;
+  }
 
   if(!filtered.length){
     container.innerHTML = `
-      <div class="empty">
+      <div class="empty" style="margin:16px">
         <strong>Aucune conversation</strong>
-        Les échanges WhatsApp apparaîtront ici dès qu'un client aura écrit au bot.
+        Aucun échange ne correspond à ce filtre.
       </div>
     `;
     return;
   }
 
-  container.innerHTML = `
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Contact</th><th>Dernier message</th><th>Statut</th><th>Dernière activité</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${filtered.map(item => `
-            <tr class="${item.commercialAttention || item.imageNeedsCommercial ? 'urgent-conversation' : ''}">
-              <td><strong>+${escapeHtml(item.contact)}</strong></td>
-              <td>
-                <div>${escapeHtml(item.lastIncoming || item.lastReply || '—')}</div>
-                ${item.adHeadline
-                  ? `<div style="margin-top:5px;font-size:11px;color:var(--muted)">Pub : ${escapeHtml(item.adHeadline)}</div>`
-                  : ''}
-              </td>
-              <td><div class="conv-badges">${conversationStatusBadges(item) || '<span class="status-pill">Normal</span>'}</div></td>
-              <td>${escapeHtml(formatDate(item.lastTime))}</td>
-              <td><button class="btn small" onclick="openConversation('${item.contact}')">Voir</button></td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+  container.innerHTML =
+    filtered
+      .map(item => {
+        const displayName =
+          conversationDisplayName(
+            item
+          );
+
+        const preview =
+          item.lastIncoming ||
+          item.lastReply ||
+          'Nouvelle conversation';
+
+        const unread =
+          Number(
+            item.unreadCount ||
+            0
+          );
+
+        const urgent =
+          item.commercialAttention ||
+          item.imageNeedsCommercial;
+
+        const selected =
+          selectedConversationContact ===
+          item.contact;
+
+        return `
+          <button
+            class="inbox-conversation-item ${urgent ? 'urgent' : ''} ${selected ? 'selected' : ''}"
+            type="button"
+            onclick="openConversation('${escapeHtml(item.contact)}')"
+          >
+            <span class="inbox-avatar ${item.hasAdReferral ? 'ad' : ''}">
+              ${escapeHtml(conversationInitials(item))}
+            </span>
+
+            <span class="inbox-item-main">
+              <span class="inbox-item-name-row">
+                <span class="inbox-item-name">
+                  ${escapeHtml(displayName)}
+                </span>
+                ${item.priority ? '<span class="inbox-priority-star">★</span>' : ''}
+              </span>
+
+              <span class="inbox-item-preview">
+                ${escapeHtml(preview)}
+              </span>
+
+              <span class="inbox-item-tags">
+                ${conversationListTags(item)}
+              </span>
+            </span>
+
+            <span class="inbox-item-side">
+              <span>${escapeHtml(formatShortTime(item.lastTime))}</span>
+              ${unread > 0 ? `<span class="inbox-unread">${unread > 99 ? '99+' : unread}</span>` : ''}
+            </span>
+          </button>
+        `;
+      })
+      .join('');
+}
+
+function renderConversationHeader(
+  contact,
+  state
+){
+  const item =
+    conversations.find(
+      entry =>
+        entry.contact ===
+        contact
+    ) || {
+      contact,
+      profileName:
+        state.profileName ||
+        ''
+    };
+
+  const header =
+    document.getElementById(
+      'inboxConversationHeader'
+    );
+
+  if(!header){
+    return;
+  }
+
+  const name =
+    conversationDisplayName(
+      item
+    );
+
+  const paused =
+    Boolean(
+      state.manualTakeover ||
+      state.humanPaused
+    );
+
+  header.innerHTML = `
+    <div class="inbox-header-left">
+      <button
+        class="icon-btn inbox-mobile-back"
+        type="button"
+        onclick="backToInboxList()"
+      >←</button>
+
+      <span class="inbox-avatar ${state.cameFromAd || state.adReferral ? 'ad' : ''}">
+        ${escapeHtml(conversationInitials(item))}
+      </span>
+
+      <div class="inbox-header-identity">
+        <div class="inbox-header-name">
+          ${escapeHtml(name)}
+        </div>
+        <div class="inbox-header-sub">
+          +${escapeHtml(contact)}
+          ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
+        </div>
+        <div class="inbox-status-line">
+          <span class="inbox-live-dot"></span>
+          ${paused ? 'Conversation prise en main par un commercial' : 'Agent MONDECO actif'}
+        </div>
+      </div>
+    </div>
+
+    <div class="inbox-header-actions">
+      <button
+        class="inbox-header-btn ${state.priority ? 'active' : ''}"
+        type="button"
+        onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})"
+        title="Priorité"
+      >
+        ${state.priority ? '★ Priorité' : '☆ Priorité'}
+      </button>
+
+      <button
+        class="inbox-header-btn"
+        type="button"
+        onclick="assignConversation('${escapeHtml(contact)}')"
+      >
+        👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}
+      </button>
+
+      ${
+        paused
+          ? `
+            <button
+              class="inbox-header-btn ai"
+              type="button"
+              onclick="reactivateConversationAI('${escapeHtml(contact)}')"
+            >
+              🤖 Réactiver IA
+            </button>
+          `
+          : `
+            <button
+              class="inbox-header-btn takeover"
+              type="button"
+              onclick="takeOverConversation('${escapeHtml(contact)}')"
+            >
+              👤 Prendre en main
+            </button>
+          `
+      }
+
+      <button
+        class="inbox-header-btn"
+        type="button"
+        onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})"
+      >
+        ${state.resolved ? '↩ Réouvrir' : '✓ Terminer'}
+      </button>
     </div>
   `;
 }
 
-window.openConversation = async function(contact){
-  const data = await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}`);
-  selectedConversationData = data;
+function renderThreadMessage(
+  type,
+  text,
+  entry,
+  commercial = false
+){
+  if(!text){
+    return '';
+  }
 
-  const detail = document.getElementById('conversationDetail');
-  detail.className = '';
+  const label =
+    type === 'incoming'
+      ? 'Client'
+      : commercial
+        ? 'Commercial MONDECO'
+        : 'Agent MONDECO';
 
-  const state = data.state || {};
-  const stateBadges = [
-    state.humanPaused ? '<span class="status-pill off">Pause commerciale active</span>' : '',
-    state.awaitingResponse ? '<span class="status-pill">En attente de réponse client</span>' : '',
-    `<span class="premium-badge">${Number(state.followUpsSent || 0)} relance(s) envoyée(s)</span>`
-  ].filter(Boolean).join(' ');
-
-  const ad = state.adReferral || null;
-
-  const adSourceUrl =
-    ad && /^https?:\/\//i.test(String(ad.sourceUrl || ''))
-      ? String(ad.sourceUrl)
-      : '';
-
-  const adContextHtml =
-    ad
-      ? `
-        <div class="meta-ad-context">
-          <div class="meta-ad-context-head">
-            <div>
-              <div class="meta-ad-kicker">Origine de la conversation</div>
-              <strong>Publicité / publication Meta</strong>
-            </div>
-            <span class="premium-badge"><span class="dot"></span> Click-to-WhatsApp</span>
-          </div>
-
-          ${ad.headline
-            ? `<div class="meta-ad-title">${escapeHtml(ad.headline)}</div>`
-            : ''}
-
-          ${ad.body
-            ? `<div class="meta-ad-body">${escapeHtml(ad.body)}</div>`
-            : ''}
-
-          <div class="meta-ad-meta">
-            ${ad.sourceId
-              ? `<span>ID : ${escapeHtml(ad.sourceId)}</span>`
-              : ''}
-            ${ad.sourceType
-              ? `<span>Type : ${escapeHtml(ad.sourceType)}</span>`
-              : ''}
-            ${ad.mediaType
-              ? `<span>Média : ${escapeHtml(ad.mediaType)}</span>`
-              : ''}
-            ${adSourceUrl
-              ? `<a href="${escapeHtml(adSourceUrl)}" target="_blank" rel="noopener noreferrer">Voir la publication ↗</a>`
-              : ''}
-          </div>
-
-          <div class="meta-ad-note">
-            L’agent conserve ce contexte pendant toute la conversation et l’utilise pour comprendre les messages courts comme « prix ? », « disponible ? » ou « dimensions ? ».
-          </div>
+  return `
+    <div class="inbox-message-row ${type === 'incoming' ? 'incoming' : commercial ? 'commercial' : 'bot'}">
+      <div class="inbox-message-wrap">
+        <div class="inbox-message-label">
+          ${label}
         </div>
-      `
-      : '';
-
-  const messagesHtml = data.entries.map(entry => {
-    const commercial = String(entry.source || '').startsWith('commercial');
-
-    return `
-      <div style="margin-bottom:14px">
-        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+        <div class="inbox-bubble">
+          ${escapeHtml(text)}
+        </div>
+        ${
+          entry.attachment_name &&
+          type !== 'incoming'
+            ? `
+              <div class="inbox-attachment">
+                ${entry.attachment_type === 'image' ? '📷' : '📎'}
+                ${escapeHtml(entry.attachment_name)}
+              </div>
+            `
+            : ''
+        }
+        <div class="inbox-message-meta">
           ${escapeHtml(formatDate(entry.time))}
           ${entry.action && entry.action !== 'ok' ? ` • ${escapeHtml(actionLabel(entry.action))}` : ''}
-          ${commercial ? '<span class="commercial-label">• Commercial</span>' : ''}
         </div>
-        ${entry.incoming ? `<div class="msg user">${escapeHtml(entry.incoming)}</div>` : ''}
-        ${entry.reply ? `<div class="msg ${commercial ? 'commercial' : 'bot'}">${escapeHtml(entry.reply)}</div>` : ''}
-        ${entry.attachment_name ? `<div class="attachment-chip">${entry.attachment_type === 'image' ? '📷' : '📎'} ${escapeHtml(entry.attachment_name)}</div>` : ''}
-        ${entry.image_product ? `<div class="notice info" style="margin-top:6px">Produit lu dans la capture : <strong>${escapeHtml(entry.image_product)}</strong></div>` : ''}
-        ${entry.image_reason ? `<div class="help" style="margin-top:6px">${escapeHtml(entry.image_reason)}</div>` : ''}
-        ${entry.error ? `<div class="notice warning" style="margin-top:6px">${escapeHtml(entry.error)}</div>` : ''}
       </div>
-    `;
-  }).join('');
-
-  detail.innerHTML = `
-    <div class="toolbar" style="margin-bottom:14px">
-      <div>
-        <strong>+${escapeHtml(contact)}</strong>
-        <div class="conv-badges" style="margin-top:7px">${stateBadges}</div>
-      </div>
-      <button class="btn primary small" onclick="openCommercialFromConversation('${contact}')">
-        Répondre / corriger
-      </button>
     </div>
-    ${adContextHtml}
-    <div class="chat-box">${messagesHtml || '<div class="empty">Aucun échange enregistré.</div>'}</div>
+  `;
+}
 
-    <div class="conversation-composer">
+function buildConversationComposer(
+  contact
+){
+  return `
+    <div class="inbox-composer conversation-composer">
       <div class="smart-keyboard">
         <select
           id="conversationQuickReplySelect"
@@ -5029,12 +6266,12 @@ window.openConversation = async function(contact){
       </div>
 
       <div class="smart-keyboard-help">
-        Astuce : tapez /showroom, /devis, /ville… puis Entrée.
+        /showroom · /devis · /ville · /dimensions
       </div>
 
       <textarea
         id="conversationQuickReply"
-        placeholder="Répondre directement au client..."
+        placeholder="Écrire une réponse au client..."
       ></textarea>
 
       <div class="conversation-composer-actions">
@@ -5050,7 +6287,7 @@ window.openConversation = async function(contact){
         </label>
 
         <label class="btn small composer-file-label">
-          📷 Prendre une photo
+          📷 Photo
           <input
             id="conversationCameraFile"
             type="file"
@@ -5062,17 +6299,20 @@ window.openConversation = async function(contact){
         </label>
 
         <label class="btn small composer-file-label">
-          🖼️ Galerie
+          🖼 Galerie
           <input
             id="conversationImageFile"
             type="file"
-            accept="image/jpeg,image/png,image/webp,image/*"
+            accept="image/*"
             hidden
             onchange="selectConversationAttachment(this,'image')"
           >
         </label>
 
-        <span id="conversationAttachmentName" class="composer-file-name">
+        <span
+          id="conversationAttachmentName"
+          class="composer-file-name"
+        >
           Aucun fichier sélectionné
         </span>
 
@@ -5080,41 +6320,583 @@ window.openConversation = async function(contact){
           class="btn primary"
           id="conversationSendBtn"
           type="button"
-          onclick="sendConversationCommercialReply('${contact}')"
+          onclick="sendConversationCommercialReply('${escapeHtml(contact)}')"
         >
           Envoyer
         </button>
       </div>
     </div>
   `;
+}
+
+function renderCustomerPanel(
+  contact,
+  state
+){
+  const panel =
+    document.getElementById(
+      'inboxCustomerPanel'
+    );
+
+  if(!panel){
+    return;
+  }
+
+  const item =
+    conversations.find(
+      entry =>
+        entry.contact ===
+        contact
+    ) || {
+      contact,
+      profileName:
+        state.profileName ||
+        ''
+    };
+
+  const name =
+    conversationDisplayName(
+      item
+    );
+
+  const ad =
+    state.adReferral ||
+    null;
+
+  const source =
+    ad
+      ? 'Publicité Meta'
+      : 'WhatsApp';
+
+  panel.innerHTML = `
+    <div class="inbox-profile-card">
+      <div class="inbox-avatar ${ad ? 'ad' : ''}">
+        ${escapeHtml(conversationInitials(item))}
+      </div>
+      <div class="inbox-profile-name">
+        ${escapeHtml(name)}
+      </div>
+      <div class="inbox-profile-phone">
+        +${escapeHtml(contact)}
+      </div>
+    </div>
+
+    <div class="inbox-panel-section">
+      <div class="inbox-panel-title">Conversation</div>
+
+      <div class="inbox-info-row">
+        <span>Source</span>
+        <strong>${escapeHtml(source)}</strong>
+      </div>
+
+      <div class="inbox-info-row">
+        <span>Affecté à</span>
+        <strong>${escapeHtml(state.assignedTo || 'Non affecté')}</strong>
+      </div>
+
+      <div class="inbox-info-row">
+        <span>Produit actif</span>
+        <strong>${escapeHtml(state.activeProductName || '—')}</strong>
+      </div>
+
+      <div class="inbox-info-row">
+        <span>Statut IA</span>
+        <strong>${state.manualTakeover || state.humanPaused ? 'Pause commerciale' : 'Active'}</strong>
+      </div>
+
+      <div class="inbox-info-row">
+        <span>Relances</span>
+        <strong>${Number(state.followUpsSent || 0)}</strong>
+      </div>
+    </div>
+
+    ${
+      state.commercialAttentionReason ||
+      state.lastImageReason
+        ? `
+          <div class="inbox-panel-section">
+            <div class="inbox-panel-title">Attention</div>
+            <div class="inbox-alert">
+              ${escapeHtml(state.commercialAttentionReason || state.lastImageReason)}
+            </div>
+          </div>
+        `
+        : ''
+    }
+
+    ${
+      ad
+        ? `
+          <div class="inbox-panel-section">
+            <div class="inbox-panel-title">Publicité d'origine</div>
+            ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
+            ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
+            ${
+              /^https?:\/\//i.test(String(ad.sourceUrl || ''))
+                ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`
+                : ''
+            }
+          </div>
+        `
+        : ''
+    }
+
+    <div class="inbox-panel-section">
+      <div class="inbox-panel-title">Actions</div>
+
+      <div class="inbox-panel-actions">
+        <button
+          class="btn"
+          type="button"
+          onclick="assignConversation('${escapeHtml(contact)}')"
+        >
+          👤 Affecter la conversation
+        </button>
+
+        <a
+          class="btn"
+          href="https://wa.me/${escapeHtml(contact)}"
+          target="_blank"
+          rel="noopener"
+        >
+          WhatsApp ↗
+        </a>
+
+        <button
+          class="btn"
+          type="button"
+          onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})"
+        >
+          ${state.priority ? '★ Retirer priorité' : '☆ Mettre en priorité'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+window.openConversation = async function(contact){
+  selectedConversationContact =
+    String(contact || '');
+
+  document
+    .getElementById(
+      'page-conversations'
+    )
+    ?.classList
+    .add(
+      'has-selection'
+    );
+
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/read`,
+      {
+        method:'POST'
+      }
+    );
+  }catch(error){
+    console.debug(
+      'Marquage lu :',
+      error.message
+    );
+  }
+
+  const localItem =
+    conversations.find(
+      item =>
+        item.contact === contact
+    );
+
+  if(localItem){
+    localItem.unreadCount = 0;
+  }
+
+  renderConversationsList();
+
+  const data =
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}`
+    );
+
+  selectedConversationData =
+    data;
+
+  const state =
+    data.state ||
+    {};
+
+  renderConversationHeader(
+    contact,
+    state
+  );
+
+  renderCustomerPanel(
+    contact,
+    state
+  );
+
+  const detail =
+    document.getElementById(
+      'conversationDetail'
+    );
+
+  detail.className =
+    'inbox-thread';
+
+  const ad =
+    state.adReferral ||
+    null;
+
+  const adHtml =
+    ad
+      ? `
+        <div class="inbox-ad-context">
+          <strong>📣 Conversation issue d’une publicité Meta</strong>
+          ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
+        </div>
+      `
+      : '';
+
+  const messages =
+    data.entries
+      .map(entry => {
+        const commercial =
+          String(
+            entry.source ||
+            ''
+          )
+            .startsWith(
+              'commercial'
+            );
+
+        return [
+          renderThreadMessage(
+            'incoming',
+            entry.incoming,
+            entry,
+            false
+          ),
+          renderThreadMessage(
+            'outgoing',
+            entry.reply,
+            entry,
+            commercial
+          ),
+          entry.image_reason
+            ? `
+              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
+                ${escapeHtml(entry.image_reason)}
+              </div>
+            `
+            : '',
+          entry.error
+            ? `
+              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
+                ${escapeHtml(entry.error)}
+              </div>
+            `
+            : ''
+        ]
+          .filter(Boolean)
+          .join('');
+      })
+      .join('');
+
+  detail.innerHTML = `
+    ${adHtml}
+    ${messages || `
+      <div class="inbox-empty-state">
+        <strong>Aucun échange enregistré</strong>
+      </div>
+    `}
+    ${buildConversationComposer(contact)}
+  `;
 
   await loadQuickReplies();
   populateConversationQuickReplySelect();
   bindSmartKeyboardShortcuts();
+
+  requestAnimationFrame(() => {
+    detail.scrollTop =
+      detail.scrollHeight;
+  });
+
+  await loadConversations();
+}
+
+window.backToInboxList = function(){
+  document
+    .getElementById(
+      'page-conversations'
+    )
+    ?.classList
+    .remove(
+      'has-selection'
+    );
 };
 
-window.openCommercialFromConversation = function(contact){
-  const data = selectedConversationData || {};
-  const entries = Array.isArray(data.entries) ? data.entries : [];
-  const lastIncoming = [...entries].reverse().find(entry => entry.incoming)?.incoming || '';
-  const question = lastIncoming || data?.state?.lastCustomerText || '';
+async function refreshSelectedConversation(){
+  await loadConversations();
 
-  showPage('corrections');
+  if(selectedConversationContact){
+    await window.openConversation(
+      selectedConversationContact
+    );
+  }
+}
 
-  document.getElementById('commercialPhone').value = contact || '';
-  document.getElementById('commercialQuestion').value = question || '';
-  document.getElementById('commercialReplyText').value = '';
+window.toggleConversationPriority = async function(
+  contact,
+  priority
+){
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/priority`,
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          priority:
+            priority === true
+        })
+      }
+    );
 
-  setTimeout(() => {
-    document.getElementById('commercialReplyCard')?.scrollIntoView({behavior:'smooth', block:'start'});
-    document.getElementById('commercialReplyText')?.focus();
-  }, 80);
+    await refreshSelectedConversation();
+  }catch(error){
+    alert(error.message);
+  }
 };
 
-document.getElementById('refreshConversationsBtn').addEventListener('click', loadConversations);
-document.getElementById('conversationSearch').addEventListener('input', renderConversationsList);
+window.assignConversation = async function(contact){
+  const current =
+    selectedConversationData
+      ?.state
+      ?.assignedTo ||
+    '';
 
+  const assignedTo =
+    prompt(
+      'Affecter cette conversation à :',
+      current
+    );
 
+  if(assignedTo === null){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/assign`,
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          assignedTo:
+            String(
+              assignedTo ||
+              ''
+            )
+              .trim()
+        })
+      }
+    );
+
+    await refreshSelectedConversation();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.takeOverConversation = async function(contact){
+  let assignedTo =
+    selectedConversationData
+      ?.state
+      ?.assignedTo ||
+    '';
+
+  if(!assignedTo){
+    assignedTo =
+      prompt(
+        'Nom du commercial qui prend la conversation :',
+        ''
+      );
+
+    if(assignedTo === null){
+      return;
+    }
+  }
+
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/takeover`,
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          assignedTo:
+            String(
+              assignedTo ||
+              ''
+            )
+              .trim()
+        })
+      }
+    );
+
+    await refreshSelectedConversation();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.reactivateConversationAI = async function(contact){
+  if(
+    !confirm(
+      'Réactiver l’agent IA pour cette conversation ?'
+    )
+  ){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/reactivate-ai`,
+      {
+        method:'POST'
+      }
+    );
+
+    await refreshSelectedConversation();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.toggleResolvedConversation = async function(
+  contact,
+  resolved
+){
+  try{
+    await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/resolve`,
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          resolved:
+            resolved === true
+        })
+      }
+    );
+
+    await loadConversations();
+
+    if(resolved){
+      selectedConversationContact = '';
+
+      document
+        .getElementById(
+          'page-conversations'
+        )
+        ?.classList
+        .remove(
+          'has-selection'
+        );
+
+      document.getElementById(
+        'inboxConversationHeader'
+      ).innerHTML =
+        '<div class="inbox-empty-header">Conversation terminée</div>';
+
+      document.getElementById(
+        'conversationDetail'
+      ).innerHTML = `
+        <div class="inbox-empty-state">
+          <strong>Conversation terminée</strong>
+          <span>Elle reste disponible dans le filtre « Terminées ».</span>
+        </div>
+      `;
+
+      document.getElementById(
+        'inboxCustomerPanel'
+      ).innerHTML = `
+        <div class="inbox-empty-state compact">
+          <strong>Conversation terminée</strong>
+        </div>
+      `;
+    }else{
+      await window.openConversation(
+        contact
+      );
+    }
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+document
+  .getElementById(
+    'refreshConversationsBtn'
+  )
+  .addEventListener(
+    'click',
+    async () => {
+      await loadConversations();
+
+      if(selectedConversationContact){
+        await window.openConversation(
+          selectedConversationContact
+        );
+      }
+    }
+  );
+
+document
+  .getElementById(
+    'conversationSearch'
+  )
+  .addEventListener(
+    'input',
+    renderConversationsList
+  );
+
+document
+  .querySelectorAll(
+    '#conversationFilters .inbox-filter'
+  )
+  .forEach(button => {
+    button.addEventListener(
+      'click',
+      () => {
+        conversationFilter =
+          button.dataset.filter ||
+          'all';
+
+        document
+          .querySelectorAll(
+            '#conversationFilters .inbox-filter'
+          )
+          .forEach(
+            item =>
+              item.classList.toggle(
+                'active',
+                item === button
+              )
+          );
+
+        renderConversationsList();
+      }
+    );
+  });
 
 // ============================================================
 // CLAVIER INTELLIGENT / RÉPONSES RAPIDES
@@ -5599,6 +7381,183 @@ function showClientBrowserNotification(event){
   playNotificationTone(urgent);
 }
 
+
+async function softRefreshSelectedConversation(){
+  if(!selectedConversationContact){
+    return;
+  }
+
+  const textarea =
+    document.getElementById(
+      'conversationQuickReply'
+    );
+
+  const draft =
+    textarea?.value || '';
+
+  const fileName =
+    document.getElementById(
+      'conversationAttachmentName'
+    )?.textContent || '';
+
+  try{
+    const data =
+      await apiFetch(
+        `${API}/conversations/${encodeURIComponent(selectedConversationContact)}`
+      );
+
+    const currentEntries =
+      Array.isArray(
+        selectedConversationData?.entries
+      )
+        ? selectedConversationData.entries
+        : [];
+
+    const nextEntries =
+      Array.isArray(data.entries)
+        ? data.entries
+        : [];
+
+    const changed =
+      nextEntries.length !==
+      currentEntries.length ||
+      String(
+        nextEntries.at(-1)?.time || ''
+      ) !==
+      String(
+        currentEntries.at(-1)?.time || ''
+      );
+
+    if(!changed){
+      return;
+    }
+
+    const detail =
+      document.getElementById(
+        'conversationDetail'
+      );
+
+    const wasNearBottom =
+      detail
+        ? (
+            detail.scrollHeight -
+            detail.scrollTop -
+            detail.clientHeight
+          ) < 150
+        : true;
+
+    selectedConversationData =
+      data;
+
+    renderConversationHeader(
+      selectedConversationContact,
+      data.state || {}
+    );
+
+    renderCustomerPanel(
+      selectedConversationContact,
+      data.state || {}
+    );
+
+    const ad =
+      data.state?.adReferral ||
+      null;
+
+    const adHtml =
+      ad
+        ? `
+          <div class="inbox-ad-context">
+            <strong>📣 Conversation issue d’une publicité Meta</strong>
+            ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
+          </div>
+        `
+        : '';
+
+    const messages =
+      nextEntries
+        .map(entry => {
+          const commercial =
+            String(
+              entry.source || ''
+            )
+              .startsWith(
+                'commercial'
+              );
+
+          return [
+            renderThreadMessage(
+              'incoming',
+              entry.incoming,
+              entry,
+              false
+            ),
+            renderThreadMessage(
+              'outgoing',
+              entry.reply,
+              entry,
+              commercial
+            ),
+            entry.image_reason
+              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`
+              : '',
+            entry.error
+              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`
+              : ''
+          ]
+            .filter(Boolean)
+            .join('');
+        })
+        .join('');
+
+    if(detail){
+      detail.innerHTML = `
+        ${adHtml}
+        ${messages || '<div class="inbox-empty-state"><strong>Aucun échange enregistré</strong></div>'}
+        ${buildConversationComposer(selectedConversationContact)}
+      `;
+
+      await loadQuickReplies();
+      populateConversationQuickReplySelect();
+      bindSmartKeyboardShortcuts();
+
+      const newTextarea =
+        document.getElementById(
+          'conversationQuickReply'
+        );
+
+      if(newTextarea){
+        newTextarea.value =
+          draft;
+      }
+
+      const attachmentLabel =
+        document.getElementById(
+          'conversationAttachmentName'
+        );
+
+      if(
+        attachmentLabel &&
+        fileName
+      ){
+        attachmentLabel.textContent =
+          fileName;
+      }
+
+      if(wasNearBottom){
+        requestAnimationFrame(() => {
+          detail.scrollTop =
+            detail.scrollHeight;
+        });
+      }
+    }
+  }catch(error){
+    console.debug(
+      'Actualisation discussion :',
+      error.message
+    );
+  }
+}
+
 async function pollCommercialNotifications(){
   try{
     if(!conversationNotificationCursor){
@@ -5642,6 +7601,10 @@ async function pollCommercialNotifications(){
           ?.contains('active')
       ){
         await loadConversations();
+
+        if(selectedConversationContact){
+          await softRefreshSelectedConversation();
+        }
       }
     }
 
@@ -5687,7 +7650,21 @@ document.getElementById('enableNotificationsBtn').addEventListener('click', asyn
 
 setInterval(
   pollCommercialNotifications,
-  8000
+  5000
+);
+
+setInterval(
+  () => {
+    if(
+      selectedConversationContact &&
+      document.getElementById('page-conversations')
+        ?.classList
+        ?.contains('active')
+    ){
+      softRefreshSelectedConversation();
+    }
+  },
+  5000
 );
 
 setTimeout(
