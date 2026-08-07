@@ -3653,6 +3653,126 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.14 — Clavier compact + son de notification
+   ========================================================== */
+
+/* Clavier normal : beaucoup moins haut */
+.inbox-composer{
+  max-height:220px !important;
+  padding:8px 12px 10px !important;
+}
+.inbox-composer-toolbar{
+  margin-bottom:6px !important;
+}
+.inbox-composer-title{
+  font-size:10.5px !important;
+}
+.inbox-composer-toggle{
+  width:32px !important;
+  min-width:32px !important;
+  height:28px !important;
+}
+.smart-keyboard{
+  grid-template-columns:minmax(180px,1fr) auto auto !important;
+  gap:6px !important;
+  margin-bottom:5px !important;
+}
+.smart-keyboard select{
+  min-height:34px !important;
+  height:34px !important;
+  font-size:10.5px !important;
+}
+.smart-keyboard .btn{
+  min-height:34px !important;
+  height:34px !important;
+  padding:0 10px !important;
+  font-size:10px !important;
+}
+.smart-keyboard-help{
+  margin:0 0 5px !important;
+  font-size:9px !important;
+}
+.inbox-composer textarea{
+  min-height:54px !important;
+  height:54px !important;
+  max-height:92px !important;
+  padding:9px 10px !important;
+  margin-bottom:7px !important;
+  font-size:12px !important;
+  line-height:1.35 !important;
+}
+.conversation-composer-actions{
+  display:grid !important;
+  grid-template-columns:auto auto auto minmax(120px,1fr) auto;
+  align-items:center !important;
+  gap:6px !important;
+}
+.conversation-composer-actions .btn,
+.conversation-composer-actions .composer-file-label{
+  min-height:34px !important;
+  height:34px !important;
+  padding:0 10px !important;
+  font-size:10px !important;
+  white-space:nowrap;
+}
+.composer-file-name{
+  min-width:0 !important;
+  font-size:9px !important;
+}
+#conversationSendBtn{
+  min-width:105px !important;
+  height:36px !important;
+  min-height:36px !important;
+  padding:0 14px !important;
+}
+
+/* Mode replié : une seule petite barre */
+.inbox-composer.is-compact{
+  max-height:52px !important;
+  padding:7px 12px !important;
+}
+.inbox-composer.is-compact .conversation-composer-actions{
+  display:none !important;
+}
+.inbox-composer.is-compact .inbox-composer-toolbar{
+  margin:0 !important;
+}
+
+/* Plus de place réelle à la discussion */
+.inbox-thread{
+  padding-bottom:14px !important;
+}
+
+/* Mobile */
+@media(max-width:760px){
+  .inbox-composer{
+    max-height:34vh !important;
+    padding:7px 9px 9px !important;
+  }
+  .smart-keyboard{
+    grid-template-columns:1fr auto auto !important;
+  }
+  .smart-keyboard .btn{
+    padding:0 8px !important;
+  }
+  .inbox-composer textarea{
+    min-height:48px !important;
+    height:48px !important;
+  }
+  .conversation-composer-actions{
+    grid-template-columns:1fr 1fr 1fr !important;
+  }
+  .composer-file-name{
+    grid-column:1 / -1;
+  }
+  #conversationSendBtn{
+    grid-column:1 / -1;
+    width:100% !important;
+  }
+}
+
 </style>
 </head>
 
@@ -3928,7 +4048,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.12</span>
+                <span class="inbox-version">V6.14</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
             </div>
@@ -6351,7 +6471,7 @@ function buildConversationComposer(
           id="conversationQuickReplySelect"
           onchange="applyConversationQuickReply(this.value)"
         >
-          <option value="">⚡ Réponses enregistrées</option>
+          <option value="">⚡ Réponses rapides</option>
         </select>
 
         <button
@@ -6382,7 +6502,7 @@ function buildConversationComposer(
 
       <div class="conversation-composer-actions">
         <label class="btn small composer-file-label">
-          📎 PDF / Word
+          📎 Fichier
           <input
             id="conversationDocumentFile"
             type="file"
@@ -7065,7 +7185,7 @@ function populateConversationQuickReplySelect(){
   if(!select) return;
 
   select.innerHTML =
-    `<option value="">⚡ Réponses enregistrées</option>` +
+    `<option value="">⚡ Réponses rapides</option>` +
     quickReplies
       .filter(item => item.active !== false)
       .map(item => `
@@ -7513,38 +7633,79 @@ function playNotificationTone(urgent = false){
     const ctx =
       notificationAudioContext;
 
-    const oscillator =
-      ctx.createOscillator();
+    const play = () => {
+      const now =
+        ctx.currentTime;
 
-    const gain =
-      ctx.createGain();
+      const melody =
+        urgent
+          ? [
+              {f:659.25,t:0.00,d:0.13,v:0.16},
+              {f:783.99,t:0.16,d:0.13,v:0.16},
+              {f:987.77,t:0.32,d:0.18,v:0.18},
+              {f:783.99,t:0.55,d:0.16,v:0.14}
+            ]
+          : [
+              {f:523.25,t:0.00,d:0.12,v:0.13},
+              {f:659.25,t:0.15,d:0.12,v:0.13},
+              {f:783.99,t:0.30,d:0.20,v:0.15}
+            ];
 
-    oscillator.frequency.value =
-      urgent
-        ? 880
-        : 660;
+      for(const note of melody){
+        const oscillator =
+          ctx.createOscillator();
 
-    gain.gain.setValueAtTime(
-      0.0001,
-      ctx.currentTime
-    );
+        const gain =
+          ctx.createGain();
 
-    gain.gain.exponentialRampToValueAtTime(
-      0.12,
-      ctx.currentTime + 0.01
-    );
+        oscillator.type =
+          'sine';
 
-    gain.gain.exponentialRampToValueAtTime(
-      0.0001,
-      ctx.currentTime + 0.22
-    );
+        oscillator.frequency.setValueAtTime(
+          note.f,
+          now + note.t
+        );
 
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    oscillator.start();
-    oscillator.stop(
-      ctx.currentTime + 0.24
-    );
+        gain.gain.setValueAtTime(
+          0.0001,
+          now + note.t
+        );
+
+        gain.gain.exponentialRampToValueAtTime(
+          note.v,
+          now + note.t + 0.015
+        );
+
+        gain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          now + note.t + note.d
+        );
+
+        oscillator.connect(
+          gain
+        );
+
+        gain.connect(
+          ctx.destination
+        );
+
+        oscillator.start(
+          now + note.t
+        );
+
+        oscillator.stop(
+          now + note.t + note.d + 0.03
+        );
+      }
+    };
+
+    if(ctx.state === 'suspended'){
+      ctx.resume()
+        .then(play)
+        .catch(() => {});
+    }else{
+      play();
+    }
   }catch(error){
     console.debug(
       'Son notification indisponible',
@@ -7600,8 +7761,23 @@ function showClientBrowserNotification(event){
     }
   }
 
-  playNotificationTone(urgent);
+  const soundEnabled =
+    localStorage.getItem(
+      'mondecoNotificationSound'
+    ) === '1' ||
+    (
+      'Notification' in window &&
+      Notification.permission ===
+        'granted'
+    );
+
+  if(soundEnabled){
+    playNotificationTone(
+      urgent
+    );
+  }
 }
+
 
 
 async function softRefreshSelectedConversation(){
@@ -7852,8 +8028,38 @@ document.getElementById('enableNotificationsBtn').addEventListener('click', asyn
       await Notification.requestPermission();
 
     if(permission === 'granted'){
+      try{
+        if(!notificationAudioContext){
+          notificationAudioContext =
+            new (
+              window.AudioContext ||
+              window.webkitAudioContext
+            )();
+        }
+
+        if(
+          notificationAudioContext.state ===
+          'suspended'
+        ){
+          await notificationAudioContext.resume();
+        }
+      }catch(error){
+        console.debug(
+          'Initialisation audio :',
+          error
+        );
+      }
+
+      localStorage.setItem(
+        'mondecoNotificationSound',
+        '1'
+      );
+
       playNotificationTone(false);
-      alert('Notifications MONDECO activées sur ce navigateur.');
+
+      alert(
+        'Notifications MONDECO activées. Le son de notification est également actif.'
+      );
     }else{
       alert('Autorisation de notification non accordée.');
     }
