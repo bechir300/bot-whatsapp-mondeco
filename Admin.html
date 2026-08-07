@@ -4146,6 +4146,138 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.16.2 — Sidebar toujours accessible
+   ========================================================== */
+
+/* Desktop: la sidebar reste dans la hauteur de l'écran.
+   La navigation scrolle indépendamment si nécessaire. */
+@media(min-width:761px){
+  .sidebar{
+    display:flex !important;
+    flex-direction:column !important;
+    height:100dvh !important;
+    min-height:0 !important;
+    overflow:hidden !important;
+    padding-bottom:14px !important;
+  }
+
+  .sidebar .brand{
+    flex:0 0 auto !important;
+  }
+
+  .sidebar .nav{
+    flex:1 1 auto !important;
+    min-height:0 !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
+    overscroll-behavior:contain;
+    padding-right:5px !important;
+    padding-bottom:8px !important;
+    scrollbar-width:thin;
+    scrollbar-color:#554d47 transparent;
+  }
+
+  .sidebar .nav::-webkit-scrollbar{
+    width:6px;
+  }
+
+  .sidebar .nav::-webkit-scrollbar-track{
+    background:transparent;
+  }
+
+  .sidebar .nav::-webkit-scrollbar-thumb{
+    background:#554d47;
+    border-radius:999px;
+  }
+
+  .sidebar .nav::-webkit-scrollbar-thumb:hover{
+    background:#756a62;
+  }
+
+  .sidebar-footer{
+    position:static !important;
+    left:auto !important;
+    right:auto !important;
+    bottom:auto !important;
+    flex:0 0 auto !important;
+    margin-top:8px !important;
+    padding-top:10px !important;
+    background:#11100f;
+  }
+}
+
+/* Écrans moins hauts : on compacte légèrement sans utiliser le zoom. */
+@media(min-width:761px) and (max-height:900px){
+  .sidebar{
+    padding-top:16px !important;
+  }
+
+  .brand{
+    padding-bottom:12px !important;
+    margin-bottom:4px !important;
+  }
+
+  .brand-logo{
+    width:150px !important;
+  }
+
+  .brand-meta{
+    margin-top:8px !important;
+    font-size:8.5px !important;
+  }
+
+  .nav{
+    margin-top:4px !important;
+    gap:1px !important;
+  }
+
+  .nav button{
+    min-height:40px !important;
+    padding:8px 10px !important;
+    font-size:12.5px !important;
+  }
+
+  .nav button .nav-icon{
+    width:18px !important;
+    height:18px !important;
+  }
+
+  .sidebar-user{
+    margin-bottom:7px !important;
+    padding:7px !important;
+  }
+
+  .sidebar-user-avatar{
+    width:30px !important;
+    height:30px !important;
+    flex-basis:30px !important;
+  }
+
+  .logout-btn{
+    padding:9px 11px !important;
+  }
+}
+
+/* Sur les écrans très bas, le menu Équipe & rapports reste accessible
+   grâce au scroll interne de .nav. */
+@media(min-width:761px) and (max-height:720px){
+  .brand-meta{
+    display:none !important;
+  }
+
+  .brand{
+    padding-bottom:8px !important;
+  }
+
+  .nav button{
+    min-height:36px !important;
+    padding:7px 9px !important;
+    font-size:12px !important;
+  }
+}
+
 </style>
 </head>
 
@@ -4433,7 +4565,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.16.1</span>
+                <span class="inbox-version">V6.16.2</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
             </div>
