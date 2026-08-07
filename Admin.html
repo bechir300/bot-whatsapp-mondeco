@@ -4145,7 +4145,7 @@ tbody tr:hover{
     grid-column:1 / -1;
   }
 }
-
+\n\n/* ==========================================================\n   MONDECO V6.17 — Présence équipe en temps réel\n   ========================================================== */\n.team-presence-btn{\n  display:inline-flex;\n  align-items:center;\n  gap:7px;\n  white-space:nowrap;\n}\n.team-presence-btn.is-filtering{\n  background:#11100f;\n  border-color:#11100f;\n  color:#fff;\n}\n.presence-count{\n  display:inline-grid;\n  min-width:20px;\n  height:20px;\n  padding:0 5px;\n  place-items:center;\n  border-radius:999px;\n  background:#e9f8ef;\n  color:#12733f;\n  font-size:9px;\n  font-weight:900;\n}\n.team-presence-btn.is-filtering .presence-count{\n  background:#fff;\n  color:#11100f;\n}\n.team-presence-line{\n  display:flex !important;\n  align-items:center;\n  gap:6px;\n  margin-top:6px !important;\n  color:#5f5953 !important;\n  font-size:8.8px !important;\n  white-space:normal !important;\n}\n.presence-dot{\n  display:inline-block;\n  flex:0 0 auto;\n  width:8px;\n  height:8px;\n  border-radius:50%;\n  background:#96908a;\n}\n.presence-dot.online{\n  background:#18a85a;\n  box-shadow:0 0 0 3px rgba(24,168,90,.12);\n}\n.presence-dot.idle{\n  background:#e69b22;\n  box-shadow:0 0 0 3px rgba(230,155,34,.12);\n}\n.presence-dot.offline{\n  background:#aaa49e;\n}\n.team-user-row.presence-online{\n  border-color:#bfe8cf;\n  background:#fbfffc;\n}\n.team-user-row.presence-idle{\n  border-color:#f1d8ac;\n}\n.presence-page{\n  color:#8b847d;\n  font-size:8px;\n}\n.team-presence-empty{\n  padding:18px;\n  border:1px dashed var(--line);\n  border-radius:11px;\n  text-align:center;\n  color:var(--muted);\n  font-size:10px;\n}\n@media(max-width:620px){\n  .team-date-field{\n    width:100%;\n  }\n  .team-presence-btn{\n    flex:1 1 auto;\n    justify-content:center;\n  }\n}\n
 
 /* ==========================================================
    MONDECO V6.16.2 — Sidebar toujours accessible
@@ -4565,7 +4565,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.16.2</span>
+                <span class="inbox-version">V6.17</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
             </div>
@@ -5435,6 +5435,11 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             <input id="teamReportDate" type="date">
           </label>
 
+          <button class="btn team-presence-btn" id="teamPresenceBtn" type="button" title="Afficher uniquement les membres connectés">
+            <span>🟢 Connectés</span>
+            <span class="presence-count" id="teamOnlineCount">0</span>
+          </button>
+
           <button class="btn" id="refreshTeamReportBtn" type="button">
             ↻ Actualiser
           </button>
@@ -5782,6 +5787,10 @@ let productPreviewObjectUrl = null;
 let currentUser = null;
 let teamUsers = [];
 let teamReport = null;
+let teamPresence = {onlineCount:0,idleCount:0,totalCount:0,users:[]};
+let teamPresenceOnly = false;
+let presenceHeartbeatTimer = null;
+let presenceRefreshTimer = null;
 
 const pages = [...document.querySelectorAll('.page')];
 const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
@@ -10302,6 +10311,244 @@ function tunisDateKey(){
   }
 }
 
+async function loadTeamPresence(){
+  if(currentUser?.role !== 'admin'){
+    return teamPresence;
+  }
+
+  try{
+    teamPresence =
+      await apiFetch(
+        `${API}/presence`
+      );
+
+    const count =
+      document.getElementById(
+        'teamOnlineCount'
+      );
+
+    if(count){
+      count.textContent =
+        String(
+          Number(
+            teamPresence.onlineCount || 0
+          )
+        );
+    }
+
+    renderTeamUsers();
+    return teamPresence;
+  }catch(error){
+    console.warn(
+      'Présence équipe :',
+      error.message
+    );
+    return teamPresence;
+  }
+}
+
+function currentPresencePage(){
+  const activePage =
+    document.querySelector(
+      '.page.active'
+    );
+
+  if(!activePage){
+    return 'Application';
+  }
+
+  const pageId =
+    String(
+      activePage.id || ''
+    )
+      .replace(/^page-/, '');
+
+  const labels = {
+    home:'Accueil',
+    products:'Produits',
+    woocommerce:'Site web',
+    instructions:'Instructions IA',
+    conversations:'Conversations',
+    corrections:'Corrections',
+    customization:'Personnalisation',
+    test:'Discussion de test',
+    team:'Équipe & rapports',
+    settings:'Paramètres'
+  };
+
+  return labels[pageId] || pageId || 'Application';
+}
+
+async function sendPresenceHeartbeat(){
+  if(!currentUser){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/presence/heartbeat`,
+      {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          page:
+            currentPresencePage()
+        })
+      }
+    );
+  }catch(error){
+    if(
+      !/session|auth|connect/i.test(
+        String(error.message || '')
+      )
+    ){
+      console.debug(
+        'Heartbeat présence :',
+        error.message
+      );
+    }
+  }
+}
+
+function startPresenceTracking(){
+  if(presenceHeartbeatTimer){
+    clearInterval(
+      presenceHeartbeatTimer
+    );
+  }
+
+  if(presenceRefreshTimer){
+    clearInterval(
+      presenceRefreshTimer
+    );
+  }
+
+  sendPresenceHeartbeat();
+
+  presenceHeartbeatTimer =
+    setInterval(
+      sendPresenceHeartbeat,
+      20000
+    );
+
+  if(currentUser?.role === 'admin'){
+    loadTeamPresence();
+
+    presenceRefreshTimer =
+      setInterval(
+        () => {
+          loadTeamPresence();
+        },
+        20000
+      );
+  }
+}
+
+document.addEventListener(
+  'visibilitychange',
+  () => {
+    if(document.visibilityState === 'visible'){
+      sendPresenceHeartbeat();
+
+      if(currentUser?.role === 'admin'){
+        loadTeamPresence();
+      }
+    }
+  }
+);
+
+function presenceForUser(userId){
+  return (
+    teamPresence?.users || []
+  ).find(
+    item =>
+      item.id === userId
+  )?.presence || {
+    status:'offline',
+    lastSeenAt:'',
+    lastPage:'',
+    activeSessions:0
+  };
+}
+
+function formatPresenceLastSeen(value){
+  if(!value){
+    return 'Jamais vu en ligne';
+  }
+
+  const date = new Date(value);
+  const diff = Date.now() - date.getTime();
+
+  if(Number.isNaN(date.getTime())){
+    return 'Dernière activité inconnue';
+  }
+
+  if(diff < 60000){
+    return 'Maintenant';
+  }
+
+  const minutes =
+    Math.floor(diff / 60000);
+
+  if(minutes < 60){
+    return `Il y a ${minutes} min`;
+  }
+
+  const hours =
+    Math.floor(minutes / 60);
+
+  if(hours < 24){
+    return `Il y a ${hours} h`;
+  }
+
+  try{
+    return new Intl.DateTimeFormat(
+      'fr-TN',
+      {
+        timeZone:'Africa/Tunis',
+        dateStyle:'short',
+        timeStyle:'short'
+      }
+    ).format(date);
+  }catch{
+    return date.toLocaleString('fr-FR');
+  }
+}
+
+function presenceMeta(presence){
+  const status =
+    presence?.status ||
+    'offline';
+
+  if(status === 'online'){
+    return {
+      status,
+      label:'En ligne',
+      detail:'Maintenant'
+    };
+  }
+
+  if(status === 'idle'){
+    return {
+      status,
+      label:'Inactif',
+      detail:formatPresenceLastSeen(
+        presence?.lastSeenAt
+      )
+    };
+  }
+
+  return {
+    status:'offline',
+    label:'Hors ligne',
+    detail:formatPresenceLastSeen(
+      presence?.lastSeenAt
+    )
+  };
+}
+
 async function loadTeamUsers(){
   teamUsers =
     await apiFetch(
@@ -10309,7 +10556,6 @@ async function loadTeamUsers(){
     );
 
   renderTeamUsers();
-
   return teamUsers;
 }
 
@@ -10323,6 +10569,22 @@ function renderTeamUsers(){
     return;
   }
 
+  const button =
+    document.getElementById(
+      'teamPresenceBtn'
+    );
+
+  if(button){
+    button.classList.toggle(
+      'is-filtering',
+      teamPresenceOnly
+    );
+    button.title =
+      teamPresenceOnly
+        ? 'Afficher tous les membres'
+        : 'Afficher uniquement les membres connectés';
+  }
+
   if(!teamUsers.length){
     container.innerHTML = `
       <div class="empty">
@@ -10332,17 +10594,71 @@ function renderTeamUsers(){
     return;
   }
 
+  const visibleUsers =
+    teamPresenceOnly
+      ? teamUsers.filter(
+          user =>
+            presenceForUser(user.id)
+              .status === 'online'
+        )
+      : teamUsers;
+
+  if(!visibleUsers.length){
+    container.innerHTML = `
+      <div class="team-presence-empty">
+        Aucun membre n’est connecté maintenant.
+      </div>
+    `;
+    return;
+  }
+
+  const statusOrder = {
+    online:0,
+    idle:1,
+    offline:2
+  };
+
+  visibleUsers.sort(
+    (a,b) => {
+      const pa = presenceForUser(a.id);
+      const pb = presenceForUser(b.id);
+      return (
+        (statusOrder[pa.status] ?? 9) -
+        (statusOrder[pb.status] ?? 9) ||
+        String(a.name || a.email).localeCompare(
+          String(b.name || b.email),
+          'fr'
+        )
+      );
+    }
+  );
+
   container.innerHTML = `
     <div class="team-user-list">
-      ${teamUsers.map(user => {
+      ${visibleUsers.map(user => {
         const initials =
           userInitials(
             user.name,
             user.email
           );
 
+        const presence =
+          presenceForUser(
+            user.id
+          );
+
+        const meta =
+          presenceMeta(
+            presence
+          );
+
+        const pageText =
+          presence.lastPage
+            ? ` • ${escapeHtml(presence.lastPage)}`
+            : '';
+
         return `
-          <div class="team-user-row ${user.active ? '' : 'inactive'}">
+          <div class="team-user-row ${user.active ? '' : 'inactive'} presence-${escapeHtml(meta.status)}">
             <div class="team-user-avatar">
               ${escapeHtml(initials)}
             </div>
@@ -10353,6 +10669,12 @@ function renderTeamUsers(){
               <span class="team-role-pill ${escapeHtml(user.role)}">
                 ${escapeHtml(user.roleLabel || user.role)}
                 ${user.active ? '' : ' • Désactivé'}
+              </span>
+              <span class="team-presence-line">
+                <i class="presence-dot ${escapeHtml(meta.status)}"></i>
+                <strong>${escapeHtml(meta.label)}</strong>
+                <span>${escapeHtml(meta.detail)}</span>
+                ${pageText ? `<span class="presence-page">${pageText}</span>` : ''}
               </span>
             </div>
 
@@ -10401,6 +10723,21 @@ function renderTeamUsers(){
     </div>
   `;
 }
+
+document
+  .getElementById(
+    'teamPresenceBtn'
+  )
+  ?.addEventListener(
+    'click',
+    async () => {
+      teamPresenceOnly =
+        !teamPresenceOnly;
+
+      await loadTeamPresence();
+      renderTeamUsers();
+    }
+  );
 
 window.editTeamUser = async function(id){
   const user =
@@ -10759,7 +11096,8 @@ async function loadTeamAdmin(){
 
   await Promise.all([
     loadTeamUsers(),
-    loadTeamReport()
+    loadTeamReport(),
+    loadTeamPresence()
   ]);
 }
 
@@ -10884,6 +11222,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
       );
 
     applyRoleAccess();
+    startPresenceTracking();
 
     const defaultPage =
       currentUser?.role ===
