@@ -2767,6 +2767,30 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.9 — Clavier intelligent
+   ========================================================== */
+.smart-keyboard{
+  display:grid;
+  grid-template-columns:minmax(220px,1fr) auto auto;
+  gap:8px;
+  margin-bottom:9px;
+}
+.smart-keyboard .btn{
+  white-space:nowrap;
+}
+.smart-keyboard-help{
+  margin:-2px 0 9px;
+  color:var(--muted);
+  font-size:10px;
+}
+@media(max-width:700px){
+  .smart-keyboard{
+    grid-template-columns:1fr;
+  }
+}
+
 </style>
 </head>
 
@@ -4111,7 +4135,10 @@ function showPage(name){
   if(name === 'conversations'){
     conversationNotificationUnread = 0;
     updateNotificationBadges();
-    loadConversations();
+    Promise.all([
+      loadConversations(),
+      loadQuickReplies()
+    ]);
   }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
@@ -4762,6 +4789,7 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
 // ============================================================
 
 let conversations = [];
+let quickReplies = [];
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
@@ -4975,6 +5003,35 @@ window.openConversation = async function(contact){
     <div class="chat-box">${messagesHtml || '<div class="empty">Aucun échange enregistré.</div>'}</div>
 
     <div class="conversation-composer">
+      <div class="smart-keyboard">
+        <select
+          id="conversationQuickReplySelect"
+          onchange="applyConversationQuickReply(this.value)"
+        >
+          <option value="">⚡ Réponses enregistrées</option>
+        </select>
+
+        <button
+          class="btn small"
+          type="button"
+          onclick="saveConversationQuickReply()"
+        >
+          💾 Enregistrer
+        </button>
+
+        <button
+          class="btn small"
+          type="button"
+          onclick="deleteConversationQuickReply()"
+        >
+          🗑️ Supprimer
+        </button>
+      </div>
+
+      <div class="smart-keyboard-help">
+        Astuce : tapez /showroom, /devis, /ville… puis Entrée.
+      </div>
+
       <textarea
         id="conversationQuickReply"
         placeholder="Répondre directement au client..."
@@ -5030,6 +5087,10 @@ window.openConversation = async function(contact){
       </div>
     </div>
   `;
+
+  await loadQuickReplies();
+  populateConversationQuickReplySelect();
+  bindSmartKeyboardShortcuts();
 };
 
 window.openCommercialFromConversation = function(contact){
@@ -5053,6 +5114,219 @@ window.openCommercialFromConversation = function(contact){
 document.getElementById('refreshConversationsBtn').addEventListener('click', loadConversations);
 document.getElementById('conversationSearch').addEventListener('input', renderConversationsList);
 
+
+
+// ============================================================
+// CLAVIER INTELLIGENT / RÉPONSES RAPIDES
+// ============================================================
+
+async function loadQuickReplies(){
+  try{
+    quickReplies =
+      await apiFetch(
+        `${API}/quick-replies`
+      );
+  }catch(error){
+    console.debug(
+      'Réponses rapides :',
+      error.message
+    );
+
+    quickReplies = [];
+  }
+
+  return quickReplies;
+}
+
+function populateConversationQuickReplySelect(){
+  const select =
+    document.getElementById(
+      'conversationQuickReplySelect'
+    );
+
+  if(!select) return;
+
+  select.innerHTML =
+    `<option value="">⚡ Réponses enregistrées</option>` +
+    quickReplies
+      .filter(item => item.active !== false)
+      .map(item => `
+        <option value="${escapeHtml(item.id)}">
+          ${item.shortcut ? `/${escapeHtml(item.shortcut)} — ` : ''}${escapeHtml(item.title)}
+        </option>
+      `)
+      .join('');
+}
+
+window.applyConversationQuickReply = function(id){
+  if(!id) return;
+
+  const item =
+    quickReplies.find(
+      reply => reply.id === id
+    );
+
+  const textarea =
+    document.getElementById(
+      'conversationQuickReply'
+    );
+
+  if(!item || !textarea) return;
+
+  textarea.value =
+    item.content || '';
+
+  textarea.focus();
+  textarea.setSelectionRange(
+    textarea.value.length,
+    textarea.value.length
+  );
+};
+
+window.saveConversationQuickReply = async function(){
+  const textarea =
+    document.getElementById(
+      'conversationQuickReply'
+    );
+
+  const content =
+    String(textarea?.value || '').trim();
+
+  if(!content){
+    alert('Écrivez d’abord la réponse à enregistrer.');
+    return;
+  }
+
+  const title =
+    prompt(
+      'Nom de cette réponse rapide :',
+      'Nouvelle réponse'
+    );
+
+  if(!title?.trim()) return;
+
+  const shortcut =
+    prompt(
+      'Raccourci sans /, par exemple showroom :',
+      ''
+    );
+
+  try{
+    const item =
+      await apiFetch(
+        `${API}/quick-replies`,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify({
+            title:title.trim(),
+            shortcut:
+              String(shortcut || '').trim(),
+            content
+          })
+        }
+      );
+
+    await loadQuickReplies();
+    populateConversationQuickReplySelect();
+
+    const select =
+      document.getElementById(
+        'conversationQuickReplySelect'
+      );
+
+    if(select){
+      select.value = item.id;
+    }
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.deleteConversationQuickReply = async function(){
+  const select =
+    document.getElementById(
+      'conversationQuickReplySelect'
+    );
+
+  const id =
+    String(select?.value || '');
+
+  if(!id){
+    alert('Sélectionnez une réponse enregistrée.');
+    return;
+  }
+
+  const item =
+    quickReplies.find(
+      reply => reply.id === id
+    );
+
+  if(!confirm(`Supprimer « ${item?.title || 'cette réponse'} » ?`)){
+    return;
+  }
+
+  try{
+    await apiFetch(
+      `${API}/quick-replies/${encodeURIComponent(id)}`,
+      {
+        method:'DELETE'
+      }
+    );
+
+    await loadQuickReplies();
+    populateConversationQuickReplySelect();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+function bindSmartKeyboardShortcuts(){
+  const textarea =
+    document.getElementById(
+      'conversationQuickReply'
+    );
+
+  if(!textarea || textarea.dataset.smartBound === '1'){
+    return;
+  }
+
+  textarea.dataset.smartBound = '1';
+
+  textarea.addEventListener(
+    'keydown',
+    event => {
+      if(event.key !== 'Enter' || event.shiftKey){
+        return;
+      }
+
+      const value =
+        String(textarea.value || '').trim();
+
+      if(!/^\/[a-z0-9_-]+$/i.test(value)){
+        return;
+      }
+
+      const shortcut =
+        value.slice(1).toLowerCase();
+
+      const item =
+        quickReplies.find(
+          reply =>
+            String(reply.shortcut || '').toLowerCase() === shortcut &&
+            reply.active !== false
+        );
+
+      if(!item) return;
+
+      event.preventDefault();
+      textarea.value = item.content || '';
+      textarea.focus();
+    }
+  );
+}
 
 // ============================================================
 // CENTRE COMMERCIAL LIVE
