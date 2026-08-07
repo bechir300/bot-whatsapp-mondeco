@@ -27,6 +27,7 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
+const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
@@ -68,6 +69,11 @@ const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
+
+const ADMIN_EMAIL = (
+  process.env.ADMIN_EMAIL ||
+  'admin@mondeco.tn'
+).trim().toLowerCase();
 
 
 const WOOCOMMERCE_URL = (
@@ -477,6 +483,11 @@ function snapshotFiles() {
     {
       source: QUICK_REPLIES_PATH,
       name: 'quick-replies.json'
+    }
+,
+    {
+      source: USERS_PATH,
+      name: 'users.json'
     }
 ,
     {
@@ -1923,6 +1934,7 @@ initializePersistentInstructions();
 initializeSettings();
 migrateSecureImageModeV676();
 initializeQuickReplies();
+initializeUsers();
 ensureDailySnapshot();
 
 console.log(
@@ -2108,34 +2120,341 @@ function getBusinessContext() {
 }
 
 // ============================================================
-// AUTHENTIFICATION
+// AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
 const sessions = new Map();
+const loginAttempts = new Map();
 
 const SESSION_DURATION =
   24 * 60 * 60 * 1000;
 
+const LOGIN_MAX_FAILURES = 8;
+const LOGIN_BLOCK_MS =
+  15 * 60 * 1000;
+
+const ALLOWED_USER_ROLES =
+  new Set([
+    'admin',
+    'editor',
+    'commercial'
+  ]);
+
+const ROLE_LABELS = {
+  admin:
+    'Administrateur',
+  editor:
+    'Éditeur',
+  commercial:
+    'Commercial'
+};
+
+function normalizeEmail(value) {
+  return safeString(value)
+    .trim()
+    .toLowerCase();
+}
+
+function hashUserPassword(
+  password,
+  saltHex = ''
+) {
+  const salt =
+    saltHex ||
+    crypto
+      .randomBytes(16)
+      .toString('hex');
+
+  const hash =
+    crypto
+      .scryptSync(
+        String(password),
+        salt,
+        64
+      )
+      .toString('hex');
+
+  return {
+    salt,
+    hash
+  };
+}
+
+function verifyUserPassword(
+  password,
+  user
+) {
+  const salt =
+    safeString(
+      user?.passwordSalt
+    );
+
+  const expectedHex =
+    safeString(
+      user?.passwordHash
+    );
+
+  if (
+    !salt ||
+    !expectedHex
+  ) {
+    return false;
+  }
+
+  try {
+    const actual =
+      Buffer.from(
+        hashUserPassword(
+          password,
+          salt
+        ).hash,
+        'hex'
+      );
+
+    const expected =
+      Buffer.from(
+        expectedHex,
+        'hex'
+      );
+
+    return (
+      actual.length ===
+        expected.length &&
+      crypto.timingSafeEqual(
+        actual,
+        expected
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeUserForClient(user) {
+  if (!user) {
+    return null;
+  }
+
+  return {
+    id:
+      safeString(
+        user.id
+      ),
+    name:
+      safeString(
+        user.name
+      ),
+    email:
+      safeString(
+        user.email
+      ),
+    role:
+      safeString(
+        user.role
+      ),
+    roleLabel:
+      ROLE_LABELS[
+        safeString(
+          user.role
+        )
+      ] ||
+      safeString(
+        user.role
+      ),
+    active:
+      user.active !==
+      false,
+    createdAt:
+      safeString(
+        user.createdAt
+      ),
+    updatedAt:
+      safeString(
+        user.updatedAt
+      ),
+    lastLoginAt:
+      safeString(
+        user.lastLoginAt
+      )
+  };
+}
+
+function loadUsers() {
+  try {
+    if (
+      !fs.existsSync(
+        USERS_PATH
+      )
+    ) {
+      return [];
+    }
+
+    const parsed =
+      JSON.parse(
+        fs.readFileSync(
+          USERS_PATH,
+          'utf8'
+        ) ||
+        '[]'
+      );
+
+    return Array.isArray(
+      parsed
+    )
+      ? parsed
+      : [];
+  } catch (error) {
+    console.warn(
+      '⚠️ Lecture users.json :',
+      error.message
+    );
+
+    return [];
+  }
+}
+
+function saveUsers(users) {
+  writeJsonAtomic(
+    USERS_PATH,
+    Array.isArray(users)
+      ? users
+      : []
+  );
+}
+
+function initializeUsers() {
+  const existing =
+    loadUsers();
+
+  if (existing.length) {
+    return;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  const credentials =
+    hashUserPassword(
+      ADMIN_PASSWORD
+    );
+
+  const initialAdmin = {
+    id:
+      crypto.randomUUID(),
+    name:
+      'Administrateur MONDECO',
+    email:
+      ADMIN_EMAIL,
+    role:
+      'admin',
+    active:
+      true,
+    passwordSalt:
+      credentials.salt,
+    passwordHash:
+      credentials.hash,
+    createdAt:
+      now,
+    updatedAt:
+      now,
+    lastLoginAt:
+      null
+  };
+
+  saveUsers([
+    initialAdmin
+  ]);
+
+  console.log(
+    `👤 Compte administrateur initial créé : ${ADMIN_EMAIL}`
+  );
+}
+
+function findUserById(id) {
+  const wanted =
+    safeString(id);
+
+  return (
+    loadUsers().find(
+      user =>
+        user.id ===
+        wanted
+    ) ||
+    null
+  );
+}
+
+function findUserByEmail(email) {
+  const wanted =
+    normalizeEmail(
+      email
+    );
+
+  return (
+    loadUsers().find(
+      user =>
+        normalizeEmail(
+          user.email
+        ) ===
+        wanted
+    ) ||
+    null
+  );
+}
+
+function countActiveAdmins(
+  users
+) {
+  return users.filter(
+    user =>
+      user.role ===
+        'admin' &&
+      user.active !==
+        false
+  ).length;
+}
+
 function parseCookies(header = '') {
   const cookies = {};
 
-  for (const part of header.split(';')) {
-    const index = part.indexOf('=');
-    if (index === -1) continue;
+  for (
+    const part
+    of header.split(';')
+  ) {
+    const index =
+      part.indexOf('=');
+
+    if (index === -1) {
+      continue;
+    }
 
     const key =
-      part.slice(0, index).trim();
+      part
+        .slice(
+          0,
+          index
+        )
+        .trim();
 
     const value =
-      part.slice(index + 1).trim();
+      part
+        .slice(
+          index + 1
+        )
+        .trim();
 
-    if (!key) continue;
+    if (!key) {
+      continue;
+    }
 
     try {
       cookies[key] =
-        decodeURIComponent(value);
+        decodeURIComponent(
+          value
+        );
     } catch {
-      cookies[key] = value;
+      cookies[key] =
+        value;
     }
   }
 
@@ -2143,67 +2462,523 @@ function parseCookies(header = '') {
 }
 
 function cleanupSessions() {
-  const now = Date.now();
+  const now =
+    Date.now();
 
-  for (const [token, expiresAt] of sessions.entries()) {
-    if (expiresAt <= now) {
-      sessions.delete(token);
+  for (
+    const [
+      token,
+      session
+    ]
+    of sessions.entries()
+  ) {
+    const expiresAt =
+      typeof session ===
+        'number'
+        ? session
+        : Number(
+            session
+              ?.expiresAt ||
+            0
+          );
+
+    if (
+      !expiresAt ||
+      expiresAt <= now
+    ) {
+      sessions.delete(
+        token
+      );
     }
   }
 }
 
 function getSessionToken(req) {
   return (
-    parseCookies(req.headers.cookie || '')
+    parseCookies(
+      req.headers.cookie ||
+      ''
+    )
       .mondeco_admin_session ||
     ''
   );
 }
 
-function isAuthenticated(req) {
+function getAuthenticatedUser(req) {
   cleanupSessions();
 
-  const token = getSessionToken(req);
-  if (!token) return false;
+  const token =
+    getSessionToken(
+      req
+    );
 
-  const expiresAt = sessions.get(token);
+  if (!token) {
+    return null;
+  }
 
-  if (!expiresAt || expiresAt <= Date.now()) {
-    sessions.delete(token);
+  const session =
+    sessions.get(
+      token
+    );
+
+  if (!session) {
+    return null;
+  }
+
+  const expiresAt =
+    typeof session ===
+      'number'
+      ? session
+      : Number(
+          session.expiresAt ||
+          0
+        );
+
+  if (
+    !expiresAt ||
+    expiresAt <=
+      Date.now()
+  ) {
+    sessions.delete(
+      token
+    );
+
+    return null;
+  }
+
+  const userId =
+    safeString(
+      session.userId
+    );
+
+  if (!userId) {
+    return null;
+  }
+
+  const user =
+    findUserById(
+      userId
+    );
+
+  if (
+    !user ||
+    user.active ===
+      false
+  ) {
+    sessions.delete(
+      token
+    );
+
+    return null;
+  }
+
+  return user;
+}
+
+function isAuthenticated(req) {
+  return Boolean(
+    getAuthenticatedUser(
+      req
+    )
+  );
+}
+
+function pathStarts(
+  reqPath,
+  prefix
+) {
+  return (
+    reqPath === prefix ||
+    reqPath.startsWith(
+      `${prefix}/`
+    )
+  );
+}
+
+function roleCanAccess(
+  role,
+  method,
+  reqPath
+) {
+  if (
+    role ===
+    'admin'
+  ) {
+    return true;
+  }
+
+  if (
+    reqPath ===
+    '/'
+  ) {
+    return true;
+  }
+
+  // Assets protégés : accessibles à tous les comptes connectés.
+  if (
+    pathStarts(
+      reqPath,
+      '/uploads'
+    ) ||
+    pathStarts(
+      reqPath,
+      '/customizations'
+    ) ||
+    reqPath ===
+      '/api/me'
+  ) {
+    return true;
+  }
+
+  const commercialPrefixes = [
+    '/api/conversations',
+    '/api/commercial/send',
+    '/api/commercial/send-media',
+    '/api/notifications',
+    '/api/quick-replies'
+  ];
+
+  if (
+    commercialPrefixes.some(
+      prefix =>
+        pathStarts(
+          reqPath,
+          prefix
+        )
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    role ===
+    'commercial'
+  ) {
     return false;
   }
 
-  return true;
-}
+  if (
+    role ===
+    'editor'
+  ) {
+    if (
+      pathStarts(
+        reqPath,
+        '/api/products'
+      ) ||
+      pathStarts(
+        reqPath,
+        '/api/instructions'
+      ) ||
+      pathStarts(
+        reqPath,
+        '/api/commercial-corrections'
+      ) ||
+      pathStarts(
+        reqPath,
+        '/api/customizations'
+      ) ||
+      pathStarts(
+        reqPath,
+        '/api/test-chat'
+      ) ||
+      reqPath ===
+        '/api/stats'
+    ) {
+      return true;
+    }
 
-function requireAuth(req, res, next) {
-  if (isAuthenticated(req)) {
-    return next();
+    if (
+      reqPath ===
+        '/api/woocommerce/status' ||
+      reqPath ===
+        '/api/woocommerce/test' ||
+      reqPath ===
+        '/api/woocommerce/sync'
+    ) {
+      return true;
+    }
+
+    if (
+      (
+        reqPath ===
+          '/api/settings' &&
+        method ===
+          'GET'
+      ) ||
+      reqPath ===
+        '/api/storage-status'
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
-  if (req.path.startsWith('/api/')) {
+  return false;
+}
+
+function requireAuth(
+  req,
+  res,
+  next
+) {
+  const user =
+    getAuthenticatedUser(
+      req
+    );
+
+  if (!user) {
+    if (
+      req.path.startsWith(
+        '/api/'
+      )
+    ) {
+      return res
+        .status(401)
+        .json({
+          error:
+            'Non authentifié'
+        });
+    }
+
+    return res.redirect(
+      '/admin/login'
+    );
+  }
+
+  req.user =
+    user;
+
+  if (
+    !roleCanAccess(
+      user.role,
+      req.method,
+      req.path
+    )
+  ) {
+    if (
+      req.path.startsWith(
+        '/api/'
+      )
+    ) {
+      return res
+        .status(403)
+        .json({
+          error:
+            'Accès non autorisé pour votre rôle.'
+        });
+    }
+
+    return res
+      .status(403)
+      .send(
+        'Accès non autorisé.'
+      );
+  }
+
+  return next();
+}
+
+function requireAdmin(
+  req,
+  res,
+  next
+) {
+  const user =
+    getAuthenticatedUser(
+      req
+    );
+
+  if (!user) {
     return res
       .status(401)
       .json({
-        error: 'Non authentifié'
+        error:
+          'Non authentifié'
       });
   }
 
-  return res.redirect('/admin/login');
+  if (
+    user.role !==
+    'admin'
+  ) {
+    return res
+      .status(403)
+      .json({
+        error:
+          'Administrateur requis.'
+      });
+  }
+
+  req.user =
+    user;
+
+  return next();
 }
 
 function secureCookie(req) {
   const forwardedProto =
     safeString(
-      req.headers['x-forwarded-proto']
+      req.headers[
+        'x-forwarded-proto'
+      ]
     );
 
   return (
-    forwardedProto === 'https' ||
+    forwardedProto ===
+      'https' ||
     Boolean(
-      process.env.RAILWAY_ENVIRONMENT_NAME
+      process.env
+        .RAILWAY_ENVIRONMENT_NAME
     )
   );
+}
+
+
+function loginAttemptKey(req) {
+  return (
+    safeString(
+      req.headers[
+        'x-forwarded-for'
+      ]
+    )
+      .split(',')[0]
+      .trim() ||
+    safeString(
+      req.ip
+    ) ||
+    'unknown'
+  );
+}
+
+function getLoginAttemptState(req) {
+  const key =
+    loginAttemptKey(
+      req
+    );
+
+  const current =
+    loginAttempts.get(
+      key
+    ) || {
+      failures:
+        0,
+      blockedUntil:
+        0
+    };
+
+  if (
+    current.blockedUntil &&
+    current.blockedUntil <=
+      Date.now()
+  ) {
+    loginAttempts.delete(
+      key
+    );
+
+    return {
+      key,
+      failures:
+        0,
+      blockedUntil:
+        0
+    };
+  }
+
+  return {
+    key,
+    ...current
+  };
+}
+
+function registerLoginFailure(req) {
+  const state =
+    getLoginAttemptState(
+      req
+    );
+
+  const failures =
+    Number(
+      state.failures ||
+      0
+    ) +
+    1;
+
+  const blockedUntil =
+    failures >=
+      LOGIN_MAX_FAILURES
+      ? Date.now() +
+        LOGIN_BLOCK_MS
+      : 0;
+
+  loginAttempts.set(
+    state.key,
+    {
+      failures,
+      blockedUntil
+    }
+  );
+
+  return {
+    failures,
+    blockedUntil
+  };
+}
+
+function clearLoginFailures(req) {
+  loginAttempts.delete(
+    loginAttemptKey(
+      req
+    )
+  );
+}
+
+function createSessionForUser(
+  req,
+  res,
+  user
+) {
+  const token =
+    crypto
+      .randomBytes(32)
+      .toString('hex');
+
+  sessions.set(
+    token,
+    {
+      userId:
+        user.id,
+      expiresAt:
+        Date.now() +
+        SESSION_DURATION
+    }
+  );
+
+  const cookieParts = [
+    `mondeco_admin_session=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'SameSite=Lax',
+    'Path=/',
+    `Max-Age=${Math.floor(SESSION_DURATION / 1000)}`
+  ];
+
+  if (
+    secureCookie(
+      req
+    )
+  ) {
+    cookieParts.push(
+      'Secure'
+    );
+  }
+
+  res.setHeader(
+    'Set-Cookie',
+    cookieParts.join('; ')
+  );
+
+  return token;
 }
 
 
@@ -2276,17 +3051,20 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <img class="mobile-logo" src="${MONDECO_LOGO_DATA_URL}" alt="MONDECO">
       <div class="eyebrow">Administration</div>
       <h2>Connexion</h2>
-      <div class="sub">Entrez votre mot de passe administrateur pour continuer.</div>
+      <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
-        <label for="password">Mot de passe</label>
+        <label for="email">Adresse e-mail</label>
+        <input id="email" type="email" required autofocus autocomplete="username" placeholder="nom@mondeco.tn">
+
+        <label for="password" style="margin-top:14px">Mot de passe</label>
         <div class="password-row">
-          <input id="password" type="password" required autofocus autocomplete="current-password" placeholder="Votre mot de passe">
+          <input id="password" type="password" required autocomplete="current-password" placeholder="Votre mot de passe">
           <button class="show-pass" id="togglePassword" type="button" aria-label="Afficher ou masquer le mot de passe" title="Afficher / masquer">◉</button>
         </div>
         <button class="submit-btn" id="btn" type="submit">Se connecter</button>
         <div id="err" class="err"></div>
       </form>
-      <div class="security-note"><strong>Accès sécurisé.</strong> Utilisez le mot de passe défini dans Railway via <b>ADMIN_PASSWORD</b>.</div>
+      <div class="security-note"><strong>Accès sécurisé.</strong> Chaque membre de l’équipe utilise son propre e-mail et son propre mot de passe.</div>
     </div>
   </main>
 </div>
@@ -2294,10 +3072,11 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
 const form=document.getElementById('form');
 const btn=document.getElementById('btn');
 const err=document.getElementById('err');
+const emailInput=document.getElementById('email');
 const passwordInput=document.getElementById('password');
 const togglePassword=document.getElementById('togglePassword');
 togglePassword.addEventListener('click',()=>{const show=passwordInput.type==='password';passwordInput.type=show?'text':'password';togglePassword.textContent=show?'◌':'◉';});
-form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'Mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
+form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:emailInput.value,password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'E-mail ou mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
 </script>
 </body>
 </html>
@@ -2315,46 +3094,105 @@ router.get('/login', (req, res) => {
 });
 
 router.post('/login', (req, res) => {
-  const password =
-    safeString(req.body?.password);
+  const attemptState =
+    getLoginAttemptState(
+      req
+    );
 
-  if (!password || password !== ADMIN_PASSWORD) {
+  if (
+    attemptState.blockedUntil >
+    Date.now()
+  ) {
     return res
-      .status(401)
+      .status(429)
       .json({
-        error: 'Mot de passe incorrect.'
+        error:
+          'Trop de tentatives. Réessayez dans quelques minutes.'
       });
   }
 
-  const token =
-    crypto
-      .randomBytes(32)
-      .toString('hex');
+  const email =
+    normalizeEmail(
+      req.body?.email
+    );
 
-  sessions.set(
-    token,
-    Date.now() + SESSION_DURATION
-  );
+  const password =
+    safeString(
+      req.body?.password
+    );
 
-  const cookieParts = [
-    `mondeco_admin_session=${encodeURIComponent(token)}`,
-    'HttpOnly',
-    'SameSite=Lax',
-    'Path=/',
-    `Max-Age=${Math.floor(SESSION_DURATION / 1000)}`
-  ];
-
-  if (secureCookie(req)) {
-    cookieParts.push('Secure');
+  if (
+    !email ||
+    !password
+  ) {
+    return res
+      .status(400)
+      .json({
+        error:
+          'E-mail et mot de passe obligatoires.'
+      });
   }
 
-  res.setHeader(
-    'Set-Cookie',
-    cookieParts.join('; ')
+  const users =
+    loadUsers();
+
+  const index =
+    users.findIndex(
+      user =>
+        normalizeEmail(
+          user.email
+        ) ===
+        email
+    );
+
+  if (
+    index === -1 ||
+    users[index].active ===
+      false ||
+    !verifyUserPassword(
+      password,
+      users[index]
+    )
+  ) {
+    registerLoginFailure(
+      req
+    );
+
+    return res
+      .status(401)
+      .json({
+        error:
+          'E-mail ou mot de passe incorrect.'
+      });
+  }
+
+  clearLoginFailures(
+    req
+  );
+
+  users[index] = {
+    ...users[index],
+    lastLoginAt:
+      new Date().toISOString()
+  };
+
+  saveUsers(
+    users
+  );
+
+  createSessionForUser(
+    req,
+    res,
+    users[index]
   );
 
   return res.json({
-    success: true
+    success:
+      true,
+    user:
+      sanitizeUserForClient(
+        users[index]
+      )
   });
 });
 
@@ -2642,6 +3480,980 @@ router.get(
   }
 );
 
+
+
+// ============================================================
+// ÉQUIPE / UTILISATEURS / RAPPORTS
+// ============================================================
+
+function invalidateUserSessions(
+  userId
+) {
+  for (
+    const [
+      token,
+      session
+    ]
+    of sessions.entries()
+  ) {
+    if (
+      safeString(
+        session?.userId
+      ) ===
+      safeString(
+        userId
+      )
+    ) {
+      sessions.delete(
+        token
+      );
+    }
+  }
+}
+
+function safeTimezone(
+  value
+) {
+  const candidate =
+    safeString(
+      value
+    ) ||
+    'Africa/Tunis';
+
+  try {
+    new Intl.DateTimeFormat(
+      'fr-FR',
+      {
+        timeZone:
+          candidate
+      }
+    ).format(
+      new Date()
+    );
+
+    return candidate;
+  } catch {
+    return 'Africa/Tunis';
+  }
+}
+
+function dateKeyInTimezone(
+  value,
+  timezone =
+    'Africa/Tunis'
+) {
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(
+          value
+        );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return '';
+  }
+
+  const parts =
+    new Intl.DateTimeFormat(
+      'en-GB',
+      {
+        timeZone:
+          safeTimezone(
+            timezone
+          ),
+        year:
+          'numeric',
+        month:
+          '2-digit',
+        day:
+          '2-digit'
+      }
+    ).formatToParts(
+      date
+    );
+
+  const get =
+    type =>
+      parts.find(
+        part =>
+          part.type ===
+          type
+      )?.value ||
+      '';
+
+  return (
+    `${get('year')}-${get('month')}-${get('day')}`
+  );
+}
+
+function timeInTimezone(
+  value,
+  timezone =
+    'Africa/Tunis'
+) {
+  const date =
+    new Date(
+      value
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat(
+    'fr-FR',
+    {
+      timeZone:
+        safeTimezone(
+          timezone
+        ),
+      hour:
+        '2-digit',
+      minute:
+        '2-digit'
+    }
+  ).format(
+    date
+  );
+}
+
+function getCommercialDailyReport(
+  requestedDate
+) {
+  const timezone =
+    safeTimezone(
+      getBotSettings()
+        ?.timezone ||
+      'Africa/Tunis'
+    );
+
+  const date =
+    /^\d{4}-\d{2}-\d{2}$/.test(
+      safeString(
+        requestedDate
+      )
+    )
+      ? safeString(
+          requestedDate
+        )
+      : dateKeyInTimezone(
+          new Date(),
+          timezone
+        );
+
+  const users =
+    loadUsers();
+
+  const commercialUsers =
+    users.filter(
+      user =>
+        user.role ===
+          'commercial'
+    );
+
+  const log =
+    loadWhatsAppLog();
+
+  const replies =
+    log.filter(
+      entry => {
+        if (
+          entry.action !==
+            'commercial_reply' ||
+          dateKeyInTimezone(
+            entry.time,
+            timezone
+          ) !==
+            date
+        ) {
+          return false;
+        }
+
+        const actorRole =
+          safeString(
+            entry.commercial_user_role
+          );
+
+        // Le classement quotidien concerne les comptes commerciaux.
+        // Les anciennes réponses sans rôle restent signalées comme non attribuées.
+        return (
+          !actorRole ||
+          actorRole ===
+            'commercial'
+        );
+      }
+    );
+
+  const statsByUser =
+    new Map();
+
+  for (
+    const user
+    of commercialUsers
+  ) {
+    statsByUser.set(
+      user.id,
+      {
+        userId:
+          user.id,
+        name:
+          safeString(
+            user.name
+          ) ||
+          safeString(
+            user.email
+          ),
+        email:
+          safeString(
+            user.email
+          ),
+        role:
+          user.role,
+        active:
+          user.active !==
+          false,
+        replies:
+          0,
+        conversations:
+          new Set(),
+        files:
+          0,
+        textReplies:
+          0,
+        firstReplyAt:
+          '',
+        lastReplyAt:
+          ''
+      }
+    );
+  }
+
+  let unattributedReplies =
+    0;
+
+  for (
+    const entry
+    of replies
+  ) {
+    const userId =
+      safeString(
+        entry.commercial_user_id
+      );
+
+    const actorRole =
+      safeString(
+        entry.commercial_user_role
+      );
+
+    if (!userId) {
+      if (
+        !actorRole ||
+        actorRole ===
+          'commercial'
+      ) {
+        unattributedReplies +=
+          1;
+      }
+
+      continue;
+    }
+
+    if (
+      !statsByUser.has(
+        userId
+      ) &&
+      actorRole ===
+        'commercial'
+    ) {
+      statsByUser.set(
+        userId,
+        {
+          userId,
+          name:
+            safeString(
+              entry.commercial_user_name
+            ) ||
+            safeString(
+              entry.commercial_user_email
+            ) ||
+            'Ancien commercial',
+          email:
+            safeString(
+              entry.commercial_user_email
+            ),
+          role:
+            'commercial',
+          active:
+            false,
+          replies:
+            0,
+          conversations:
+            new Set(),
+          files:
+            0,
+          textReplies:
+            0,
+          firstReplyAt:
+            '',
+          lastReplyAt:
+            ''
+        }
+      );
+    }
+
+    if (
+      !statsByUser.has(
+        userId
+      )
+    ) {
+      continue;
+    }
+
+    const stat =
+      statsByUser.get(
+        userId
+      );
+
+    stat.replies +=
+      1;
+
+    if (
+      safeString(
+        entry.contact
+      )
+    ) {
+      stat.conversations.add(
+        safeString(
+          entry.contact
+        )
+      );
+    }
+
+    if (
+      safeString(
+        entry.attachment_type
+      )
+    ) {
+      stat.files +=
+        1;
+    }
+
+    if (
+      safeString(
+        entry.reply
+      )
+    ) {
+      stat.textReplies +=
+        1;
+    }
+
+    const time =
+      safeString(
+        entry.time
+      );
+
+    if (
+      time &&
+      (
+        !stat.firstReplyAt ||
+        new Date(time) <
+          new Date(
+            stat.firstReplyAt
+          )
+      )
+    ) {
+      stat.firstReplyAt =
+        time;
+    }
+
+    if (
+      time &&
+      (
+        !stat.lastReplyAt ||
+        new Date(time) >
+          new Date(
+            stat.lastReplyAt
+          )
+      )
+    ) {
+      stat.lastReplyAt =
+        time;
+    }
+  }
+
+  const ranking =
+    [
+      ...statsByUser
+        .values()
+    ]
+      .map(
+        stat => ({
+          ...stat,
+          conversations:
+            stat.conversations.size,
+          firstReplyTime:
+            timeInTimezone(
+              stat.firstReplyAt,
+              timezone
+            ),
+          lastReplyTime:
+            timeInTimezone(
+              stat.lastReplyAt,
+              timezone
+            )
+        })
+      )
+      .sort(
+        (a, b) =>
+          b.replies -
+            a.replies ||
+          b.conversations -
+            a.conversations ||
+          a.name.localeCompare(
+            b.name,
+            'fr'
+          )
+      )
+      .map(
+        (
+          stat,
+          index
+        ) => ({
+          rank:
+            index + 1,
+          ...stat
+        })
+      );
+
+  return {
+    date,
+    timezone,
+    summary: {
+      totalReplies:
+        ranking.reduce(
+          (
+            sum,
+            item
+          ) =>
+            sum +
+            item.replies,
+          0
+        ),
+      totalConversations:
+        new Set(
+          replies
+            .map(
+              entry =>
+                safeString(
+                  entry.contact
+                )
+            )
+            .filter(Boolean)
+        ).size,
+      activeCommercials:
+        ranking.filter(
+          item =>
+            item.replies >
+            0
+        ).length,
+      totalCommercials:
+        commercialUsers.length,
+      filesSent:
+        ranking.reduce(
+          (
+            sum,
+            item
+          ) =>
+            sum +
+            item.files,
+          0
+        ),
+      unattributedReplies
+    },
+    ranking
+  };
+}
+
+router.get(
+  '/api/me',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+    return res.json(
+      sanitizeUserForClient(
+        req.user
+      )
+    );
+  }
+);
+
+router.get(
+  '/api/users',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    return res.json(
+      loadUsers()
+        .map(
+          sanitizeUserForClient
+        )
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name,
+              'fr'
+            )
+        )
+    );
+  }
+);
+
+router.post(
+  '/api/users',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    const name =
+      safeString(
+        req.body?.name
+      ).trim();
+
+    const email =
+      normalizeEmail(
+        req.body?.email
+      );
+
+    const role =
+      safeString(
+        req.body?.role
+      );
+
+    const password =
+      safeString(
+        req.body?.password
+      );
+
+    if (
+      !name ||
+      !email ||
+      !role ||
+      !password
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Nom, e-mail, rôle et mot de passe sont obligatoires.'
+        });
+    }
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Adresse e-mail invalide.'
+        });
+    }
+
+    if (
+      !ALLOWED_USER_ROLES.has(
+        role
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Rôle invalide.'
+        });
+    }
+
+    if (
+      password.length <
+      8
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Le mot de passe doit contenir au moins 8 caractères.'
+        });
+    }
+
+    const users =
+      loadUsers();
+
+    if (
+      users.some(
+        user =>
+          normalizeEmail(
+            user.email
+          ) ===
+          email
+      )
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'Un compte utilise déjà cet e-mail.'
+        });
+    }
+
+    const credentials =
+      hashUserPassword(
+        password
+      );
+
+    const now =
+      new Date().toISOString();
+
+    const user = {
+      id:
+        crypto.randomUUID(),
+      name,
+      email,
+      role,
+      active:
+        true,
+      passwordSalt:
+        credentials.salt,
+      passwordHash:
+        credentials.hash,
+      createdAt:
+        now,
+      updatedAt:
+        now,
+      lastLoginAt:
+        null
+    };
+
+    users.push(
+      user
+    );
+
+    saveUsers(
+      users
+    );
+
+    return res
+      .status(201)
+      .json(
+        sanitizeUserForClient(
+          user
+        )
+      );
+  }
+);
+
+router.put(
+  '/api/users/:id',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    const users =
+      loadUsers();
+
+    const index =
+      users.findIndex(
+        user =>
+          user.id ===
+          req.params.id
+      );
+
+    if (
+      index === -1
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Utilisateur introuvable.'
+        });
+    }
+
+    const current =
+      users[index];
+
+    const name =
+      safeString(
+        req.body?.name ??
+        current.name
+      ).trim();
+
+    const email =
+      normalizeEmail(
+        req.body?.email ??
+        current.email
+      );
+
+    const role =
+      safeString(
+        req.body?.role ??
+        current.role
+      );
+
+    const active =
+      req.body?.active ===
+        undefined
+        ? current.active !==
+          false
+        : req.body.active ===
+          true;
+
+    const password =
+      safeString(
+        req.body?.password
+      );
+
+    if (
+      !name ||
+      !email ||
+      !ALLOWED_USER_ROLES.has(
+        role
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Nom, e-mail ou rôle invalide.'
+        });
+    }
+
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        email
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Adresse e-mail invalide.'
+        });
+    }
+
+    if (
+      users.some(
+        user =>
+          user.id !==
+            current.id &&
+          normalizeEmail(
+            user.email
+          ) ===
+            email
+      )
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            'Un autre compte utilise déjà cet e-mail.'
+        });
+    }
+
+    const wouldRemoveAdmin =
+      current.role ===
+        'admin' &&
+      current.active !==
+        false &&
+      (
+        role !==
+          'admin' ||
+        active ===
+          false
+      );
+
+    if (
+      wouldRemoveAdmin &&
+      countActiveAdmins(
+        users
+      ) <= 1
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Impossible de désactiver ou rétrograder le dernier administrateur actif.'
+        });
+    }
+
+    const updated = {
+      ...current,
+      name,
+      email,
+      role,
+      active,
+      updatedAt:
+        new Date().toISOString()
+    };
+
+    if (password) {
+      if (
+        password.length <
+        8
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Le nouveau mot de passe doit contenir au moins 8 caractères.'
+          });
+      }
+
+      const credentials =
+        hashUserPassword(
+          password
+        );
+
+      updated.passwordSalt =
+        credentials.salt;
+
+      updated.passwordHash =
+        credentials.hash;
+    }
+
+    users[index] =
+      updated;
+
+    saveUsers(
+      users
+    );
+
+    if (
+      active ===
+        false ||
+      password
+    ) {
+      invalidateUserSessions(
+        updated.id
+      );
+    }
+
+    return res.json(
+      sanitizeUserForClient(
+        updated
+      )
+    );
+  }
+);
+
+router.delete(
+  '/api/users/:id',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    const users =
+      loadUsers();
+
+    const index =
+      users.findIndex(
+        user =>
+          user.id ===
+          req.params.id
+      );
+
+    if (
+      index === -1
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Utilisateur introuvable.'
+        });
+    }
+
+    const user =
+      users[index];
+
+    if (
+      user.id ===
+      req.user.id
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Vous ne pouvez pas supprimer votre propre compte.'
+        });
+    }
+
+    if (
+      user.role ===
+        'admin' &&
+      user.active !==
+        false &&
+      countActiveAdmins(
+        users
+      ) <= 1
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Impossible de supprimer le dernier administrateur actif.'
+        });
+    }
+
+    users.splice(
+      index,
+      1
+    );
+
+    saveUsers(
+      users
+    );
+
+    invalidateUserSessions(
+      user.id
+    );
+
+    return res.json({
+      success:
+        true
+    });
+  }
+);
+
+router.get(
+  '/api/reports/commercial-daily',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    return res.json(
+      getCommercialDailyReport(
+        req.query?.date
+      )
+    );
+  }
+);
 
 // ============================================================
 // WOOCOMMERCE — SYNCHRONISATION SITE
@@ -6710,7 +8522,25 @@ router.post(
         await commercialSendHandler({
           phone,
           text,
-          question
+          question,
+          actor: {
+            id:
+              safeString(
+                req.user?.id
+              ),
+            name:
+              safeString(
+                req.user?.name
+              ),
+            email:
+              safeString(
+                req.user?.email
+              ),
+            role:
+              safeString(
+                req.user?.role
+              )
+          }
         });
 
       return res.json({
@@ -6793,6 +8623,24 @@ router.post(
           text,
           question,
           mediaKind,
+          actor: {
+            id:
+              safeString(
+                req.user?.id
+              ),
+            name:
+              safeString(
+                req.user?.name
+              ),
+            email:
+              safeString(
+                req.user?.email
+              ),
+            role:
+              safeString(
+                req.user?.role
+              )
+          },
           file: {
             buffer: req.file.buffer,
             mimetype: req.file.mimetype,
@@ -7672,7 +9520,7 @@ router.post(
         req.params.contact
       );
 
-    const assignedTo =
+    const requestedAssignedTo =
       safeString(
         req.body?.assignedTo
       ).slice(
@@ -7680,12 +9528,34 @@ router.post(
         100
       );
 
+    const assignedTo =
+      req.user?.role ===
+        'commercial'
+        ? (
+            safeString(
+              req.user?.name
+            ) ||
+            safeString(
+              req.user?.email
+            )
+          )
+        : requestedAssignedTo;
+
     const state =
       updateConversationStateAdmin(
         contact,
         current => ({
           ...current,
           assignedTo,
+          assignedUserId:
+            req.user?.role ===
+              'commercial'
+              ? safeString(
+                  req.user?.id
+                )
+              : safeString(
+                  current.assignedUserId
+                ),
           assignedAt:
             assignedTo
               ? new Date().toISOString()
@@ -7709,13 +9579,34 @@ router.post(
         req.params.contact
       );
 
-    const assignedTo =
+    const requestedAssignedTo =
       safeString(
         req.body?.assignedTo
       ).slice(
         0,
         100
       );
+
+    const assignedTo =
+      req.user?.role ===
+        'commercial'
+        ? (
+            safeString(
+              req.user?.name
+            ) ||
+            safeString(
+              req.user?.email
+            )
+          )
+        : (
+            requestedAssignedTo ||
+            safeString(
+              req.user?.name
+            ) ||
+            safeString(
+              req.user?.email
+            )
+          );
 
     const state =
       updateConversationStateAdmin(
@@ -7732,6 +9623,10 @@ router.post(
             assignedTo ||
             safeString(
               current.assignedTo
+            ),
+          assignedUserId:
+            safeString(
+              req.user?.id
             ),
           takeoverAt:
             new Date().toISOString()
