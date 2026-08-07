@@ -2690,6 +2690,83 @@ tbody tr:hover{
   .woo-actions .btn{width:100%}
 }
 
+
+/* ==========================================================
+   MONDECO V6.8 — Centre commercial live
+   ========================================================== */
+.conversation-composer{
+  margin-top:14px;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:#fff;
+}
+.conversation-composer textarea{
+  min-height:78px;
+  margin-bottom:10px;
+}
+.conversation-composer-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.composer-file-label{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin:0;
+}
+.composer-file-name{
+  flex:1;
+  min-width:160px;
+  color:var(--muted);
+  font-size:11px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.attachment-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  margin-top:6px;
+  padding:7px 9px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#fff;
+  font-size:11px;
+  font-weight:700;
+}
+.notification-count,.nav-count{
+  display:inline-grid;
+  place-items:center;
+  min-width:19px;
+  height:19px;
+  padding:0 5px;
+  border-radius:999px;
+  background:#ed1c24;
+  color:#fff;
+  font-size:10px;
+  font-weight:900;
+}
+.notification-count{margin-left:5px}
+.nav-count{margin-left:auto}
+.urgent-conversation td:first-child{
+  box-shadow:inset 3px 0 0 #ed1c24;
+}
+@media(max-width:700px){
+  .conversation-composer-actions .btn,
+  .conversation-composer-actions .composer-file-label{
+    width:100%;
+    justify-content:center;
+  }
+  .composer-file-name{
+    width:100%;
+    flex-basis:100%;
+  }
+}
+
 </style>
 </head>
 
@@ -2737,6 +2814,7 @@ tbody tr:hover{
       <button data-page="conversations">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 12h4l2 3h6l2-3h4"/><path d="M5 12 3 6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1l-2 6"/><path d="M5 12v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"/></svg></span>
         <span>Conversations</span>
+        <span id="conversationNavBadge" class="nav-count hidden">0</span>
       </button>
       <button data-page="corrections">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13 7 4 4"/><path d="M12 20h8"/></svg></span>
@@ -2967,6 +3045,10 @@ tbody tr:hover{
         </div>
 
         <div class="actions">
+          <button class="btn" id="enableNotificationsBtn" type="button">
+            🔔 Notifications
+            <span id="notificationHeaderCount" class="notification-count hidden">0</span>
+          </button>
           <button class="btn" id="refreshConversationsBtn">↻ Actualiser</button>
         </div>
       </div>
@@ -3548,6 +3630,14 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             </label>
 
             <label class="setting-option">
+              <input type="radio" name="imageHandling" value="secure_catalog">
+              <div>
+                <strong>Capture intelligente sécurisée — recommandé</strong>
+                <span>Lit le nom visible dans la capture, vérifie le produit dans le catalogue et ne répond que si l’identification est certaine. Sinon : commercial.</span>
+              </div>
+            </label>
+
+            <label class="setting-option">
               <input type="radio" name="imageHandling" value="analyze_only">
               <div>
                 <strong>Analyser sans répondre</strong>
@@ -4018,7 +4108,11 @@ function showPage(name){
   if(name === 'products') loadProducts();
   if(name === 'woocommerce') loadWooCommerceStatus();
   if(name === 'instructions') loadInstructions();
-  if(name === 'conversations') loadConversations();
+  if(name === 'conversations'){
+    conversationNotificationUnread = 0;
+    updateNotificationBadges();
+    loadConversations();
+  }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
   }
@@ -4111,6 +4205,7 @@ async function refreshHome(){
 
     const imageLabels = {
       commercial:'Commercial',
+      secure_catalog:'Capture sécurisée',
       analyze_only:'Analyse interne',
       analyze_reply:'Analyse + réponse'
     };
@@ -4667,6 +4762,10 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
 // ============================================================
 
 let conversations = [];
+let conversationNotificationUnread = 0;
+let conversationNotificationCursor =
+  localStorage.getItem('mondecoNotificationCursor') || '';
+let notificationAudioContext = null;
 
 async function loadConversations(){
   conversations = await apiFetch(`${API}/conversations`);
@@ -4681,11 +4780,17 @@ function actionLabel(action){
     outside_hours:'Hors horaires',
     outside_hours_message:'Message d\u2019absence envoyé',
     commercial_required:'Commercial requis',
+    secure_image_verified:'Capture vérifiée',
+    secure_image_commercial_required:'Capture à vérifier',
+    secure_image_analysis_error:'Erreur capture',
     image_analyzed_only:'Image analysée (sans réponse)',
     image_analyzed_and_replied:'Image analysée et répondue',
     image_analysis_error:'Erreur analyse image',
     automatic_followup:'Relance automatique',
-    commercial_reply:'Réponse commerciale'
+    commercial_reply:'Réponse commerciale',
+    ai_needs_commercial:'À vérifier par commercial',
+    ai_error_fallback_sent:'Erreur IA — commercial',
+    ai_error_no_reply:'Erreur IA — sans réponse'
   };
   return map[action] || action || '—';
 }
@@ -4694,6 +4799,8 @@ function conversationStatusBadges(item){
   const badges = [];
   if(item.humanPaused) badges.push('<span class="status-pill off">Pause commerciale</span>');
   if(item.awaitingResponse) badges.push('<span class="status-pill">En attente client</span>');
+  if(item.imageNeedsCommercial) badges.push('<span class="status-pill off">Capture à vérifier</span>');
+  if(item.commercialAttention) badges.push('<span class="status-pill off">Commercial requis</span>');
   if(item.hasAdReferral || String(item.lastSource || '').startsWith('meta_ad')){
     badges.push('<span class="premium-badge"><span class="dot"></span> Pub Meta</span>');
   }
@@ -4752,7 +4859,7 @@ function renderConversationsList(){
         </thead>
         <tbody>
           ${filtered.map(item => `
-            <tr>
+            <tr class="${item.commercialAttention || item.imageNeedsCommercial ? 'urgent-conversation' : ''}">
               <td><strong>+${escapeHtml(item.contact)}</strong></td>
               <td>
                 <div>${escapeHtml(item.lastIncoming || item.lastReply || '—')}</div>
@@ -4846,6 +4953,9 @@ window.openConversation = async function(contact){
         </div>
         ${entry.incoming ? `<div class="msg user">${escapeHtml(entry.incoming)}</div>` : ''}
         ${entry.reply ? `<div class="msg ${commercial ? 'commercial' : 'bot'}">${escapeHtml(entry.reply)}</div>` : ''}
+        ${entry.attachment_name ? `<div class="attachment-chip">${entry.attachment_type === 'image' ? '📷' : '📎'} ${escapeHtml(entry.attachment_name)}</div>` : ''}
+        ${entry.image_product ? `<div class="notice info" style="margin-top:6px">Produit lu dans la capture : <strong>${escapeHtml(entry.image_product)}</strong></div>` : ''}
+        ${entry.image_reason ? `<div class="help" style="margin-top:6px">${escapeHtml(entry.image_reason)}</div>` : ''}
         ${entry.error ? `<div class="notice warning" style="margin-top:6px">${escapeHtml(entry.error)}</div>` : ''}
       </div>
     `;
@@ -4863,6 +4973,62 @@ window.openConversation = async function(contact){
     </div>
     ${adContextHtml}
     <div class="chat-box">${messagesHtml || '<div class="empty">Aucun échange enregistré.</div>'}</div>
+
+    <div class="conversation-composer">
+      <textarea
+        id="conversationQuickReply"
+        placeholder="Répondre directement au client..."
+      ></textarea>
+
+      <div class="conversation-composer-actions">
+        <label class="btn small composer-file-label">
+          📎 PDF / Word
+          <input
+            id="conversationDocumentFile"
+            type="file"
+            accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            hidden
+            onchange="selectConversationAttachment(this,'document')"
+          >
+        </label>
+
+        <label class="btn small composer-file-label">
+          📷 Prendre une photo
+          <input
+            id="conversationCameraFile"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onchange="selectConversationAttachment(this,'camera')"
+          >
+        </label>
+
+        <label class="btn small composer-file-label">
+          🖼️ Galerie
+          <input
+            id="conversationImageFile"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/*"
+            hidden
+            onchange="selectConversationAttachment(this,'image')"
+          >
+        </label>
+
+        <span id="conversationAttachmentName" class="composer-file-name">
+          Aucun fichier sélectionné
+        </span>
+
+        <button
+          class="btn primary"
+          id="conversationSendBtn"
+          type="button"
+          onclick="sendConversationCommercialReply('${contact}')"
+        >
+          Envoyer
+        </button>
+      </div>
+    </div>
   `;
 };
 
@@ -4886,6 +5052,374 @@ window.openCommercialFromConversation = function(contact){
 
 document.getElementById('refreshConversationsBtn').addEventListener('click', loadConversations);
 document.getElementById('conversationSearch').addEventListener('input', renderConversationsList);
+
+
+// ============================================================
+// CENTRE COMMERCIAL LIVE
+// ============================================================
+
+window.selectConversationAttachment = function(input, type){
+  const ids = [
+    'conversationDocumentFile',
+    'conversationCameraFile',
+    'conversationImageFile'
+  ];
+
+  for(const id of ids){
+    const other = document.getElementById(id);
+    if(other && other !== input){
+      other.value = '';
+    }
+  }
+
+  const file = input?.files?.[0] || null;
+  const label =
+    document.getElementById('conversationAttachmentName');
+
+  if(label){
+    label.textContent =
+      file
+        ? `${type === 'camera' ? 'Photo' : 'Fichier'} : ${file.name}`
+        : 'Aucun fichier sélectionné';
+  }
+};
+
+window.sendConversationCommercialReply = async function(contact){
+  const textEl =
+    document.getElementById('conversationQuickReply');
+
+  const text =
+    String(textEl?.value || '').trim();
+
+  const file =
+    document.getElementById('conversationCameraFile')?.files?.[0] ||
+    document.getElementById('conversationImageFile')?.files?.[0] ||
+    document.getElementById('conversationDocumentFile')?.files?.[0] ||
+    null;
+
+  if(!text && !file){
+    alert('Écrivez un message ou ajoutez un fichier.');
+    return;
+  }
+
+  const data =
+    selectedConversationData || {};
+
+  const entries =
+    Array.isArray(data.entries)
+      ? data.entries
+      : [];
+
+  const lastIncoming =
+    [...entries]
+      .reverse()
+      .find(entry => entry.incoming)
+      ?.incoming ||
+    data?.state?.lastCustomerText ||
+    '';
+
+  const button =
+    document.getElementById('conversationSendBtn');
+
+  const oldText =
+    button?.textContent || 'Envoyer';
+
+  if(button){
+    button.disabled = true;
+    button.textContent = 'Envoi...';
+  }
+
+  try{
+    if(file){
+      const form =
+        new FormData();
+
+      form.append(
+        'phone',
+        contact
+      );
+
+      form.append(
+        'question',
+        lastIncoming
+      );
+
+      form.append(
+        'text',
+        text
+      );
+
+      form.append(
+        'file',
+        file,
+        file.name
+      );
+
+      await apiFetch(
+        `${API}/commercial/send-media`,
+        {
+          method:'POST',
+          body:form
+        }
+      );
+    }else{
+      await apiFetch(
+        `${API}/commercial/send`,
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json'
+          },
+          body:JSON.stringify({
+            phone:contact,
+            question:lastIncoming,
+            text
+          })
+        }
+      );
+    }
+
+    await loadConversations();
+    await window.openConversation(contact);
+  }catch(error){
+    alert(error.message);
+  }finally{
+    const currentButton =
+      document.getElementById('conversationSendBtn');
+
+    if(currentButton){
+      currentButton.disabled = false;
+      currentButton.textContent = oldText;
+    }
+  }
+};
+
+function updateNotificationBadges(){
+  const count =
+    Math.max(
+      0,
+      Number(
+        conversationNotificationUnread || 0
+      )
+    );
+
+  for(const id of [
+    'conversationNavBadge',
+    'notificationHeaderCount'
+  ]){
+    const el =
+      document.getElementById(id);
+
+    if(!el) continue;
+
+    el.textContent =
+      String(count);
+
+    el.classList.toggle(
+      'hidden',
+      count <= 0
+    );
+  }
+}
+
+function playNotificationTone(urgent = false){
+  try{
+    if(!notificationAudioContext){
+      notificationAudioContext =
+        new (
+          window.AudioContext ||
+          window.webkitAudioContext
+        )();
+    }
+
+    const ctx =
+      notificationAudioContext;
+
+    const oscillator =
+      ctx.createOscillator();
+
+    const gain =
+      ctx.createGain();
+
+    oscillator.frequency.value =
+      urgent
+        ? 880
+        : 660;
+
+    gain.gain.setValueAtTime(
+      0.0001,
+      ctx.currentTime
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.12,
+      ctx.currentTime + 0.01
+    );
+
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      ctx.currentTime + 0.22
+    );
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(
+      ctx.currentTime + 0.24
+    );
+  }catch(error){
+    console.debug(
+      'Son notification indisponible',
+      error
+    );
+  }
+}
+
+function showClientBrowserNotification(event){
+  const urgent =
+    event.urgent === true;
+
+  const title =
+    urgent
+      ? '⚠️ MONDECO — Commercial requis'
+      : '💬 Nouveau message WhatsApp';
+
+  const body =
+    `+${event.contact || ''}\n${event.preview || 'Nouveau message client'}`;
+
+  if(
+    'Notification' in window &&
+    Notification.permission === 'granted'
+  ){
+    try{
+      const notification =
+        new Notification(
+          title,
+          {
+            body,
+            tag:
+              `mondeco-${event.id}`
+          }
+        );
+
+      notification.onclick = () => {
+        window.focus();
+        showPage('conversations');
+
+        setTimeout(() => {
+          if(event.contact){
+            window.openConversation(
+              event.contact
+            );
+          }
+        }, 100);
+      };
+    }catch(error){
+      console.debug(
+        'Notification navigateur indisponible',
+        error
+      );
+    }
+  }
+
+  playNotificationTone(urgent);
+}
+
+async function pollCommercialNotifications(){
+  try{
+    if(!conversationNotificationCursor){
+      const initial =
+        await apiFetch(
+          `${API}/notifications`
+        );
+
+      conversationNotificationCursor =
+        initial.serverTime;
+
+      localStorage.setItem(
+        'mondecoNotificationCursor',
+        conversationNotificationCursor
+      );
+
+      return;
+    }
+
+    const data =
+      await apiFetch(
+        `${API}/notifications?since=${encodeURIComponent(conversationNotificationCursor)}`
+      );
+
+    const events =
+      Array.isArray(data.events)
+        ? data.events
+        : [];
+
+    for(const event of events){
+      conversationNotificationUnread += 1;
+      showClientBrowserNotification(event);
+    }
+
+    if(events.length){
+      updateNotificationBadges();
+
+      if(
+        document.getElementById('page-conversations')
+          ?.classList
+          ?.contains('active')
+      ){
+        await loadConversations();
+      }
+    }
+
+    conversationNotificationCursor =
+      data.serverTime ||
+      new Date().toISOString();
+
+    localStorage.setItem(
+      'mondecoNotificationCursor',
+      conversationNotificationCursor
+    );
+  }catch(error){
+    console.debug(
+      'Polling notifications :',
+      error.message
+    );
+  }
+}
+
+document.getElementById('enableNotificationsBtn').addEventListener('click', async () => {
+  if(!('Notification' in window)){
+    alert('Les notifications navigateur ne sont pas disponibles sur cet appareil.');
+    return;
+  }
+
+  try{
+    const permission =
+      await Notification.requestPermission();
+
+    if(permission === 'granted'){
+      playNotificationTone(false);
+      alert('Notifications MONDECO activées sur ce navigateur.');
+    }else{
+      alert('Autorisation de notification non accordée.');
+    }
+  }catch(error){
+    alert(
+      'Impossible d’activer les notifications : ' +
+      error.message
+    );
+  }
+});
+
+setInterval(
+  pollCommercialNotifications,
+  8000
+);
+
+setTimeout(
+  pollCommercialNotifications,
+  1200
+);
 
 // ============================================================
 // CORRECTIONS COMMERCIALES
