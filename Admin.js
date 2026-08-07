@@ -27,6 +27,8 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
+const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
+const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
@@ -475,6 +477,15 @@ function snapshotFiles() {
     {
       source: QUICK_REPLIES_PATH,
       name: 'quick-replies.json'
+    }
+,
+    {
+      source: CONVERSATION_STATE_PATH_ADMIN,
+      name: 'conversation-state.json'
+    },
+    {
+      source: CONVERSATIONS_LOG_PATH,
+      name: 'conversation-log.json'
     }
 ,
     {
@@ -7424,9 +7435,6 @@ router.delete(
 // API CONVERSATIONS WHATSAPP (lecture seule)
 // ============================================================
 
-const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
-const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
-
 function loadWhatsAppLog() {
   return readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
 }
@@ -7442,6 +7450,46 @@ function loadConversationStatesAdmin() {
     console.warn('⚠️ Lecture conversation-state.json :', error.message);
     return {};
   }
+}
+
+
+function saveConversationStatesAdmin(states) {
+  writeJsonAtomic(
+    CONVERSATION_STATE_PATH_ADMIN,
+    states &&
+    typeof states === 'object' &&
+    !Array.isArray(states)
+      ? states
+      : {}
+  );
+}
+
+function updateConversationStateAdmin(
+  contact,
+  updater
+) {
+  const states =
+    loadConversationStatesAdmin();
+
+  const current =
+    states[contact] &&
+    typeof states[contact] === 'object'
+      ? states[contact]
+      : {};
+
+  const updated =
+    updater({
+      ...current
+    }) || current;
+
+  states[contact] =
+    updated;
+
+  saveConversationStatesAdmin(
+    states
+  );
+
+  return updated;
 }
 
 router.get('/api/conversations', requireAuth, (req, res) => {
@@ -7486,7 +7534,16 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         commercialAttentionReason: safeString(state?.commercialAttentionReason),
         lastCustomerAt: safeString(state?.lastCustomerAt),
         lastInboundType: safeString(state?.lastInboundType),
+        profileName: safeString(state?.profileName),
+        unreadCount: Number(state.unreadCount || 0),
+        priority: Boolean(state.priority),
+        assignedTo: safeString(state?.assignedTo),
+        resolved: Boolean(state.resolved),
+        resolvedAt: safeString(state?.resolvedAt),
+        activeProductName: safeString(state?.activeProductName),
+        manualTakeover: Boolean(state.manualTakeover),
         humanPaused: Boolean(state.humanPaused),
+        pausedUntil: safeString(state?.pausedUntil),
         awaitingResponse: Boolean(state.awaitingResponse),
         followUpsSent: Number(state.followUpsSent || 0)
       };
@@ -7519,6 +7576,224 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     return res.status(500).json({ error: 'Impossible de lire cette conversation.' });
   }
 });
+
+
+router.post(
+  '/api/conversations/:contact/read',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    if (!contact) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Contact invalide.'
+        });
+    }
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          unreadCount: 0,
+          lastReadAt:
+            new Date().toISOString()
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/priority',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    const priority =
+      req.body?.priority === true;
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          priority
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/assign',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    const assignedTo =
+      safeString(
+        req.body?.assignedTo
+      ).slice(
+        0,
+        100
+      );
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          assignedTo,
+          assignedAt:
+            assignedTo
+              ? new Date().toISOString()
+              : null
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/takeover',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    const assignedTo =
+      safeString(
+        req.body?.assignedTo
+      ).slice(
+        0,
+        100
+      );
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          manualTakeover: true,
+          humanPaused: true,
+          pausedUntil: null,
+          commercialAttention: false,
+          commercialAttentionReason: '',
+          imageNeedsCommercial: false,
+          assignedTo:
+            assignedTo ||
+            safeString(
+              current.assignedTo
+            ),
+          takeoverAt:
+            new Date().toISOString()
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/reactivate-ai',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          manualTakeover: false,
+          humanPaused: false,
+          pausedUntil: null,
+          commercialAttention: false,
+          commercialAttentionReason: '',
+          imageNeedsCommercial: false,
+          aiReactivatedAt:
+            new Date().toISOString()
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/resolve',
+  requireAuth,
+  (req, res) => {
+    const contact =
+      safeString(
+        req.params.contact
+      );
+
+    const resolved =
+      req.body?.resolved === true;
+
+    const state =
+      updateConversationStateAdmin(
+        contact,
+        current => ({
+          ...current,
+          resolved,
+          resolvedAt:
+            resolved
+              ? new Date().toISOString()
+              : null,
+          unreadCount:
+            resolved
+              ? 0
+              : Number(
+                  current.unreadCount ||
+                  0
+                )
+        })
+      );
+
+    return res.json({
+      success: true,
+      state
+    });
+  }
+);
 
 
 router.get(
