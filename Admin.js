@@ -26,6 +26,7 @@ const SETTINGS_PATH = path.join(DATA_DIR, 'settings.json');
 const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-migration-done');
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
+const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
@@ -470,6 +471,10 @@ function snapshotFiles() {
     {
       source: COMMERCIAL_CORRECTIONS_PATH,
       name: 'commercial-corrections.json'
+    },
+    {
+      source: QUICK_REPLIES_PATH,
+      name: 'quick-replies.json'
     }
 ,
     {
@@ -793,6 +798,8 @@ function createExternalDataExport() {
       loadCustomizations(),
     commercialCorrections:
       loadCommercialCorrections(),
+    quickReplies:
+      loadQuickReplies(),
     woocommerceSync:
       loadWooCommerceSyncState(),
     note:
@@ -1273,6 +1280,102 @@ const COMMERCIAL_PRODUCT_FIELDS = {
   categoryUrl: 'Lien catégorie',
   description: 'Description'
 };
+
+
+const DEFAULT_QUICK_REPLIES = [
+  {
+    title: 'Demander le modèle',
+    shortcut: 'modele',
+    content:
+      'Avec plaisir. Envoyez-moi le nom du modèle qui vous intéresse et je vous confirme les informations actuelles.'
+  },
+  {
+    title: 'Demander la ville',
+    shortcut: 'ville',
+    content:
+      'Vous êtes dans quelle ville ? Je vous oriente vers le showroom MONDECO le plus proche.'
+  },
+  {
+    title: 'Demander les dimensions',
+    shortcut: 'dimensions',
+    content:
+      'Vous pouvez me donner les dimensions de votre espace ? Comme ça je vous conseille le modèle le plus adapté.'
+  },
+  {
+    title: 'Visite showroom',
+    shortcut: 'showroom',
+    content:
+      'Vous souhaitez voir le produit en showroom ? Dites-moi votre ville et je vous envoie l’adresse, le numéro et l’itinéraire.'
+  },
+  {
+    title: 'Préparer un devis',
+    shortcut: 'devis',
+    content:
+      'Je peux vous préparer un devis. Envoyez-moi les modèles souhaités ainsi que votre ville de livraison.'
+  },
+  {
+    title: 'Livraison',
+    shortcut: 'livraison',
+    content:
+      'Nous assurons la livraison en Tunisie. Donnez-moi votre ville pour vous orienter sur la suite de la commande.'
+  }
+];
+
+function normalizeQuickReplyShortcut(value) {
+  return safeString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^\/+/, '')
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+}
+
+function initializeQuickReplies() {
+  if (fs.existsSync(QUICK_REPLIES_PATH)) {
+    return;
+  }
+
+  const now =
+    new Date().toISOString();
+
+  const items =
+    DEFAULT_QUICK_REPLIES.map(
+      item => ({
+        id: crypto.randomUUID(),
+        title: item.title,
+        shortcut: item.shortcut,
+        content: item.content,
+        active: true,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+
+  writeJsonAtomic(
+    QUICK_REPLIES_PATH,
+    items
+  );
+}
+
+function loadQuickReplies() {
+  initializeQuickReplies();
+
+  return readJsonArray(
+    QUICK_REPLIES_PATH,
+    'quick-replies.json'
+  );
+}
+
+function saveQuickReplies(items) {
+  writeJsonAtomic(
+    QUICK_REPLIES_PATH,
+    Array.isArray(items)
+      ? items.slice(-500)
+      : []
+  );
+}
 
 function loadCommercialCorrections() {
   return readJsonArray(
@@ -1808,6 +1911,7 @@ migrateLegacyData();
 initializePersistentInstructions();
 initializeSettings();
 migrateSecureImageModeV676();
+initializeQuickReplies();
 ensureDailySnapshot();
 
 console.log(
@@ -5788,6 +5892,209 @@ router.get(
             'Impossible d\u2019exporter les données.'
         });
     }
+  }
+);
+
+
+// ============================================================
+// API RÉPONSES RAPIDES COMMERCIALES
+// ============================================================
+
+router.get(
+  '/api/quick-replies',
+  requireAuth,
+  (req, res) => {
+    return res.json(
+      loadQuickReplies()
+        .sort(
+          (a, b) =>
+            safeString(a.title)
+              .localeCompare(
+                safeString(b.title),
+                'fr'
+              )
+        )
+    );
+  }
+);
+
+router.post(
+  '/api/quick-replies',
+  requireAuth,
+  (req, res) => {
+    const title =
+      safeString(req.body?.title);
+
+    const content =
+      safeString(req.body?.content);
+
+    const shortcut =
+      normalizeQuickReplyShortcut(
+        req.body?.shortcut ||
+        title
+      );
+
+    if (!title || !content) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Le titre et la réponse sont obligatoires.'
+        });
+    }
+
+    const items =
+      loadQuickReplies();
+
+    if (
+      shortcut &&
+      items.some(
+        item =>
+          item.shortcut === shortcut
+      )
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            `Le raccourci /${shortcut} existe déjà.`
+        });
+    }
+
+    const now =
+      new Date().toISOString();
+
+    const item = {
+      id: crypto.randomUUID(),
+      title,
+      shortcut,
+      content,
+      active: true,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    items.push(item);
+    saveQuickReplies(items);
+
+    return res
+      .status(201)
+      .json(item);
+  }
+);
+
+router.put(
+  '/api/quick-replies/:id',
+  requireAuth,
+  (req, res) => {
+    const items =
+      loadQuickReplies();
+
+    const index =
+      items.findIndex(
+        item =>
+          item.id === req.params.id
+      );
+
+    if (index === -1) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Réponse rapide introuvable.'
+        });
+    }
+
+    const title =
+      safeString(
+        req.body?.title ??
+        items[index].title
+      );
+
+    const content =
+      safeString(
+        req.body?.content ??
+        items[index].content
+      );
+
+    const shortcut =
+      normalizeQuickReplyShortcut(
+        req.body?.shortcut ??
+        items[index].shortcut
+      );
+
+    if (!title || !content) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Le titre et la réponse sont obligatoires.'
+        });
+    }
+
+    if (
+      items.some(
+        item =>
+          item.id !== req.params.id &&
+          shortcut &&
+          item.shortcut === shortcut
+      )
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            `Le raccourci /${shortcut} existe déjà.`
+        });
+    }
+
+    items[index] = {
+      ...items[index],
+      title,
+      content,
+      shortcut,
+      active:
+        req.body?.active ??
+        items[index].active,
+      updatedAt:
+        new Date().toISOString()
+    };
+
+    saveQuickReplies(items);
+
+    return res.json(
+      items[index]
+    );
+  }
+);
+
+router.delete(
+  '/api/quick-replies/:id',
+  requireAuth,
+  (req, res) => {
+    const items =
+      loadQuickReplies();
+
+    const next =
+      items.filter(
+        item =>
+          item.id !== req.params.id
+      );
+
+    if (next.length === items.length) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Réponse rapide introuvable.'
+        });
+    }
+
+    saveQuickReplies(next);
+
+    return res.json({
+      success: true
+    });
   }
 );
 
