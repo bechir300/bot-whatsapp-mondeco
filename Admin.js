@@ -2394,7 +2394,28 @@ router.get('/', requireAuth, (req, res) => {
       .send('Admin.html introuvable.');
   }
 
-  return res.sendFile(ADMIN_HTML_PATH);
+  res.setHeader(
+    'Cache-Control',
+    'no-store, no-cache, must-revalidate, proxy-revalidate'
+  );
+  res.setHeader(
+    'Pragma',
+    'no-cache'
+  );
+  res.setHeader(
+    'Expires',
+    '0'
+  );
+
+  return res.sendFile(
+    ADMIN_HTML_PATH,
+    {
+      headers: {
+        'Cache-Control':
+          'no-store, no-cache, must-revalidate, proxy-revalidate'
+      }
+    }
+  );
 });
 
 // ============================================================
