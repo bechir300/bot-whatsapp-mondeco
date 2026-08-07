@@ -2131,6 +2131,13 @@ const loginAttempts = new Map();
 const SESSION_DURATION =
   24 * 60 * 60 * 1000;
 
+// V6.17 — Présence équipe en temps réel.
+// Le navigateur envoie un heartbeat toutes les 20 secondes.
+// Un membre est considéré en ligne si son dernier heartbeat date de moins de 75 s,
+// puis « inactif » pendant quelques minutes avant de passer hors ligne.
+const PRESENCE_ONLINE_MS = 75 * 1000;
+const PRESENCE_IDLE_MS = 5 * 60 * 1000;
+
 const LOGIN_MAX_FAILURES = 8;
 const LOGIN_BLOCK_MS =
   15 * 60 * 1000;
@@ -2640,6 +2647,110 @@ function getSessionToken(req) {
   );
 }
 
+function normalizePresencePage(value) {
+  return safeString(value)
+    .trim()
+    .slice(0, 80);
+}
+
+function touchSessionPresence(req, page = '') {
+  cleanupSessions();
+
+  const token =
+    getSessionToken(req);
+
+  if (!token) {
+    return null;
+  }
+
+  const session =
+    sessions.get(token);
+
+  if (
+    !session ||
+    typeof session !== 'object'
+  ) {
+    return null;
+  }
+
+  session.lastSeenAt = Date.now();
+
+  const normalizedPage =
+    normalizePresencePage(page);
+
+  if (normalizedPage) {
+    session.lastPage = normalizedPage;
+  }
+
+  sessions.set(token, session);
+  return session;
+}
+
+function getPresenceForUser(userId) {
+  cleanupSessions();
+
+  const normalizedUserId =
+    safeString(userId);
+
+  let lastSeenAt = 0;
+  let lastPage = '';
+  let activeSessions = 0;
+
+  for (const session of sessions.values()) {
+    if (
+      !session ||
+      typeof session !== 'object' ||
+      safeString(session.userId) !== normalizedUserId
+    ) {
+      continue;
+    }
+
+    activeSessions += 1;
+
+    const seen = Number(
+      session.lastSeenAt ||
+      session.createdAt ||
+      0
+    );
+
+    if (seen > lastSeenAt) {
+      lastSeenAt = seen;
+      lastPage = safeString(session.lastPage);
+    }
+  }
+
+  const ageMs =
+    lastSeenAt
+      ? Math.max(0, Date.now() - lastSeenAt)
+      : null;
+
+  let status = 'offline';
+
+  if (
+    ageMs !== null &&
+    ageMs <= PRESENCE_ONLINE_MS
+  ) {
+    status = 'online';
+  } else if (
+    ageMs !== null &&
+    ageMs <= PRESENCE_IDLE_MS
+  ) {
+    status = 'idle';
+  }
+
+  return {
+    status,
+    online: status === 'online',
+    idle: status === 'idle',
+    lastSeenAt:
+      lastSeenAt
+        ? new Date(lastSeenAt).toISOString()
+        : '',
+    lastPage,
+    activeSessions
+  };
+}
+
 function getAuthenticatedUser(req) {
   cleanupSessions();
 
@@ -3085,6 +3196,12 @@ function createSessionForUser(
     {
       userId:
         user.id,
+      createdAt:
+        Date.now(),
+      lastSeenAt:
+        Date.now(),
+      lastPage:
+        'connexion',
       expiresAt:
         Date.now() +
         SESSION_DURATION
@@ -3130,7 +3247,7 @@ function renderLoginPage() {
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <meta name="theme-color" content="#11100f">
@@ -3165,8 +3282,54 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
 .err{display:none;margin-top:12px;padding:10px 11px;border:1px solid #efc8ca;border-radius:10px;background:#fff7f7;color:#aa2026;font-size:12px;line-height:1.45}
 .security-note{margin-top:20px;color:#92877f;font-size:11px;line-height:1.5}.security-note strong{color:#625951}
 .mobile-logo{display:none;height:auto;object-fit:contain}
-@media(max-width:760px){body{display:block;min-height:100dvh;padding:0;background:#fff}.login-wrap{width:100%;min-height:100dvh;display:block;border:0;border-radius:0}.brand-side{display:none}.form-side{min-height:100dvh;align-items:flex-start;padding:calc(34px + env(safe-area-inset-top)) 22px calc(28px + env(safe-area-inset-bottom));background:#fff}.form-box{max-width:100%}.mobile-logo{display:block;width:162px;margin-bottom:54px;filter:none}h2{font-size:33px}.sub{margin-bottom:25px}}
-@media(max-width:390px){.form-side{padding-left:18px;padding-right:18px}.mobile-logo{width:150px;margin-bottom:46px}h2{font-size:31px}}
+.login-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.login-version{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border-radius:999px;background:#11100f;color:#fff;font-size:9px;font-weight:900;letter-spacing:.04em;white-space:nowrap}
+
+@media(max-width:760px){
+  html,body{min-height:100%;background:#fff}
+  body{display:block;min-height:100svh;padding:0;background:#fff}
+  .login-wrap{width:100%;min-height:100svh;display:block;border:0;border-radius:0;background:#fff}
+  .brand-side{display:none}
+  .form-side{
+    min-height:100svh;
+    align-items:flex-start;
+    padding:calc(20px + env(safe-area-inset-top)) 22px calc(24px + env(safe-area-inset-bottom));
+    background:#fff
+  }
+  .form-box{width:100%;max-width:480px;margin:0 auto}
+  .mobile-logo{
+    display:block;
+    width:154px;
+    max-width:48vw;
+    margin:4px 0 32px;
+    filter:none
+  }
+  .eyebrow{margin-bottom:7px;font-size:9px}
+  .login-title-row{gap:8px;margin-bottom:0}
+  .login-title-row h2{font-size:34px;line-height:1.05}
+  .login-version{min-height:22px;padding:2px 7px;font-size:8.5px}
+  .sub{margin:10px 0 23px;font-size:13px}
+  label{font-size:12px}
+  input{min-height:54px;font-size:16px}
+  .submit-btn{min-height:54px;font-size:15px}
+  .security-note{margin-top:18px;font-size:11px}
+}
+
+@media(max-width:390px){
+  .form-side{padding-left:18px;padding-right:18px}
+  .mobile-logo{width:145px;margin-bottom:28px}
+  .login-title-row h2{font-size:31px}
+  .sub{margin-bottom:20px}
+}
+
+@media(max-height:700px) and (max-width:760px){
+  .form-side{padding-top:calc(12px + env(safe-area-inset-top))}
+  .mobile-logo{width:132px;margin-bottom:20px}
+  .sub{margin-bottom:16px}
+  input{min-height:48px}
+  .submit-btn{min-height:48px}
+  .security-note{margin-top:14px}
+}
 </style>
 </head>
 <body>
@@ -3186,8 +3349,10 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
     <div class="form-box">
       <img class="mobile-logo" src="${MONDECO_LOGO_DATA_URL}" alt="MONDECO">
       <div class="eyebrow">Administration</div>
-      <h2>Connexion</h2>
-      <div style="margin:-14px 0 18px;color:#7b756f;font-size:11px;font-weight:800">MONDECO V6.16.1</div>
+      <div class="login-title-row">
+        <h2>Connexion</h2>
+        <span class="login-version">V6.16.3</span>
+      </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
         <label for="email">Adresse e-mail</label>
@@ -4131,6 +4296,88 @@ router.get(
         req.user
       )
     );
+  }
+);
+
+router.post(
+  '/api/presence/heartbeat',
+  requireAuth,
+  (
+    req,
+    res
+  ) => {
+    const session =
+      touchSessionPresence(
+        req,
+        req.body?.page
+      );
+
+    return res.json({
+      success: true,
+      lastSeenAt:
+        session?.lastSeenAt
+          ? new Date(session.lastSeenAt).toISOString()
+          : new Date().toISOString()
+    });
+  }
+);
+
+router.get(
+  '/api/presence',
+  requireAdmin,
+  (
+    req,
+    res
+  ) => {
+    // Le simple fait d'ouvrir la page Équipe maintient aussi la session admin présente.
+    touchSessionPresence(
+      req,
+      'Équipe & rapports'
+    );
+
+    const users =
+      loadUsers()
+        .map(user => ({
+          ...sanitizeUserForClient(user),
+          presence:
+            getPresenceForUser(user.id)
+        }))
+        .sort(
+          (a, b) => {
+            const order = {
+              online: 0,
+              idle: 1,
+              offline: 2
+            };
+
+            return (
+              (order[a.presence?.status] ?? 9) -
+              (order[b.presence?.status] ?? 9) ||
+              a.name.localeCompare(
+                b.name,
+                'fr'
+              )
+            );
+          }
+        );
+
+    return res.json({
+      generatedAt:
+        new Date().toISOString(),
+      onlineCount:
+        users.filter(
+          user =>
+            user.presence?.status === 'online'
+        ).length,
+      idleCount:
+        users.filter(
+          user =>
+            user.presence?.status === 'idle'
+        ).length,
+      totalCount:
+        users.length,
+      users
+    });
   }
 );
 
