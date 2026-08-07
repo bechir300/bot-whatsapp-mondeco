@@ -3564,6 +3564,95 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.13 — Composer docké, discussion toujours visible
+   ========================================================== */
+.inbox-center{
+  overflow:hidden !important;
+}
+.inbox-thread{
+  min-height:0 !important;
+  padding-bottom:22px !important;
+}
+.inbox-composer-host{
+  flex:0 0 auto;
+  border-top:1px solid var(--line);
+  background:#fff;
+  z-index:10;
+}
+.inbox-composer-host.hidden{
+  display:none !important;
+}
+.inbox-composer{
+  position:relative !important;
+  bottom:auto !important;
+  margin:0 !important;
+  border:0 !important;
+  border-radius:0 !important;
+  box-shadow:0 -5px 20px rgba(24,20,17,.05) !important;
+  padding:10px 14px 12px !important;
+  max-height:310px;
+  overflow:auto;
+}
+.inbox-composer.is-compact{
+  padding:8px 14px !important;
+}
+.inbox-composer.is-compact .smart-keyboard,
+.inbox-composer.is-compact .smart-keyboard-help,
+.inbox-composer.is-compact textarea,
+.inbox-composer.is-compact .composer-file-name{
+  display:none !important;
+}
+.inbox-composer-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:8px;
+}
+.inbox-composer-title{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:11px;
+  font-weight:900;
+}
+.inbox-composer-toggle{
+  min-width:34px;
+  height:30px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:#fff;
+  cursor:pointer;
+  font-weight:900;
+}
+.inbox-composer.is-compact .inbox-composer-toolbar{
+  margin-bottom:0;
+}
+.inbox-composer.is-compact .conversation-composer-actions{
+  justify-content:flex-end;
+}
+.inbox-composer.is-compact .conversation-composer-actions label,
+.inbox-composer.is-compact .conversation-composer-actions .composer-file-label{
+  display:none !important;
+}
+.inbox-composer.is-compact #conversationSendBtn{
+  min-width:110px;
+}
+.inbox-thread{
+  scrollbar-gutter:stable;
+}
+@media(max-width:760px){
+  .inbox-composer{
+    max-height:42vh;
+    padding:9px 10px 10px !important;
+  }
+  .inbox-composer textarea{
+    min-height:64px !important;
+  }
+}
+
 </style>
 </head>
 
@@ -3904,6 +3993,8 @@ tbody tr:hover{
               <span>Choisissez un client à gauche pour afficher la discussion.</span>
             </div>
           </div>
+
+          <div id="inboxComposerHost" class="inbox-composer-host hidden"></div>
         </main>
 
         <aside id="inboxCustomerPanel" class="inbox-right">
@@ -6239,7 +6330,22 @@ function buildConversationComposer(
   contact
 ){
   return `
-    <div class="inbox-composer conversation-composer">
+    <div class="inbox-composer conversation-composer" id="commercialComposer">
+      <div class="inbox-composer-toolbar">
+        <div class="inbox-composer-title">
+          💬 Répondre au client
+        </div>
+
+        <button
+          class="inbox-composer-toggle"
+          type="button"
+          title="Réduire / agrandir la zone de réponse"
+          onclick="toggleCommercialComposer()"
+        >
+          ▾
+        </button>
+      </div>
+
       <div class="smart-keyboard">
         <select
           id="conversationQuickReplySelect"
@@ -6609,12 +6715,28 @@ window.openConversation = async function(contact){
         <strong>Aucun échange enregistré</strong>
       </div>
     `}
-    ${buildConversationComposer(contact)}
   `;
+
+  const composerHost =
+    document.getElementById(
+      'inboxComposerHost'
+    );
+
+  if(composerHost){
+    composerHost.classList.remove(
+      'hidden'
+    );
+
+    composerHost.innerHTML =
+      buildConversationComposer(
+        contact
+      );
+  }
 
   await loadQuickReplies();
   populateConversationQuickReplySelect();
   bindSmartKeyboardShortcuts();
+  applyStoredComposerMode();
 
   requestAnimationFrame(() => {
     detail.scrollTop =
@@ -6833,6 +6955,20 @@ window.toggleResolvedConversation = async function(
           <strong>Conversation terminée</strong>
         </div>
       `;
+
+      const composerHost =
+        document.getElementById(
+          'inboxComposerHost'
+        );
+
+      if(composerHost){
+        composerHost.classList.add(
+          'hidden'
+        );
+
+        composerHost.innerHTML =
+          '';
+      }
     }else{
       await window.openConversation(
         contact
@@ -7113,6 +7249,92 @@ function bindSmartKeyboardShortcuts(){
 // ============================================================
 // CENTRE COMMERCIAL LIVE
 // ============================================================
+
+
+window.toggleCommercialComposer = function(){
+  const composer =
+    document.getElementById(
+      'commercialComposer'
+    );
+
+  if(!composer){
+    return;
+  }
+
+  const compact =
+    composer.classList.toggle(
+      'is-compact'
+    );
+
+  const button =
+    composer.querySelector(
+      '.inbox-composer-toggle'
+    );
+
+  if(button){
+    button.textContent =
+      compact
+        ? '▴'
+        : '▾';
+
+    button.title =
+      compact
+        ? 'Agrandir la zone de réponse'
+        : 'Réduire la zone de réponse';
+  }
+
+  localStorage.setItem(
+    'mondecoComposerCompact',
+    compact
+      ? '1'
+      : '0'
+  );
+
+  requestAnimationFrame(() => {
+    const detail =
+      document.getElementById(
+        'conversationDetail'
+      );
+
+    if(detail){
+      detail.scrollTop =
+        detail.scrollHeight;
+    }
+  });
+};
+
+function applyStoredComposerMode(){
+  const composer =
+    document.getElementById(
+      'commercialComposer'
+    );
+
+  if(!composer){
+    return;
+  }
+
+  const compact =
+    localStorage.getItem(
+      'mondecoComposerCompact'
+    ) === '1';
+
+  composer.classList.toggle(
+    'is-compact',
+    compact
+  );
+
+  const button =
+    composer.querySelector(
+      '.inbox-composer-toggle'
+    );
+
+  if(button){
+    button.textContent =
+      compact
+        ? '▴'
+        : '▾';
+  }
+}
 
 window.selectConversationAttachment = function(input, type){
   const ids = [
@@ -7513,12 +7735,7 @@ async function softRefreshSelectedConversation(){
       detail.innerHTML = `
         ${adHtml}
         ${messages || '<div class="inbox-empty-state"><strong>Aucun échange enregistré</strong></div>'}
-        ${buildConversationComposer(selectedConversationContact)}
       `;
-
-      await loadQuickReplies();
-      populateConversationQuickReplySelect();
-      bindSmartKeyboardShortcuts();
 
       const newTextarea =
         document.getElementById(
