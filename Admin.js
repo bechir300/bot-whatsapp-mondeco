@@ -3575,14 +3575,19 @@ const ALLOWED_COMMERCIAL_MEDIA_TYPES = new Set([
   'image/webp',
   'application/pdf',
   'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'audio/aac',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/amr',
+  'audio/ogg'
 ]);
 
 function commercialMediaFileFilter(req, file, callback) {
   if (!ALLOWED_COMMERCIAL_MEDIA_TYPES.has(file.mimetype)) {
     return callback(
       new Error(
-        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG ou WEBP.'
+        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG, WEBP, OGG/Opus, M4A/MP4, MP3, AAC ou AMR.'
       )
     );
   }
@@ -8992,14 +8997,16 @@ router.post(
           .status(400)
           .json({
             error:
-              'Ajoutez un PDF, un document Word ou une photo.'
+              'Ajoutez un PDF, un document Word, une photo ou un message vocal.'
           });
       }
 
       const mediaKind =
         req.file.mimetype.startsWith('image/')
           ? 'image'
-          : 'document';
+          : req.file.mimetype.startsWith('audio/')
+            ? 'audio'
+            : 'document';
 
       const result =
         await commercialSendHandler({
