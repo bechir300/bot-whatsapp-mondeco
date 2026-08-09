@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA — V6.19.5
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale — V6.19.6
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -36,6 +36,9 @@ const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 const INSTAGRAM_HISTORY_PATH = path.join(DATA_DIR, 'instagram-history.json');
 const INSTAGRAM_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'instagram-history-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
+const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
+const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
+const MESSAGE_ID_INDEX_PATH = path.join(DATA_DIR, 'conversation-message-ids.jsonl');
 
 const INSTAGRAM_ACCESS_TOKEN = (
   process.env.INSTAGRAM_ACCESS_TOKEN ||
@@ -157,6 +160,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_MEDIA_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true });
+fs.mkdirSync(CONVERSATION_EVENTS_DIR, { recursive: true });
 fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
@@ -535,6 +539,14 @@ function snapshotFiles() {
     {
       source: INSTAGRAM_HISTORY_SYNC_STATE_PATH,
       name: 'instagram-history-sync.json'
+    },
+    {
+      source: NOTIFICATIONS_PATH,
+      name: 'notifications.json'
+    },
+    {
+      source: MESSAGE_ID_INDEX_PATH,
+      name: 'conversation-message-ids.jsonl'
     }
 ,
     {
@@ -705,6 +717,14 @@ function createFullSnapshot(reason = 'manual') {
     path.join(
       snapshotDir,
       'conversation-profile'
+    )
+  );
+
+  copyDirectoryRecursive(
+    CONVERSATION_EVENTS_DIR,
+    path.join(
+      snapshotDir,
+      'conversation-events'
     )
   );
 
@@ -890,6 +910,27 @@ function restoreFullSnapshot(snapshotId) {
     copyDirectoryRecursive(
       snapshotConversationProfile,
       CONVERSATION_PROFILE_DIR
+    );
+  }
+
+  const snapshotConversationEvents =
+    path.join(
+      snapshotDir,
+      'conversation-events'
+    );
+
+  if (
+    fs.existsSync(
+      snapshotConversationEvents
+    )
+  ) {
+    clearDirectory(
+      CONVERSATION_EVENTS_DIR
+    );
+
+    copyDirectoryRecursive(
+      snapshotConversationEvents,
+      CONVERSATION_EVENTS_DIR
     );
   }
 
@@ -2978,6 +3019,10 @@ function roleCanAccess(
       reqPath,
       '/conversation-media'
     ) ||
+    pathStarts(
+      reqPath,
+      '/conversation-profile'
+    ) ||
     reqPath ===
       '/api/me'
   ) {
@@ -3522,7 +3567,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.19.4</span>
+        <span class="login-version">V6.19.6</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -3976,6 +4021,13 @@ router.get(
       'Cache-Control',
       'private, max-age=3600'
     );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; sandbox");
+
+    const extension = path.extname(filename).toLowerCase();
+    if (['.pdf','.doc','.docx','.bin'].includes(extension)) {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[\"\r\n]/g, '')}"`);
+    }
 
     return res.sendFile(filePath);
   }
@@ -4005,6 +4057,7 @@ router.get(
       'Cache-Control',
       'private, max-age=86400'
     );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
     return res.sendFile(filePath);
   }
@@ -10596,9 +10649,68 @@ function conversationLogDedupeKey(entry) {
   ].join('|');
 }
 
+let persistentConversationEventsCache = {
+  stamp: '',
+  entries: []
+};
+
+function conversationEventsDirectoryStamp() {
+  try {
+    if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 'missing';
+    return fs
+      .readdirSync(CONVERSATION_EVENTS_DIR)
+      .filter(name => /^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
+      .sort()
+      .map(name => {
+        const stat = fs.statSync(path.join(CONVERSATION_EVENTS_DIR, name));
+        return `${name}:${stat.size}:${stat.mtimeMs}`;
+      })
+      .join('|');
+  } catch {
+    return 'error';
+  }
+}
+
+function loadPersistentConversationEvents() {
+  const stamp = conversationEventsDirectoryStamp();
+  if (persistentConversationEventsCache.stamp === stamp) {
+    return persistentConversationEventsCache.entries;
+  }
+
+  const entries = [];
+
+  try {
+    const files = fs
+      .readdirSync(CONVERSATION_EVENTS_DIR)
+      .filter(name => /^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
+      .sort();
+
+    for (const name of files) {
+      const content = fs.readFileSync(path.join(CONVERSATION_EVENTS_DIR, name), 'utf8');
+      for (const line of content.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            entries.push(parsed);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Ligne JSONL ignorée dans ${name} :`, error.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Lecture conversation-events :', error.message);
+  }
+
+  persistentConversationEventsCache = { stamp, entries };
+  return entries;
+}
+
 let combinedConversationLogCache = {
   liveStamp: '',
   historyStamp: '',
+  persistentStamp: '',
   entries: []
 };
 
@@ -10622,9 +10734,13 @@ function loadWhatsAppLog() {
       INSTAGRAM_HISTORY_PATH
     );
 
+  const persistentStamp =
+    conversationEventsDirectoryStamp();
+
   if (
     combinedConversationLogCache.liveStamp === liveStamp &&
-    combinedConversationLogCache.historyStamp === historyStamp
+    combinedConversationLogCache.historyStamp === historyStamp &&
+    combinedConversationLogCache.persistentStamp === persistentStamp
   ) {
     return combinedConversationLogCache.entries;
   }
@@ -10635,18 +10751,22 @@ function loadWhatsAppLog() {
       'instagram-history.json'
     );
 
+  const persistent =
+    loadPersistentConversationEvents();
+
   const live =
     readJsonArray(
       CONVERSATIONS_LOG_PATH,
       'conversation-log.json'
     );
 
-  // L'historique est chargé en premier et le journal temps réel l'écrase en
+  // L'historique est chargé en premier et les événements persistants puis le
+  // cache temps réel l'écrasent en cas de doublon.
   // cas de doublon. Ainsi une conversation importée puis reçue par webhook
   // ne s'affiche jamais deux fois.
   const merged = new Map();
 
-  for (const entry of [...historical, ...live]) {
+  for (const entry of [...historical, ...persistent, ...live]) {
     merged.set(
       conversationLogDedupeKey(entry),
       entry
@@ -10659,6 +10779,7 @@ function loadWhatsAppLog() {
   combinedConversationLogCache = {
     liveStamp,
     historyStamp,
+    persistentStamp,
     entries
   };
 
@@ -10716,6 +10837,57 @@ function updateConversationStateAdmin(
   );
 
   return updated;
+}
+
+// ============================================================
+// V6.19.6 — NOTIFICATIONS PERSISTANTES
+// ============================================================
+
+function notificationUserKey(user) {
+  return safeString(user?.id || user?.email || user?.role || 'admin');
+}
+
+function loadNotificationsStore() {
+  try {
+    if (!fs.existsSync(NOTIFICATIONS_PATH)) return { items: [] };
+    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
+    return {
+      items: Array.isArray(parsed?.items) ? parsed.items : []
+    };
+  } catch (error) {
+    console.warn('⚠️ Lecture notifications.json :', error.message);
+    return { items: [] };
+  }
+}
+
+function saveNotificationsStore(store) {
+  writeJsonAtomic(NOTIFICATIONS_PATH, {
+    items: Array.isArray(store?.items) ? store.items : []
+  });
+}
+
+function notificationVisibleToUser(item, user, states = {}) {
+  if (user?.role !== 'commercial') return true;
+  const assignedId = safeString(states[item?.contact]?.assignedUserId);
+  return assignedId && assignedId === safeString(user?.id);
+}
+
+function markNotificationsReadForContact(contact, user) {
+  const key = notificationUserKey(user);
+  const store = loadNotificationsStore();
+  let changed = false;
+
+  store.items = store.items.map(item => {
+    if (safeString(item?.contact) !== safeString(contact)) return item;
+    const readBy = Array.isArray(item?.readBy) ? [...item.readBy] : [];
+    if (!readBy.includes(key)) {
+      readBy.push(key);
+      changed = true;
+    }
+    return { ...item, readBy };
+  });
+
+  if (changed) saveNotificationsStore(store);
 }
 
 // ============================================================
@@ -10811,12 +10983,15 @@ async function listAllInstagramConversations() {
     `${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/conversations` +
     `?platform=instagram&fields=id,updated_time&limit=50`;
 
-  // Garde-fou très large : 250 pages = jusqu'à environ 12 500 discussions.
-  // Si MONDECO dépasse ce volume, l'état de synchronisation indiquera que
-  // la limite de sécurité a été atteinte plutôt que de saturer Railway.
   let pageCount = 0;
+  const seenPageUrls = new Set();
 
-  while (nextUrl && pageCount < 250) {
+  while (nextUrl) {
+    if (seenPageUrls.has(nextUrl)) {
+      throw new Error('Pagination Instagram conversations en boucle : Meta a renvoyé deux fois la même page.');
+    }
+    seenPageUrls.add(nextUrl);
+
     const data = await instagramGraphGet(nextUrl);
 
     for (const item of Array.isArray(data?.data) ? data.data : []) {
@@ -10836,104 +11011,101 @@ async function listAllInstagramConversations() {
     pageCount += 1;
   }
 
+  console.log(`📚 Instagram : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
+
   return {
     conversations,
-    truncated:
-      Boolean(nextUrl)
+    truncated: false,
+    pageCount
   };
 }
 
-async function getInstagramConversationRecentMessages(conversationId) {
-  const encodedId =
-    encodeURIComponent(
-      safeString(conversationId)
-    );
+async function listAllInstagramConversationMessageRefs(conversationId) {
+  const encodedId = encodeURIComponent(safeString(conversationId));
+  let nextUrl =
+    `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
+    `?fields=${encodeURIComponent('messages.limit(100){id,created_time}')}`;
 
-  // Meta limite actuellement l'accès aux détails aux 20 messages les plus
-  // récents d'une discussion. On demande directement tous les champs utiles.
-  const nestedFields =
-    'messages.limit(20){id,created_time,from,to,message}';
+  const refs = [];
+  const seenIds = new Set();
+  const seenUrls = new Set();
 
-  try {
-    const nestedUrl =
-      `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
-      `?fields=${encodeURIComponent(nestedFields)}`;
-
-    const nested =
-      await instagramGraphGet(
-        nestedUrl
-      );
-
-    const data =
-      Array.isArray(nested?.messages?.data)
-        ? nested.messages.data
-        : [];
-
-    if (
-      data.length &&
-      data.some(item =>
-        safeString(item?.from?.id) ||
-        (Array.isArray(item?.to?.data) && item.to.data.some(target => safeString(target?.id)))
-      )
-    ) {
-      return data;
+  while (nextUrl) {
+    if (seenUrls.has(nextUrl)) {
+      throw new Error('Pagination Instagram messages en boucle.');
     }
-  } catch (error) {
-    // Certaines versions de Graph peuvent refuser les champs imbriqués.
-    // Le fallback ci-dessous récupère alors les IDs puis leurs détails.
-    console.warn(
-      '⚠️ Historique Instagram champs imbriqués :',
-      error.message
-    );
+    seenUrls.add(nextUrl);
+
+    const data = await instagramGraphGet(nextUrl);
+    const pageData = Array.isArray(data?.messages?.data)
+      ? data.messages.data
+      : (Array.isArray(data?.data) ? data.data : []);
+
+    for (const item of pageData) {
+      const id = safeString(item?.id);
+      if (!id || seenIds.has(id)) continue;
+      seenIds.add(id);
+      refs.push({
+        id,
+        created_time: safeString(item?.created_time)
+      });
+    }
+
+    nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
   }
 
-  const listUrl =
-    `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
-    `?fields=${encodeURIComponent('messages.limit(20){id,created_time}')}`;
+  return refs.sort((a, b) =>
+    new Date(b?.created_time || 0) - new Date(a?.created_time || 0)
+  );
+}
 
-  const listing =
-    await instagramGraphGet(
-      listUrl
-    );
+async function getInstagramConversationRecentMessages(conversationId) {
+  const refs = await listAllInstagramConversationMessageRefs(conversationId);
+  const detailedRefs = refs.slice(0, 20);
+  const detailsById = new Map();
 
-  const refs =
-    Array.isArray(listing?.messages?.data)
-      ? listing.messages.data.slice(0, 20)
-      : [];
-
-  const details = [];
-
-  for (let index = 0; index < refs.length; index += 5) {
-    const batch = refs.slice(index, index + 5);
-
+  // Meta documente que le détail n'est disponible que pour les 20 messages
+  // les plus récents. Les IDs/date plus anciens sont néanmoins conservés.
+  for (let index = 0; index < detailedRefs.length; index += 5) {
+    const batch = detailedRefs.slice(index, index + 5);
     const responses = await Promise.all(
       batch.map(async ref => {
-        const messageId =
-          safeString(ref?.id);
-
-        if (!messageId) return null;
-
         try {
           const detailUrl =
-            `https://graph.instagram.com/${META_API_VERSION}/` +
-            `${encodeURIComponent(messageId)}` +
+            `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(ref.id)}` +
             `?fields=${encodeURIComponent('id,created_time,from,to,message')}`;
-
-          return await instagramGraphGet(
-            detailUrl
-          );
-        } catch {
+          return await instagramGraphGet(detailUrl);
+        } catch (error) {
+          console.warn('⚠️ Détail message Instagram indisponible :', ref.id, error.message);
           return null;
         }
       })
     );
 
-    details.push(
-      ...responses.filter(Boolean)
-    );
+    for (const detail of responses.filter(Boolean)) {
+      detailsById.set(safeString(detail?.id), detail);
+    }
   }
 
-  return details;
+  return refs.map((ref, index) => {
+    const detail = detailsById.get(ref.id);
+    if (detail) {
+      return {
+        ...ref,
+        ...detail,
+        meta_content_available: true
+      };
+    }
+
+    return {
+      ...ref,
+      meta_content_available: false,
+      meta_detail_limit_reason:
+        index >= 20
+          ? 'Meta limite le détail aux 20 messages les plus récents.'
+          : 'Détail non retourné par Meta.'
+    };
+  });
 }
 
 function instagramMessageParticipants(message) {
@@ -11096,6 +11268,8 @@ async function runInstagramHistorySync() {
   const startedAt =
     new Date().toISOString();
 
+  console.log('📚 Instagram : pagination maximale activée. Meta ne fournit le détail complet que pour les 20 messages les plus récents de chaque discussion ; les anciens IDs/dates seront conservés sans direction inventée.');
+
   instagramHistorySyncJob = {
     running: true,
     startedAt,
@@ -11107,7 +11281,10 @@ async function runInstagramHistorySync() {
     skippedMessages: 0,
     errorCount: 0,
     lastError: '',
-    truncated: false
+    truncated: false,
+    metaMessageDetailLimit: 20,
+    messageIdsDiscovered: 0,
+    contentUnavailableMessages: 0
   };
 
   saveInstagramHistorySyncState(
@@ -11183,6 +11360,9 @@ async function runInstagramHistorySync() {
                 await getInstagramConversationRecentMessages(
                   conversation.id
                 );
+
+              instagramHistorySyncJob.messageIdsDiscovered += messages.length;
+              instagramHistorySyncJob.contentUnavailableMessages += messages.filter(item => item?.meta_content_available === false).length;
 
               const customerId =
                 instagramConversationCustomerId(
@@ -11280,7 +11460,11 @@ async function runInstagramHistorySync() {
           const fromId =
             safeString(message?.from?.id);
 
+          const directionKnown =
+            Boolean(fromId);
+
           const outgoing =
+            directionKnown &&
             fromId === INSTAGRAM_ACCOUNT_ID;
 
           const text =
@@ -11296,7 +11480,7 @@ async function runInstagramHistorySync() {
               ? minIso(earliestTime, time)
               : time;
 
-          if (!outgoing) {
+          if (directionKnown && !outgoing) {
             latestInboundTime =
               latestInboundTime
                 ? maxIso(latestInboundTime, time)
@@ -11321,17 +11505,35 @@ async function runInstagramHistorySync() {
             action:
               'history_import',
             source:
-              outgoing
-                ? 'commercial_instagram_history'
-                : 'instagram_history_import',
+              !directionKnown
+                ? 'instagram_history_meta_limited'
+                : outgoing
+                  ? 'commercial_instagram_history'
+                  : 'instagram_history_import',
+            direction:
+              !directionKnown
+                ? 'unknown'
+                : outgoing
+                  ? 'outgoing'
+                  : 'incoming',
             history_import:
               true,
             instagram_conversation_id:
               safeString(result.conversation?.id),
+            meta_content_available:
+              message?.meta_content_available !== false,
+            meta_detail_limit_reason:
+              safeString(message?.meta_detail_limit_reason),
             time
           };
 
-          if (outgoing) {
+          if (!directionKnown) {
+            // Meta permet de conserver l'ID/date des anciens messages mais
+            // ne fournit plus le détail au-delà de sa fenêtre documentée.
+            // Ne jamais inventer ici s'il s'agissait d'un entrant ou sortant.
+            entry.type = 'history';
+            entry.message_text = text || undefined;
+          } else if (outgoing) {
             entry.reply = text;
             entry.reply_sent = true;
             entry.commercial_user_name =
@@ -11397,6 +11599,10 @@ async function runInstagramHistorySync() {
               result.profile?.profilePicture ||
               current.profilePicture
             ),
+          profileUpdatedAt:
+            result.profile && Object.keys(result.profile).length
+              ? startedAt
+              : safeString(current.profileUpdatedAt),
           firstSeenAt:
             current.firstSeenAt
               ? (
@@ -11563,6 +11769,35 @@ router.post(
   }
 );
 
+function conversationEntryPreview(entry) {
+  const attachments = Array.isArray(entry?.attachments) ? entry.attachments.filter(Boolean) : [];
+  const source = safeString(entry?.source);
+  const commercialName = safeString(entry?.commercial_user_name || entry?.actor_name);
+
+  if (entry?.reply_sent && safeString(entry?.reply)) {
+    if (source.startsWith('commercial')) {
+      return `${commercialName ? `👤 ${commercialName} : ` : '👤 Équipe MONDECO : '}${safeString(entry.reply)}`.slice(0, 220);
+    }
+    if (safeString(entry?.action) === 'ai_reply') {
+      return `🤖 ${safeString(entry.reply)}`.slice(0, 220);
+    }
+  }
+
+  if (safeString(entry?.incoming)) return safeString(entry.incoming).slice(0, 220);
+
+  if (attachments.length > 1 && attachments.every(item => safeString(item?.type) === 'image')) {
+    return `📷 ${attachments.length} photos`;
+  }
+
+  const type = safeString(attachments[0]?.type || entry?.attachment_type || entry?.type).toLowerCase();
+  if (type === 'image') return '📷 Photo envoyée';
+  if (type === 'audio') return '🎤 Message vocal';
+  if (type === 'video') return '🎬 Vidéo';
+  if (type === 'file' || type === 'document') return '📎 Fichier';
+
+  return 'Nouvelle conversation';
+}
+
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
     const log = loadWhatsAppLog();
@@ -11593,6 +11828,8 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         lastAction: safeString(last?.action),
         lastReplySent: Boolean(last?.reply_sent),
         lastSource: safeString(last?.source),
+        lastMessagePreview: conversationEntryPreview(last),
+        lastMessageId: safeString(last?.message_id || last?.meta_message_id),
         channel:
           safeString(
             last?.channel ||
@@ -11627,6 +11864,12 @@ router.get('/api/conversations', requireAuth, (req, res) => {
           ),
         adSourceId: safeString(state?.adReferral?.sourceId),
         adSourceUrl: safeString(state?.adReferral?.sourceUrl),
+        adMediaType: safeString(state?.adReferral?.mediaType),
+        adMediaUrl: safeString(state?.adReferral?.storedMediaUrl || state?.adReferral?.mediaUrl),
+        adCampaignName: safeString(state?.adReferral?.campaignName || state?.adReferral?.campaignId),
+        adSetName: safeString(state?.adReferral?.adsetName || state?.adReferral?.adsetId),
+        adCreativeName: safeString(state?.adReferral?.creativeName || state?.adReferral?.creativeId),
+        sourceContext: state?.sourceContext && typeof state.sourceContext === 'object' ? state.sourceContext : null,
         imageNeedsCommercial: Boolean(state.imageNeedsCommercial),
         lastImageProduct: safeString(state?.lastImageProduct),
         lastImageReason: safeString(state?.lastImageReason),
@@ -11654,9 +11897,92 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       };
     }).sort((a, b) => new Date(b.lastTime || 0) - new Date(a.lastTime || 0));
 
-    const visibleConversations = req.user?.role === 'commercial'
+    let visibleConversations = req.user?.role === 'commercial'
       ? conversations.filter(item => safeString(item.assignedUserId) === safeString(req.user.id))
       : conversations;
+
+    const countBase = visibleConversations;
+    const counts = {
+      all: countBase.filter(item => !item.resolved).length,
+      whatsapp: countBase.filter(item => !item.resolved && item.channel === 'whatsapp').length,
+      instagram: countBase.filter(item => !item.resolved && item.channel === 'instagram').length,
+      unread: countBase.filter(item => !item.resolved && Number(item.unreadCount || 0) > 0).length,
+      priority: countBase.filter(item => !item.resolved && item.priority).length,
+      commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
+      sla: countBase.filter(item => !item.resolved && ['pending','late'].includes(safeString(item?.slaStatus))).length,
+      ads: countBase.filter(item => !item.resolved && item.hasAdReferral).length,
+      resolved: countBase.filter(item => item.resolved).length
+    };
+
+    const requestedFilter = safeString(req.query?.filter).toLowerCase();
+    if (requestedFilter === 'resolved') {
+      visibleConversations = visibleConversations.filter(item => item.resolved === true);
+    } else {
+      visibleConversations = visibleConversations.filter(item => !item.resolved);
+      if (requestedFilter === 'whatsapp' || requestedFilter === 'instagram') {
+        visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
+      } else if (requestedFilter === 'unread') {
+        visibleConversations = visibleConversations.filter(item => Number(item.unreadCount || 0) > 0);
+      } else if (requestedFilter === 'priority') {
+        visibleConversations = visibleConversations.filter(item => item.priority === true);
+      } else if (requestedFilter === 'commercial') {
+        visibleConversations = visibleConversations.filter(item => item.commercialAttention || item.imageNeedsCommercial);
+      } else if (requestedFilter === 'sla') {
+        visibleConversations = visibleConversations.filter(item => ['pending','late'].includes(safeString(item?.slaStatus)));
+      } else if (requestedFilter === 'ads') {
+        visibleConversations = visibleConversations.filter(item => item.hasAdReferral === true);
+      }
+    }
+
+    const search = safeString(req.query?.q).toLowerCase();
+    if (search) {
+      visibleConversations = visibleConversations.filter(item => {
+        const entries = byContact[item.contact] || [];
+        const searchable = [
+          item.contact,
+          item.externalContact,
+          item.instagramUsername,
+          item.profileName,
+          item.assignedTo,
+          item.activeProductName,
+          item.adHeadline,
+          item.adBody,
+          item.adProductHint,
+          item.adSourceId,
+          item.adCampaignName,
+          item.adSetName,
+          item.adCreativeName,
+          item.sourceContext?.label,
+          item.sourceContext?.id,
+          item.sourceContext?.caption,
+          item.sourceContext?.url,
+          item.sourceContext?.raw ? JSON.stringify(item.sourceContext.raw) : '',
+          ...entries.flatMap(entry => [
+            entry?.incoming,
+            entry?.reply,
+            entry?.ad_headline,
+            entry?.source_caption,
+            entry?.source_url
+          ])
+        ]
+          .map(value => safeString(value).toLowerCase())
+          .join(' ');
+        return searchable.includes(search);
+      });
+    }
+
+    if (String(req.query?.paged || '') === '1') {
+      const limit = Math.max(20, Math.min(200, Number(req.query?.limit || 80) || 80));
+      const offset = Math.max(0, Number(req.query?.offset || 0) || 0);
+      return res.json({
+        items: visibleConversations.slice(offset, offset + limit),
+        total: visibleConversations.length,
+        offset,
+        limit,
+        hasMore: offset + limit < visibleConversations.length,
+        counts
+      });
+    }
 
     return res.json(visibleConversations);
   } catch (error) {
@@ -11676,9 +12002,41 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
     }
 
-    const entries = log
+    let entries = log
       .filter(entry => safeString(entry.contact) === contact)
       .sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+
+    const targetMessageId = safeString(req.query?.messageId);
+    let targetWindowApplied = false;
+    if (targetMessageId) {
+      const targetIndex = entries.findIndex(entry =>
+        safeString(entry?.message_id || entry?.meta_message_id) === targetMessageId
+      );
+      if (targetIndex >= 0) {
+        const start = Math.max(0, targetIndex - 80);
+        const end = Math.min(entries.length, targetIndex + 41);
+        entries = entries.slice(start, end);
+        targetWindowApplied = true;
+      }
+    }
+
+    const beforeTime = Date.parse(safeString(req.query?.before));
+    if (!targetWindowApplied && Number.isFinite(beforeTime)) {
+      entries = entries.filter(entry => {
+        const ms = Date.parse(entry?.time || '');
+        return Number.isFinite(ms) && ms < beforeTime;
+      });
+    }
+
+    const requestedLimit = Number(req.query?.limit || 0);
+    let hasMore = false;
+    let nextBefore = '';
+    if (!targetWindowApplied && Number.isFinite(requestedLimit) && requestedLimit > 0) {
+      const limit = Math.max(20, Math.min(300, requestedLimit));
+      hasMore = entries.length > limit;
+      entries = entries.slice(-limit);
+      nextBefore = hasMore ? safeString(entries[0]?.time) : '';
+    }
 
     const adReferral =
       state?.adReferral &&
@@ -11700,7 +12058,9 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
         ...(adReferral ? { adReferral } : {}),
         sla: computeLiveSla(state)
       },
-      entries
+      entries,
+      hasMore,
+      nextBefore
     });
   } catch (error) {
     console.error('❌ Détail conversation :', error);
@@ -11733,10 +12093,13 @@ router.post(
         current => ({
           ...current,
           unreadCount: 0,
+          lastUnreadMessageId: '',
           lastReadAt:
             new Date().toISOString()
         })
       );
+
+    markNotificationsReadForContact(contact, req.user);
 
     return res.json({
       success: true,
@@ -11986,127 +12349,61 @@ router.get(
   requireAuth,
   (req, res) => {
     try {
-      const sinceRaw =
-        safeString(req.query?.since);
-
-      const sinceMs =
-        Date.parse(sinceRaw);
-
-      const minTime =
-        Number.isFinite(sinceMs)
-          ? sinceMs
-          : Date.now();
-
-      const urgentActions =
-        new Set([
-          'ai_needs_commercial',
-          'ai_error_fallback_sent',
-          'ai_error_no_reply',
-          'commercial_required',
-          'human_pause',
-          'ai_disabled',
-          'audience',
-          'secure_image_commercial_required',
-          'secure_image_analysis_error',
-          'image_analysis_error'
-        ]);
-
-      // Notifications = uniquement le journal temps réel. L'historique
-      // Instagram importé ne doit jamais générer d'anciennes alertes.
-      const events =
-        readJsonArray(
-          CONVERSATIONS_LOG_PATH,
-          'conversation-log.json'
-        )
-          .filter(entry => {
-            const timeMs =
-              Date.parse(entry?.time || '');
-
-            if (
-              !Number.isFinite(timeMs) ||
-              timeMs <= minTime
-            ) {
-              return false;
-            }
-
-            const source =
-              safeString(entry?.source);
-
-            const action =
-              safeString(entry?.action);
-
-            if (
-              source.startsWith('commercial') ||
-              action === 'commercial_reply' ||
-              action === 'automatic_followup'
-            ) {
-              return false;
-            }
-
-            return Boolean(
-              safeString(entry?.incoming) ||
-              safeString(entry?.type)
-            );
-          })
-          .slice(-80)
-          .map(entry => {
-            const action =
-              safeString(entry?.action);
-
-            const type =
-              safeString(entry?.type) ||
-              'text';
-
-            let preview =
-              safeString(entry?.incoming);
-
-            if (!preview) {
-              if (type === 'image') {
-                preview =
-                  'Photo / capture reçue';
-              } else if (type === 'document') {
-                preview =
-                  'Document reçu';
-              } else {
-                preview =
-                  `Nouveau message ${type}`;
-              }
-            }
-
-            return {
-              id:
-                safeString(entry?.message_id) ||
-                `${safeString(entry?.contact)}-${safeString(entry?.time)}`,
-
-              contact:
-                safeString(entry?.contact),
-
-              time:
-                safeString(entry?.time),
-
-              preview:
-                preview.slice(0, 180),
-
-              action,
-
-              urgent:
-                urgentActions.has(action)
-            };
-          });
-
       const states = loadConversationStatesAdmin();
-      const scopedEvents = events.filter(event => {
-        if (req.user?.role !== 'commercial') return true;
-        return safeString(states[event.contact]?.assignedUserId) === safeString(req.user.id);
-      }).map(event => ({
-        ...event,
-        channel: safeString(states[event.contact]?.channel) || (safeString(event.contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
-        assignedTo: safeString(states[event.contact]?.assignedTo),
-        kind: event.urgent ? 'commercial' : 'message'
-      }));
+      const userKey = notificationUserKey(req.user);
+      const filter = safeString(req.query?.filter).toLowerCase();
+      const sinceMs = Date.parse(safeString(req.query?.since));
+      const store = loadNotificationsStore();
+
+      let items = store.items
+        .filter(item => notificationVisibleToUser(item, req.user, states))
+        .map(item => ({
+          ...item,
+          read: Array.isArray(item?.readBy) && item.readBy.includes(userKey),
+          channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+          assignedTo: safeString(states[item?.contact]?.assignedTo || item?.assignedTo),
+          kind: item?.urgent ? 'commercial' : 'message'
+        }));
+
+      if (filter === 'instagram' || filter === 'whatsapp') {
+        items = items.filter(item => item.channel === filter);
+      } else if (filter === 'commercial') {
+        items = items.filter(item => item.urgent === true);
+      }
+
+      items.sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
+
+      const unreadCount = store.items
+        .filter(item => notificationVisibleToUser(item, req.user, states))
+        .filter(item => !(Array.isArray(item?.readBy) && item.readBy.includes(userKey)))
+        .length;
+
+      const events = items
+        .filter(item => {
+          if (!Number.isFinite(sinceMs)) return false;
+          const ms = Date.parse(item?.createdAt || '');
+          return Number.isFinite(ms) && ms > sinceMs;
+        })
+        .map(item => ({
+          id: item.id,
+          notificationId: item.id,
+          messageId: safeString(item.messageId),
+          contact: safeString(item.contact),
+          time: safeString(item.createdAt),
+          preview: safeString(item.preview),
+          action: safeString(item.action),
+          urgent: item.urgent === true,
+          kind: item.kind,
+          channel: item.channel,
+          assignedTo: item.assignedTo,
+          username: safeString(item.username),
+          profileName: safeString(item.profileName),
+          profilePicture: safeString(item.profilePicture),
+          attachmentPreview: safeString(item.attachmentPreview)
+        }));
 
       const liveSlaEvents = [];
-      for (const [contact,state] of Object.entries(states)) {
+      for (const [contact, state] of Object.entries(states)) {
         if (req.user?.role === 'commercial' && safeString(state?.assignedUserId) !== safeString(req.user.id)) continue;
         const sla = computeLiveSla(state);
         if (!sla || !['pending','late'].includes(sla.status)) continue;
@@ -12118,16 +12415,18 @@ router.get(
         else if (remaining <= (Number(sla.minutes || DEFAULT_COMMERCIAL_SLA_MINUTES) * 60 * 1000) / 2) threshold = 'half';
         if (!threshold) continue;
         liveSlaEvents.push({
-          id:`sla-${safeString(sla.id)}-${threshold}`,
+          id: `sla-${safeString(sla.id)}-${threshold}`,
           contact,
-          time:new Date().toISOString(),
-          preview: threshold === 'breached' ? 'Délai commercial dépassé' : `Client en attente — ${Math.max(0,Math.ceil(remaining/1000))} s restantes`,
+          time: new Date().toISOString(),
+          preview: threshold === 'breached'
+            ? 'Délai commercial dépassé'
+            : `Client en attente — ${Math.max(0, Math.ceil(remaining / 1000))} s restantes`,
           action: threshold === 'breached' ? 'sla_breached' : 'sla_warning',
-          urgent:true,
-          kind:'sla',
-          channel:safeString(state?.channel),
-          assignedTo:safeString(state?.assignedTo),
-          remainingMs:remaining
+          urgent: true,
+          kind: 'sla',
+          channel: safeString(state?.channel),
+          assignedTo: safeString(state?.assignedTo),
+          remainingMs: remaining
         });
       }
 
@@ -12140,14 +12439,14 @@ router.get(
           if (safeString(task.date) !== today) continue;
           if (['done','cancelled'].includes(safeString(task.status))) continue;
           taskEvents.push({
-            id:`task-${safeString(task.id)}`,
-            contact:'',
-            time:safeString(task.createdAt) || new Date().toISOString(),
-            preview:`${safeString(task.title)}${task.dueTime ? ` — avant ${safeString(task.dueTime)}` : ''}`,
-            action:'task_assigned',
-            urgent:safeString(task.priority)==='urgent',
-            kind:'task',
-            taskId:safeString(task.id)
+            id: `task-${safeString(task.id)}`,
+            contact: '',
+            time: safeString(task.createdAt) || new Date().toISOString(),
+            preview: `${safeString(task.title)}${task.dueTime ? ` — avant ${safeString(task.dueTime)}` : ''}`,
+            action: 'task_assigned',
+            urgent: safeString(task.priority) === 'urgent',
+            kind: 'task',
+            taskId: safeString(task.id)
           });
         }
       }
@@ -12157,38 +12456,74 @@ router.get(
         const report = ensureDailyReportGenerated(false);
         if (report?.finalized === true) {
           reportEvents.push({
-            id:`daily-report-${report.date}`,
-            contact:'',
-            time:report.generatedAt,
-            preview:`Rapport commercial du ${report.date} disponible`,
-            action:'daily_report_ready',
-            urgent:false,
-            kind:'report',
-            reportDate:report.date
+            id: `daily-report-${report.date}`,
+            contact: '',
+            time: report.generatedAt,
+            preview: `Rapport commercial du ${report.date} disponible`,
+            action: 'daily_report_ready',
+            urgent: false,
+            kind: 'report',
+            reportDate: report.date
           });
         }
       }
 
       return res.json({
-        serverTime:
-          new Date().toISOString(),
-        events:[...scopedEvents,...liveSlaEvents,...taskEvents,...reportEvents]
+        serverTime: new Date().toISOString(),
+        unreadCount,
+        items: items.slice(0, 200),
+        events: [...events, ...liveSlaEvents, ...taskEvents, ...reportEvents]
       });
     } catch (error) {
-      console.error(
-        '❌ Notifications Admin :',
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            'Impossible de lire les notifications.'
-        });
+      console.error('❌ Notifications Admin :', error);
+      return res.status(500).json({ error: 'Impossible de lire les notifications.' });
     }
   }
 );
+
+router.post(
+  '/api/notifications/:id/read',
+  requireAuth,
+  (req, res) => {
+    const id = safeString(req.params.id);
+    const key = notificationUserKey(req.user);
+    const store = loadNotificationsStore();
+    let found = false;
+
+    store.items = store.items.map(item => {
+      if (safeString(item?.id) !== id) return item;
+      found = true;
+      const readBy = Array.isArray(item?.readBy) ? [...item.readBy] : [];
+      if (!readBy.includes(key)) readBy.push(key);
+      return { ...item, readBy };
+    });
+
+    if (!found) return res.status(404).json({ error: 'Notification introuvable.' });
+    saveNotificationsStore(store);
+    return res.json({ success: true });
+  }
+);
+
+router.post(
+  '/api/notifications/read-all',
+  requireAuth,
+  (req, res) => {
+    const key = notificationUserKey(req.user);
+    const states = loadConversationStatesAdmin();
+    const store = loadNotificationsStore();
+
+    store.items = store.items.map(item => {
+      if (!notificationVisibleToUser(item, req.user, states)) return item;
+      const readBy = Array.isArray(item?.readBy) ? [...item.readBy] : [];
+      if (!readBy.includes(key)) readBy.push(key);
+      return { ...item, readBy };
+    });
+
+    saveNotificationsStore(store);
+    return res.json({ success: true });
+  }
+);
+
 
 // ============================================================
 // STATUS / STATS
@@ -12255,6 +12590,12 @@ router.get(
 
       conversationProfileDirectory:
         fs.existsSync(CONVERSATION_PROFILE_DIR),
+
+      conversationEventsDirectory:
+        fs.existsSync(CONVERSATION_EVENTS_DIR),
+
+      notificationsFile:
+        fs.existsSync(NOTIFICATIONS_PATH),
 
       backupsDirectory:
         fs.existsSync(BACKUPS_DIR),
