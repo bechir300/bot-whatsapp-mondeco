@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale — V6.19.6
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -35,6 +35,9 @@ const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 // la rotation du fichier conversation-log.json.
 const INSTAGRAM_HISTORY_PATH = path.join(DATA_DIR, 'instagram-history.json');
 const INSTAGRAM_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'instagram-history-sync.json');
+// V6.20 — historique Messenger importé via Conversations API.
+const FACEBOOK_HISTORY_PATH = path.join(DATA_DIR, 'facebook-history.json');
+const FACEBOOK_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'facebook-history-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
@@ -47,6 +50,16 @@ const INSTAGRAM_ACCESS_TOKEN = (
 
 const INSTAGRAM_ACCOUNT_ID = (
   process.env.INSTAGRAM_ACCOUNT_ID ||
+  ''
+).trim();
+
+const FACEBOOK_PAGE_ID = (
+  process.env.FACEBOOK_PAGE_ID ||
+  ''
+).trim();
+
+const FACEBOOK_PAGE_ACCESS_TOKEN = (
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN ||
   ''
 ).trim();
 
@@ -539,6 +552,14 @@ function snapshotFiles() {
     {
       source: INSTAGRAM_HISTORY_SYNC_STATE_PATH,
       name: 'instagram-history-sync.json'
+    },
+    {
+      source: FACEBOOK_HISTORY_PATH,
+      name: 'facebook-history.json'
+    },
+    {
+      source: FACEBOOK_HISTORY_SYNC_STATE_PATH,
+      name: 'facebook-history-sync.json'
     },
     {
       source: NOTIFICATIONS_PATH,
@@ -3061,6 +3082,7 @@ function roleCanAccess(
       pathStarts(reqPath, '/api/commercial/send-media') ||
       pathStarts(reqPath, '/api/notifications') ||
       pathStarts(reqPath, '/api/instagram-history') ||
+      pathStarts(reqPath, '/api/facebook-history') ||
       pathStarts(reqPath, '/api/quick-replies') ||
       pathStarts(reqPath, '/api/presence') ||
       pathStarts(reqPath, '/api/users') ||
@@ -3553,11 +3575,11 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
   <aside class="brand-side">
     <div>
       <img class="brand-logo" src="${MONDECO_LOGO_DATA_URL}" alt="MONDECO">
-      <div class="brand-kicker">Agent WhatsApp + Instagram • Administration</div>
+      <div class="brand-kicker">Agent WhatsApp + Instagram + Facebook • Administration</div>
     </div>
     <div class="brand-copy">
       <h1>Centre de pilotage MONDECO</h1>
-      <p>Gérez l'agent WhatsApp + Instagram, l’équipe commerciale, les produits et les paramètres depuis une interface unique.</p>
+      <p>Gérez WhatsApp, Instagram, la supervision Facebook, l’équipe commerciale, les produits et les paramètres depuis une interface unique.</p>
     </div>
     <div class="brand-foot">Accès réservé</div>
   </aside>
@@ -3567,7 +3589,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.19.6</span>
+        <span class="login-version">V6.20</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -5282,8 +5304,10 @@ function tunisMinutesNow(value = new Date()) {
 
 function normalizeChannels(value) {
   const raw = Array.isArray(value) ? value : [value];
-  const allowed = new Set(['whatsapp', 'instagram']);
+  const allowed = new Set(['whatsapp', 'instagram', 'facebook']);
   const channels = [...new Set(raw.map(item => safeString(item).toLowerCase()).filter(item => allowed.has(item)))];
+  // Compatibilité : un ancien planning sans canal explicite conserve son
+  // comportement WhatsApp + Instagram au lieu d'être étendu silencieusement.
   return channels.length ? channels : ['whatsapp', 'instagram'];
 }
 
@@ -5663,14 +5687,23 @@ router.get('/api/tasks', requireAuth, (req,res) => { const date=safeString(req.q
 router.post('/api/tasks', requireAdminOrCommercialManager, (req,res) => {
   const userId=safeString(req.body?.userId); const user=loadUsers().find(item=>item.id===userId&&item.role==='commercial'&&item.active!==false); const title=safeString(req.body?.title); const date=safeString(req.body?.date);
   if(!user||!title||!/^\d{4}-\d{2}-\d{2}$/.test(date))return res.status(400).json({error:'Commercial, date et tâche sont obligatoires.'});
-  const now=new Date().toISOString(); const item={id:crypto.randomUUID(),userId,userName:safeString(user.name),date,channel:safeString(req.body?.channel||'both'),startTime:safeString(req.body?.startTime),dueTime:safeString(req.body?.dueTime),title:title.slice(0,180),details:safeString(req.body?.details).slice(0,1500),priority:safeString(req.body?.priority||'normal'),status:'todo',createdBy:safeString(req.user?.id),createdAt:now,updatedAt:now}; const items=loadTasks();items.push(item);saveTasks(items);return res.status(201).json(item);
+  const requestedTaskChannel=safeString(req.body?.channel||'both').toLowerCase(); const taskChannel=['both','whatsapp','instagram','facebook'].includes(requestedTaskChannel)?requestedTaskChannel:'both';
+  const now=new Date().toISOString(); const item={id:crypto.randomUUID(),userId,userName:safeString(user.name),date,channel:taskChannel,startTime:safeString(req.body?.startTime),dueTime:safeString(req.body?.dueTime),title:title.slice(0,180),details:safeString(req.body?.details).slice(0,1500),priority:safeString(req.body?.priority||'normal'),status:'todo',conversationContact:safeString(req.body?.conversationContact||req.body?.contact).slice(0,180),conversationMessageId:safeString(req.body?.conversationMessageId||req.body?.messageId).slice(0,260),clientName:safeString(req.body?.clientName).slice(0,180),createdBy:safeString(req.user?.id),createdAt:now,updatedAt:now}; const items=loadTasks();items.push(item);saveTasks(items);return res.status(201).json(item);
 });
 
 router.put('/api/tasks/:id', requireAuth, (req,res) => {
   const items=loadTasks();const index=items.findIndex(item=>item.id===req.params.id);if(index<0)return res.status(404).json({error:'Tâche introuvable.'});const current=items[index];
   const manager=req.user.role==='admin'||req.user.role==='responsable_commercial'; if(!manager&&!(req.user.role==='commercial'&&safeString(current.userId)===safeString(req.user.id)))return res.status(403).json({error:'Accès non autorisé à cette tâche.'});
   const allowedStatus=new Set(['todo','in_progress','done','late','cancelled']);const requestedStatus=safeString(req.body?.status||current.status);if(!allowedStatus.has(requestedStatus))return res.status(400).json({error:'Statut de tâche invalide.'});
-  const editable=manager?{...current,...req.body}:{...current,status:requestedStatus}; items[index]={...editable,id:current.id,userId:current.userId,userName:current.userName,status:requestedStatus,completedAt:requestedStatus==='done'?(current.completedAt||new Date().toISOString()):null,updatedAt:new Date().toISOString()};saveTasks(items);return res.json(items[index]);
+  const editable=manager?{...current,...req.body}:{...current,status:requestedStatus};
+  if(manager){
+    const requestedChannel=safeString(editable.channel||current.channel||'both').toLowerCase();
+    editable.channel=['both','whatsapp','instagram','facebook'].includes(requestedChannel)?requestedChannel:'both';
+    editable.conversationContact=safeString(editable.conversationContact).slice(0,180);
+    editable.conversationMessageId=safeString(editable.conversationMessageId).slice(0,260);
+    editable.clientName=safeString(editable.clientName).slice(0,180);
+  }
+  items[index]={...editable,id:current.id,userId:current.userId,userName:current.userName,status:requestedStatus,completedAt:requestedStatus==='done'?(current.completedAt||new Date().toISOString()):null,updatedAt:new Date().toISOString()};saveTasks(items);return res.json(items[index]);
 });
 
 router.delete('/api/tasks/:id', requireAdminOrCommercialManager, (req,res) => {const items=loadTasks();const next=items.filter(item=>item.id!==req.params.id);if(next.length===items.length)return res.status(404).json({error:'Tâche introuvable.'});saveTasks(next);return res.json({success:true});});
@@ -9762,10 +9795,11 @@ router.post(
         ).toLowerCase();
 
       const channel =
-        requestedChannel === 'instagram' ||
-        contact.startsWith('instagram:')
-          ? 'instagram'
-          : 'whatsapp';
+        requestedChannel === 'facebook' || contact.startsWith('facebook:')
+          ? 'facebook'
+          : requestedChannel === 'instagram' || contact.startsWith('instagram:')
+            ? 'instagram'
+            : 'whatsapp';
 
       const externalContact =
         safeString(
@@ -9773,7 +9807,18 @@ router.post(
         ) ||
         (channel === 'instagram'
           ? contact.replace(/^instagram:/, '')
-          : normalizePhone(contact));
+          : channel === 'facebook'
+            ? contact.replace(/^facebook:/, '')
+            : normalizePhone(contact));
+
+      if (channel === 'facebook') {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Facebook est en mode supervision. Les réponses restent gérées par Meta Business AI / Business Suite.'
+          });
+      }
 
       const phone =
         channel === 'whatsapp'
@@ -9886,10 +9931,11 @@ router.post(
         ).toLowerCase();
 
       const channel =
-        requestedChannel === 'instagram' ||
-        contact.startsWith('instagram:')
-          ? 'instagram'
-          : 'whatsapp';
+        requestedChannel === 'facebook' || contact.startsWith('facebook:')
+          ? 'facebook'
+          : requestedChannel === 'instagram' || contact.startsWith('instagram:')
+            ? 'instagram'
+            : 'whatsapp';
 
       const externalContact =
         safeString(
@@ -9897,7 +9943,18 @@ router.post(
         ) ||
         (channel === 'instagram'
           ? contact.replace(/^instagram:/, '')
-          : normalizePhone(contact));
+          : channel === 'facebook'
+            ? contact.replace(/^facebook:/, '')
+            : normalizePhone(contact));
+
+      if (channel === 'facebook') {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Facebook est en mode supervision. Les réponses restent gérées par Meta Business AI / Business Suite.'
+          });
+      }
 
       if (channel === 'instagram') {
         return res
@@ -10710,6 +10767,7 @@ function loadPersistentConversationEvents() {
 let combinedConversationLogCache = {
   liveStamp: '',
   historyStamp: '',
+  facebookHistoryStamp: '',
   persistentStamp: '',
   entries: []
 };
@@ -10734,12 +10792,18 @@ function loadWhatsAppLog() {
       INSTAGRAM_HISTORY_PATH
     );
 
+  const facebookHistoryStamp =
+    fileChangeStamp(
+      FACEBOOK_HISTORY_PATH
+    );
+
   const persistentStamp =
     conversationEventsDirectoryStamp();
 
   if (
     combinedConversationLogCache.liveStamp === liveStamp &&
     combinedConversationLogCache.historyStamp === historyStamp &&
+    combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
     combinedConversationLogCache.persistentStamp === persistentStamp
   ) {
     return combinedConversationLogCache.entries;
@@ -10749,6 +10813,12 @@ function loadWhatsAppLog() {
     readJsonArray(
       INSTAGRAM_HISTORY_PATH,
       'instagram-history.json'
+    );
+
+  const facebookHistorical =
+    readJsonArray(
+      FACEBOOK_HISTORY_PATH,
+      'facebook-history.json'
     );
 
   const persistent =
@@ -10766,7 +10836,7 @@ function loadWhatsAppLog() {
   // ne s'affiche jamais deux fois.
   const merged = new Map();
 
-  for (const entry of [...historical, ...persistent, ...live]) {
+  for (const entry of [...historical, ...facebookHistorical, ...persistent, ...live]) {
     merged.set(
       conversationLogDedupeKey(entry),
       entry
@@ -10779,6 +10849,7 @@ function loadWhatsAppLog() {
   combinedConversationLogCache = {
     liveStamp,
     historyStamp,
+    facebookHistoryStamp,
     persistentStamp,
     entries
   };
@@ -11769,12 +11840,662 @@ router.post(
   }
 );
 
+// ============================================================
+// V6.20 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// ============================================================
+
+let facebookHistorySyncJob = {
+  running: false,
+  startedAt: '',
+  completedAt: '',
+  totalConversations: 0,
+  processedConversations: 0,
+  importedConversations: 0,
+  importedMessages: 0,
+  skippedMessages: 0,
+  messageIdsDiscovered: 0,
+  contentUnavailableMessages: 0,
+  errorCount: 0,
+  lastError: ''
+};
+
+function loadFacebookHistorySyncState() {
+  try {
+    if (!fs.existsSync(FACEBOOK_HISTORY_SYNC_STATE_PATH)) return {};
+    const parsed = JSON.parse(
+      fs.readFileSync(FACEBOOK_HISTORY_SYNC_STATE_PATH, 'utf8') || '{}'
+    );
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFacebookHistorySyncState(state) {
+  writeJsonAtomic(
+    FACEBOOK_HISTORY_SYNC_STATE_PATH,
+    state && typeof state === 'object' ? state : {}
+  );
+}
+
+async function facebookGraphGet(url) {
+  if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
+    throw new Error('FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`
+    }
+  });
+
+  let data = {};
+  try { data = await response.json(); } catch { data = {}; }
+
+  if (!response.ok) {
+    throw new Error(
+      safeString(data?.error?.message) ||
+      `Facebook HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function listAllFacebookConversations() {
+  if (!FACEBOOK_PAGE_ID) {
+    throw new Error('FACEBOOK_PAGE_ID manquant.');
+  }
+
+  const conversations = [];
+  const seenIds = new Set();
+  const seenUrls = new Set();
+  let pageCount = 0;
+  let nextUrl =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
+    `?fields=${encodeURIComponent('id,link,updated_time')}&limit=50`;
+
+  while (nextUrl) {
+    if (seenUrls.has(nextUrl)) {
+      throw new Error('Pagination Facebook conversations en boucle.');
+    }
+    seenUrls.add(nextUrl);
+
+    const data = await facebookGraphGet(nextUrl);
+    for (const item of Array.isArray(data?.data) ? data.data : []) {
+      const id = safeString(item?.id);
+      if (!id || seenIds.has(id)) continue;
+      seenIds.add(id);
+      conversations.push({
+        id,
+        link: safeString(item?.link),
+        updatedTime: safeString(item?.updated_time)
+      });
+    }
+
+    nextUrl = safeString(data?.paging?.next);
+    pageCount += 1;
+  }
+
+  console.log(`📘 Facebook : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
+  return { conversations, pageCount, truncated: false };
+}
+
+async function listAllFacebookConversationMessageRefs(conversationId) {
+  const encodedId = encodeURIComponent(safeString(conversationId));
+  let nextUrl =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodedId}` +
+    `?fields=${encodeURIComponent('messages.limit(100){id,created_time}')}`;
+
+  const refs = [];
+  const seenIds = new Set();
+  const seenUrls = new Set();
+
+  while (nextUrl) {
+    if (seenUrls.has(nextUrl)) {
+      throw new Error('Pagination Facebook messages en boucle.');
+    }
+    seenUrls.add(nextUrl);
+
+    const data = await facebookGraphGet(nextUrl);
+    const pageData = Array.isArray(data?.messages?.data)
+      ? data.messages.data
+      : (Array.isArray(data?.data) ? data.data : []);
+
+    for (const item of pageData) {
+      const id = safeString(item?.id);
+      if (!id || seenIds.has(id)) continue;
+      seenIds.add(id);
+      refs.push({
+        id,
+        created_time: safeString(item?.created_time)
+      });
+    }
+
+    nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
+  }
+
+  return refs.sort((a, b) =>
+    new Date(b?.created_time || 0) - new Date(a?.created_time || 0)
+  );
+}
+
+async function getFacebookMessageDetail(ref) {
+  const base =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(ref.id)}`;
+
+  // Les champs textuels/direction sont les plus importants. On tente aussi
+  // attachments ; si une version Graph refuse ce champ, on retente sans lui.
+  const fieldSets = [
+    'id,created_time,from,to,message,reply_to,attachments',
+    'id,created_time,from,to,message,reply_to'
+  ];
+
+  let lastError = null;
+  for (const fields of fieldSets) {
+    try {
+      const detail = await facebookGraphGet(
+        `${base}?fields=${encodeURIComponent(fields)}`
+      );
+      return {
+        ...ref,
+        ...detail,
+        meta_content_available: true
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  return {
+    ...ref,
+    meta_content_available: false,
+    meta_detail_limit_reason: safeString(lastError?.message || 'Détail non retourné par Meta.')
+  };
+}
+
+async function getAllFacebookConversationMessages(conversationId) {
+  const refs = await listAllFacebookConversationMessageRefs(conversationId);
+  const messages = [];
+
+  // Aucune limite artificielle : tous les IDs accessibles sont demandés.
+  // On limite seulement la concurrence pour ménager les quotas Graph API.
+  for (let index = 0; index < refs.length; index += 8) {
+    const batch = refs.slice(index, index + 8);
+    const details = await Promise.all(batch.map(getFacebookMessageDetail));
+    messages.push(...details);
+  }
+
+  return messages;
+}
+
+
+function facebookHistoryAttachmentList(message) {
+  const value=message?.attachments;
+  if(Array.isArray(value)) return value.filter(Boolean);
+  if(Array.isArray(value?.data)) return value.data.filter(Boolean);
+  return [];
+}
+
+function facebookHistoryAttachmentUrl(item) {
+  return safeString(
+    item?.file_url ||
+    item?.url ||
+    item?.image_data?.url ||
+    item?.video_data?.url ||
+    item?.audio_data?.url ||
+    item?.payload?.url
+  );
+}
+
+function facebookHistoryMediaType(item, mimetype='') {
+  const mime=safeString(mimetype || item?.mime_type).toLowerCase();
+  const raw=safeString(item?.type).toLowerCase();
+  if(mime.startsWith('image/') || raw==='image') return 'image';
+  if(mime.startsWith('video/') || raw==='video') return 'video';
+  if(mime.startsWith('audio/') || raw==='audio') return 'audio';
+  return 'file';
+}
+
+function facebookHistoryMediaExtension(mimetype, type='file') {
+  const mime=safeString(mimetype).toLowerCase().split(';')[0];
+  const map={
+    'image/jpeg':'jpg','image/jpg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif',
+    'video/mp4':'mp4','video/quicktime':'mov','video/webm':'webm',
+    'audio/mpeg':'mp3','audio/mp4':'m4a','audio/ogg':'ogg','audio/wav':'wav','audio/x-wav':'wav','audio/webm':'webm',
+    'application/pdf':'pdf','text/plain':'txt','application/msword':'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'docx',
+    'application/vnd.ms-excel':'xls','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'xlsx'
+  };
+  if(map[mime]) return map[mime];
+  if(type==='image') return 'jpg';
+  if(type==='video') return 'mp4';
+  if(type==='audio') return 'mp3';
+  return 'bin';
+}
+
+function assertSafeFacebookHistoryMedia(buffer, mimetype='') {
+  if(!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Média Facebook vide.');
+  if(buffer.length > 20 * 1024 * 1024) throw new Error('Média Facebook trop volumineux (maximum 20 Mo).');
+  const mime=safeString(mimetype).toLowerCase().split(';')[0];
+  const first=buffer.subarray(0,32);
+  const ascii=first.toString('utf8').trimStart().toLowerCase();
+  if(mime==='text/html'||mime==='application/xhtml+xml'||mime.includes('javascript')||mime.includes('x-sh')||mime.includes('x-executable')||ascii.startsWith('<!doctype html')||ascii.startsWith('<html')||ascii.startsWith('<script')||first.subarray(0,2).toString('ascii')==='MZ'||first.subarray(0,4).equals(Buffer.from([0x7f,0x45,0x4c,0x46]))||first.subarray(0,2).toString('ascii')==='#!'){
+    throw new Error('Fichier Facebook potentiellement exécutable refusé.');
+  }
+  if((mime==='image/jpeg'||mime==='image/jpg') && !(buffer[0]===0xff&&buffer[1]===0xd8&&buffer[2]===0xff)) throw new Error('JPEG Facebook invalide.');
+  if(mime==='image/png' && !buffer.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) throw new Error('PNG Facebook invalide.');
+  if(mime==='image/gif' && !['GIF87a','GIF89a'].includes(buffer.subarray(0,6).toString('ascii'))) throw new Error('GIF Facebook invalide.');
+  if(mime==='image/webp' && !(buffer.subarray(0,4).toString('ascii')==='RIFF'&&buffer.subarray(8,12).toString('ascii')==='WEBP')) throw new Error('WEBP Facebook invalide.');
+  if(mime==='application/pdf' && buffer.subarray(0,5).toString('ascii')!=='%PDF-') throw new Error('PDF Facebook invalide.');
+}
+
+async function persistFacebookHistoryAttachments(message) {
+  const items=facebookHistoryAttachmentList(message);
+  const messageId=safeString(message?.id).replace(/[^a-zA-Z0-9_-]/g,'').slice(-70) || crypto.randomUUID();
+  const stored=[];
+  for(let index=0; index<items.length; index+=1){
+    const item=items[index];
+    const remoteUrl=facebookHistoryAttachmentUrl(item);
+    if(!remoteUrl) continue;
+    try{
+      let response=await fetch(remoteUrl,{headers:{Authorization:`Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`}});
+      if(!response.ok) response=await fetch(remoteUrl);
+      if(!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer=Buffer.from(await response.arrayBuffer());
+      const mimetype=safeString(item?.mime_type || response.headers.get('content-type') || 'application/octet-stream').split(';')[0];
+      assertSafeFacebookHistoryMedia(buffer,mimetype);
+      const type=facebookHistoryMediaType(item,mimetype);
+      const extension=facebookHistoryMediaExtension(mimetype,type);
+      const filename=`facebook-history-${messageId}-${index}.${extension}`;
+      const filePath=path.join(CONVERSATION_MEDIA_DIR,filename);
+      if(!fs.existsSync(filePath)) fs.writeFileSync(filePath,buffer);
+      stored.push({
+        type,
+        sourceType:safeString(item?.type)||type,
+        name:safeString(item?.name)||`${type==='image'?'Photo':type==='video'?'Vidéo':type==='audio'?'Audio':'Fichier'} Facebook`,
+        mimetype,
+        size:buffer.length,
+        url:`/admin/conversation-media/${encodeURIComponent(filename)}`,
+        filename,
+        metaAttachmentId:safeString(item?.id)
+      });
+    }catch(error){
+      console.warn('⚠️ Média historique Facebook non sauvegardé :',safeString(message?.id),error.message);
+    }
+  }
+  return stored;
+}
+
+function facebookMessageParticipants(message) {
+  const ids = [];
+  const fromId = safeString(message?.from?.id);
+  if (fromId) ids.push(fromId);
+
+  const toData = Array.isArray(message?.to?.data)
+    ? message.to.data
+    : [];
+  for (const item of toData) {
+    const id = safeString(item?.id);
+    if (id) ids.push(id);
+  }
+
+  return [...new Set(ids)];
+}
+
+function facebookConversationCustomerId(messages) {
+  for (const message of messages) {
+    const customer = facebookMessageParticipants(message).find(
+      id => id && id !== FACEBOOK_PAGE_ID
+    );
+    if (customer) return customer;
+  }
+  return '';
+}
+
+async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
+  const url = safeString(remoteUrl);
+  const scopedId = safeString(customerId).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!url || !scopedId) return '';
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return '';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > 5 * 1024 * 1024) return '';
+
+    const extension = profilePictureExtensionAdmin(
+      response.headers.get('content-type')
+    );
+    const filename = `facebook-${scopedId}.${extension}`;
+
+    for (const ext of ['jpg', 'png', 'webp', 'gif']) {
+      const candidate = path.join(
+        CONVERSATION_PROFILE_DIR,
+        `facebook-${scopedId}.${ext}`
+      );
+      if (ext !== extension && fs.existsSync(candidate)) {
+        try { fs.unlinkSync(candidate); } catch {}
+      }
+    }
+
+    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+  } catch {
+    return '';
+  }
+}
+
+async function getFacebookHistoryProfile(customerId) {
+  if (!customerId) return {};
+
+  const fieldSets = [
+    'first_name,last_name,name,profile_pic',
+    'first_name,last_name,profile_pic'
+  ];
+
+  for (const fields of fieldSets) {
+    try {
+      const url =
+        `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(customerId)}` +
+        `?fields=${encodeURIComponent(fields)}`;
+      const data = await facebookGraphGet(url);
+      if (!data || typeof data !== 'object') continue;
+
+      const profilePicture = await persistFacebookHistoryProfilePicture(
+        data?.profile_pic,
+        customerId
+      );
+      const name = safeString(
+        data?.name ||
+        [safeString(data?.first_name), safeString(data?.last_name)].filter(Boolean).join(' ')
+      );
+      return { ...data, name, profilePicture };
+    } catch {}
+  }
+
+  return {};
+}
+
+async function runFacebookHistorySync() {
+  const startedAt = new Date().toISOString();
+
+  facebookHistorySyncJob = {
+    running: true,
+    startedAt,
+    completedAt: '',
+    totalConversations: 0,
+    processedConversations: 0,
+    importedConversations: 0,
+    importedMessages: 0,
+    skippedMessages: 0,
+    messageIdsDiscovered: 0,
+    contentUnavailableMessages: 0,
+    errorCount: 0,
+    lastError: '',
+    truncated: false
+  };
+  saveFacebookHistorySyncState(facebookHistorySyncJob);
+
+  try {
+    const listed = await listAllFacebookConversations();
+    const conversations = listed.conversations;
+    facebookHistorySyncJob.totalConversations = conversations.length;
+
+    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
+    const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
+    const persistent = loadPersistentConversationEvents();
+
+    const knownMessageIds = new Set(
+      [...live, ...existingHistory, ...persistent]
+        .map(entry => safeString(entry?.message_id || entry?.meta_message_id))
+        .filter(Boolean)
+    );
+
+    const historyByKey = new Map();
+    for (const entry of existingHistory) {
+      historyByKey.set(conversationLogDedupeKey(entry), entry);
+    }
+
+    const states = loadConversationStatesAdmin();
+
+    for (let start = 0; start < conversations.length; start += 4) {
+      const batch = conversations.slice(start, start + 4);
+      const results = await Promise.all(
+        batch.map(async conversation => {
+          try {
+            const messages = await getAllFacebookConversationMessages(conversation.id);
+            const customerId = facebookConversationCustomerId(messages);
+            if (!customerId) {
+              return { conversation, messages, error: 'Client Facebook non identifiable.' };
+            }
+            const profile = await getFacebookHistoryProfile(customerId);
+            return { conversation, messages, customerId, profile };
+          } catch (error) {
+            return { conversation, messages: [], error: error.message };
+          }
+        })
+      );
+
+      for (const result of results) {
+        facebookHistorySyncJob.processedConversations += 1;
+
+        if (result.error) {
+          facebookHistorySyncJob.errorCount += 1;
+          facebookHistorySyncJob.lastError = result.error;
+          continue;
+        }
+
+        const customerId = result.customerId;
+        const contact = `facebook:${customerId}`;
+        const ordered = [...result.messages].sort(
+          (a, b) => new Date(a?.created_time || 0) - new Date(b?.created_time || 0)
+        );
+
+        facebookHistorySyncJob.messageIdsDiscovered += ordered.length;
+        let conversationAdded = false;
+        let earliestTime = '';
+        let latestInboundTime = '';
+        let lastInboundType = '';
+
+        for (const message of ordered) {
+          const messageId = safeString(message?.id);
+          if (messageId && knownMessageIds.has(messageId)) {
+            facebookHistorySyncJob.skippedMessages += 1;
+            continue;
+          }
+
+          const fromId = safeString(message?.from?.id);
+          const directionKnown = Boolean(fromId);
+          const outgoing = directionKnown && fromId === FACEBOOK_PAGE_ID;
+          const text = safeString(message?.message);
+          const time =
+            safeString(message?.created_time) ||
+            safeString(result.conversation?.updatedTime) ||
+            startedAt;
+
+          const storedAttachments = message?.meta_content_available === false
+            ? []
+            : await persistFacebookHistoryAttachments(message);
+
+          earliestTime = earliestTime ? minIso(earliestTime, time) : time;
+          if (directionKnown && !outgoing) {
+            latestInboundTime = latestInboundTime
+              ? maxIso(latestInboundTime, time)
+              : time;
+            lastInboundType = text ? 'text' : (storedAttachments[0]?.type || 'history');
+          }
+
+          const entry = {
+            message_id: messageId || null,
+            meta_message_id: messageId || null,
+            contact,
+            external_contact: customerId,
+            channel: 'facebook',
+            action: 'history_import',
+            source: !directionKnown
+              ? 'facebook_history_meta_limited'
+              : outgoing
+                ? 'facebook_meta_history'
+                : 'facebook_history_import',
+            direction: !directionKnown
+              ? 'unknown'
+              : outgoing
+                ? 'outgoing'
+                : 'incoming',
+            sender_kind: !directionKnown ? 'system' : (outgoing ? 'meta' : 'client'),
+            history_import: true,
+            facebook_conversation_id: safeString(result.conversation?.id),
+            facebook_conversation_link: safeString(result.conversation?.link),
+            meta_content_available: message?.meta_content_available !== false,
+            meta_detail_limit_reason: safeString(message?.meta_detail_limit_reason),
+            reply_to: message?.reply_to || undefined,
+            attachments: storedAttachments,
+            attachment_direction: directionKnown ? (outgoing ? 'outgoing' : 'incoming') : 'unknown',
+            raw_attachments: message?.attachments || undefined,
+            time
+          };
+
+          if (message?.meta_content_available === false) {
+            facebookHistorySyncJob.contentUnavailableMessages += 1;
+          }
+
+          if (!directionKnown) {
+            entry.type = 'history';
+            entry.message_text = text || undefined;
+          } else if (outgoing) {
+            entry.reply = text;
+            entry.reply_sent = true;
+            entry.facebook_response_owner = 'meta_or_business_suite';
+          } else {
+            entry.incoming = text;
+            entry.reply_sent = false;
+            entry.type = text ? 'text' : (storedAttachments[0]?.type || 'history');
+          }
+
+          historyByKey.set(conversationLogDedupeKey(entry), entry);
+          if (messageId) knownMessageIds.add(messageId);
+          conversationAdded = true;
+          facebookHistorySyncJob.importedMessages += 1;
+        }
+
+        const current = states[contact] && typeof states[contact] === 'object'
+          ? states[contact]
+          : {};
+
+        states[contact] = {
+          ...current,
+          channel: 'facebook',
+          externalContact: customerId,
+          facebookPsid: customerId,
+          facebookPageId: FACEBOOK_PAGE_ID,
+          profileName: safeString(result.profile?.name || current.profileName),
+          profilePicture: safeString(result.profile?.profilePicture || current.profilePicture),
+          profileUpdatedAt:
+            result.profile && Object.keys(result.profile).length
+              ? startedAt
+              : safeString(current.profileUpdatedAt),
+          firstSeenAt: current.firstSeenAt
+            ? (earliestTime ? minIso(current.firstSeenAt, earliestTime) : current.firstSeenAt)
+            : (earliestTime || safeString(result.conversation?.updatedTime) || startedAt),
+          lastCustomerAt: latestInboundTime
+            ? maxIso(current.lastCustomerAt, latestInboundTime)
+            : safeString(current.lastCustomerAt),
+          lastInboundType: lastInboundType || safeString(current.lastInboundType),
+          unreadCount: Number(current.unreadCount || 0),
+          facebookResponseMode: 'meta_business_ai',
+          mondecoAiEnabled: false,
+          aiModePreference: 'meta',
+          aiModeChoicePending: false,
+          facebookHistoryImported: true,
+          facebookHistoryConversationId: safeString(result.conversation?.id),
+          facebookConversationLink: safeString(result.conversation?.link),
+          facebookHistoryUpdatedTime: safeString(result.conversation?.updatedTime),
+          facebookHistoryImportedAt: startedAt
+        };
+
+        if (conversationAdded) facebookHistorySyncJob.importedConversations += 1;
+      }
+
+      const shouldCheckpoint =
+        facebookHistorySyncJob.processedConversations % 20 === 0 ||
+        facebookHistorySyncJob.processedConversations >= conversations.length;
+
+      if (shouldCheckpoint) {
+        const historyList = [...historyByKey.values()].sort(
+          (a, b) => new Date(a?.time || 0) - new Date(b?.time || 0)
+        );
+        writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
+        saveConversationStatesAdmin(states);
+      }
+
+      saveFacebookHistorySyncState({
+        ...facebookHistorySyncJob,
+        lastProgressAt: new Date().toISOString()
+      });
+    }
+
+    facebookHistorySyncJob.running = false;
+    facebookHistorySyncJob.completedAt = new Date().toISOString();
+    saveFacebookHistorySyncState(facebookHistorySyncJob);
+  } catch (error) {
+    facebookHistorySyncJob.running = false;
+    facebookHistorySyncJob.completedAt = new Date().toISOString();
+    facebookHistorySyncJob.errorCount += 1;
+    facebookHistorySyncJob.lastError = error.message;
+    saveFacebookHistorySyncState(facebookHistorySyncJob);
+    console.error('❌ Synchronisation historique Facebook :', error);
+  }
+}
+
+router.get('/api/facebook-history/status', requireAuth, (req, res) => {
+  const persisted = loadFacebookHistorySyncState();
+  return res.json({
+    configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    ...persisted,
+    ...(facebookHistorySyncJob.running ? facebookHistorySyncJob : {})
+  });
+});
+
+router.post(
+  '/api/facebook-history/sync',
+  requireAdminOrCommercialManager,
+  (req, res) => {
+    if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+      return res.status(400).json({
+        error: 'Facebook Messenger n’est pas complètement configuré dans Railway.'
+      });
+    }
+
+    if (facebookHistorySyncJob.running) {
+      return res.status(202).json({
+        success: true,
+        alreadyRunning: true,
+        job: facebookHistorySyncJob
+      });
+    }
+
+    setImmediate(() => {
+      runFacebookHistorySync().catch(error => {
+        console.error('❌ Job historique Facebook :', error);
+      });
+    });
+
+    return res.status(202).json({ success: true, started: true });
+  }
+);
+
 function conversationEntryPreview(entry) {
   const attachments = Array.isArray(entry?.attachments) ? entry.attachments.filter(Boolean) : [];
   const source = safeString(entry?.source);
   const commercialName = safeString(entry?.commercial_user_name || entry?.actor_name);
 
   if (entry?.reply_sent && safeString(entry?.reply)) {
+    if (safeString(entry?.channel) === 'facebook' || source.startsWith('facebook_meta')) {
+      return `🔵 Facebook / Meta : ${safeString(entry.reply)}`.slice(0, 220);
+    }
     if (source.startsWith('commercial')) {
       return `${commercialName ? `👤 ${commercialName} : ` : '👤 Équipe MONDECO : '}${safeString(entry.reply)}`.slice(0, 220);
     }
@@ -11816,7 +12537,17 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       const entries = byContact[contact].sort(
         (a, b) => new Date(a.time || 0) - new Date(b.time || 0)
       );
-      const last = entries[entries.length - 1];
+      const lastActivity = entries[entries.length - 1];
+      const last = [...entries].reverse().find(item => {
+        const attachments = Array.isArray(item?.attachments) ? item.attachments.filter(Boolean) : [];
+        const mediaType = safeString(item?.attachment_type || item?.type).toLowerCase();
+        return Boolean(
+          safeString(item?.incoming) ||
+          safeString(item?.reply) ||
+          attachments.length ||
+          ['image','video','audio','file','document','attachment'].includes(mediaType)
+        );
+      }) || lastActivity;
       const state = states[contact] || {};
 
       return {
@@ -11830,24 +12561,32 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         lastSource: safeString(last?.source),
         lastMessagePreview: conversationEntryPreview(last),
         lastMessageId: safeString(last?.message_id || last?.meta_message_id),
-        channel:
-          safeString(
-            last?.channel ||
-            state?.channel ||
-            (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')
-          ).toLowerCase() === 'instagram'
-            ? 'instagram'
-            : 'whatsapp',
+        channel: (() => {
+          const raw = safeString(last?.channel || state?.channel).toLowerCase();
+          if (raw === 'instagram' || contact.startsWith('instagram:')) return 'instagram';
+          if (raw === 'facebook' || contact.startsWith('facebook:')) return 'facebook';
+          return 'whatsapp';
+        })(),
         externalContact:
           safeString(
             last?.external_contact ||
             state?.externalContact ||
             (contact.startsWith('instagram:')
               ? contact.slice('instagram:'.length)
-              : contact)
+              : contact.startsWith('facebook:')
+                ? contact.slice('facebook:'.length)
+                : contact)
           ),
         instagramUsername:
           safeString(state?.instagramUsername),
+        facebookPsid:
+          safeString(state?.facebookPsid),
+        facebookResponseMode:
+          safeString(state?.facebookResponseMode),
+        facebookConversationLink:
+          safeString(state?.facebookConversationLink),
+        mondecoAiEnabled:
+          state?.mondecoAiEnabled !== false,
         profilePicture:
           safeString(state?.profilePicture),
         aiModePreference:
@@ -11906,6 +12645,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       all: countBase.filter(item => !item.resolved).length,
       whatsapp: countBase.filter(item => !item.resolved && item.channel === 'whatsapp').length,
       instagram: countBase.filter(item => !item.resolved && item.channel === 'instagram').length,
+      facebook: countBase.filter(item => !item.resolved && item.channel === 'facebook').length,
       unread: countBase.filter(item => !item.resolved && Number(item.unreadCount || 0) > 0).length,
       priority: countBase.filter(item => !item.resolved && item.priority).length,
       commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
@@ -11919,7 +12659,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       visibleConversations = visibleConversations.filter(item => item.resolved === true);
     } else {
       visibleConversations = visibleConversations.filter(item => !item.resolved);
-      if (requestedFilter === 'whatsapp' || requestedFilter === 'instagram') {
+      if (['whatsapp','instagram','facebook'].includes(requestedFilter)) {
         visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
       } else if (requestedFilter === 'unread') {
         visibleConversations = visibleConversations.filter(item => Number(item.unreadCount || 0) > 0);
@@ -11942,6 +12682,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
           item.contact,
           item.externalContact,
           item.instagramUsername,
+          item.facebookPsid,
           item.profileName,
           item.assignedTo,
           item.activeProductName,
@@ -12205,6 +12946,12 @@ router.post(
         req.params.contact
       );
 
+    const existingState = loadConversationStatesAdmin()?.[contact] || {};
+    const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
+    if(existingChannel === 'facebook'){
+      return res.status(409).json({ error:'Facebook est en mode supervision : les réponses restent gérées par Meta Business AI / Business Suite.' });
+    }
+
     const requestedAssignedTo =
       safeString(
         req.body?.assignedTo
@@ -12277,6 +13024,12 @@ router.post(
       safeString(
         req.params.contact
       );
+
+    const existingState = loadConversationStatesAdmin()?.[contact] || {};
+    const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
+    if(existingChannel === 'facebook'){
+      return res.status(409).json({ error:'L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.' });
+    }
 
     const state =
       updateConversationStateAdmin(
@@ -12360,12 +13113,12 @@ router.get(
         .map(item => ({
           ...item,
           read: Array.isArray(item?.readBy) && item.readBy.includes(userKey),
-          channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+          channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : safeString(item?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
           assignedTo: safeString(states[item?.contact]?.assignedTo || item?.assignedTo),
           kind: item?.urgent ? 'commercial' : 'message'
         }));
 
-      if (filter === 'instagram' || filter === 'whatsapp') {
+      if (['instagram','whatsapp','facebook'].includes(filter)) {
         items = items.filter(item => item.channel === filter);
       } else if (filter === 'commercial') {
         items = items.filter(item => item.urgent === true);
