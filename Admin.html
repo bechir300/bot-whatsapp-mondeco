@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.19.6 — Inbox commerciale Instagram + WhatsApp
+   MONDECO V6.20 — Inbox commerciale WhatsApp + Instagram + Facebook
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4519,7 +4519,7 @@ tbody tr:hover{
 
         <div class="dashboard-hero-actions">
           <span id="homeAiBadge" class="status-pill">IA activée</span>
-          <span class="premium-badge"><span class="dot"></span> WhatsApp + Instagram</span>
+          <span class="premium-badge"><span class="dot"></span> WhatsApp + Instagram + Facebook</span>
         </div>
       </div>
 
@@ -4701,13 +4701,14 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.19.6</span>
+                <span class="inbox-version">V6.20</span>
               </div>
-              <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
+              <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
 
             <div class="inbox-head-actions">
               <button class="icon-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser les anciennes conversations Instagram" style="display:none">IG↻</button>
+              <button class="icon-btn" id="syncFacebookHistoryBtn" type="button" title="Synchroniser les anciennes conversations Facebook" style="display:none">FB↻</button>
               <button class="icon-btn" id="enableNotificationsBtn" type="button" title="Voir tous les nouveaux messages">
                 🔔
                 <span id="notificationHeaderCount" class="notification-count hidden">0</span>
@@ -4716,13 +4717,14 @@ tbody tr:hover{
             </div>
           </div>
           <div id="instagramHistorySyncStatus" class="inbox-mini-sub" style="display:none;margin-top:5px"></div>
+          <div id="facebookHistorySyncStatus" class="inbox-mini-sub" style="display:none;margin-top:3px"></div>
 
           <div class="inbox-search-wrap">
             <input
               id="conversationSearch"
               class="inbox-search"
               type="search"
-              placeholder="Rechercher client, WhatsApp, Instagram, publicité..."
+              placeholder="Rechercher client, WhatsApp, Instagram, Facebook, publicité..."
             >
           </div>
 
@@ -4735,6 +4737,9 @@ tbody tr:hover{
             </button>
             <button class="inbox-filter" data-filter="instagram">
               Instagram <span id="filterCountInstagram">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="facebook">
+              Facebook <span id="filterCountFacebook">0</span>
             </button>
             <button class="inbox-filter" data-filter="unread">
               Non lus <span id="filterCountUnread">0</span>
@@ -4800,6 +4805,7 @@ tbody tr:hover{
           <div class="notification-panel-filters">
             <button class="notification-filter active" data-notification-filter="all">Tous</button>
             <button class="notification-filter" data-notification-filter="instagram">Instagram</button>
+            <button class="notification-filter" data-notification-filter="facebook">Facebook</button>
             <button class="notification-filter" data-notification-filter="whatsapp">WhatsApp</button>
             <button class="notification-filter" data-notification-filter="commercial">Commercial requis</button>
           </div>
@@ -5707,7 +5713,7 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             <div class="manager-form-row"><div class="field"><label>Date</label><input id="scheduleDate" type="date" required></div><div class="field"><label>SLA (minutes)</label><input id="scheduleSla" type="number" min="1" max="120" value="5" required></div></div>
             <div class="manager-form-row"><div class="field"><label>Début</label><input id="scheduleStart" type="time" value="09:00" required></div><div class="field"><label>Fin</label><input id="scheduleEnd" type="time" value="17:00" required></div></div>
             <div class="manager-form-row"><div class="field"><label>Début pause</label><input id="scheduleBreakStart" type="time" value="13:00"></div><div class="field"><label>Fin pause</label><input id="scheduleBreakEnd" type="time" value="14:00"></div></div>
-            <div class="field"><label>Plateformes</label><div class="channel-checks"><label><input id="scheduleWhatsApp" type="checkbox" checked> WhatsApp</label><label><input id="scheduleInstagram" type="checkbox" checked> Instagram</label></div></div>
+            <div class="field"><label>Plateformes</label><div class="channel-checks"><label><input id="scheduleWhatsApp" type="checkbox" checked> WhatsApp</label><label><input id="scheduleInstagram" type="checkbox" checked> Instagram</label><label><input id="scheduleFacebook" type="checkbox"> Facebook</label></div></div>
             <div class="field"><label>Mission</label><textarea id="scheduleMission" rows="3" placeholder="Ex. Traiter les demandes salons et reprendre tous les transferts IA."></textarea></div>
             <button class="btn primary" type="submit">Ajouter au planning</button>
           </form>
@@ -5718,7 +5724,7 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
           <div class="team-card-head"><div><h3>Tâches commerciales</h3><p>Créez des missions avec heure de début, échéance et plateforme.</p></div></div>
           <form id="taskForm" class="manager-form">
             <div class="field"><label>Commercial</label><select id="taskUser" required></select></div>
-            <div class="manager-form-row"><div class="field"><label>Date</label><input id="taskDate" type="date" required></div><div class="field"><label>Plateforme</label><select id="taskChannel"><option value="both">WhatsApp + Instagram</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></div></div>
+            <div class="manager-form-row"><div class="field"><label>Date</label><input id="taskDate" type="date" required></div><div class="field"><label>Plateforme</label><select id="taskChannel"><option value="both">WhatsApp + Instagram</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option></select></div></div>
             <div class="manager-form-row"><div class="field"><label>Début</label><input id="taskStart" type="time"></div><div class="field"><label>À terminer avant</label><input id="taskDue" type="time"></div></div>
             <div class="field"><label>Tâche</label><input id="taskTitle" required placeholder="Ex. Reprendre toutes les demandes chambres enfants"></div>
             <div class="field"><label>Détails</label><textarea id="taskDetails" rows="3"></textarea></div>
@@ -6250,6 +6256,7 @@ function showPage(name){
       loadQuickReplies()
     ]);
     refreshInstagramHistoryStatus({ autoStart: true });
+    refreshFacebookHistoryStatus({ autoStart: true });
   }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
@@ -6914,6 +6921,9 @@ const notificationSeenIds = new Set();
 let instagramHistoryAutoSyncChecked = false;
 let instagramHistoryStatusTimer = null;
 let instagramHistoryWasRunning = false;
+let facebookHistoryAutoSyncChecked = false;
+let facebookHistoryStatusTimer = null;
+let facebookHistoryWasRunning = false;
 let conversationListTotal = 0;
 let conversationListHasMore = false;
 let conversationSearchTimer = null;
@@ -7068,6 +7078,110 @@ async function startInstagramHistorySync({ silent = false } = {}){
 }
 
 
+function renderFacebookHistoryStatus(status = {}){
+  const button = document.getElementById('syncFacebookHistoryBtn');
+  const label = document.getElementById('facebookHistorySyncStatus');
+  if(!button || !label) return;
+
+  const allowed = canManageInstagramHistory();
+  button.style.display = allowed ? '' : 'none';
+  label.style.display = allowed ? '' : 'none';
+  if(!allowed) return;
+
+  if(!status.configured){
+    button.disabled = true;
+    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_PAGE_ACCESS_TOKEN dans Railway.';
+    return;
+  }
+
+  if(status.running){
+    button.disabled = true;
+    const done = Number(status.processedConversations || 0);
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    label.textContent = `Facebook : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+    return;
+  }
+
+  button.disabled = false;
+  if(status.completedAt){
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
+    const errors = Number(status.errorCount || 0);
+    label.textContent = `Facebook : historique synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+  }else{
+    label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
+  }
+}
+
+async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
+  if(!canManageInstagramHistory()){
+    renderFacebookHistoryStatus({});
+    return;
+  }
+
+  try{
+    const status = await apiFetch(`${API}/facebook-history/status`);
+    renderFacebookHistoryStatus(status);
+    const running = Boolean(status.running);
+
+    if(
+      autoStart &&
+      !facebookHistoryAutoSyncChecked &&
+      status.configured &&
+      !running &&
+      !status.completedAt
+    ){
+      facebookHistoryAutoSyncChecked = true;
+      await startFacebookHistorySync({ silent: true });
+      return;
+    }
+
+    if(facebookHistoryWasRunning && !running){
+      await loadConversations();
+    }
+    facebookHistoryWasRunning = running;
+
+    if(facebookHistoryStatusTimer){
+      clearTimeout(facebookHistoryStatusTimer);
+      facebookHistoryStatusTimer = null;
+    }
+    if(running){
+      facebookHistoryStatusTimer = setTimeout(
+        () => refreshFacebookHistoryStatus(),
+        1800
+      );
+    }
+  }catch(error){
+    const label = document.getElementById('facebookHistorySyncStatus');
+    if(label && canManageInstagramHistory()){
+      label.style.display = '';
+      label.textContent = `Facebook : impossible de lire l’état de synchronisation (${error.message}).`;
+    }
+  }
+}
+
+async function startFacebookHistorySync({ silent = false } = {}){
+  if(!canManageInstagramHistory()) return;
+  const button = document.getElementById('syncFacebookHistoryBtn');
+  if(button) button.disabled = true;
+
+  try{
+    await apiFetch(`${API}/facebook-history/sync`, { method:'POST' });
+    facebookHistoryWasRunning = true;
+    await refreshFacebookHistoryStatus();
+  }catch(error){
+    if(!silent){
+      alert('Synchronisation Facebook impossible : ' + error.message);
+    }
+    await refreshFacebookHistoryStatus();
+  }
+}
+
+
 async function loadConversations({ append = false } = {}){
   try{
     const search = String(document.getElementById('conversationSearch')?.value || '').trim();
@@ -7124,7 +7238,14 @@ function actionLabel(action){
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
     ai_mode_choice:'Choix IA / Commercial',
-    history_import:'Historique Instagram',
+    history_import:'Historique importé',
+    facebook_inbound_observed:'Message Facebook reçu',
+    facebook_outbound_observed:'Réponse Facebook / Meta',
+    facebook_postback_observed:'Interaction Facebook',
+    facebook_message_edit:'Message Facebook modifié',
+    facebook_message_read:'Lu sur Facebook',
+    facebook_message_delivery:'Livré sur Facebook',
+    facebook_message_reaction:'Réaction Facebook',
     product_image_sent:'Image produit envoyée',
     product_image_unavailable:'Image produit indisponible',
     product_image_need_name:'Nom produit demandé',
@@ -7199,13 +7320,21 @@ function conversationChannel(item){
       .trim()
       .toLowerCase();
 
-  if(explicit === 'instagram'){
-    return 'instagram';
+  if(['instagram','facebook','whatsapp'].includes(explicit)){
+    return explicit;
   }
 
-  return String(item?.contact || '').startsWith('instagram:')
-    ? 'instagram'
-    : 'whatsapp';
+  const contact=String(item?.contact || '');
+  if(contact.startsWith('instagram:')) return 'instagram';
+  if(contact.startsWith('facebook:')) return 'facebook';
+  return 'whatsapp';
+}
+
+function channelDisplayName(channel){
+  const value=String(channel||'').toLowerCase();
+  if(value==='instagram') return 'Instagram';
+  if(value==='facebook') return 'Facebook';
+  return 'WhatsApp';
 }
 
 function conversationExternalContact(item){
@@ -7219,46 +7348,29 @@ function conversationExternalContact(item){
     return explicit;
   }
 
-  const contact =
-    String(item?.contact || '');
-
-  return contact.startsWith('instagram:')
-    ? contact.slice('instagram:'.length)
-    : contact;
+  const contact = String(item?.contact || '');
+  if(contact.startsWith('instagram:')) return contact.slice('instagram:'.length);
+  if(contact.startsWith('facebook:')) return contact.slice('facebook:'.length);
+  return contact;
 }
 
 function conversationDisplayName(item){
-  const channel =
-    conversationChannel(item);
-
-  const username =
-    String(
-      item?.instagramUsername ||
-      ''
-    ).trim();
-
-  const profile =
-    String(
-      item?.profileName ||
-      ''
-    ).trim();
+  const channel = conversationChannel(item);
+  const username = String(item?.instagramUsername || '').trim();
+  const profile = String(item?.profileName || '').trim();
 
   if(channel === 'instagram' && username){
-    return username.startsWith('@')
-      ? username
-      : `@${username}`;
+    return username.startsWith('@') ? username : `@${username}`;
   }
 
   if(profile){
     return profile;
   }
 
-  const external =
-    conversationExternalContact(item);
-
-  return channel === 'instagram'
-    ? `Instagram • ${external}`
-    : `+${external}`;
+  const external = conversationExternalContact(item);
+  if(channel === 'instagram') return `Instagram • ${external}`;
+  if(channel === 'facebook') return `Facebook • ${external}`;
+  return `+${external}`;
 }
 
 function conversationInitials(item){
@@ -7338,6 +7450,13 @@ function conversationMatchesFilter(item){
 
   if(
     conversationFilter ===
+    'facebook'
+  ){
+    return conversationChannel(item) === 'facebook';
+  }
+
+  if(
+    conversationFilter ===
     'unread'
   ){
     return Number(
@@ -7400,6 +7519,11 @@ function updateConversationFilterCounts(){
         item =>
           conversationChannel(item) === 'instagram'
       ).length,
+    facebook:
+      open.filter(
+        item =>
+          conversationChannel(item) === 'facebook'
+      ).length,
     unread:
       open.filter(
         item =>
@@ -7445,6 +7569,7 @@ function updateConversationFilterCounts(){
     filterCountAll:'all',
     filterCountWhatsApp:'whatsapp',
     filterCountInstagram:'instagram',
+    filterCountFacebook:'facebook',
     filterCountUnread:'unread',
     filterCountPriority:'priority',
     filterCountCommercial:'commercial',
@@ -7511,18 +7636,23 @@ function liveSlaForConversation(item){
 
 function conversationListTags(item){
   const channel=conversationChannel(item);
-  const paused=Boolean(item.humanPaused||item.manualTakeover||item.commercialAttention||item.imageNeedsCommercial);
+  const facebook=channel==='facebook';
+  const paused=!facebook&&Boolean(item.humanPaused||item.manualTakeover||item.commercialAttention||item.imageNeedsCommercial);
   const liveSla=liveSlaForConversation(item);
   const sourceContext=item.sourceContext||null;
-  const line2=`<span class="inbox-item-platform-row"><span>${channel==='instagram'?'Instagram':'WhatsApp'}</span>${(item.commercialAttention||item.imageNeedsCommercial)?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
+  const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
   const status=[];
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
-  status.push(paused?'<span class="ai-paused">🤖 IA en pause</span>':item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
+  if(facebook){
+    status.push('<span class="ai-active">✨ IA Meta / Business Suite</span>');
+  }else{
+    status.push(paused?'<span class="ai-paused">🤖 IA en pause</span>':item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
+  }
   if(liveSla) status.push(`<span class="sla-human ${liveSla.status}">${escapeHtml(formatSlaHuman(liveSla.remainingMs))}</span>`);
   const sourceLabel=item.hasAdReferral
     ? `📣 ${item.adProductHint||item.adHeadline||'Publicité Meta'}`
     : sourceContext&&sourceContext.type&&sourceContext.type!=='direct'
-      ? `${sourceContext.type==='story'?'⭕':sourceContext.type==='reel'?'🎬':sourceContext.type==='share'?'🔗':'💬'} ${sourceContext.label||'Source Instagram'}`
+      ? `${sourceContext.type==='story'?'⭕':sourceContext.type==='reel'?'🎬':sourceContext.type==='share'?'🔗':'💬'} ${sourceContext.label||`Source ${channelDisplayName(channel)}`}`
       : '';
   return `${line2}<span class="inbox-item-status-row">${status.join('')}</span>${sourceLabel?`<span class="inbox-item-source-row">${escapeHtml(sourceLabel)}</span>`:''}`;
 }
@@ -7649,10 +7779,10 @@ function renderConversationHeader(
       contact,
       channel:
         state.channel ||
-        (String(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+        (String(contact).startsWith('instagram:') ? 'instagram' : String(contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
       externalContact:
         state.externalContact ||
-        (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : contact),
+        (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : String(contact).startsWith('facebook:') ? String(contact).slice('facebook:'.length) : contact),
       instagramUsername:
         state.instagramUsername ||
         '',
@@ -7664,106 +7794,72 @@ function renderConversationHeader(
         ''
     };
 
-  const header =
-    document.getElementById(
-      'inboxConversationHeader'
-    );
+  const header = document.getElementById('inboxConversationHeader');
+  if(!header) return;
 
-  if(!header){
-    return;
-  }
-
-  const name =
-    conversationDisplayName(
-      item
-    );
-
-  const paused =
-    Boolean(
-      state.manualTakeover ||
-      state.humanPaused ||
-      state.commercialAttention ||
-      state.imageNeedsCommercial
-    );
+  const name=conversationDisplayName(item);
+  const channel=conversationChannel(item);
+  const facebook=channel==='facebook';
+  const paused=!facebook && Boolean(
+    state.manualTakeover ||
+    state.humanPaused ||
+    state.commercialAttention ||
+    state.imageNeedsCommercial
+  );
 
   const slaDueMs = Date.parse(state?.sla?.dueAt || '');
   const selectedSlaRemaining = Number.isFinite(slaDueMs) && ['pending','late'].includes(String(state?.sla?.status || ''))
     ? slaDueMs - Date.now()
     : null;
 
+  const external=conversationExternalContact(item);
+  const channelIdentity=channel==='instagram'
+    ? `Instagram • ${escapeHtml(external)}`
+    : channel==='facebook'
+      ? `Facebook Messenger • ${escapeHtml(external)}`
+      : `WhatsApp • +${escapeHtml(external)}`;
+
+  const stateText=facebook
+    ? '✨ FACEBOOK EN SUPERVISION • Réponses gérées par Meta Business AI / Business Suite'
+    : paused
+      ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
+      : '🤖 IA ACTIVE • Réponses automatiques';
+
   header.innerHTML = `
     <div class="inbox-header-left">
-      <button
-        class="icon-btn inbox-mobile-back"
-        type="button"
-        onclick="backToInboxList()"
-      >←</button>
-
+      <button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()">←</button>
       ${conversationAvatarHtml(item, state.cameFromAd || state.adReferral ? 'ad' : '')}
 
       <div class="inbox-header-identity">
-        <div class="inbox-header-name">
-          ${escapeHtml(name)}
-        </div>
+        <div class="inbox-header-name">${escapeHtml(name)}</div>
         <div class="inbox-header-sub">
-          ${conversationChannel(item) === 'instagram'
-            ? `Instagram • ${escapeHtml(conversationExternalContact(item))}`
-            : `WhatsApp • +${escapeHtml(conversationExternalContact(item))}`}
+          ${channelIdentity}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
-        <div class="inbox-header-state ${paused ? 'human' : 'ai'}">
-          ${paused ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE' : '🤖 IA ACTIVE • Réponses automatiques'}
+        <div class="inbox-header-state ${facebook ? 'ai' : paused ? 'human' : 'ai'}">
+          ${stateText}
           ${Number.isFinite(selectedSlaRemaining) ? ` • ${escapeHtml(formatSlaHuman(selectedSlaRemaining))}` : ''}
         </div>
-
       </div>
     </div>
 
     <div class="inbox-header-actions">
-      <button
-        class="inbox-header-btn ${state.priority ? 'active' : ''}"
-        type="button"
-        onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})"
-        title="Priorité"
-      >
+      <button class="inbox-header-btn ${state.priority ? 'active' : ''}" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})" title="Priorité">
         ${state.priority ? '★ Priorité' : '☆ Priorité'}
       </button>
 
-      <button
-        class="inbox-header-btn"
-        type="button"
-        onclick="assignConversation('${escapeHtml(contact)}')"
-      >
+      <button class="inbox-header-btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">
         👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}
       </button>
 
-      ${
-        paused
-          ? `
-            <button
-              class="inbox-header-btn ai"
-              type="button"
-              onclick="reactivateConversationAI('${escapeHtml(contact)}')"
-            >
-              🤖 Réactiver IA
-            </button>
-          `
-          : `
-            <button
-              class="inbox-header-btn takeover"
-              type="button"
-              onclick="takeOverConversation('${escapeHtml(contact)}')"
-            >
-              👤 Prendre en main
-            </button>
-          `
+      ${facebook
+        ? `<span class="inbox-header-btn ai" style="cursor:default">✨ IA Meta</span>`
+        : paused
+          ? `<button class="inbox-header-btn ai" type="button" onclick="reactivateConversationAI('${escapeHtml(contact)}')">🤖 Réactiver IA</button>`
+          : `<button class="inbox-header-btn takeover" type="button" onclick="takeOverConversation('${escapeHtml(contact)}')">👤 Prendre en main</button>`
       }
 
-      <button
-        class="inbox-header-btn"
-        type="button"
-        onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})"
-      >
+      <button class="inbox-header-btn" type="button" onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})">
         ${state.resolved ? '↩ Réouvrir' : '✓ Terminer'}
       </button>
     </div>
@@ -7868,10 +7964,17 @@ function renderThreadMessage(
   const explicitAttachmentDirection =
     String(entry?.attachment_direction || '').toLowerCase();
 
+  const entryChannel=conversationChannel(entry || {});
+  const facebookOutbound = entryChannel === 'facebook' && (
+    String(entry?.sender_kind || '').toLowerCase() === 'meta' ||
+    String(entry?.source || '').startsWith('facebook_meta') ||
+    String(entry?.action || '') === 'facebook_outbound_observed'
+  );
+
   const inferredAttachmentDirection =
     explicitAttachmentDirection ||
     (
-      String(entry?.source || '').startsWith('commercial')
+      String(entry?.source || '').startsWith('commercial') || facebookOutbound
         ? 'outgoing'
         : 'incoming'
     );
@@ -7931,24 +8034,30 @@ function renderThreadMessage(
   const label =
     type === 'incoming'
       ? 'Client'
-      : commercial
-        ? (
-            commercialName
-              ? `${commercialRoleLabel} MONDECO • ${commercialName}${directInstagram ? ' • Instagram' : ''}`
-              : `${commercialRoleLabel} MONDECO${directInstagram ? ' • Instagram' : ''}`
-          )
-        : isRoutingMessage
-          ? '🤖 Assistant IA MONDECO • Choix de prise en charge'
-          : '🤖 IA MONDECO • Réponse automatique';
+      : facebookOutbound
+        ? '🔵 Réponse Facebook / Meta'
+        : commercial
+          ? (
+              commercialName
+                ? `${commercialRoleLabel} MONDECO • ${commercialName}${directInstagram ? ' • Instagram' : ''}`
+                : `${commercialRoleLabel} MONDECO${directInstagram ? ' • Instagram' : ''}`
+            )
+          : isRoutingMessage
+            ? '🤖 Assistant IA MONDECO • Choix de prise en charge'
+            : '🤖 IA MONDECO • Réponse automatique';
+
+  const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
 
   return `
-    <div class="inbox-message-row ${type === 'incoming' ? 'incoming' : commercial ? 'commercial' : 'bot'}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
+    <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
       <div class="inbox-message-wrap">
         <div class="inbox-message-label">
           ${label}
-          ${type !== 'incoming' && !commercial
+          ${type !== 'incoming' && !commercial && !facebookOutbound
             ? '<span class="ai-answer-badge">🤖 IA</span>'
-            : ''}
+            : facebookOutbound
+              ? '<span class="ai-answer-badge">Meta</span>'
+              : ''}
         </div>
         ${
           text
@@ -7978,8 +8087,25 @@ function renderThreadMessage(
   `;
 }
 
+
+function renderThreadSystemEvent(entry){
+  const action=String(entry?.action||'');
+  if(!action.startsWith('facebook_')) return '';
+  let label='';
+  if(action==='facebook_message_delivery') label='✓ Message livré sur Facebook';
+  else if(action==='facebook_message_read') label='✓✓ Message lu sur Facebook';
+  else if(action==='facebook_message_reaction'){
+    const reaction=String(entry?.reaction||'').trim();
+    const removed=String(entry?.reaction_action||'').toLowerCase()==='remove';
+    label=removed ? `Réaction retirée${reaction?` : ${reaction}`:''}` : `Réaction Facebook${reaction?` : ${reaction}`:''}`;
+  }else return '';
+  return `<div class="inbox-history-limit" style="max-width:520px;margin:6px auto;text-align:center">${escapeHtml(label)} • ${escapeHtml(formatDate(entry?.time))}</div>`;
+}
+
 function conversationSourceCardHtml(state = {}){
   const source=state?.sourceContext&&typeof state.sourceContext==='object'?state.sourceContext:null;
+  const sourceChannel=String(state?.channel||'instagram').toLowerCase();
+  const sourcePlatform=channelDisplayName(sourceChannel);
   const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
   if(ad){
     const media=ad.storedMediaUrl||source?.previewUrl||ad.mediaUrl||'';
@@ -8001,11 +8127,11 @@ function conversationSourceCardHtml(state = {}){
   const media=source.previewUrl||source.url||'';
   const mediaType=String(source.previewType||'').toLowerCase();
   const mediaHtml=mediaType==='image'&&media
-    ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Contexte Instagram" loading="lazy">`
+    ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Contexte ${escapeHtml(sourcePlatform)}" loading="lazy">`
     : mediaType==='video'&&media
       ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
       : '';
-  return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||'Source Instagram')}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
+  return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||`Source ${sourcePlatform}`)}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
 }
 
 window.openMediaLightbox=function(url,alt=''){
@@ -8022,7 +8148,9 @@ function historyLimitNotice(entries = []){
     ? entries.filter(entry => entry?.history_import === true && entry?.meta_content_available === false).length
     : 0;
   if(!unavailable) return '';
-  return `<div class="inbox-history-limit">ℹ️ ${unavailable} ancien${unavailable > 1 ? 's' : ''} message${unavailable > 1 ? 's' : ''} Instagram identifié${unavailable > 1 ? 's' : ''} par Meta dans cette portion d’historique, mais le contenu détaillé n’est plus fourni par l’API. Aucune direction ni contenu n’est inventé.</div>`;
+  const channels=[...new Set(entries.filter(entry=>entry?.history_import===true&&entry?.meta_content_available===false).map(entry=>channelDisplayName(conversationChannel(entry))))];
+  const platformText=channels.length===1?channels[0]:'Meta';
+  return `<div class="inbox-history-limit">ℹ️ ${unavailable} ancien${unavailable > 1 ? 's' : ''} message${unavailable > 1 ? 's' : ''} ${escapeHtml(platformText)} identifié${unavailable > 1 ? 's' : ''} par Meta dans cette portion d’historique, mais le contenu détaillé n’est plus fourni par l’API. Aucune direction ni contenu n’est inventé.</div>`;
 }
 
 function buildConversationComposer(
@@ -8032,6 +8160,19 @@ function buildConversationComposer(
     conversations.find(item => item.contact === contact) || { contact };
   const composerChannel =
     conversationChannel(composerItem);
+
+  if(composerChannel === 'facebook'){
+    return `
+      <div class="inbox-composer conversation-composer" id="commercialComposer">
+        <div class="inbox-composer-toolbar">
+          <div class="inbox-composer-title">🔵 Facebook Messenger • supervision</div>
+        </div>
+        <div class="inbox-alert" style="margin:12px 0 4px">
+          Les réponses Facebook restent gérées par Meta Business AI / Business Suite. MONDECO centralise ici l’historique, les médias, les notifications, l’affectation et les tâches, sans envoyer de réponse et sans lancer l’IA MONDECO.
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="inbox-composer conversation-composer" id="commercialComposer">
@@ -8157,169 +8298,109 @@ function renderCustomerPanel(
   contact,
   state
 ){
-  const panel =
-    document.getElementById(
-      'inboxCustomerPanel'
-    );
+  const panel=document.getElementById('inboxCustomerPanel');
+  if(!panel) return;
 
-  if(!panel){
-    return;
-  }
+  const item = conversations.find(entry => entry.contact === contact) || {
+    contact,
+    channel: state.channel || (String(contact).startsWith('instagram:') ? 'instagram' : String(contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
+    externalContact: state.externalContact || (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : String(contact).startsWith('facebook:') ? String(contact).slice('facebook:'.length) : contact),
+    instagramUsername: state.instagramUsername || '',
+    profileName: state.profileName || '',
+    profilePicture: state.profilePicture || ''
+  };
 
-  const item =
-    conversations.find(
-      entry =>
-        entry.contact ===
-        contact
-    ) || {
-      contact,
-      channel:
-        state.channel ||
-        (String(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
-      externalContact:
-        state.externalContact ||
-        (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : contact),
-      instagramUsername:
-        state.instagramUsername ||
-        '',
-      profileName:
-        state.profileName ||
-        '',
-      profilePicture:
-        state.profilePicture ||
-        ''
-    };
+  const name=conversationDisplayName(item);
+  const ad=state.adReferral || null;
+  const channel=conversationChannel(item);
+  const facebook=channel==='facebook';
+  const channelName=channelDisplayName(channel);
+  const sourceContext=state?.sourceContext || null;
+  const source=ad
+    ? `${channelName} • Publicité Meta`
+    : sourceContext?.label
+      ? `${channelName} • ${sourceContext.label}`
+      : channel==='instagram'
+        ? 'Instagram • Message direct'
+        : facebook
+          ? 'Facebook Messenger • Message direct'
+          : 'WhatsApp';
 
-  const name =
-    conversationDisplayName(
-      item
-    );
+  const identifier=channel==='instagram'
+    ? `Instagram • ${escapeHtml(conversationExternalContact(item))}`
+    : facebook
+      ? `Facebook Messenger • ${escapeHtml(conversationExternalContact(item))}`
+      : `+${escapeHtml(conversationExternalContact(item))}`;
 
-  const ad =
-    state.adReferral ||
-    null;
+  const aiStatus=facebook
+    ? '✨ Meta Business AI / Business Suite'
+    : state.manualTakeover || state.humanPaused
+      ? '👤 En pause — Commercial'
+      : state.aiModeChoicePending
+        ? '⏳ Choix du client en attente'
+        : '🤖 Active — Réponse automatique';
 
-  const channel =
-    conversationChannel(item);
-
-  const sourceContext = state?.sourceContext || null;
-  const source =
-    ad
-      ? `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • Publicité Meta`
-      : sourceContext?.label
-        ? `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • ${sourceContext.label}`
-        : (channel === 'instagram' ? 'Instagram • Message direct' : 'WhatsApp');
+  const preference=facebook
+    ? '🔵 Réponses gérées côté Meta'
+    : state.aiModePreference === 'commercial'
+      ? '👤 Commercial'
+      : state.aiModePreference === 'ai'
+        ? '🤖 IA'
+        : state.aiModeChoicePending
+          ? 'En attente du choix'
+          : '—';
 
   panel.innerHTML = `
     <div class="inbox-profile-card">
       ${conversationAvatarHtml(item, ad ? 'ad' : '')}
-      <div class="inbox-profile-name">
-        ${escapeHtml(name)}
-      </div>
-      <div class="inbox-profile-phone">
-        ${channel === 'instagram'
-          ? `Instagram • ${escapeHtml(conversationExternalContact(item))}`
-          : `+${escapeHtml(conversationExternalContact(item))}`}
-      </div>
+      <div class="inbox-profile-name">${escapeHtml(name)}</div>
+      <div class="inbox-profile-phone">${identifier}</div>
     </div>
 
     <div class="inbox-panel-section">
       <div class="inbox-panel-title">Conversation</div>
 
-      <div class="inbox-info-row">
-        <span>Source</span>
-        <strong>${escapeHtml(source)}</strong>
-      </div>
-
-      <div class="inbox-info-row">
-        <span>Affecté à</span>
-        <strong>${escapeHtml(state.assignedTo || 'Non affecté')}</strong>
-      </div>
-
-      <div class="inbox-info-row">
-        <span>Produit actif</span>
-        <strong>${escapeHtml(state.activeProductName || '—')}</strong>
-      </div>
-
-      <div class="inbox-info-row">
-        <span>Statut IA</span>
-        <strong>${state.manualTakeover || state.humanPaused
-          ? '👤 En pause — Commercial'
-          : state.aiModeChoicePending
-            ? '⏳ Choix du client en attente'
-            : '🤖 Active — Réponse automatique'}</strong>
-      </div>
-
-      <div class="inbox-info-row">
-        <span>Préférence client</span>
-        <strong>${state.aiModePreference === 'commercial'
-          ? '👤 Commercial'
-          : state.aiModePreference === 'ai'
-            ? '🤖 IA'
-            : state.aiModeChoicePending
-              ? 'En attente du choix'
-              : '—'}</strong>
-      </div>
-
-      <div class="inbox-info-row">
-        <span>Relances</span>
-        <strong>${Number(state.followUpsSent || 0)}</strong>
-      </div>
+      <div class="inbox-info-row"><span>Source</span><strong>${escapeHtml(source)}</strong></div>
+      <div class="inbox-info-row"><span>Affecté à</span><strong>${escapeHtml(state.assignedTo || 'Non affecté')}</strong></div>
+      <div class="inbox-info-row"><span>Produit actif</span><strong>${escapeHtml(state.activeProductName || '—')}</strong></div>
+      <div class="inbox-info-row"><span>Statut IA</span><strong>${aiStatus}</strong></div>
+      <div class="inbox-info-row"><span>Prise en charge</span><strong>${preference}</strong></div>
+      ${facebook
+        ? `<div class="inbox-info-row"><span>Mode MONDECO</span><strong>Lecture / supervision uniquement</strong></div>`
+        : `<div class="inbox-info-row"><span>Relances</span><strong>${Number(state.followUpsSent || 0)}</strong></div>`}
     </div>
 
-    ${
-      state.commercialAttentionReason ||
-      state.lastImageReason
-        ? `
-          <div class="inbox-panel-section">
-            <div class="inbox-panel-title">Attention</div>
-            <div class="inbox-alert">
-              ${escapeHtml(state.commercialAttentionReason || state.lastImageReason)}
-            </div>
-          </div>
-        `
-        : ''
-    }
+    ${state.commercialAttentionReason || state.lastImageReason
+      ? `<div class="inbox-panel-section"><div class="inbox-panel-title">Attention</div><div class="inbox-alert">${escapeHtml(state.commercialAttentionReason || state.lastImageReason)}</div></div>`
+      : ''}
 
-    ${
-      ad
-        ? `
-          <div class="inbox-panel-section">
-            <div class="inbox-panel-title">Publicité d'origine</div>
-            ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
-            ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
-            ${(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(ad.storedMediaUrl || state?.sourceContext?.previewUrl)}" alt="Visuel publicité" loading="lazy">` : ''}
-            ${
-              /^https?:\/\//i.test(String(ad.sourceUrl || ''))
-                ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`
-                : ''
-            }
-          </div>
-        `
-        : ''
-    }
+    ${ad
+      ? `<div class="inbox-panel-section">
+          <div class="inbox-panel-title">Publicité d'origine</div>
+          ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
+          ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
+          ${(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(ad.storedMediaUrl || state?.sourceContext?.previewUrl)}" alt="Visuel publicité" loading="lazy">` : ''}
+          ${/^https?:\/\//i.test(String(ad.sourceUrl || '')) ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>` : ''}
+        </div>`
+      : ''}
+
+    ${facebook
+      ? `<div class="inbox-panel-section"><div class="inbox-panel-title">Facebook</div><div class="inbox-alert">🔵 Les réponses restent dans Meta Business AI / Business Suite. Cette application ne déclenche jamais Gemini/Groq pour ce canal.</div></div>`
+      : ''}
 
     <div class="inbox-panel-section">
       <div class="inbox-panel-title">Actions</div>
-
       <div class="inbox-panel-actions">
-        <button
-          class="btn"
-          type="button"
-          onclick="assignConversation('${escapeHtml(contact)}')"
-        >
-          👤 Affecter la conversation
-        </button>
-
+        <button class="btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 Affecter la conversation</button>
+        ${['admin','responsable_commercial'].includes(currentUser?.role)
+          ? `<button class="btn" type="button" onclick="createTaskFromConversation('${escapeHtml(contact)}')">📋 Créer une tâche</button>`
+          : ''}
         ${channel === 'whatsapp'
           ? `<a class="btn" href="https://wa.me/${escapeHtml(conversationExternalContact(item))}" target="_blank" rel="noopener">WhatsApp ↗</a>`
-          : `<span class="btn" style="cursor:default">Instagram DM</span>`}
-
-        <button
-          class="btn"
-          type="button"
-          onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})"
-        >
+          : facebook
+            ? `<span class="btn" style="cursor:default">Facebook • supervision</span>`
+            : `<span class="btn" style="cursor:default">Instagram DM</span>`}
+        <button class="btn" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})">
           ${state.priority ? '★ Retirer priorité' : '☆ Mettre en priorité'}
         </button>
       </div>
@@ -8432,6 +8513,7 @@ window.openConversation = async function(contact, targetMessageId = ''){
             entry,
             commercial
           ),
+          renderThreadSystemEvent(entry),
           entry.image_reason
             ? `
               <div class="inbox-alert" style="max-width:650px;margin:8px auto">
@@ -8523,7 +8605,7 @@ window.loadOlderConversationMessages = async function(contact, before){
     const sourceHtml=conversationSourceCardHtml(state);
     const messages=entries.map(entry=>{
       const commercial=String(entry.source||'').startsWith('commercial');
-      return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
+      return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),renderThreadSystemEvent(entry),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
     }).join('');
     if(detail){
       detail.innerHTML=`${older.hasMore?`<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages('${escapeHtml(contact)}','${escapeHtml(older.nextBefore||'')}')">Afficher les messages plus anciens</button>`:''}${sourceHtml}${historyLimitNotice(entries)}${messages}`;
@@ -8620,7 +8702,72 @@ window.assignConversation = async function(contact){
   }catch(error){ alert(error.message); }
 };
 
+window.createTaskFromConversation = async function(contact){
+  if(!['admin','responsable_commercial'].includes(currentUser?.role)){
+    alert('Seul le responsable commercial ou l’administrateur peut créer cette tâche.');
+    return;
+  }
+
+  const data=selectedConversationData||{};
+  const state=data.state||{};
+  const assignedUserId=String(state.assignedUserId||'').trim();
+  if(!assignedUserId){
+    alert('Affectez d’abord la conversation à un commercial, puis créez la tâche.');
+    return;
+  }
+
+  const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:state.channel,externalContact:state.externalContact,profileName:state.profileName};
+  const clientName=conversationDisplayName(item);
+  const channel=conversationChannel(item);
+  const date=prompt('Date de la tâche (AAAA-MM-JJ) :',tunisDateKey());
+  if(date===null)return;
+  const dueTime=prompt('Heure limite (HH:MM) :','');
+  if(dueTime===null)return;
+  const title=prompt('Tâche :',`Suivi ${channelDisplayName(channel)} — ${clientName}`);
+  if(!title?.trim())return;
+  const lastIncoming=[...(Array.isArray(data.entries)?data.entries:[])].reverse().find(entry=>String(entry?.incoming||'').trim())?.incoming||state.lastCustomerText||'';
+  const details=prompt('Détails :',lastIncoming?`Dernier message client : ${String(lastIncoming).slice(0,500)}`:'Suivi de la conversation client.');
+  if(details===null)return;
+
+  try{
+    const lastMessageId=[...(Array.isArray(data.entries)?data.entries:[])].reverse().find(entry=>entry?.message_id||entry?.meta_message_id)?.message_id||'';
+    await apiFetch(`${API}/tasks`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        userId:assignedUserId,
+        date:String(date).trim(),
+        channel,
+        dueTime:String(dueTime).trim(),
+        title:title.trim(),
+        details:String(details).trim(),
+        priority:state.priority?'high':'normal',
+        conversationContact:contact,
+        conversationMessageId:lastMessageId,
+        clientName
+      })
+    });
+    alert(`Tâche créée pour ${state.assignedTo||'le commercial affecté'}.`);
+  }catch(error){
+    alert(error.message);
+  }
+};
+
+window.openLinkedTaskConversation = async function(contact,messageId=''){
+  if(!contact)return;
+  showPage('conversations');
+  conversationFilter='all';
+  document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.filter==='all'));
+  await loadConversations();
+  await window.openConversation(contact,messageId||'');
+};
+
 window.takeOverConversation = async function(contact){
+  const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
+  if(conversationChannel(item)==='facebook'){
+    alert('Facebook est en supervision : les réponses restent gérées par Meta Business AI / Business Suite. Utilisez Affecter ou créer une tâche pour le suivi commercial.');
+    return;
+  }
   const assignedTo =
     currentUser?.name ||
     currentUser?.email ||
@@ -8655,6 +8802,11 @@ window.takeOverConversation = async function(contact){
 };
 
 window.reactivateConversationAI = async function(contact){
+  const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
+  if(conversationChannel(item)==='facebook'){
+    alert('L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.');
+    return;
+  }
   if(
     !confirm(
       'Réactiver l’agent IA pour cette conversation ?'
@@ -9178,6 +9330,11 @@ window.sendConversationCommercialReply = async function(contact){
   const channel =
     conversationChannel(currentConversation);
 
+  if(channel === 'facebook'){
+    alert('Facebook est en mode supervision : répondez depuis Meta Business AI / Business Suite. MONDECO n’enverra aucun message Facebook.');
+    return;
+  }
+
   const externalContact =
     conversationExternalContact(currentConversation);
 
@@ -9426,10 +9583,10 @@ function showClientBrowserNotification(event){
   const urgent=event.urgent===true;
   const kind=String(event.kind||(urgent?'commercial':'message'));
   const channel=String(event.channel||'').toLowerCase();
-  const network=channel==='instagram'?'Instagram':'WhatsApp';
+  const network=channelDisplayName(channel);
   const identity=event.username
     ? (String(event.username).startsWith('@')?event.username:`@${event.username}`)
-    : event.profileName||String(event.contact||'').replace(/^instagram:/,'');
+    : event.profileName||String(event.contact||'').replace(/^(instagram|facebook):/,'');
   const title=kind==='report'
     ? 'MONDECO • Rapport quotidien'
     : kind==='task'
@@ -9571,6 +9728,7 @@ async function softRefreshSelectedConversation(){
               entry,
               commercial
             ),
+            renderThreadSystemEvent(entry),
             entry.image_reason
               ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`
               : '',
@@ -9698,7 +9856,7 @@ function renderNotificationPanel(){
   if(!notificationPanelItems.length){list.innerHTML='<div class="empty" style="margin:18px"><strong>Aucune notification</strong>Rien de nouveau pour ce filtre.</div>';return;}
   list.innerHTML=notificationPanelItems.map(item=>{
     const displayName=conversationDisplayName(item);
-    return `<button class="notification-item ${item.read?'':'unread'}" type="button" onclick="openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}</span><span class="notification-item-meta">${escapeHtml(item.channel==='instagram'?'Instagram':'WhatsApp')} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||'Nouveau message')}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
+    return `<button class="notification-item ${item.read?'':'unread'}" type="button" onclick="openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}</span><span class="notification-item-meta">${escapeHtml(channelDisplayName(item.channel))} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||'Nouveau message')}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
   }).join('');
 }
 
@@ -9746,6 +9904,13 @@ const syncInstagramHistoryBtn = document.getElementById('syncInstagramHistoryBtn
 if(syncInstagramHistoryBtn){
   syncInstagramHistoryBtn.addEventListener('click', () => {
     startInstagramHistorySync();
+  });
+}
+
+const syncFacebookHistoryBtn = document.getElementById('syncFacebookHistoryBtn');
+if(syncFacebookHistoryBtn){
+  syncFacebookHistoryBtn.addEventListener('click', () => {
+    startFacebookHistorySync();
   });
 }
 
@@ -12034,7 +12199,7 @@ async function loadTeamSchedules(){
 function renderTeamSchedules(){
   const host=document.getElementById('scheduleList');if(!host)return;
   if(!teamSchedules.length){host.innerHTML='<div class="empty">Aucun planning pour cette date.</div>';return;}
-  host.innerHTML=teamSchedules.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')}</strong><div class="manager-item-meta">${escapeHtml(item.date)} • ${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)} • SLA ${Number(item.slaMinutes||5)} min</div></div><span class="badge">${(item.channels||[]).map(c=>c==='instagram'?'Instagram':'WhatsApp').join(' + ')}</span></div>${item.mission?`<div style="margin-top:7px">${escapeHtml(item.mission)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editSchedule('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteSchedule('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');
+  host.innerHTML=teamSchedules.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')}</strong><div class="manager-item-meta">${escapeHtml(item.date)} • ${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)} • SLA ${Number(item.slaMinutes||5)} min</div></div><span class="badge">${(item.channels||[]).map(channelDisplayName).join(' + ')}</span></div>${item.mission?`<div style="margin-top:7px">${escapeHtml(item.mission)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editSchedule('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteSchedule('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');
 }
 
 window.editSchedule=async function(id){
@@ -12042,25 +12207,25 @@ window.editSchedule=async function(id){
   const startTime=prompt('Heure de début :',item.startTime||'09:00');if(startTime===null)return;
   const endTime=prompt('Heure de fin :',item.endTime||'17:00');if(endTime===null)return;
   const slaMinutes=prompt('Délai maximum de réponse client (minutes) :',String(item.slaMinutes||5));if(slaMinutes===null)return;
-  const channelsRaw=prompt('Plateformes : whatsapp, instagram ou les deux séparées par une virgule',(item.channels||[]).join(','));if(channelsRaw===null)return;
+  const channelsRaw=prompt('Plateformes : whatsapp, instagram, facebook (séparées par une virgule)',(item.channels||[]).join(','));if(channelsRaw===null)return;
   const mission=prompt('Mission :',item.mission||'');if(mission===null)return;
-  const channels=channelsRaw.split(',').map(v=>v.trim().toLowerCase()).filter(v=>['whatsapp','instagram'].includes(v));
+  const channels=channelsRaw.split(',').map(v=>v.trim().toLowerCase()).filter(v=>['whatsapp','instagram','facebook'].includes(v));
   try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({startTime:startTime.trim(),endTime:endTime.trim(),slaMinutes:Number(slaMinutes||5),channels,mission})});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}
 };
 
 window.deleteSchedule=async function(id){if(!confirm('Supprimer ce planning ?'))return;try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}};
 
-document.getElementById('scheduleForm')?.addEventListener('submit',async event=>{event.preventDefault();const channels=[];if(document.getElementById('scheduleWhatsApp')?.checked)channels.push('whatsapp');if(document.getElementById('scheduleInstagram')?.checked)channels.push('instagram');if(!channels.length){alert('Sélectionnez au moins une plateforme.');return;}try{await apiFetch(`${API}/schedules`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('scheduleUser').value,date:document.getElementById('scheduleDate').value,startTime:document.getElementById('scheduleStart').value,endTime:document.getElementById('scheduleEnd').value,breakStart:document.getElementById('scheduleBreakStart').value,breakEnd:document.getElementById('scheduleBreakEnd').value,channels,mission:document.getElementById('scheduleMission').value,slaMinutes:Number(document.getElementById('scheduleSla').value||5)})});document.getElementById('scheduleMission').value='';await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}});
+document.getElementById('scheduleForm')?.addEventListener('submit',async event=>{event.preventDefault();const channels=[];if(document.getElementById('scheduleWhatsApp')?.checked)channels.push('whatsapp');if(document.getElementById('scheduleInstagram')?.checked)channels.push('instagram');if(document.getElementById('scheduleFacebook')?.checked)channels.push('facebook');if(!channels.length){alert('Sélectionnez au moins une plateforme.');return;}try{await apiFetch(`${API}/schedules`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('scheduleUser').value,date:document.getElementById('scheduleDate').value,startTime:document.getElementById('scheduleStart').value,endTime:document.getElementById('scheduleEnd').value,breakStart:document.getElementById('scheduleBreakStart').value,breakEnd:document.getElementById('scheduleBreakEnd').value,channels,mission:document.getElementById('scheduleMission').value,slaMinutes:Number(document.getElementById('scheduleSla').value||5)})});document.getElementById('scheduleMission').value='';await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}});
 
 async function loadTeamTasks(){setTodayInputs();const date=document.getElementById('taskDate')?.value||tunisDateKey();try{teamTasks=await apiFetch(`${API}/tasks?date=${encodeURIComponent(date)}`);renderTeamTasks();}catch(error){console.warn(error.message);}return teamTasks;}
 
-function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(item.channel)}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editTask('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteTask('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');}
+function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(item.channel))}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}${item.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" onclick="openLinkedTaskConversation('${escapeHtml(item.conversationContact)}','${escapeHtml(item.conversationMessageId||'')}')">💬 Ouvrir ${escapeHtml(item.clientName||'la conversation')}</button></div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editTask('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteTask('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');}
 window.editTask=async function(id){
   const item=teamTasks.find(x=>x.id===id);if(!item)return;
   const title=prompt('Tâche :',item.title||'');if(title===null)return;
   const dueTime=prompt('Heure limite (HH:MM) :',item.dueTime||'');if(dueTime===null)return;
   const details=prompt('Détails :',item.details||'');if(details===null)return;
-  const channel=prompt('Plateforme : both, whatsapp ou instagram',item.channel||'both');if(channel===null)return;
+  const channel=prompt('Plateforme : both, whatsapp, instagram ou facebook',item.channel||'both');if(channel===null)return;
   const priority=prompt('Priorité : normal, high ou urgent',item.priority||'normal');if(priority===null)return;
   try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.trim(),dueTime:dueTime.trim(),details:details.trim(),channel:channel.trim().toLowerCase(),priority:priority.trim().toLowerCase(),status:item.status})});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}
 };
@@ -12069,7 +12234,7 @@ window.deleteTask=async function(id){if(!confirm('Supprimer cette tâche ?'))ret
 
 document.getElementById('taskForm')?.addEventListener('submit',async event=>{event.preventDefault();const selectedDate=document.getElementById('taskDate').value;try{await apiFetch(`${API}/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('taskUser').value,date:selectedDate,channel:document.getElementById('taskChannel').value,startTime:document.getElementById('taskStart').value,dueTime:document.getElementById('taskDue').value,title:document.getElementById('taskTitle').value,details:document.getElementById('taskDetails').value,priority:document.getElementById('taskPriority').value})});event.target.reset();setTodayInputs();document.getElementById('taskDate').value=selectedDate;await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}});
 
-function platformLabel(shifts){const channels=[...new Set((shifts||[]).flatMap(s=>s.channels||[]))];return channels.length?channels.map(c=>c==='instagram'?'Instagram':'WhatsApp').join(' + '):'Non planifié';}
+function platformLabel(shifts){const channels=[...new Set((shifts||[]).flatMap(s=>s.channels||[]))];return channels.length?channels.map(channelDisplayName).join(' + '):'Non planifié';}
 function formatCountdownMs(ms){if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return '—';return formatSlaHuman(Number(ms));}
 async function loadTeamOperations(){setTodayInputs();const date=document.getElementById('operationsDate')?.value||tunisDateKey();try{teamOperations=await apiFetch(`${API}/team/operations?date=${encodeURIComponent(date)}`);renderTeamOperations();}catch(error){console.warn(error.message);}return teamOperations;}
 function renderTeamOperations(){const data=teamOperations||{};const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=String(v??0)};set('opsPendingSla',data.pendingSla);set('opsLateSla',data.lateSla);set('opsLateTasks',data.tasksLate);set('opsOnlineUsers',(data.users||[]).filter(u=>u.presence?.status==='online').length);const host=document.getElementById('operationsLive');if(!host)return;const users=data.users||[];if(!users.length){host.innerHTML='<div class="empty">Aucun commercial.</div>';return;}host.innerHTML=users.map(user=>`<div class="operations-user"><div><strong>${escapeHtml(user.name||user.email)}</strong><div class="manager-item-meta"><span class="presence-dot ${escapeHtml(user.presence?.status||'offline')}"></span> ${escapeHtml(user.presence?.status==='online'?'En ligne':user.presence?.status==='idle'?'Inactif':'Hors ligne')}</div></div><div><span class="ops-platform">${escapeHtml(platformLabel(user.shifts))}</span><div class="manager-item-meta">${(user.shifts||[]).map(s=>`${escapeHtml(s.startTime)}–${escapeHtml(s.endTime)}`).join(', ')||'Aucun horaire'}</div></div><div><strong>${Number(user.activeConversations||0)}</strong><div class="manager-item-meta">clients actifs</div></div><div><strong>${Number(user.pendingSla||0)}</strong><div class="manager-item-meta">en attente</div></div><div class="sla-countdown ${Number(user.nextSlaRemainingMs)<0?'late':Number(user.nextSlaRemainingMs)<=60000?'warning':''}">${formatCountdownMs(user.nextSlaRemainingMs)}</div></div>`).join('');}
@@ -12079,7 +12244,7 @@ document.getElementById('taskDate')?.addEventListener('change',loadTeamTasks);
 document.getElementById('operationsDate')?.addEventListener('change',()=>{const date=document.getElementById('operationsDate').value;for(const id of ['scheduleDate','taskDate']){const el=document.getElementById(id);if(el)el.value=date;}Promise.all([loadTeamSchedules(),loadTeamTasks(),loadTeamOperations()]);});
 
 async function loadMyWorkday(){setTodayInputs();const date=document.getElementById('myWorkDate')?.value||tunisDateKey();try{const data=await apiFetch(`${API}/my-workday?date=${encodeURIComponent(date)}`);renderMyWorkday(data);}catch(error){const host=document.getElementById('myWorkTasks');if(host)host.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`;}}
-function renderMyWorkday(data){const cards=document.getElementById('myWorkScheduleCards');const shifts=data?.schedules||[];if(cards){cards.innerHTML=shifts.length?shifts.map(s=>`<div class="workday-card"><strong>${escapeHtml(s.startTime)} → ${escapeHtml(s.endTime)}</strong><div class="manager-item-meta">Pause ${escapeHtml(s.breakStart||'—')}–${escapeHtml(s.breakEnd||'—')} • SLA ${Number(s.slaMinutes||5)} min</div><div class="workday-platforms">${(s.channels||[]).map(c=>`<span class="badge">${c==='instagram'?'Instagram':'WhatsApp'}</span>`).join('')}</div>${s.mission?`<div style="margin-top:10px">${escapeHtml(s.mission)}</div>`:''}</div>`).join(''):'<div class="empty">Aucun horaire planifié.</div>';}const host=document.getElementById('myWorkTasks');const tasks=data?.tasks||[];if(host){host.innerHTML=tasks.length?tasks.map(t=>`<div class="task-row"><div><strong>${escapeHtml(t.title)}</strong><div class="manager-item-meta">${t.startTime?escapeHtml(t.startTime):'—'} ${t.dueTime?`→ ${escapeHtml(t.dueTime)}`:''} • ${t.channel==='both'?'WhatsApp + Instagram':escapeHtml(t.channel)}</div>${t.details?`<div style="margin-top:5px">${escapeHtml(t.details)}</div>`:''}</div><select class="task-status-select" onchange="updateMyTask('${escapeHtml(t.id)}',this.value)"><option value="todo" ${t.status==='todo'?'selected':''}>À faire</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>En cours</option><option value="done" ${t.status==='done'?'selected':''}>Terminée</option><option value="late" ${t.status==='late'?'selected':''}>En retard</option></select></div>`).join(''):'<div class="empty">Aucune tâche pour cette date.</div>';}}
+function renderMyWorkday(data){const cards=document.getElementById('myWorkScheduleCards');const shifts=data?.schedules||[];if(cards){cards.innerHTML=shifts.length?shifts.map(s=>`<div class="workday-card"><strong>${escapeHtml(s.startTime)} → ${escapeHtml(s.endTime)}</strong><div class="manager-item-meta">Pause ${escapeHtml(s.breakStart||'—')}–${escapeHtml(s.breakEnd||'—')} • SLA ${Number(s.slaMinutes||5)} min</div><div class="workday-platforms">${(s.channels||[]).map(c=>`<span class="badge">${channelDisplayName(c)}</span>`).join('')}</div>${s.mission?`<div style="margin-top:10px">${escapeHtml(s.mission)}</div>`:''}</div>`).join(''):'<div class="empty">Aucun horaire planifié.</div>';}const host=document.getElementById('myWorkTasks');const tasks=data?.tasks||[];if(host){host.innerHTML=tasks.length?tasks.map(t=>`<div class="task-row"><div><strong>${escapeHtml(t.title)}</strong><div class="manager-item-meta">${t.startTime?escapeHtml(t.startTime):'—'} ${t.dueTime?`→ ${escapeHtml(t.dueTime)}`:''} • ${t.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(t.channel))}</div>${t.details?`<div style="margin-top:5px">${escapeHtml(t.details)}</div>`:''}${t.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" onclick="openLinkedTaskConversation('${escapeHtml(t.conversationContact)}','${escapeHtml(t.conversationMessageId||'')}')">💬 Ouvrir la conversation</button></div>`:''}</div><select class="task-status-select" onchange="updateMyTask('${escapeHtml(t.id)}',this.value)"><option value="todo" ${t.status==='todo'?'selected':''}>À faire</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>En cours</option><option value="done" ${t.status==='done'?'selected':''}>Terminée</option><option value="late" ${t.status==='late'?'selected':''}>En retard</option></select></div>`).join(''):'<div class="empty">Aucune tâche pour cette date.</div>';}}
 window.updateMyTask=async function(id,status){try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});await loadMyWorkday();}catch(error){alert(error.message);}};
 document.getElementById('refreshMyWorkBtn')?.addEventListener('click',loadMyWorkday);document.getElementById('myWorkDate')?.addEventListener('change',loadMyWorkday);
 
