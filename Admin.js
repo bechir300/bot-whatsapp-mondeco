@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.1
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.2
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -3589,7 +3589,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.1</span>
+        <span class="login-version">V6.20.2</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11284,7 +11284,7 @@ async function instagramGraphGet(url) {
   return data;
 }
 
-async function listAllInstagramConversations() {
+async function listAllInstagramConversations(onProgress = null) {
   if (!INSTAGRAM_ACCOUNT_ID) {
     throw new Error('INSTAGRAM_ACCOUNT_ID manquant.');
   }
@@ -11323,6 +11323,18 @@ async function listAllInstagramConversations() {
       safeString(data?.paging?.next);
 
     pageCount += 1;
+
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          pageCount,
+          conversationCount: conversations.length,
+          hasMore: Boolean(nextUrl)
+        });
+      } catch (progressError) {
+        console.warn('⚠️ Progression historique Instagram non enregistrée :', progressError.message);
+      }
+    }
   }
 
   console.log(`📚 Instagram : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
@@ -11597,9 +11609,13 @@ async function runInstagramHistorySync() {
     lastError: '',
     truncated: false,
     metaMessageDetailLimit: 20,
-    chronologyVersion: 2,
+    chronologyVersion: 3,
+    phase: 'listing',
+    listedConversations: 0,
+    listPages: 0,
     messageIdsDiscovered: 0,
-    contentUnavailableMessages: 0
+    contentUnavailableMessages: 0,
+    interrupted: false
   };
 
   saveInstagramHistorySyncState(
@@ -11608,16 +11624,26 @@ async function runInstagramHistorySync() {
 
   try {
     const listed =
-      await listAllInstagramConversations();
+      await listAllInstagramConversations(progress => {
+        instagramHistorySyncJob.phase = 'listing';
+        instagramHistorySyncJob.listedConversations = Number(progress?.conversationCount || 0);
+        instagramHistorySyncJob.listPages = Number(progress?.pageCount || 0);
+        instagramHistorySyncJob.lastProgressAt = new Date().toISOString();
+        saveInstagramHistorySyncState(instagramHistorySyncJob);
+      });
 
     const conversations =
       listed.conversations;
 
     instagramHistorySyncJob.totalConversations =
       conversations.length;
+    instagramHistorySyncJob.listedConversations = conversations.length;
+    instagramHistorySyncJob.listPages = Number(listed.pageCount || instagramHistorySyncJob.listPages || 0);
+    instagramHistorySyncJob.phase = 'messages';
 
     instagramHistorySyncJob.truncated =
       Boolean(listed.truncated);
+    saveInstagramHistorySyncState(instagramHistorySyncJob);
 
     const live =
       readJsonArray(
@@ -12014,6 +12040,7 @@ async function runInstagramHistorySync() {
     }
 
     instagramHistorySyncJob.running = false;
+    instagramHistorySyncJob.phase = 'completed';
     instagramHistorySyncJob.completedAt =
       new Date().toISOString();
 
@@ -12022,6 +12049,7 @@ async function runInstagramHistorySync() {
     );
   } catch (error) {
     instagramHistorySyncJob.running = false;
+    instagramHistorySyncJob.phase = 'error';
     instagramHistorySyncJob.completedAt =
       new Date().toISOString();
     instagramHistorySyncJob.errorCount += 1;
@@ -12043,8 +12071,23 @@ router.get(
   '/api/instagram-history/status',
   requireAuth,
   (req, res) => {
-    const persisted =
+    let persisted =
       loadInstagramHistorySyncState();
+
+    // Après un redémarrage Railway, un ancien fichier peut encore indiquer
+    // running=true alors qu'aucun job n'existe dans le nouveau processus.
+    // On le marque interrompu afin que l'interface puisse relancer proprement.
+    if (!instagramHistorySyncJob.running && persisted?.running === true) {
+      persisted = {
+        ...persisted,
+        running: false,
+        interrupted: true,
+        phase: 'interrupted',
+        interruptedAt: new Date().toISOString(),
+        lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
+      };
+      saveInstagramHistorySyncState(persisted);
+    }
 
     return res.json({
       configured:
@@ -12108,7 +12151,7 @@ router.post(
 );
 
 // ============================================================
-// V6.20 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// V6.20.2 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
 // ============================================================
 
 let facebookHistorySyncJob = {
@@ -12171,7 +12214,7 @@ async function facebookGraphGet(url) {
   return data;
 }
 
-async function listAllFacebookConversations() {
+async function listAllFacebookConversations(onProgress = null) {
   if (!FACEBOOK_PAGE_ID) {
     throw new Error('FACEBOOK_PAGE_ID manquant.');
   }
@@ -12204,6 +12247,18 @@ async function listAllFacebookConversations() {
 
     nextUrl = safeString(data?.paging?.next);
     pageCount += 1;
+
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          pageCount,
+          conversationCount: conversations.length,
+          hasMore: Boolean(nextUrl)
+        });
+      } catch (progressError) {
+        console.warn('⚠️ Progression historique Facebook non enregistrée :', progressError.message);
+      }
+    }
   }
 
   console.log(`📘 Facebook : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
@@ -12584,7 +12639,11 @@ async function runFacebookHistorySync() {
     pageTokenValidated: false,
     pageName: '',
     tokenPageId: '',
-    syncVersion: 2,
+    syncVersion: 3,
+    phase: 'validating',
+    listedConversations: 0,
+    listPages: 0,
+    interrupted: false,
     truncated: false
   };
   saveFacebookHistorySyncState(facebookHistorySyncJob);
@@ -12594,11 +12653,22 @@ async function runFacebookHistorySync() {
     facebookHistorySyncJob.pageTokenValidated = true;
     facebookHistorySyncJob.pageName = safeString(validation?.pageName);
     facebookHistorySyncJob.tokenPageId = safeString(validation?.pageId);
+    facebookHistorySyncJob.phase = 'listing';
     saveFacebookHistorySyncState(facebookHistorySyncJob);
 
-    const listed = await listAllFacebookConversations();
+    const listed = await listAllFacebookConversations(progress => {
+      facebookHistorySyncJob.phase = 'listing';
+      facebookHistorySyncJob.listedConversations = Number(progress?.conversationCount || 0);
+      facebookHistorySyncJob.listPages = Number(progress?.pageCount || 0);
+      facebookHistorySyncJob.lastProgressAt = new Date().toISOString();
+      saveFacebookHistorySyncState(facebookHistorySyncJob);
+    });
     const conversations = listed.conversations;
     facebookHistorySyncJob.totalConversations = conversations.length;
+    facebookHistorySyncJob.listedConversations = conversations.length;
+    facebookHistorySyncJob.listPages = Number(listed.pageCount || facebookHistorySyncJob.listPages || 0);
+    facebookHistorySyncJob.phase = 'messages';
+    saveFacebookHistorySyncState(facebookHistorySyncJob);
 
     if (!conversations.length) {
       facebookHistorySyncJob.warning =
@@ -12801,10 +12871,12 @@ async function runFacebookHistorySync() {
     }
 
     facebookHistorySyncJob.running = false;
+    facebookHistorySyncJob.phase = 'completed';
     facebookHistorySyncJob.completedAt = new Date().toISOString();
     saveFacebookHistorySyncState(facebookHistorySyncJob);
   } catch (error) {
     facebookHistorySyncJob.running = false;
+    facebookHistorySyncJob.phase = 'error';
     facebookHistorySyncJob.completedAt = new Date().toISOString();
     facebookHistorySyncJob.errorCount += 1;
     facebookHistorySyncJob.lastError = error.message;
@@ -12814,7 +12886,20 @@ async function runFacebookHistorySync() {
 }
 
 router.get('/api/facebook-history/status', requireAuth, (req, res) => {
-  const persisted = loadFacebookHistorySyncState();
+  let persisted = loadFacebookHistorySyncState();
+
+  if (!facebookHistorySyncJob.running && persisted?.running === true) {
+    persisted = {
+      ...persisted,
+      running: false,
+      interrupted: true,
+      phase: 'interrupted',
+      interruptedAt: new Date().toISOString(),
+      lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
+    };
+    saveFacebookHistorySyncState(persisted);
+  }
+
   return res.json({
     configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
     ...persisted,
