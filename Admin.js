@@ -39,6 +39,7 @@ const DAILY_REPORTS_PATH = path.join(DATA_DIR, 'daily-reports.json');
 const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
+const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
@@ -133,6 +134,7 @@ const WOOCOMMERCE_SYNC_IMAGES =
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
+fs.mkdirSync(CONVERSATION_MEDIA_DIR, { recursive: true });
 fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
@@ -660,6 +662,14 @@ function createFullSnapshot(reason = 'manual') {
     )
   );
 
+  copyDirectoryRecursive(
+    CONVERSATION_MEDIA_DIR,
+    path.join(
+      snapshotDir,
+      'conversation-media'
+    )
+  );
+
   const products =
     readJsonArray(
       PRODUCTS_PATH,
@@ -800,6 +810,27 @@ function restoreFullSnapshot(snapshotId) {
     copyDirectoryRecursive(
       snapshotCustomizations,
       CUSTOMIZATIONS_DIR
+    );
+  }
+
+  const snapshotConversationMedia =
+    path.join(
+      snapshotDir,
+      'conversation-media'
+    );
+
+  if (
+    fs.existsSync(
+      snapshotConversationMedia
+    )
+  ) {
+    clearDirectory(
+      CONVERSATION_MEDIA_DIR
+    );
+
+    copyDirectoryRecursive(
+      snapshotConversationMedia,
+      CONVERSATION_MEDIA_DIR
     );
   }
 
@@ -2884,6 +2915,10 @@ function roleCanAccess(
       reqPath,
       '/customizations'
     ) ||
+    pathStarts(
+      reqPath,
+      '/conversation-media'
+    ) ||
     reqPath ===
       '/api/me'
   ) {
@@ -3427,7 +3462,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.19.2</span>
+        <span class="login-version">V6.19.3</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -3853,6 +3888,34 @@ router.get(
     if (!fs.existsSync(filePath)) {
       return res.sendStatus(404);
     }
+
+    return res.sendFile(filePath);
+  }
+);
+
+router.get(
+  '/conversation-media/:filename',
+  requireAuth,
+  (req, res) => {
+    const filename =
+      path.basename(req.params.filename || '');
+
+    if (!filename) return res.sendStatus(404);
+
+    const filePath =
+      path.join(
+        CONVERSATION_MEDIA_DIR,
+        filename
+      );
+
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
+    }
+
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=3600'
+    );
 
     return res.sendFile(filePath);
   }
@@ -11151,6 +11214,9 @@ router.get(
 
       customizationsDirectory:
         fs.existsSync(CUSTOMIZATIONS_DIR),
+
+      conversationMediaDirectory:
+        fs.existsSync(CONVERSATION_MEDIA_DIR),
 
       backupsDirectory:
         fs.existsSync(BACKUPS_DIR),
