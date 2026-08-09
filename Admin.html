@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20.2 — Historique complet + chronologie Meta
+   MONDECO V6.20.3 — Historique complet + chronologie Meta
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20.2</span>
+                <span class="inbox-version">V6.20.3</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -7016,7 +7016,15 @@ function renderInstagramHistoryStatus(status = {}){
     const discovered = Number(status.messageIdsDiscovered || 0);
     const unavailable = Number(status.contentUnavailableMessages || 0);
     const errors = Number(status.errorCount || 0);
-    label.textContent = `Instagram : historique synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    const warning = String(status.warning || '').trim();
+    const lastError = String(status.lastError || '').trim();
+    if(lastError && errors){
+      label.textContent = `Instagram : synchronisation terminée avec erreur • ${lastError}`;
+    }else if(total === 0){
+      label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
+    }else{
+      label.textContent = `Instagram : historique synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    }
   }else{
     label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
   }
@@ -7067,7 +7075,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
     const label = document.getElementById('instagramHistorySyncStatus');
     if(label && canManageInstagramHistory()){
       label.style.display = '';
-      label.textContent = `Instagram : impossible de lire l’état de synchronisation (${error.message}).`;
+      label.textContent = `Instagram : impossible de lire l’état de synchronisation — ${error.message}`;
     }
   }
 }
@@ -7199,7 +7207,7 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
     const label = document.getElementById('facebookHistorySyncStatus');
     if(label && canManageInstagramHistory()){
       label.style.display = '';
-      label.textContent = `Facebook : impossible de lire l’état de synchronisation (${error.message}).`;
+      label.textContent = `Facebook : impossible de lire l’état de synchronisation — ${error.message}`;
     }
   }
 }
@@ -7700,7 +7708,7 @@ function conversationListTags(item){
 function renderConversationsList(){
   updateConversationFilterCounts();
 
-  // V6.20.2 : la boîte de réception suit strictement la chronologie du
+  // V6.20.3 : la boîte de réception suit strictement la chronologie du
   // dernier message réel. Le SLA reste visuellement prioritaire (badge/rouge),
   // mais ne déplace plus artificiellement une ancienne conversation au-dessus
   // d'une conversation plus récente.
