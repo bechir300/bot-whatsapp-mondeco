@@ -3192,6 +3192,55 @@ tbody tr:hover{
   font-size:10px;
   font-weight:800;
 }
+.inbox-media-list{
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+  margin-top:6px;
+}
+.inbox-media-card{
+  display:block;
+  max-width:380px;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:13px;
+  background:#fff;
+  color:#111;
+  text-decoration:none;
+}
+.inbox-media-image{
+  display:block;
+  width:100%;
+  max-height:420px;
+  object-fit:contain;
+  background:#f3f1ee;
+}
+.inbox-media-video{
+  display:block;
+  width:min(380px,100%);
+  max-height:420px;
+  background:#111;
+}
+.inbox-media-audio{
+  display:block;
+  width:min(360px,100%);
+  margin:7px 0 0;
+}
+.inbox-media-file{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  padding:10px 12px;
+  font-size:10px;
+  font-weight:800;
+}
+.inbox-media-caption{
+  padding:7px 9px;
+  border-top:1px solid var(--line);
+  color:#5d5750;
+  font-size:9px;
+  font-weight:700;
+}
 .inbox-ad-context{
   max-width:720px;
   margin:10px auto 14px;
@@ -3456,6 +3505,9 @@ tbody tr:hover{
 .inbox-ad-context{
   padding:12px 14px !important;
   font-size:11px !important;
+}
+.inbox-media-card{
+  max-width:min(380px,100%) !important;
 }
 .inbox-composer{
   position:sticky !important;
@@ -4280,7 +4332,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.19.2 — Responsable commercial, planning & SLA + handoff strict
+   MONDECO V6.19.3 — Responsable commercial, planning & SLA + handoff strict
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4585,7 +4637,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.19.2</span>
+                <span class="inbox-version">V6.19.3</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
             </div>
@@ -7317,6 +7369,13 @@ function renderConversationsList(){
 
         const preview =
           item.lastIncoming ||
+          (
+            ['image','attachment'].includes(
+              String(item.lastInboundType || '').toLowerCase()
+            )
+              ? '📷 Photo / média reçu'
+              : ''
+          ) ||
           item.lastReply ||
           'Nouvelle conversation';
 
@@ -7502,15 +7561,125 @@ function renderConversationHeader(
   `;
 }
 
+function safeConversationMediaUrl(value){
+  const url = String(value || '').trim();
+  if(!url) return '';
+
+  if(
+    url.startsWith('/admin/conversation-media/') ||
+    url.startsWith('https://')
+  ){
+    return url;
+  }
+
+  return '';
+}
+
+function conversationEntryAttachments(entry){
+  const direct = Array.isArray(entry?.attachments)
+    ? entry.attachments.filter(Boolean)
+    : [];
+
+  if(direct.length){
+    return direct;
+  }
+
+  if(
+    entry?.attachment_name ||
+    entry?.attachment_url
+  ){
+    return [{
+      name:entry?.attachment_name || 'Pièce jointe',
+      type:entry?.attachment_type || 'file',
+      url:entry?.attachment_url || '',
+      mimetype:entry?.attachment_mimetype || ''
+    }];
+  }
+
+  return [];
+}
+
+function renderConversationAttachment(item){
+  const type = String(item?.type || 'file').toLowerCase();
+  const name = String(item?.name || 'Pièce jointe');
+  const url = safeConversationMediaUrl(item?.url || item?.remote_url);
+
+  if(type === 'image' && url){
+    return `
+      <a class="inbox-media-card" href="${escapeHtml(url)}" target="_blank" rel="noopener">
+        <img class="inbox-media-image" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy">
+        <div class="inbox-media-caption">📷 ${escapeHtml(name)}</div>
+      </a>
+    `;
+  }
+
+  if(type === 'video' && url){
+    return `
+      <div class="inbox-media-card">
+        <video class="inbox-media-video" controls preload="metadata" src="${escapeHtml(url)}"></video>
+        <div class="inbox-media-caption">🎬 ${escapeHtml(name)}</div>
+      </div>
+    `;
+  }
+
+  if(type === 'audio' && url){
+    return `
+      <div class="inbox-media-card" style="padding:8px 10px">
+        <audio class="inbox-media-audio" controls preload="metadata" src="${escapeHtml(url)}"></audio>
+        <div class="inbox-media-caption">🎵 ${escapeHtml(name)}</div>
+      </div>
+    `;
+  }
+
+  if(url){
+    return `
+      <a class="inbox-media-card inbox-media-file" href="${escapeHtml(url)}" target="_blank" rel="noopener">
+        📎 ${escapeHtml(name)}
+      </a>
+    `;
+  }
+
+  return `
+    <div class="inbox-attachment">
+      ${type === 'image' ? '📷' : type === 'video' ? '🎬' : type === 'audio' ? '🎵' : '📎'}
+      ${escapeHtml(name)}
+    </div>
+  `;
+}
+
 function renderThreadMessage(
   type,
   text,
   entry,
   commercial = false
 ){
+  const allAttachments =
+    conversationEntryAttachments(entry);
+
+  const explicitAttachmentDirection =
+    String(entry?.attachment_direction || '').toLowerCase();
+
+  const inferredAttachmentDirection =
+    explicitAttachmentDirection ||
+    (
+      String(entry?.source || '').startsWith('commercial')
+        ? 'outgoing'
+        : 'incoming'
+    );
+
+  const attachments =
+    (
+      type === 'incoming' && inferredAttachmentDirection !== 'outgoing'
+    ) ||
+    (
+      type !== 'incoming' && inferredAttachmentDirection === 'outgoing'
+    )
+      ? allAttachments
+      : [];
+
   if(
     !text &&
-    !entry?.attachment_name
+    !attachments.length
   ){
     return '';
   }
@@ -7535,7 +7704,13 @@ function renderThreadMessage(
       ? 'Administrateur'
       : commercialRole === 'editor'
         ? 'Éditeur'
-        : 'Commercial';
+        : commercialRole === 'responsable_commercial'
+          ? 'Responsable commercial'
+          : 'Commercial';
+
+  const directInstagram =
+    String(entry?.source || '') ===
+      'commercial_instagram_app';
 
   const label =
     type === 'incoming'
@@ -7543,8 +7718,8 @@ function renderThreadMessage(
       : commercial
         ? (
             commercialName
-              ? `${commercialRoleLabel} MONDECO • ${commercialName}`
-              : `${commercialRoleLabel} MONDECO`
+              ? `${commercialRoleLabel} MONDECO • ${commercialName}${directInstagram ? ' • Instagram' : ''}`
+              : `${commercialRoleLabel} MONDECO${directInstagram ? ' • Instagram' : ''}`
           )
         : 'Agent MONDECO';
 
@@ -7564,12 +7739,10 @@ function renderThreadMessage(
             : ''
         }
         ${
-          entry.attachment_name &&
-          type !== 'incoming'
+          attachments.length
             ? `
-              <div class="inbox-attachment">
-                ${entry.attachment_type === 'image' ? '📷' : '📎'}
-                ${escapeHtml(entry.attachment_name)}
+              <div class="inbox-media-list">
+                ${attachments.map(renderConversationAttachment).join('')}
               </div>
             `
             : ''
@@ -7577,6 +7750,7 @@ function renderThreadMessage(
         <div class="inbox-message-meta">
           ${escapeHtml(formatDate(entry.time))}
           ${entry.action && entry.action !== 'ok' ? ` • ${escapeHtml(actionLabel(entry.action))}` : ''}
+          ${directInstagram ? ' • Instagram direct' : ''}
         </div>
       </div>
     </div>
