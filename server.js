@@ -26,10 +26,7 @@ const {
   setChatHandler,
   setImageChatHandler,
   setCustomizationHandler,
-  setCommercialSendHandler,
-  setCallActionHandler,
-  recordWhatsAppCallEvent,
-  createCommercialCorrectionCandidate
+  setCommercialSendHandler
 } = require('./Admin');
 
 const app = express();
@@ -65,6 +62,18 @@ const WHATSAPP_TOKEN =
 const PHONE_NUMBER_ID =
   (
     process.env.PHONE_NUMBER_ID ||
+    ''
+  ).trim();
+
+const INSTAGRAM_ACCESS_TOKEN =
+  (
+    process.env.INSTAGRAM_ACCESS_TOKEN ||
+    ''
+  ).trim();
+
+const INSTAGRAM_ACCOUNT_ID =
+  (
+    process.env.INSTAGRAM_ACCOUNT_ID ||
     ''
   ).trim();
 
@@ -228,6 +237,40 @@ function normalizePhone(value) {
   return safeString(value).replace(/\D/g, '');
 }
 
+function normalizeChannel(value) {
+  return safeString(value).toLowerCase() === 'instagram'
+    ? 'instagram'
+    : 'whatsapp';
+}
+
+function makeConversationKey(channel, externalId) {
+  const cleanChannel = normalizeChannel(channel);
+  const cleanExternal = cleanChannel === 'instagram'
+    ? safeString(externalId)
+    : normalizePhone(externalId);
+
+  if (!cleanExternal) return '';
+
+  return cleanChannel === 'instagram'
+    ? `instagram:${cleanExternal}`
+    : cleanExternal;
+}
+
+function conversationExternalId(contact) {
+  const clean = safeString(contact);
+  return clean.startsWith('instagram:')
+    ? clean.slice('instagram:'.length)
+    : normalizePhone(clean);
+}
+
+function conversationChannel(contact, state = null) {
+  const stateChannel = normalizeChannel(state?.channel || '');
+  if (safeString(state?.channel)) return stateChannel;
+  return safeString(contact).startsWith('instagram:')
+    ? 'instagram'
+    : 'whatsapp';
+}
+
 function writeJsonAtomic(filePath, data) {
   const tmp = `${filePath}.tmp`;
 
@@ -382,17 +425,44 @@ function updateConversationState(
 }
 
 function markCustomerMessage(
-  phone,
+  contact,
   message,
-  isAdReferral
+  isAdReferral,
+  metadata = {}
 ) {
   const now =
     new Date().toISOString();
 
   return updateConversationState(
-    phone,
+    contact,
     current => ({
       ...current,
+
+      channel:
+        normalizeChannel(
+          metadata.channel ||
+          current.channel ||
+          (safeString(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp')
+        ),
+
+      externalContact:
+        safeString(
+          metadata.externalContact ||
+          current.externalContact ||
+          conversationExternalId(contact)
+        ),
+
+      profileName:
+        safeString(
+          metadata.profileName ||
+          current.profileName
+        ),
+
+      instagramUsername:
+        safeString(
+          metadata.instagramUsername ||
+          current.instagramUsername
+        ),
 
       firstSeenAt:
         current.firstSeenAt ||
@@ -837,9 +907,15 @@ function isWithinSchedule(
 }
 
 function messageHasAdReferral(message) {
+  const referral =
+    message?.referral ||
+    null;
+
   return Boolean(
-    message?.referral?.source_id ||
-    message?.referral?.source_url
+    referral?.source_id ||
+    referral?.source_url ||
+    referral?.ad_id ||
+    safeString(referral?.source).toUpperCase() === 'ADS'
   );
 }
 
@@ -1381,256 +1457,6 @@ function splitBusinessContext(
   };
 }
 
-
-// ============================================================
-// V6.17.2 — ANCRAGE PRODUIT EXACT
-// Empêche l'IA de renommer un modèle ou de tronquer son prix.
-// Pour un message produit court / prix, on retrouve d'abord la fiche
-// exacte dans le contexte MONDECO puis on construit une réponse sûre.
-// ============================================================
-
-const GENERIC_PRODUCT_TOKENS = new Set([
-  'salon','canape','canapee','chambre','table','lit','bureau','pack',
-  'meuble','meubles','chaise','chaises','armoire','coiffeuse','fauteuil',
-  'prix','tarif','promo','promotion','tnd','dt'
-]);
-
-const PRODUCT_ARABIC_ALIASES = new Map([
-  ['دنيا', 'donia'],
-  ['دونيا', 'donia'],
-  ['فيونا', 'fiona'],
-  ['لارا', 'lara'],
-  ['تياغو', 'tiago'],
-  ['اوبرا', 'opera'],
-  ['أوبرا', 'opera'],
-  ['اوبيرا', 'opera'],
-  ['أوبيرا', 'opera']
-]);
-
-function parseProductFactsFromBlock(block) {
-  const text = safeString(block);
-  const pick = (label) => {
-    const re = new RegExp(`^${label}\\s*:\\s*(.+)$`, 'mi');
-    const match = text.match(re);
-    return match ? safeString(match[1]) : '';
-  };
-
-  return {
-    block: text,
-    name: pick('Produit'),
-    category: pick('Catégorie'),
-    price: pick('Prix normal'),
-    promoPrice: pick('Prix promotionnel'),
-    availability: pick('Disponibilité'),
-    dimensions: pick('Dimensions'),
-    productUrl: pick('Lien produit'),
-    categoryUrl: pick('Lien catégorie')
-  };
-}
-
-function productNameTokens(name) {
-  return normalizeForSearch(name)
-    .split(' ')
-    .filter(token =>
-      token.length >= 3 &&
-      !GENERIC_PRODUCT_TOKENS.has(token)
-    );
-}
-
-function messageDistinctiveTokens(userText) {
-  const normalized = normalizeForSearch(userText);
-  const result = new Set();
-
-  for (const token of normalized.split(' ')) {
-    if (
-      token.length >= 3 &&
-      !GENERIC_PRODUCT_TOKENS.has(token) &&
-      !['صالة','صالون','بقداش','قداش','السوم','الثمن'].includes(token)
-    ) {
-      result.add(token);
-    }
-
-    if (PRODUCT_ARABIC_ALIASES.has(token)) {
-      result.add(PRODUCT_ARABIC_ALIASES.get(token));
-    }
-
-    if (containsArabic(token)) {
-      const latin = arabicToLatin(token);
-      if (latin.length >= 3) result.add(latin);
-    }
-  }
-
-  return [...result];
-}
-
-function findExplicitProductFacts(userText) {
-  let rawContext = '';
-
-  try {
-    rawContext = getBusinessContext() || '';
-  } catch (error) {
-    console.error('❌ Recherche produit exact :', error.message);
-    return null;
-  }
-
-  if (!rawContext) return null;
-
-  const { productBlocks } = splitBusinessContext(rawContext);
-  const queryTokens = messageDistinctiveTokens(userText);
-
-  if (!queryTokens.length) return null;
-
-  const candidates = [];
-
-  for (const block of productBlocks) {
-    const facts = parseProductFactsFromBlock(block);
-    if (!facts.name) continue;
-
-    const nameTokens = productNameTokens(facts.name);
-    if (!nameTokens.length) continue;
-
-    let score = 0;
-    let bestDistance = 99;
-
-    for (const q of queryTokens) {
-      for (const n of nameTokens) {
-        if (q === n) {
-          score += 30;
-          bestDistance = 0;
-          continue;
-        }
-
-        if (n.includes(q) || q.includes(n)) {
-          score += 18;
-          bestDistance = Math.min(bestDistance, Math.abs(n.length - q.length));
-          continue;
-        }
-
-        const maxLen = Math.max(q.length, n.length);
-        const threshold = maxLen >= 7 ? 2 : 1;
-        const distance = editDistance(q, n);
-
-        if (distance <= threshold) {
-          score += 12 - (distance * 2);
-          bestDistance = Math.min(bestDistance, distance);
-        }
-      }
-    }
-
-    if (score > 0) {
-      candidates.push({ facts, score, bestDistance });
-    }
-  }
-
-  candidates.sort((a, b) =>
-    b.score - a.score ||
-    a.bestDistance - b.bestDistance ||
-    b.facts.name.length - a.facts.name.length
-  );
-
-  const best = candidates[0];
-  const second = candidates[1];
-
-  if (!best || best.score < 10) return null;
-
-  // Évite les choix ambigus entre deux produits proches.
-  if (
-    second &&
-    second.score === best.score &&
-    second.bestDistance === best.bestDistance
-  ) {
-    return null;
-  }
-
-  return best.facts;
-}
-
-function isSimpleProductFactRequest(userText) {
-  const text = normalizeForSearch(userText);
-  if (!text) return false;
-
-  // Ces intentions ont leurs propres traitements / réponses IA.
-  const excluded = [
-    'photo','image','تصويرة','تصويره','صورة',
-    'showroom','adresse','magasin','وين','فين','العنوان','عنوان',
-    'dimension','dimensions','mesure','مقاس','قياس',
-    'livraison','توصيل','paiement','دفع','credit'
-  ];
-
-  if (excluded.some(term => text.includes(term))) {
-    return false;
-  }
-
-  const priceIntent = [
-    'prix','tarif','بقداش','قداش','السوم','الثمن'
-  ].some(term => text.includes(term));
-
-  const wordCount = text.split(' ').filter(Boolean).length;
-
-  return priceIntent || wordCount <= 4;
-}
-
-function buildExactProductReply(userText, facts) {
-  if (!facts?.name) return '';
-
-  const isArabic = containsArabic(userText);
-  const currentPrice = facts.promoPrice || facts.price;
-  const hasPromo = Boolean(facts.promoPrice && facts.price);
-  const link = facts.categoryUrl || facts.productUrl || '';
-
-  if (isArabic) {
-    const lines = ['عسلامة 🌸', ''];
-
-    if (currentPrice) {
-      if (hasPromo) {
-        lines.push(
-          `${facts.name} سعرها الحالي ${facts.promoPrice} دينار بدل ${facts.price} دينار.`
-        );
-      } else {
-        lines.push(
-          `سعر ${facts.name} هو ${currentPrice} دينار.`
-        );
-      }
-    } else {
-      lines.push(
-        `بالنسبة لـ ${facts.name}، السعر موش متوفر في المعلومات الحالية. التجاري متاع MONDECO ينجم يأكدلك السعر.`
-      );
-    }
-
-    if (link) {
-      lines.push('', 'تشوف بقية الموديلات والتفاصيل هنا:', link);
-    }
-
-    lines.push('', 'تحب نعطيك زادة المقاسات والتوفر في أقرب showroom؟');
-    return lines.join('\n');
-  }
-
-  const lines = ['Bonjour 👋', ''];
-
-  if (currentPrice) {
-    if (hasPromo) {
-      lines.push(
-        `${facts.name} est actuellement à ${facts.promoPrice} DT au lieu de ${facts.price} DT.`
-      );
-    } else {
-      lines.push(
-        `Le prix de ${facts.name} est de ${currentPrice} DT.`
-      );
-    }
-  } else {
-    lines.push(
-      `Le prix de ${facts.name} n’est pas disponible dans nos informations actuelles. Un commercial MONDECO peut vous le confirmer.`
-    );
-  }
-
-  if (link) {
-    lines.push('', 'Découvrez les autres modèles et détails ici :', link);
-  }
-
-  lines.push('', 'Souhaitez-vous aussi les dimensions ou la disponibilité en showroom ?');
-  return lines.join('\n');
-}
-
 function buildSmartBusinessContext(
   userText
 ) {
@@ -1822,7 +1648,8 @@ function buildSmartBusinessContext(
 }
 
 function buildBusinessSystemPrompt(
-  userText = ''
+  userText = '',
+  channel = 'whatsapp'
 ) {
   const businessContext =
     buildSmartBusinessContext(
@@ -1830,7 +1657,8 @@ function buildBusinessSystemPrompt(
     );
 
   return `
-Tu es l'assistant WhatsApp officiel de MONDECO, entreprise de meubles en Tunisie.
+Tu es l'assistant digital officiel de MONDECO, entreprise de meubles en Tunisie.
+Tu réponds actuellement sur ${normalizeChannel(channel) === 'instagram' ? 'Instagram' : 'WhatsApp'}.
 
 OBJECTIF :
 Aider les clients MONDECO avec précision à partir uniquement des informations fiables disponibles dans le contexte MONDECO.
@@ -1857,8 +1685,6 @@ RÈGLES :
 - Une demande showroom doit contenir une intention de lieu/adresse (ex. وين، فين، العنوان, adresse, showroom, magasin ou une ville).
 - Si un nom de modèle accompagne une demande de prix, traite d'abord le produit et son prix avant toute information showroom.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
-- Copie toujours le NOM DU PRODUIT et le PRIX exactement comme ils apparaissent dans la fiche MONDECO ; ne traduis, ne renomme et ne raccourcis jamais un nom ou un nombre.
-- Si un lien catégorie est présent dans la fiche, termine la réponse produit avec ce lien.
 
 ==================================================
 CONTEXTE MONDECO PERTINENT
@@ -2315,38 +2141,10 @@ async function callAIChat(
   );
 }
 
-// ============================================================
-// V6.17.3 — FORMAT WHATSAPP ARABE / TUNISIEN
-// - Pas de Markdown ** visible dans WhatsApp
-// - Les prix arabes sont affichés en « دينار » et non DT/TND/T
-// ============================================================
-function normalizeCustomerReplyFormat(reply, userText = '') {
-  let text = safeString(reply);
-
-  if (!text) return '';
-
-  // WhatsApp utilise *texte* pour le gras, alors que les modèles IA
-  // produisent souvent **texte**. On retire ces marqueurs pour garder
-  // une réponse propre et naturelle.
-  text = text
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*\n]+)\*/g, '$1');
-
-  if (containsArabic(userText)) {
-    // Exemples corrigés : « 3090 T », « 3090 DT », « 3090 TND »
-    // deviennent tous « 3090 دينار ».
-    text = text.replace(
-      /(\d[\d\s.,]*)\s*(?:TND|DT|T)(?=\s|[.,!?؛،]|$)/gi,
-      (_, amount) => `${safeString(amount).trim()} دينار`
-    );
-  }
-
-  return text.trim();
-}
-
 async function generateReply(
   userId,
-  userText
+  userText,
+  channel = 'whatsapp'
 ) {
   const cleanText =
     safeString(userText);
@@ -2355,27 +2153,6 @@ async function generateReply(
     throw new Error(
       'Message utilisateur vide.'
     );
-  }
-
-  // Pour une demande courte clairement liée à un produit,
-  // répondre avec les données exactes du catalogue avant de solliciter l'IA.
-  // Cela empêche les erreurs du type « Donia » -> « Dina » et les prix tronqués.
-  if (isSimpleProductFactRequest(cleanText)) {
-    const exactProduct = findExplicitProductFacts(cleanText);
-
-    if (exactProduct) {
-      const groundedReply = normalizeCustomerReplyFormat(
-        buildExactProductReply(cleanText, exactProduct),
-        cleanText
-      );
-
-      if (groundedReply) {
-        addHistoryMessage(userId, 'user', cleanText);
-        addHistoryMessage(userId, 'assistant', groundedReply);
-        console.log(`✅ Réponse produit ancrée : ${exactProduct.name}`);
-        return groundedReply;
-      }
-    }
   }
 
   const history =
@@ -2390,7 +2167,8 @@ async function generateReply(
 
       content:
         buildBusinessSystemPrompt(
-          cleanText
+          cleanText,
+          channel
         )
     },
 
@@ -2405,7 +2183,7 @@ async function generateReply(
     }
   ];
 
-  let reply =
+  const reply =
     await callAIChat(
       {
         messages,
@@ -2418,11 +2196,6 @@ async function generateReply(
           false
       }
     );
-
-  reply = normalizeCustomerReplyFormat(
-    reply,
-    cleanText
-  );
 
   addHistoryMessage(
     userId,
@@ -2593,486 +2366,6 @@ async function downloadWhatsAppMedia(
     originalname:
       `whatsapp-${mediaId}`
   };
-}
-
-
-// ============================================================
-// V6.18 — MESSAGES VOCAUX WHATSAPP
-// ============================================================
-
-const VOICE_UPLOADS_DIR =
-  path.join(
-    DATA_DIR,
-    'uploads'
-  );
-
-fs.mkdirSync(
-  VOICE_UPLOADS_DIR,
-  {
-    recursive: true
-  }
-);
-
-function audioExtensionFromMime(
-  mimetype
-) {
-  const type =
-    safeString(mimetype)
-      .toLowerCase();
-
-  if (
-    type.includes('ogg')
-  ) {
-    return '.ogg';
-  }
-
-  if (
-    type.includes('mp4') ||
-    type.includes('m4a')
-  ) {
-    return '.m4a';
-  }
-
-  if (
-    type.includes('mpeg') ||
-    type.includes('mp3')
-  ) {
-    return '.mp3';
-  }
-
-  if (
-    type.includes('aac')
-  ) {
-    return '.aac';
-  }
-
-  if (
-    type.includes('amr')
-  ) {
-    return '.amr';
-  }
-
-  return '.audio';
-}
-
-function persistConversationAudio(
-  audio,
-  prefix = 'voice'
-) {
-  if (!audio?.buffer) {
-    return '';
-  }
-
-  const extension =
-    audioExtensionFromMime(
-      audio.mimetype
-    );
-
-  const filename =
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2,10)}${extension}`;
-
-  const filePath =
-    path.join(
-      VOICE_UPLOADS_DIR,
-      filename
-    );
-
-  fs.writeFileSync(
-    filePath,
-    audio.buffer
-  );
-
-  return `/admin/uploads/${encodeURIComponent(filename)}`;
-}
-
-async function transcribeWhatsAppAudio(
-  audio
-) {
-  if (
-    !audio?.buffer ||
-    !audio?.mimetype
-  ) {
-    throw new Error(
-      'Audio WhatsApp invalide.'
-    );
-  }
-
-  if (!GEMINI_API_KEY) {
-    throw new Error(
-      'GEMINI_API_KEY manquante : transcription vocale indisponible.'
-    );
-  }
-
-  // Gemini inline audio accepte jusqu'à 20 Mo par requête totale.
-  if (
-    audio.buffer.length >
-    18 * 1024 * 1024
-  ) {
-    throw new Error(
-      'Message vocal trop volumineux pour la transcription automatique.'
-    );
-  }
-
-  const prompt = `
-Transcris fidèlement ce message vocal client MONDECO.
-
-RÈGLES :
-- Le client peut parler en arabe tunisien, arabe, français ou mélanger les langues.
-- Conserve les noms de produits, nombres, prix, villes et dimensions exactement comme entendus.
-- Ne réponds pas au client.
-- Ne résume pas.
-- Ne traduis pas.
-- Retourne uniquement la transcription, sans guillemets, sans préambule.
-- Si la parole est réellement incompréhensible, retourne exactement : [INAUDIBLE]
-`.trim();
-
-  const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/` +
-    `${encodeURIComponent(GEMINI_MODEL)}:generateContent` +
-    `?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-
-  const response =
-    await fetch(
-      url,
-      {
-        method:
-          'POST',
-
-        headers: {
-          'Content-Type':
-            'application/json'
-        },
-
-        body:
-          JSON.stringify({
-            contents: [
-              {
-                role:
-                  'user',
-
-                parts: [
-                  {
-                    text:
-                      prompt
-                  },
-
-                  {
-                    inlineData: {
-                      mimeType:
-                        safeString(audio.mimetype)
-                          .split(';')[0]
-                          .trim(),
-                      data:
-                        audio.buffer.toString(
-                          'base64'
-                        )
-                    }
-                  }
-                ]
-              }
-            ],
-
-            generationConfig: {
-              maxOutputTokens:
-                700
-            }
-          })
-      }
-    );
-
-  let data = {};
-
-  try {
-    data =
-      await response.json();
-  } catch {
-    data = {};
-  }
-
-  if (!response.ok) {
-    console.error(
-      '❌ Transcription Gemini :',
-      JSON.stringify(data)
-    );
-
-    throw new Error(
-      data?.error?.message ||
-      `Erreur transcription Gemini HTTP ${response.status}`
-    );
-  }
-
-  const transcript =
-    Array.isArray(
-      data
-        ?.candidates
-        ?.[0]
-        ?.content
-        ?.parts
-    )
-      ? data
-          .candidates[0]
-          .content
-          .parts
-          .map(part =>
-            safeString(
-              part?.text
-            )
-          )
-          .filter(Boolean)
-          .join('\n')
-          .trim()
-      : '';
-
-  if (
-    !transcript ||
-    transcript ===
-      '[INAUDIBLE]'
-  ) {
-    throw new Error(
-      'Le message vocal est incompréhensible.'
-    );
-  }
-
-  return transcript;
-}
-
-async function processWhatsAppAudio(
-  from,
-  message,
-  isAdReferral,
-  options = {}
-) {
-  const mediaId =
-    safeString(
-      message
-        ?.audio
-        ?.id
-    );
-
-  if (!mediaId) {
-    throw new Error(
-      'Message vocal WhatsApp sans media ID.'
-    );
-  }
-
-  let audio = null;
-  let audioUrl = '';
-
-  const replyAllowed =
-    options?.replyAllowed !==
-      false;
-
-  try {
-    audio =
-      await downloadWhatsAppMedia(
-        mediaId
-      );
-
-    audioUrl =
-      persistConversationAudio(
-        audio,
-        'client-voice'
-      );
-
-    const transcript =
-      await transcribeWhatsAppAudio(
-        audio
-      );
-
-    console.log(
-      '🎙️ TRANSCRIPTION CLIENT :',
-      transcript
-    );
-
-    if (!replyAllowed) {
-      updateConversationState(
-        from,
-        current => ({
-          ...current,
-          commercialAttention:
-            true,
-          commercialAttentionReason:
-            'Nouveau message vocal client.'
-        })
-      );
-
-      logConversation({
-        message_id:
-          message?.id ||
-          null,
-        contact:
-          from,
-        type:
-          'audio',
-        incoming:
-          transcript,
-        transcription:
-          transcript,
-        audio_url:
-          audioUrl,
-        audio_mime:
-          safeString(
-            audio?.mimetype
-          ),
-        action:
-          'voice_transcribed_commercial_required',
-        reply_sent:
-          false,
-        time:
-          new Date().toISOString()
-      });
-
-      return;
-    }
-
-    let reply = '';
-
-    try {
-      reply =
-        await generateReply(
-          from,
-          transcript
-        );
-    } catch (error) {
-      console.error(
-        '❌ Réponse après transcription :',
-        error.message
-      );
-
-      updateConversationState(
-        from,
-        current => ({
-          ...current,
-          commercialAttention:
-            true,
-          commercialAttentionReason:
-            'Message vocal transcrit mais réponse IA indisponible.'
-        })
-      );
-
-      logConversation({
-        message_id:
-          message?.id ||
-          null,
-        contact:
-          from,
-        type:
-          'audio',
-        incoming:
-          transcript,
-        transcription:
-          transcript,
-        audio_url:
-          audioUrl,
-        audio_mime:
-          safeString(
-            audio?.mimetype
-          ),
-        action:
-          'voice_transcribed_commercial_required',
-        error:
-          error.message,
-        reply_sent:
-          false,
-        time:
-          new Date().toISOString()
-      });
-
-      return;
-    }
-
-    const metaResult =
-      await sendWhatsAppMessage(
-        from,
-        reply
-      );
-
-    markBotMessage(
-      from,
-      'voice_reply'
-    );
-
-    logConversation({
-      message_id:
-        message?.id ||
-        null,
-      contact:
-        from,
-      type:
-        'audio',
-      incoming:
-        transcript,
-      transcription:
-        transcript,
-      audio_url:
-        audioUrl,
-      audio_mime:
-        safeString(
-          audio?.mimetype
-        ),
-      action:
-        'voice_transcribed_and_replied',
-      reply,
-      source:
-        isAdReferral
-          ? 'meta_ad'
-          : 'organic',
-      meta_message_id:
-        metaResult
-          ?.messages
-          ?.[0]
-          ?.id ||
-        null,
-      reply_sent:
-        true,
-      time:
-        new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(
-      '❌ Message vocal client :',
-      error.message
-    );
-
-    updateConversationState(
-      from,
-      current => ({
-        ...current,
-        commercialAttention:
-          true,
-        commercialAttentionReason:
-          'Message vocal à écouter par un commercial.'
-      })
-    );
-
-    logConversation({
-      message_id:
-        message?.id ||
-        null,
-      contact:
-        from,
-      type:
-        'audio',
-      audio_url:
-        audioUrl ||
-        undefined,
-      audio_mime:
-        safeString(
-          audio?.mimetype
-        ) ||
-        safeString(
-          message?.audio?.mime_type
-        ),
-      action:
-        'voice_commercial_required',
-      error:
-        error.message,
-      reply_sent:
-        false,
-      time:
-        new Date().toISOString()
-    });
-  }
 }
 
 // ============================================================
@@ -3560,220 +2853,6 @@ async function generateCustomizationSimulation({
 }
 
 // ============================================================
-// V6.19 — WHATSAPP BUSINESS CALLING API (AUDIO)
-// ============================================================
-
-async function callMetaCallingApi({
-  action,
-  callId = '',
-  sdp = '',
-  phoneNumberId = ''
-}) {
-  const targetPhoneNumberId =
-    safeString(phoneNumberId) ||
-    PHONE_NUMBER_ID;
-
-  if (!WHATSAPP_TOKEN) {
-    throw new Error(
-      'WHATSAPP_TOKEN manquant.'
-    );
-  }
-
-  if (!targetPhoneNumberId) {
-    throw new Error(
-      'PHONE_NUMBER_ID manquant.'
-    );
-  }
-
-  const baseUrl =
-    `https://graph.facebook.com/${META_API_VERSION}/${targetPhoneNumberId}`;
-
-  if (action === 'get_settings') {
-    const response = await fetch(
-      `${baseUrl}/settings`,
-      {
-        headers: {
-          Authorization:
-            `Bearer ${WHATSAPP_TOKEN}`
-        }
-      }
-    );
-
-    const data = await response.json()
-      .catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(
-        data?.error?.message ||
-        `Meta Calling settings HTTP ${response.status}`
-      );
-    }
-
-    return data;
-  }
-
-  const body = {
-    messaging_product: 'whatsapp',
-    action
-  };
-
-  if (callId) {
-    body.call_id = callId;
-  }
-
-  if (
-    ['pre_accept', 'accept'].includes(action)
-  ) {
-    body.session = {
-      sdp_type: 'answer',
-      sdp: safeString(sdp)
-        .replace(/\r?\n/g, '\r\n')
-    };
-  }
-
-  const response = await fetch(
-    `${baseUrl}/calls`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization:
-          `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type':
-          'application/json'
-      },
-      body: JSON.stringify(body)
-    }
-  );
-
-  const data = await response.json()
-    .catch(() => ({}));
-
-  if (!response.ok) {
-    console.error(
-      '❌ Meta Calling API :',
-      JSON.stringify(data)
-    );
-
-    throw new Error(
-      data?.error?.message ||
-      `Meta Calling API HTTP ${response.status}`
-    );
-  }
-
-  return data;
-}
-
-function callWebhookEventName(call) {
-  return safeString(
-    call?.event ||
-    call?.status ||
-    call?.state
-  ).toLowerCase();
-}
-
-async function processWhatsAppCalls(value) {
-  const incomingPhoneNumberId =
-    safeString(
-      value?.metadata?.phone_number_id
-    );
-
-  if (
-    PHONE_NUMBER_ID &&
-    incomingPhoneNumberId &&
-    incomingPhoneNumberId !== PHONE_NUMBER_ID
-  ) {
-    console.log(
-      '☎️ Appel autre numéro ignoré.'
-    );
-    return;
-  }
-
-  const calls = Array.isArray(value?.calls)
-    ? value.calls
-    : [];
-
-  for (const call of calls) {
-    const event = callWebhookEventName(call);
-    const saved = recordWhatsAppCallEvent(
-      call,
-      {
-        phoneNumberId:
-          incomingPhoneNumberId ||
-          PHONE_NUMBER_ID
-      }
-    );
-
-    if (!saved) {
-      continue;
-    }
-
-    const contact = normalizePhone(
-      call?.from || saved.from
-    );
-
-    console.log(
-      '☎️ ÉVÉNEMENT APPEL WHATSAPP :',
-      event || 'inconnu',
-      '| id :',
-      saved.id,
-      '| client :',
-      contact || 'inconnu'
-    );
-
-    if (
-      contact &&
-      ['connect', 'ringing', 'incoming'].includes(event)
-    ) {
-      updateConversationState(
-        contact,
-        current => ({
-          ...current,
-          commercialAttention: true,
-          commercialAttentionReason:
-            saved.mediaType === 'video'
-              ? 'Appel vidéo entrant — non pris en charge'
-              : 'Appel WhatsApp entrant',
-          priority: true,
-          unread: true,
-          lastCustomerAt:
-            new Date().toISOString()
-        })
-      );
-
-      logConversation({
-        contact,
-        incoming:
-          saved.mediaType === 'video'
-            ? '📹 Appel vidéo WhatsApp entrant'
-            : '☎️ Appel audio WhatsApp entrant',
-        action:
-          saved.mediaType === 'video'
-            ? 'video_call_incoming'
-            : 'voice_call_incoming',
-        call_id: saved.id,
-        reply_sent: false,
-        time: new Date().toISOString()
-      });
-    }
-
-    if (
-      contact &&
-      ['terminate', 'terminated', 'ended', 'completed'].includes(event)
-    ) {
-      logConversation({
-        contact,
-        incoming: '☎️ Appel WhatsApp terminé',
-        action: 'voice_call_ended',
-        call_id: saved.id,
-        duration: saved.duration || 0,
-        reply_sent: false,
-        time: new Date().toISOString()
-      });
-    }
-  }
-}
-
-// ============================================================
 // CONNECTION ADMIN
 // ============================================================
 
@@ -3784,234 +2863,101 @@ setCustomizationHandler(
   generateCustomizationSimulation
 );
 
-setCallActionHandler(
-  async payload =>
-    callMetaCallingApi(payload)
-);
-
 setCommercialSendHandler(
   async ({
     phone,
+    contact,
+    channel,
+    externalContact,
     text,
-    question,
-    file = null,
-    mediaKind = '',
-    actor = null
+    actor,
+    mediaKind,
+    file
   }) => {
-    const cleanPhone =
-      normalizePhone(
-        phone
-      );
-
-    const cleanText =
-      safeString(
-        text
+    const resolvedChannel =
+      normalizeChannel(
+        channel ||
+        (safeString(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp')
       );
 
     if (
-      !cleanPhone ||
-      (
-        !cleanText &&
-        !file
-      )
+      file &&
+      resolvedChannel === 'instagram'
     ) {
       throw new Error(
-        'Numéro client ou contenu commercial manquant.'
+        'Pour Instagram, utilisez pour le moment une réponse texte. Les pièces jointes seront ajoutées dans une prochaine version.'
       );
     }
 
-    let metaResult =
-      null;
+    const resolvedExternal =
+      safeString(externalContact) ||
+      (resolvedChannel === 'instagram'
+        ? conversationExternalId(contact)
+        : normalizePhone(phone || contact));
 
-    let attachment =
-      null;
+    const conversationKey =
+      makeConversationKey(
+        resolvedChannel,
+        resolvedExternal
+      );
 
-    if (file) {
-      attachment =
-        await sendWhatsAppCommercialMedia(
-          cleanPhone,
-          file,
-          mediaKind,
-          cleanText
-        );
+    let result;
 
-      metaResult =
-        attachment
-          .metaResult;
+    if (resolvedChannel === 'instagram') {
+      result = await sendInstagramMessage(
+        resolvedExternal,
+        text
+      );
+    } else if (file) {
+      result = await sendWhatsAppMedia(
+        resolvedExternal,
+        file,
+        text,
+        safeString(mediaKind) ||
+          (safeString(file?.mimetype).startsWith('image/') ? 'image' : 'document')
+      );
     } else {
-      metaResult =
-        await sendWhatsAppMessage(
-          cleanPhone,
-          cleanText
-        );
-    }
-
-    const settings =
-      getBotSettings();
-
-    if (
-      settings
-        .pauseWhenHumanReplies
-    ) {
-      markHumanTakeover(
-        cleanPhone,
-        settings
+      result = await sendWhatsAppMessage(
+        resolvedExternal,
+        text
       );
     }
 
-    updateConversationState(
-      cleanPhone,
-      current => ({
-        ...current,
-        commercialAttention:
-          false,
-        commercialAttentionReason:
-          '',
-        imageNeedsCommercial:
-          false,
-        lastCommercialAt:
-          new Date()
-            .toISOString(),
-        lastCommercialUserId:
-          safeString(
-            actor?.id
-          ),
-        lastCommercialName:
-          safeString(
-            actor?.name
-          ),
-        lastCommercialEmail:
-          safeString(
-            actor?.email
-          ),
-        assignedTo:
-          safeString(
-            actor?.name
-          ) ||
-          safeString(
-            current
-              .assignedTo
-          ),
-        assignedUserId:
-          safeString(
-            actor?.id
-          ) ||
-          safeString(
-            current
-              .assignedUserId
-          )
-      })
+    markHumanTakeover(
+      conversationKey,
+      getBotSettings()
     );
-
-    const state =
-      getConversationState(
-        cleanPhone
-      );
-
-    const customerQuestion =
-      safeString(
-        question
-      ) ||
-      safeString(
-        state
-          ?.lastCustomerText
-      );
-
-    if (cleanText) {
-      createCommercialCorrectionCandidate({
-        phone:
-          cleanPhone,
-        question:
-          customerQuestion,
-        commercialReply:
-          cleanText,
-        source:
-          file
-            ? 'admin_commercial_media'
-            : 'admin_commercial_reply'
-      });
-    }
 
     logConversation({
       contact:
-        cleanPhone,
-      reply:
-        cleanText ||
-        undefined,
+        conversationKey,
+      external_contact:
+        resolvedExternal,
+      channel:
+        resolvedChannel,
       action:
-        attachment?.kind ===
-          'audio'
-          ? 'commercial_voice_reply'
-          : 'commercial_reply',
+        'commercial_reply',
       source:
         'commercial_admin',
-      commercial_user_id:
-        safeString(
-          actor?.id
-        ),
-      commercial_user_name:
-        safeString(
-          actor?.name
-        ),
-      commercial_user_email:
-        safeString(
-          actor?.email
-        ),
-      commercial_user_role:
-        safeString(
-          actor?.role
-        ),
-      attachment_type:
-        attachment?.kind ||
-        undefined,
-      attachment_name:
-        attachment?.filename ||
-        undefined,
-      attachment_mime:
-        attachment?.mimetype ||
-        undefined,
-      attachment_media_id:
-        attachment?.mediaId ||
-        undefined,
-      attachment_url:
-        attachment?.localUrl ||
-        undefined,
-      attachment_voice:
-        attachment?.voice ===
-          true ||
-        undefined,
-      meta_message_id:
-        metaResult
-          ?.messages
-          ?.[0]
-          ?.id ||
-        null,
+      reply:
+        safeString(text),
       reply_sent:
         true,
+      actor_name:
+        safeString(actor?.name),
+      actor_email:
+        safeString(actor?.email),
       time:
-        new Date()
-          .toISOString()
+        new Date().toISOString()
     });
 
     return {
-      meta_message_id:
-        metaResult
-          ?.messages
-          ?.[0]
-          ?.id ||
-        null,
-      attachment:
-        attachment
-          ? {
-              kind:
-                attachment.kind,
-              filename:
-                attachment.filename,
-              url:
-                attachment.localUrl ||
-                ''
-            }
-          : null
+      channel:
+        resolvedChannel,
+      externalContact:
+        resolvedExternal,
+      meta:
+        result
     };
   }
 );
@@ -4136,228 +3082,215 @@ async function sendWhatsAppMessage(
   return data;
 }
 
+// ============================================================
+// MÉDIAS WHATSAPP (centre commercial)
+// ============================================================
 
-async function uploadWhatsAppMedia(
-  file
-) {
+async function uploadWhatsAppMedia(file) {
   if (!WHATSAPP_TOKEN) {
-    throw new Error(
-      'WHATSAPP_TOKEN manquant.'
-    );
+    throw new Error('WHATSAPP_TOKEN manquant.');
   }
 
   if (!PHONE_NUMBER_ID) {
-    throw new Error(
-      'PHONE_NUMBER_ID manquant.'
-    );
+    throw new Error('PHONE_NUMBER_ID manquant.');
   }
 
-  if (
-    !file?.buffer ||
-    !file?.mimetype
-  ) {
-    throw new Error(
-      'Fichier média invalide.'
-    );
+  if (!file?.buffer) {
+    throw new Error('Fichier WhatsApp manquant.');
   }
 
-  const filename =
-    path
-      .basename(
-        safeString(
-          file.originalname
-        ) ||
-        `fichier-${Date.now()}`
-      )
-      .slice(
-        0,
-        180
-      );
-
-  const form =
-    new FormData();
-
-  form.append(
-    'messaging_product',
-    'whatsapp'
-  );
-
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
   form.append(
     'file',
     new Blob(
-      [
-        file.buffer
-      ],
+      [file.buffer],
       {
         type:
-          file.mimetype
+          safeString(file.mimetype) ||
+          'application/octet-stream'
       }
     ),
-    filename
+    safeString(file.originalname) ||
+      'fichier'
   );
 
-  const url =
-    `https://graph.facebook.com/${META_API_VERSION}/` +
-    `${PHONE_NUMBER_ID}/media`;
-
-  const response =
-    await fetch(
-      url,
-      {
-        method:
-          'POST',
-
-        headers: {
-          Authorization:
-            `Bearer ${WHATSAPP_TOKEN}`
-        },
-
-        body:
-          form
-      }
-    );
+  const response = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${PHONE_NUMBER_ID}/media`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_TOKEN}`
+      },
+      body: form
+    }
+  );
 
   let data = {};
-
   try {
-    data =
-      await response.json();
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok || !data?.id) {
+    throw new Error(
+      data?.error?.message ||
+      `Upload média WhatsApp impossible (${response.status}).`
+    );
+  }
+
+  return safeString(data.id);
+}
+
+async function sendWhatsAppMedia(
+  to,
+  file,
+  caption = '',
+  mediaKind = 'document'
+) {
+  const cleanRecipient =
+    normalizePhone(to);
+
+  if (!cleanRecipient) {
+    throw new Error('Destinataire WhatsApp manquant.');
+  }
+
+  const mediaId =
+    await uploadWhatsAppMedia(file);
+
+  const type =
+    mediaKind === 'image' ||
+    safeString(file?.mimetype).startsWith('image/')
+      ? 'image'
+      : 'document';
+
+  const mediaObject = {
+    id: mediaId
+  };
+
+  const cleanCaption =
+    safeString(caption);
+
+  if (cleanCaption) {
+    mediaObject.caption =
+      cleanCaption;
+  }
+
+  if (type === 'document') {
+    mediaObject.filename =
+      safeString(file?.originalname) ||
+      'document';
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type':
+          'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product:
+          'whatsapp',
+        recipient_type:
+          'individual',
+        to:
+          cleanRecipient,
+        type,
+        [type]:
+          mediaObject
+      })
+    }
+  );
+
+  let data = {};
+  try {
+    data = await response.json();
   } catch {
     data = {};
   }
 
   if (!response.ok) {
-    console.error(
-      '❌ Upload média Meta :',
-      JSON.stringify(
-        data
-      )
-    );
-
     throw new Error(
       data?.error?.message ||
-      `Erreur upload média HTTP ${response.status}`
+      `Envoi média WhatsApp impossible (${response.status}).`
     );
   }
 
-  const mediaId =
-    safeString(
-      data?.id
-    );
-
-  if (!mediaId) {
-    throw new Error(
-      'Meta n’a pas retourné d’identifiant média.'
-    );
-  }
-
-  return {
-    mediaId,
-    filename
-  };
+  return data;
 }
 
-async function sendWhatsAppMediaById(
+// ============================================================
+// ENVOI INSTAGRAM
+// ============================================================
+
+async function sendInstagramMessage(
   to,
-  {
-    mediaId,
-    kind,
-    filename,
-    caption = '',
-    voice = false
-  }
+  text
 ) {
-  const cleanRecipient =
-    normalizePhone(
-      to
-    );
-
-  if (
-    !cleanRecipient ||
-    !mediaId
-  ) {
+  if (!INSTAGRAM_ACCESS_TOKEN) {
     throw new Error(
-      'Destinataire ou média WhatsApp manquant.'
+      'INSTAGRAM_ACCESS_TOKEN manquant.'
     );
   }
 
-  const normalizedKind =
-    kind === 'image'
-      ? 'image'
-      : kind === 'audio'
-        ? 'audio'
-        : 'document';
-
-  const mediaPayload = {
-    id:
-      mediaId
-  };
-
-  const cleanCaption =
-    safeString(
-      caption
+  if (!INSTAGRAM_ACCOUNT_ID) {
+    throw new Error(
+      'INSTAGRAM_ACCOUNT_ID manquant.'
     );
-
-  // Les messages audio n'acceptent pas de caption.
-  if (
-    normalizedKind !==
-      'audio' &&
-    cleanCaption &&
-    cleanCaption.length <=
-      900
-  ) {
-    mediaPayload.caption =
-      cleanCaption;
   }
 
-  if (
-    normalizedKind ===
-      'document' &&
-    filename
-  ) {
-    mediaPayload.filename =
-      filename;
+  const cleanRecipient =
+    safeString(to);
+
+  const cleanText =
+    safeString(text);
+
+  if (!cleanRecipient) {
+    throw new Error(
+      'Destinataire Instagram manquant.'
+    );
   }
 
-  if (
-    normalizedKind ===
-      'audio' &&
-    voice === true
-  ) {
-    mediaPayload.voice =
-      true;
+  if (!cleanText) {
+    throw new Error(
+      'Message Instagram vide.'
+    );
   }
+
+  console.log(
+    '📤 ENVOI INSTAGRAM VERS :',
+    cleanRecipient
+  );
 
   const url =
-    `https://graph.facebook.com/${META_API_VERSION}/` +
-    `${PHONE_NUMBER_ID}/messages`;
+    `https://graph.instagram.com/${META_API_VERSION}/` +
+    `${INSTAGRAM_ACCOUNT_ID}/messages`;
 
   const response =
     await fetch(
       url,
       {
-        method:
-          'POST',
-
+        method: 'POST',
         headers: {
           Authorization:
-            `Bearer ${WHATSAPP_TOKEN}`,
+            `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
           'Content-Type':
             'application/json'
         },
-
         body:
           JSON.stringify({
-            messaging_product:
-              'whatsapp',
-            recipient_type:
-              'individual',
-            to:
-              cleanRecipient,
-            type:
-              normalizedKind,
-            [normalizedKind]:
-              mediaPayload
+            recipient: {
+              id: cleanRecipient
+            },
+            message: {
+              text: cleanText
+            }
           })
       }
     );
@@ -4365,207 +3298,71 @@ async function sendWhatsAppMediaById(
   let data = {};
 
   try {
-    data =
-      await response.json();
+    data = await response.json();
   } catch {
     data = {};
   }
 
   if (!response.ok) {
     console.error(
-      '❌ Envoi média WhatsApp :',
-      JSON.stringify(
-        data
-      )
+      '❌ Meta Instagram API :',
+      JSON.stringify(data)
     );
 
     throw new Error(
       data?.error?.message ||
-      `Erreur média WhatsApp HTTP ${response.status}`
+      `Erreur Instagram HTTP ${response.status}`
     );
   }
+
+  console.log(
+    '✅ Meta Instagram a accepté le message :',
+    data?.message_id ||
+    data?.messages?.[0]?.id ||
+    'ID non retourné'
+  );
 
   return data;
 }
 
-function isWhatsAppSupportedAudioMime(
-  mimetype
+async function getInstagramProfile(
+  instagramScopedId
 ) {
-  const type =
-    safeString(
-      mimetype
-    )
-      .toLowerCase()
-      .split(';')[0]
-      .trim();
-
-  return new Set([
-    'audio/aac',
-    'audio/mp4',
-    'audio/mpeg',
-    'audio/amr',
-    'audio/ogg'
-  ])
-    .has(
-      type
-    );
-}
-
-async function sendWhatsAppCommercialMedia(
-  to,
-  file,
-  mediaKind,
-  text = ''
-) {
-  const mimetype =
-    safeString(
-      file?.mimetype
-    )
-      .toLowerCase();
-
-  let kind =
-    mediaKind;
-
   if (
-    ![
-      'image',
-      'audio',
-      'document'
-    ]
-      .includes(
-        kind
-      )
+    !INSTAGRAM_ACCESS_TOKEN ||
+    !instagramScopedId
   ) {
-    kind =
-      mimetype
-        .startsWith(
-          'image/'
-        )
-        ? 'image'
-        : mimetype
-            .startsWith(
-              'audio/'
-            )
-          ? 'audio'
-          : 'document';
+    return {};
   }
 
-  if (
-    kind === 'audio' &&
-    !isWhatsAppSupportedAudioMime(
-      mimetype
-    )
-  ) {
-    throw new Error(
-      'Format vocal non compatible WhatsApp. Utilisez OGG/Opus, M4A/MP4, MP3, AAC ou AMR.'
-    );
-  }
+  try {
+    const url =
+      `https://graph.instagram.com/${META_API_VERSION}/` +
+      `${encodeURIComponent(instagramScopedId)}` +
+      `?fields=name,username,profile_pic`;
 
-  if (
-    kind === 'audio' &&
-    Number(
-      file?.buffer?.length ||
-      0
-    ) >
-      16 * 1024 * 1024
-  ) {
-    throw new Error(
-      'Message vocal trop volumineux. WhatsApp accepte jusqu’à 16 Mo pour l’audio.'
-    );
-  }
-
-  let localUrl = '';
-
-  if (
-    kind === 'audio'
-  ) {
-    localUrl =
-      persistConversationAudio(
-        {
-          buffer:
-            file.buffer,
-          mimetype:
-            file.mimetype
-        },
-        'commercial-voice'
-      );
-  }
-
-  const uploaded =
-    await uploadWhatsAppMedia(
-      file
-    );
-
-  const cleanText =
-    safeString(
-      text
-    );
-
-  // Un audio n'accepte pas de légende : envoyer le texte séparément.
-  if (
-    kind === 'audio' &&
-    cleanText
-  ) {
-    await sendWhatsAppMessage(
-      to,
-      cleanText
-    );
-  } else if (
-    cleanText.length >
-      900
-  ) {
-    await sendWhatsAppMessage(
-      to,
-      cleanText
-    );
-  }
-
-  const normalizedMime =
-    mimetype
-      .split(';')[0]
-      .trim();
-
-  // Meta autorise voice=true uniquement pour OGG avec codec Opus.
-  const voice =
-    kind === 'audio' &&
-    normalizedMime ===
-      'audio/ogg';
-
-  const metaResult =
-    await sendWhatsAppMediaById(
-      to,
+    const response = await fetch(
+      url,
       {
-        mediaId:
-          uploaded.mediaId,
-        kind,
-        filename:
-          uploaded.filename,
-        caption:
-          kind !== 'audio' &&
-          cleanText.length <=
-            900
-            ? cleanText
-            : '',
-        voice
+        headers: {
+          Authorization:
+            `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
+        }
       }
     );
 
-  return {
-    metaResult,
-    mediaId:
-      uploaded.mediaId,
-    filename:
-      uploaded.filename,
-    mimetype:
-      safeString(
-        file?.mimetype
-      ),
-    kind,
-    voice,
-    localUrl
-  };
-}
+    if (!response.ok) {
+      return {};
+    }
 
+    const data = await response.json();
+    return data && typeof data === 'object'
+      ? data
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 // ============================================================
 // POLITIQUE DE RÉPONSE
@@ -4662,7 +3459,7 @@ app.get('/', (req, res) => {
   res
     .status(200)
     .send(
-      '✅ Bot WhatsApp MONDECO actif.'
+      '✅ Agent MONDECO WhatsApp + Instagram actif.'
     );
 });
 
@@ -4724,6 +3521,12 @@ app.get('/debug-env', (req, res) => {
 
       phone_number_id_present:
         Boolean(PHONE_NUMBER_ID),
+
+      instagram_access_token_present:
+        Boolean(INSTAGRAM_ACCESS_TOKEN),
+
+      instagram_account_id_present:
+        Boolean(INSTAGRAM_ACCOUNT_ID),
 
       gemini_api_key_present:
         Boolean(GEMINI_API_KEY),
@@ -4842,12 +3645,19 @@ app.get('/webhook', (req, res) => {
 // ============================================================
 
 app.post('/webhook', (req, res) => {
+  const object =
+    safeString(
+      req.body?.object
+    );
+
   console.log('');
   console.log(
     '=============================================='
   );
   console.log(
-    '📩 WEBHOOK WHATSAPP REÇU'
+    object === 'instagram'
+      ? '📩 WEBHOOK INSTAGRAM REÇU'
+      : '📩 WEBHOOK WHATSAPP REÇU'
   );
   console.log(
     '🕐 Date :',
@@ -4868,14 +3678,35 @@ app.post('/webhook', (req, res) => {
   // Meta doit recevoir 200 rapidement
   res.sendStatus(200);
 
-  processWhatsAppWebhook(
-    req.body
-  ).catch(error => {
-    console.error(
-      '❌ Erreur globale webhook :',
-      error
-    );
-  });
+  if (object === 'instagram') {
+    processInstagramWebhook(
+      req.body
+    ).catch(error => {
+      console.error(
+        '❌ Erreur globale webhook Instagram :',
+        error
+      );
+    });
+
+    return;
+  }
+
+  if (object === 'whatsapp_business_account') {
+    processWhatsAppWebhook(
+      req.body
+    ).catch(error => {
+      console.error(
+        '❌ Erreur globale webhook WhatsApp :',
+        error
+      );
+    });
+
+    return;
+  }
+
+  console.log(
+    `ℹ️ Webhook Meta ignoré : ${object || 'objet inconnu'}`
+  );
 });
 
 // ============================================================
@@ -4919,11 +3750,6 @@ async function processWhatsAppWebhook(body) {
           value
         );
 
-        continue;
-      }
-
-      if (field === 'calls') {
-        await processWhatsAppCalls(value);
         continue;
       }
 
@@ -4990,6 +3816,436 @@ async function processWhatsAppWebhook(body) {
       }
     }
   }
+}
+
+// ============================================================
+// WEBHOOK INSTAGRAM
+// ============================================================
+
+async function processInstagramWebhook(body) {
+  if (body?.object !== 'instagram') {
+    return;
+  }
+
+  const entries =
+    Array.isArray(body?.entry)
+      ? body.entry
+      : [];
+
+  for (const entry of entries) {
+    const accountId =
+      safeString(entry?.id);
+
+    if (
+      INSTAGRAM_ACCOUNT_ID &&
+      accountId &&
+      accountId !== INSTAGRAM_ACCOUNT_ID
+    ) {
+      console.log(
+        `🧪 Webhook Instagram autre compte ignoré : ${accountId}`
+      );
+      continue;
+    }
+
+    const events =
+      Array.isArray(entry?.messaging)
+        ? entry.messaging
+        : [];
+
+    for (const event of events) {
+      try {
+        await processSingleInstagramEvent(
+          event
+        );
+      } catch (error) {
+        console.error(
+          '❌ Erreur message Instagram :',
+          error
+        );
+      }
+    }
+  }
+}
+
+async function processSingleInstagramEvent(event) {
+  const senderId =
+    safeString(
+      event?.sender?.id
+    );
+
+  const recipientId =
+    safeString(
+      event?.recipient?.id
+    );
+
+  const message =
+    event?.message ||
+    null;
+
+  const postback =
+    event?.postback ||
+    null;
+
+  if (!senderId) {
+    return;
+  }
+
+  // Ignore les messages émis par MONDECO / échos API.
+  if (
+    message?.is_echo === true ||
+    message?.is_self === true ||
+    event?.is_self === true ||
+    senderId === INSTAGRAM_ACCOUNT_ID
+  ) {
+    return;
+  }
+
+  if (
+    INSTAGRAM_ACCOUNT_ID &&
+    recipientId &&
+    recipientId !== INSTAGRAM_ACCOUNT_ID
+  ) {
+    return;
+  }
+
+  const messageId =
+    safeString(
+      message?.mid ||
+      postback?.mid
+    );
+
+  if (
+    messageId &&
+    isDuplicateMessage(messageId)
+  ) {
+    return;
+  }
+
+  const contact =
+    makeConversationKey(
+      'instagram',
+      senderId
+    );
+
+  const previousState =
+    getConversationState(
+      contact
+    );
+
+  const isNewCustomer =
+    !previousState?.firstSeenAt;
+
+  const profile =
+    isNewCustomer ||
+    !previousState?.profileName
+      ? await getInstagramProfile(
+          senderId
+        )
+      : {};
+
+  const text =
+    safeString(
+      message?.text ||
+      postback?.title ||
+      postback?.payload
+    );
+
+  const referral =
+    message?.referral ||
+    event?.referral ||
+    null;
+
+  const isAdReferral =
+    safeString(referral?.source)
+      .toUpperCase() === 'ADS' ||
+    Boolean(referral?.ad_id);
+
+  const attachments =
+    Array.isArray(message?.attachments)
+      ? message.attachments
+      : [];
+
+  const pseudoMessage = {
+    id:
+      messageId,
+    type:
+      text
+        ? 'text'
+        : (
+            attachments.length
+              ? 'attachment'
+              : 'unknown'
+          ),
+    text: {
+      body:
+        text
+    },
+    referral:
+      referral ||
+      undefined
+  };
+
+  markCustomerMessage(
+    contact,
+    pseudoMessage,
+    isAdReferral,
+    {
+      channel:
+        'instagram',
+      externalContact:
+        senderId,
+      profileName:
+        safeString(
+          profile?.name ||
+          profile?.username
+        ),
+      instagramUsername:
+        safeString(
+          profile?.username
+        )
+    }
+  );
+
+  if (isAdReferral) {
+    updateConversationState(
+      contact,
+      current => ({
+        ...current,
+        cameFromAd:
+          true,
+        adReferral: {
+          ...(current.adReferral || {}),
+          sourceId:
+            safeString(
+              referral?.ad_id ||
+              referral?.source_id
+            ),
+          sourceUrl:
+            safeString(
+              referral?.source_url
+            ),
+          headline:
+            safeString(
+              referral
+                ?.ads_context_data
+                ?.ad_title
+            ),
+          body:
+            safeString(
+              referral?.ref
+            )
+        }
+      })
+    );
+  }
+
+  console.log(
+    '📸 MESSAGE INSTAGRAM',
+    '| de :',
+    safeString(profile?.username) || senderId,
+    '| type :',
+    pseudoMessage.type,
+    '| id :',
+    messageId || 'sans-id'
+  );
+
+  const decision =
+    await checkWhetherBotShouldReply(
+      contact,
+      pseudoMessage,
+      isNewCustomer
+    );
+
+  if (decision.sendAbsence) {
+    const absenceMessage =
+      safeString(
+        decision
+          .settings
+          ?.schedule
+          ?.absenceMessage
+      );
+
+    if (absenceMessage) {
+      await sendInstagramMessage(
+        senderId,
+        absenceMessage
+      );
+
+      markBotMessage(
+        contact,
+        'absence'
+      );
+
+      logConversation({
+        message_id:
+          messageId || null,
+        contact,
+        external_contact:
+          senderId,
+        channel:
+          'instagram',
+        incoming:
+          text,
+        reply:
+          absenceMessage,
+        source:
+          isAdReferral
+            ? 'meta_ad'
+            : 'organic',
+        action:
+          'outside_hours_message',
+        reply_sent:
+          true,
+        time:
+          new Date().toISOString()
+      });
+    }
+
+    return;
+  }
+
+  if (!decision.allowed) {
+    logConversation({
+      message_id:
+        messageId || null,
+      contact,
+      external_contact:
+        senderId,
+      channel:
+        'instagram',
+      incoming:
+        text,
+      type:
+        pseudoMessage.type,
+      action:
+        decision.reason,
+      source:
+        isAdReferral
+          ? 'meta_ad'
+          : 'organic',
+      reply_sent:
+        false,
+      time:
+        new Date().toISOString()
+    });
+
+    return;
+  }
+
+  // Sécurité MONDECO : médias/captures Instagram -> commercial.
+  if (!text || attachments.length) {
+    updateConversationState(
+      contact,
+      current => ({
+        ...current,
+        commercialAttention:
+          true,
+        commercialAttentionReason:
+          'Média Instagram reçu — vérification commerciale requise.',
+        imageNeedsCommercial:
+          true
+      })
+    );
+
+    logConversation({
+      message_id:
+        messageId || null,
+      contact,
+      external_contact:
+        senderId,
+      channel:
+        'instagram',
+      incoming:
+        text,
+      type:
+        attachments.length
+          ? 'attachment'
+          : 'unknown',
+      action:
+        'commercial_required',
+      source:
+        isAdReferral
+          ? 'meta_ad'
+          : 'organic',
+      reply_sent:
+        false,
+      time:
+        new Date().toISOString()
+    });
+
+    return;
+  }
+
+  let reply;
+
+  try {
+    reply = await generateReply(
+      contact,
+      text,
+      'instagram'
+    );
+  } catch (error) {
+    logConversation({
+      message_id:
+        messageId || null,
+      contact,
+      external_contact:
+        senderId,
+      channel:
+        'instagram',
+      incoming:
+        text,
+      error:
+        error.message,
+      source:
+        isAdReferral
+          ? 'meta_ad'
+          : 'organic',
+      reply_sent:
+        false,
+      time:
+        new Date().toISOString()
+    });
+
+    throw error;
+  }
+
+  const metaResult =
+    await sendInstagramMessage(
+      senderId,
+      reply
+    );
+
+  markBotMessage(
+    contact,
+    'reply'
+  );
+
+  logConversation({
+    message_id:
+      messageId || null,
+    contact,
+    external_contact:
+      senderId,
+    channel:
+      'instagram',
+    incoming:
+      text,
+    reply,
+    source:
+      isAdReferral
+        ? 'meta_ad'
+        : 'organic',
+    meta_message_id:
+      safeString(
+        metaResult?.message_id ||
+        metaResult?.messages?.[0]?.id
+      ) || null,
+    reply_sent:
+      true,
+    time:
+      new Date().toISOString()
+  });
 }
 
 // ============================================================
@@ -5091,7 +4347,11 @@ async function processSingleMessage(message) {
   markCustomerMessage(
     from,
     message,
-    isAdReferral
+    isAdReferral,
+    {
+      channel: 'whatsapp',
+      externalContact: from
+    }
   );
 
   const decision =
@@ -5102,18 +4362,6 @@ async function processSingleMessage(message) {
     );
 
   if (decision.sendAbsence) {
-    if (messageType === 'audio') {
-      await processWhatsAppAudio(
-        from,
-        message,
-        isAdReferral,
-        {
-          replyAllowed:
-            false
-        }
-      );
-    }
-
     const absenceMessage =
       safeString(
         decision
@@ -5148,20 +4396,6 @@ async function processSingleMessage(message) {
     console.log(
       `⏸️ IA ne répond pas : ${decision.reason}`
     );
-
-    if (messageType === 'audio') {
-      await processWhatsAppAudio(
-        from,
-        message,
-        isAdReferral,
-        {
-          replyAllowed:
-            false
-        }
-      );
-
-      return;
-    }
 
     logConversation({
       message_id:
@@ -5216,7 +4450,8 @@ async function processSingleMessage(message) {
       reply =
         await generateReply(
           from,
-          userText
+          userText,
+          'whatsapp'
         );
 
       console.log(
@@ -5306,20 +4541,6 @@ async function processSingleMessage(message) {
         error.message
       );
     }
-
-    return;
-  }
-
-  // ==========================================================
-  // AUDIO / MESSAGE VOCAL
-  // ==========================================================
-
-  if (messageType === 'audio') {
-    await processWhatsAppAudio(
-      from,
-      message,
-      isAdReferral
-    );
 
     return;
   }
@@ -5656,10 +4877,29 @@ async function checkFollowUps() {
       }
 
       try {
-        await sendWhatsAppMessage(
-          phone,
-          message
-        );
+        const followUpChannel =
+          conversationChannel(
+            phone,
+            state
+          );
+
+        const followUpRecipient =
+          safeString(
+            state.externalContact ||
+            conversationExternalId(phone)
+          );
+
+        if (followUpChannel === 'instagram') {
+          await sendInstagramMessage(
+            followUpRecipient,
+            message
+          );
+        } else {
+          await sendWhatsAppMessage(
+            followUpRecipient,
+            message
+          );
+        }
 
         state.lastBotAt =
           new Date().toISOString();
@@ -5675,6 +4915,12 @@ async function checkFollowUps() {
         logConversation({
           contact:
             phone,
+
+          external_contact:
+            followUpRecipient,
+
+          channel:
+            followUpChannel,
 
           action:
             'automatic_followup',
@@ -5851,8 +5097,7 @@ app.listen(
       '✅ Admin : /admin'
     );
     console.log(
-      '✅ Webhook : /webhook',
-      '☎️ Calling API : V6.19 audio entrant (si Meta Calling est activé)'
+      '✅ Webhook : /webhook'
     );
     console.log(
       '✅ Debug logs : /debug-log'
