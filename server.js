@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + IA + RESPONSABLE COMMERCIAL + SLA — V6.19.5
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + IA + RESPONSABLE COMMERCIAL + SLA — V6.19.6
 // server.js
 //
 // Ajouts V5 :
@@ -18,6 +18,7 @@ require('dotenv').config();
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const {
   adminRouter,
@@ -35,7 +36,12 @@ const app = express();
 
 app.use(
   express.json({
-    limit: '5mb'
+    limit: '5mb',
+    verify(req, res, buffer) {
+      if (req.originalUrl === '/webhook') {
+        req.rawBody = Buffer.from(buffer);
+      }
+    }
   })
 );
 
@@ -77,6 +83,28 @@ const INSTAGRAM_ACCOUNT_ID =
   (
     process.env.INSTAGRAM_ACCOUNT_ID ||
     ''
+  ).trim();
+
+// V6.19.6 — validation cryptographique des webhooks Meta lorsqu'un
+// App Secret est configuré dans Railway. Aucun secret n'est exposé au frontend.
+const META_APP_SECRET =
+  (
+    process.env.META_APP_SECRET ||
+    ''
+  ).trim();
+
+// Optionnel : utile si Instagram et WhatsApp utilisent deux apps Meta
+// différentes. META_APP_SECRET reste le fallback compatible avec l'existant.
+const INSTAGRAM_APP_SECRET =
+  (
+    process.env.INSTAGRAM_APP_SECRET ||
+    META_APP_SECRET
+  ).trim();
+
+const WHATSAPP_APP_SECRET =
+  (
+    process.env.WHATSAPP_APP_SECRET ||
+    META_APP_SECRET
   ).trim();
 
 const GEMINI_API_KEY =
@@ -136,6 +164,27 @@ const CONVERSATION_PROFILE_DIR =
     'conversation-profile'
   );
 
+// V6.19.6 — journal append-only. conversation-log.json reste un cache récent
+// compatible avec les versions précédentes, tandis que ces fichiers JSONL
+// conservent tous les futurs événements sans rotation destructive.
+const CONVERSATION_EVENTS_DIR =
+  path.join(
+    DATA_DIR,
+    'conversation-events'
+  );
+
+const MESSAGE_ID_INDEX_PATH =
+  path.join(
+    DATA_DIR,
+    'conversation-message-ids.jsonl'
+  );
+
+const NOTIFICATIONS_PATH =
+  path.join(
+    DATA_DIR,
+    'notifications.json'
+  );
+
 fs.mkdirSync(
   CONVERSATION_MEDIA_DIR,
   { recursive: true }
@@ -143,6 +192,11 @@ fs.mkdirSync(
 
 fs.mkdirSync(
   CONVERSATION_PROFILE_DIR,
+  { recursive: true }
+);
+
+fs.mkdirSync(
+  CONVERSATION_EVENTS_DIR,
   { recursive: true }
 );
 
@@ -196,7 +250,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO WHATSAPP + INSTAGRAM BOT V6.19.4');
+console.log('🚀 MONDECO WHATSAPP + INSTAGRAM BOT V6.19.6');
 console.log(
   '=============================================='
 );
@@ -238,6 +292,12 @@ console.log(
     : '⚠️ MANQUANT'
 );
 console.log('DATA_DIR :', DATA_DIR);
+console.log(
+  'META APP SECRET(S) :',
+  INSTAGRAM_APP_SECRET || WHATSAPP_APP_SECRET
+    ? '✅ configuré(s) — validation X-Hub-Signature-256 active par canal'
+    : '⚠️ MANQUANT — ajoutez META_APP_SECRET (ou les secrets par canal)'
+);
 console.log(
   'META_API_VERSION :',
   META_API_VERSION
@@ -351,6 +411,186 @@ function readJsonObject(filePath, fallback = {}) {
 }
 
 // ============================================================
+// V6.19.6 — PERSISTANCE CONVERSATIONS / NOTIFICATIONS
+// ============================================================
+
+function isoDateKey(value = new Date()) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function appendJsonLine(filePath, value) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.appendFileSync(
+    filePath,
+    `${JSON.stringify(value)}\n`,
+    'utf8'
+  );
+}
+
+function appendPersistentConversationEvent(entry) {
+  const day = isoDateKey(entry?.time || new Date());
+  const filePath = path.join(
+    CONVERSATION_EVENTS_DIR,
+    `conversation-events-${day}.jsonl`
+  );
+  appendJsonLine(filePath, entry);
+}
+
+const persistentMessageIds = new Set();
+
+function loadPersistentMessageIds() {
+  try {
+    if (!fs.existsSync(MESSAGE_ID_INDEX_PATH)) return;
+    const lines = fs
+      .readFileSync(MESSAGE_ID_INDEX_PATH, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean);
+
+    for (const line of lines) {
+      const id = safeString(line);
+      if (id) persistentMessageIds.add(id);
+    }
+  } catch (error) {
+    console.warn('⚠️ Index message_id non chargé :', error.message);
+  }
+}
+
+function persistMessageId(value) {
+  const id = safeString(value);
+  if (!id || persistentMessageIds.has(id)) return;
+
+  persistentMessageIds.add(id);
+
+  try {
+    fs.appendFileSync(
+      MESSAGE_ID_INDEX_PATH,
+      `${id}\n`,
+      'utf8'
+    );
+  } catch (error) {
+    console.warn('⚠️ Index message_id non enregistré :', error.message);
+  }
+}
+
+loadPersistentMessageIds();
+
+const ESCALATION_NOTIFICATION_ACTIONS = new Set([
+  'ai_needs_commercial',
+  'ai_error_fallback_sent',
+  'ai_error_no_reply',
+  'commercial_required',
+  'human_pause',
+  'ai_disabled',
+  'audience',
+  'secure_image_commercial_required',
+  'secure_image_analysis_error',
+  'image_analysis_error'
+]);
+
+function conversationMediaPreview(entry) {
+  const attachments = Array.isArray(entry?.attachments)
+    ? entry.attachments.filter(Boolean)
+    : [];
+
+  if (safeString(entry?.incoming)) {
+    return safeString(entry.incoming).slice(0, 220);
+  }
+
+  if (attachments.length > 1) {
+    const allImages = attachments.every(item => safeString(item?.type) === 'image');
+    if (allImages) return `📷 ${attachments.length} photos`;
+  }
+
+  const type = safeString(
+    attachments[0]?.type ||
+    entry?.attachment_type ||
+    entry?.type
+  ).toLowerCase();
+
+  if (type === 'image') return '📷 Photo envoyée';
+  if (type === 'audio') return '🎤 Message vocal';
+  if (type === 'video') return '🎬 Vidéo';
+  if (type === 'file' || type === 'document') return '📎 Fichier';
+  return 'Nouveau message client';
+}
+
+function loadNotificationsStore() {
+  const parsed = readJsonObject(NOTIFICATIONS_PATH, { items: [] });
+  return {
+    items: Array.isArray(parsed?.items) ? parsed.items : []
+  };
+}
+
+function saveNotificationsStore(store) {
+  writeJsonAtomic(NOTIFICATIONS_PATH, {
+    items: Array.isArray(store?.items) ? store.items : []
+  });
+}
+
+function registerConversationNotification(entry) {
+  const contact = safeString(entry?.contact);
+  const incoming = safeString(entry?.incoming);
+  const type = safeString(entry?.type || entry?.attachment_type);
+  const hasAttachments = Array.isArray(entry?.attachments) && entry.attachments.length > 0;
+
+  // Les notifications concernent uniquement les nouveaux messages clients réels.
+  if (!contact || (!incoming && !type && !hasAttachments)) return;
+  if (entry?.history_import === true) return;
+
+  const source = safeString(entry?.source);
+  if (source.startsWith('commercial')) return;
+
+  const messageId = safeString(entry?.message_id);
+  const id = messageId || crypto
+    .createHash('sha256')
+    .update(`${contact}|${safeString(entry?.time)}|${incoming}|${type}`)
+    .digest('hex');
+
+  try {
+    const store = loadNotificationsStore();
+    if (store.items.some(item => safeString(item?.id) === id)) return;
+
+    const state = getConversationState(contact) || {};
+    const attachments = Array.isArray(entry?.attachments)
+      ? entry.attachments.filter(Boolean)
+      : [];
+
+    store.items.push({
+      id,
+      messageId,
+      contact,
+      channel: normalizeChannel(
+        entry?.channel ||
+        state?.channel ||
+        (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')
+      ),
+      externalContact: safeString(entry?.external_contact || state?.externalContact || conversationExternalId(contact)),
+      username: safeString(state?.instagramUsername),
+      profileName: safeString(state?.profileName),
+      profilePicture: safeString(state?.profilePicture),
+      preview: conversationMediaPreview(entry),
+      type: safeString(type || (incoming ? 'text' : 'message')),
+      urgent: ESCALATION_NOTIFICATION_ACTIONS.has(safeString(entry?.action)),
+      action: safeString(entry?.action),
+      assignedTo: safeString(state?.assignedTo),
+      createdAt: safeString(entry?.time) || new Date().toISOString(),
+      readBy: [],
+      attachmentPreview: attachments[0]?.type === 'image'
+        ? safeString(attachments[0]?.url)
+        : ''
+    });
+
+    saveNotificationsStore(store);
+  } catch (error) {
+    console.warn('⚠️ Notification persistante non enregistrée :', error.message);
+  }
+}
+
+// ============================================================
 // V6.19.4 — MÉDIAS CONVERSATIONS
 // ============================================================
 
@@ -374,7 +614,16 @@ function mediaExtensionFromMime(
     'audio/mpeg': 'mp3',
     'audio/mp4': 'm4a',
     'audio/ogg': 'ogg',
-    'application/pdf': 'pdf'
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'video/webm': 'webm',
+    'audio/webm': 'webm',
+    'application/pdf': 'pdf',
+    'text/plain': 'txt',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/vnd.ms-excel': 'xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx'
   };
 
   if (byMime[mime]) {
@@ -386,6 +635,59 @@ function mediaExtensionFromMime(
   if (fallbackType === 'audio') return 'mp3';
 
   return 'bin';
+}
+
+function assertSafeConversationMediaBuffer(buffer, mimetype = '') {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    throw new Error('Média vide.');
+  }
+
+  const mime = safeString(mimetype).toLowerCase().split(';')[0];
+  const firstBytes = buffer.subarray(0, 32);
+  const ascii = firstBytes.toString('utf8').trimStart().toLowerCase();
+
+  if (
+    mime === 'text/html' ||
+    mime === 'application/xhtml+xml' ||
+    mime.includes('javascript') ||
+    mime.includes('x-sh') ||
+    mime.includes('x-executable') ||
+    ascii.startsWith('<!doctype html') ||
+    ascii.startsWith('<html') ||
+    ascii.startsWith('<script') ||
+    firstBytes.subarray(0, 2).toString('ascii') === 'MZ' ||
+    firstBytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+    firstBytes.subarray(0, 2).toString('ascii') === '#!'
+  ) {
+    throw new Error('Type de fichier potentiellement exécutable refusé.');
+  }
+
+  if (mime === 'image/jpeg' || mime === 'image/jpg') {
+    if (!(buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)) {
+      throw new Error('Contenu JPEG invalide.');
+    }
+  } else if (mime === 'image/png') {
+    const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
+    if (!buffer.subarray(0, 8).equals(png)) {
+      throw new Error('Contenu PNG invalide.');
+    }
+  } else if (mime === 'image/gif') {
+    const sig = buffer.subarray(0, 6).toString('ascii');
+    if (sig !== 'GIF87a' && sig !== 'GIF89a') {
+      throw new Error('Contenu GIF invalide.');
+    }
+  } else if (mime === 'image/webp') {
+    if (
+      buffer.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+      buffer.subarray(8, 12).toString('ascii') !== 'WEBP'
+    ) {
+      throw new Error('Contenu WEBP invalide.');
+    }
+  } else if (mime === 'application/pdf') {
+    if (buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+      throw new Error('Contenu PDF invalide.');
+    }
+  }
 }
 
 function normalizeConversationMediaType(value) {
@@ -431,6 +733,8 @@ function saveConversationMediaBuffer({
     throw new Error('Média trop volumineux (maximum 20 Mo).');
   }
 
+  assertSafeConversationMediaBuffer(buffer, mimetype);
+
   let normalizedType =
     normalizeConversationMediaType(type);
 
@@ -456,10 +760,16 @@ function saveConversationMediaBuffer({
     safeString(messageId)
       .replace(/[^a-zA-Z0-9_-]/g, '')
       .slice(-70) ||
-    `${Date.now()}`;
+    crypto
+      .createHash('sha256')
+      .update(buffer)
+      .digest('hex')
+      .slice(0, 32);
 
+  const safeChannel = safeString(channel).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 20) || 'media';
+  const safeDirection = safeString(direction).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 30) || 'unknown';
   const filename =
-    `${channel}-${direction}-${safeMessageId}-${Number(index) || 0}-${Date.now()}.${extension}`;
+    `${safeChannel}-${safeDirection}-${safeMessageId}-${Number(index) || 0}.${extension}`;
 
   const filePath =
     path.join(
@@ -467,10 +777,12 @@ function saveConversationMediaBuffer({
       filename
     );
 
-  fs.writeFileSync(
-    filePath,
-    buffer
-  );
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(
+      filePath,
+      buffer
+    );
+  }
 
   return {
     type:
@@ -898,6 +1210,90 @@ function isKnownInstagramApiEcho({
 
 function logConversation(entry) {
   try {
+    const contact = safeString(entry?.contact);
+    const action = safeString(entry?.action);
+
+    // Le SLA / handoff est déclenché AVANT l'écriture permanente afin que
+    // l'événement archivé contienne déjà l'affectation et l'état final.
+    if (
+      ESCALATION_NOTIFICATION_ACTIONS.has(action) &&
+      contact
+    ) {
+      try {
+        registerCommercialEscalation({
+          contact,
+          channel: safeString(entry?.channel) || (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+          reason: safeString(entry?.image_reason || entry?.error || action),
+          messageId: safeString(entry?.message_id),
+          source: safeString(entry?.source)
+        });
+
+        const strictHandoffActions = new Set([
+          'ai_needs_commercial',
+          'ai_error_fallback_sent',
+          'ai_error_no_reply',
+          'commercial_required',
+          'secure_image_commercial_required',
+          'secure_image_analysis_error',
+          'image_analysis_error'
+        ]);
+
+        if (strictHandoffActions.has(action)) {
+          pauseAiForCommercial(
+            contact,
+            safeString(entry?.image_reason || entry?.error || action)
+          );
+        }
+      } catch (slaError) {
+        console.warn('⚠️ SLA commercial :', slaError.message);
+      }
+    }
+
+    let state = {};
+    try {
+      state = contact ? (getConversationState(contact) || {}) : {};
+    } catch {
+      state = {};
+    }
+
+    const incoming = safeString(entry?.incoming);
+    const reply = safeString(entry?.reply);
+    const source = safeString(entry?.source);
+    const direction = incoming && reply
+      ? 'inbound_outbound'
+      : incoming
+        ? 'incoming'
+        : reply
+          ? 'outgoing'
+          : safeString(entry?.direction || 'system');
+    const senderKind = incoming && !reply
+      ? 'client'
+      : source.startsWith('commercial') || action === 'commercial_reply'
+        ? 'human'
+        : reply
+          ? 'ai'
+          : 'system';
+
+    entry = {
+      ...entry,
+      direction: safeString(entry?.direction) || direction,
+      sender_kind: safeString(entry?.sender_kind) || senderKind,
+      channel: safeString(entry?.channel || state?.channel || (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')),
+      external_contact: safeString(entry?.external_contact || state?.externalContact || conversationExternalId(contact)),
+      profile_name: safeString(entry?.profile_name || state?.profileName),
+      instagram_username: safeString(entry?.instagram_username || state?.instagramUsername),
+      profile_picture: safeString(entry?.profile_picture || state?.profilePicture),
+      assigned_user_id: safeString(entry?.assigned_user_id || state?.assignedUserId),
+      assigned_to: safeString(entry?.assigned_to || state?.assignedTo),
+      ai_paused: Boolean(state?.manualTakeover || state?.humanPaused),
+      commercial_attention: Boolean(state?.commercialAttention),
+      sla_snapshot: state?.sla && typeof state.sla === 'object' ? state.sla : undefined,
+      source_context: entry?.source_context || (state?.sourceContext && typeof state.sourceContext === 'object' ? state.sourceContext : undefined),
+      ad_referral: entry?.ad_referral || (state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : undefined),
+      instagram_conversation_id: safeString(entry?.instagram_conversation_id || state?.instagramHistoryConversationId),
+      unread_at_ingest: Boolean(incoming)
+    };
+
     let logs = [];
 
     if (fs.existsSync(HISTORY_PATH)) {
@@ -915,10 +1311,20 @@ function logConversation(entry) {
       }
     }
 
+    // V6.19.6 : l'événement complet est conservé en append-only AVANT
+    // d'actualiser le cache JSON récent. Un déploiement ne touche jamais
+    // aux fichiers déjà présents dans /data/conversation-events/.
+    appendPersistentConversationEvent(entry);
+
+    persistMessageId(entry?.message_id);
+    persistMessageId(entry?.meta_message_id);
+
     logs.push(entry);
 
-    if (logs.length > 1000) {
-      logs = logs.slice(-1000);
+    // Cache de compatibilité : limité pour garder les lectures rapides.
+    // La copie permanente est dans conversation-events/*.jsonl.
+    if (logs.length > 5000) {
+      logs = logs.slice(-5000);
     }
 
     writeJsonAtomic(
@@ -926,54 +1332,7 @@ function logConversation(entry) {
       logs
     );
 
-    const escalationActions = new Set([
-      'ai_needs_commercial',
-      'ai_error_fallback_sent',
-      'ai_error_no_reply',
-      'commercial_required',
-      'human_pause',
-      'ai_disabled',
-      'audience',
-      'secure_image_commercial_required',
-      'secure_image_analysis_error',
-      'image_analysis_error'
-    ]);
-
-    if (
-      escalationActions.has(safeString(entry?.action)) &&
-      safeString(entry?.contact)
-    ) {
-      try {
-        registerCommercialEscalation({
-          contact: safeString(entry.contact),
-          channel: safeString(entry.channel) || (safeString(entry.contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
-          reason: safeString(entry.image_reason || entry.error || entry.action),
-          messageId: safeString(entry.message_id),
-          source: safeString(entry.source)
-        });
-
-        // V6.19.2 — Handoff strict : dès que l'IA ne sait pas,
-        // elle cède complètement la conversation au commercial.
-        const strictHandoffActions = new Set([
-          'ai_needs_commercial',
-          'ai_error_fallback_sent',
-          'ai_error_no_reply',
-          'commercial_required',
-          'secure_image_commercial_required',
-          'secure_image_analysis_error',
-          'image_analysis_error'
-        ]);
-
-        if (strictHandoffActions.has(safeString(entry?.action))) {
-          pauseAiForCommercial(
-            safeString(entry.contact),
-            safeString(entry.image_reason || entry.error || entry.action)
-          );
-        }
-      } catch (slaError) {
-        console.warn('⚠️ SLA commercial :', slaError.message);
-      }
-    }
+    registerConversationNotification(entry);
   } catch (error) {
     console.error(
       '⚠️ Impossible d’enregistrer conversation-log.json :',
@@ -1089,6 +1448,25 @@ function markCustomerMessage(
           current.profilePicture
         ),
 
+      profileUpdatedAt:
+        safeString(
+          metadata.profileUpdatedAt ||
+          current.profileUpdatedAt
+        ),
+
+      sourceContext:
+        metadata.sourceContext && typeof metadata.sourceContext === 'object'
+          ? (
+              safeString(metadata.sourceContext.type) === 'direct' &&
+              current.sourceContext &&
+              typeof current.sourceContext === 'object' &&
+              safeString(current.sourceContext.type) &&
+              safeString(current.sourceContext.type) !== 'direct'
+                ? current.sourceContext
+                : { ...(current.sourceContext || {}), ...metadata.sourceContext }
+            )
+          : current.sourceContext,
+
       firstSeenAt:
         current.firstSeenAt ||
         now,
@@ -1110,6 +1488,12 @@ function markCustomerMessage(
 
       lastMessageWasAd:
         Boolean(isAdReferral),
+
+      unreadCount:
+        Math.min(9999, Number(current.unreadCount || 0) + 1),
+
+      lastUnreadMessageId:
+        safeString(message?.id) || safeString(current.lastUnreadMessageId),
 
       awaitingResponse:
         false,
@@ -1397,7 +1781,8 @@ function isDuplicateMessage(messageId) {
   cleanupProcessedMessageIds();
 
   if (
-    processedMessageIds.has(messageId)
+    processedMessageIds.has(messageId) ||
+    persistentMessageIds.has(safeString(messageId))
   ) {
     return true;
   }
@@ -1631,20 +2016,53 @@ function normalizeAdReferral(referral) {
       referral?.ref
     );
 
+  const adsContext =
+    referral?.ads_context_data && typeof referral.ads_context_data === 'object'
+      ? referral.ads_context_data
+      : {};
+
   const normalized = {
+    adId:
+      safeString(referral?.ad_id),
     sourceId:
       safeString(
-        referral?.ad_id ||
-        referral?.source_id
+        referral?.source_id ||
+        referral?.ad_id
       ),
     sourceUrl:
       safeString(
         referral?.source_url
       ),
+    source:
+      safeString(referral?.source),
+    referralType:
+      safeString(referral?.type),
+    ref:
+      safeString(referral?.ref),
     headline,
     body,
+    adTitle:
+      safeString(adsContext?.ad_title),
+    campaignId:
+      safeString(referral?.campaign_id || adsContext?.campaign_id),
+    campaignName:
+      safeString(referral?.campaign_name || adsContext?.campaign_name),
+    adsetId:
+      safeString(referral?.adset_id || adsContext?.adset_id),
+    adsetName:
+      safeString(referral?.adset_name || adsContext?.adset_name),
+    creativeId:
+      safeString(referral?.creative_id || adsContext?.creative_id),
+    creativeName:
+      safeString(referral?.creative_name || adsContext?.creative_name),
+    mediaType:
+      safeString(adsContext?.video_url) ? 'video' : (safeString(adsContext?.photo_url) ? 'image' : ''),
+    mediaUrl:
+      safeString(adsContext?.video_url || adsContext?.photo_url),
     productHint:
-      inferAdProductHint(referral)
+      inferAdProductHint(referral),
+    raw:
+      referral
   };
 
   if (
@@ -4298,6 +4716,57 @@ async function sendInstagramMessage(
   return data;
 }
 
+function instagramSourceContext(event, message, referral, attachments = []) {
+  const ad = normalizeAdReferral(referral);
+  if (ad) {
+    return {
+      type: 'ad',
+      label: 'Publicité Meta',
+      ad
+    };
+  }
+
+  const story = message?.reply_to?.story;
+  if (story && typeof story === 'object') {
+    return {
+      type: 'story',
+      label: 'Réponse à une Story',
+      id: safeString(story?.id),
+      url: safeString(story?.url),
+      raw: story
+    };
+  }
+
+  const first = Array.isArray(attachments) ? attachments.find(Boolean) : null;
+  const attachmentType = safeString(first?.type).toLowerCase();
+  const payload = first?.payload && typeof first.payload === 'object' ? first.payload : {};
+  const url = instagramAttachmentRemoteUrl(first);
+  const sharedFields = {
+    id: safeString(payload?.id || payload?.media?.id || first?.id),
+    caption: safeString(payload?.caption || payload?.title || payload?.description),
+    date: safeString(payload?.created_time || payload?.timestamp || payload?.date),
+    url,
+    raw: first
+  };
+
+  if (attachmentType === 'story_mention') {
+    return { type: 'story', label: 'Story mentionnée', ...sharedFields };
+  }
+
+  if (attachmentType === 'ig_reel' || attachmentType === 'reel') {
+    return { type: 'reel', label: 'Reel lié', ...sharedFields };
+  }
+
+  if (attachmentType === 'share') {
+    return { type: 'share', label: 'Publication / contenu partagé', ...sharedFields };
+  }
+
+  return {
+    type: 'direct',
+    label: 'Message direct'
+  };
+}
+
 function profilePictureExtension(contentType) {
   const type = safeString(contentType).toLowerCase();
   if (type.includes('png')) return 'png';
@@ -4368,6 +4837,13 @@ async function persistInstagramProfilePicture(
     );
     return '';
   }
+}
+
+function instagramProfileNeedsRefresh(state) {
+  if (!state?.profilePicture || !state?.instagramUsername) return true;
+  const updatedAt = Date.parse(safeString(state?.profileUpdatedAt));
+  if (!Number.isFinite(updatedAt)) return true;
+  return Date.now() - updatedAt > 7 * 24 * 60 * 60 * 1000;
 }
 
 async function getInstagramProfile(
@@ -4543,9 +5019,15 @@ async function checkWhetherBotShouldReply(
     };
   }
 
+  const conversationState =
+    getConversationState(phone) || {};
+
   if (
-    settings.pauseWhenHumanReplies &&
-    isHumanPaused(phone)
+    isHumanPaused(phone) &&
+    (
+      conversationState.manualTakeover === true ||
+      settings.pauseWhenHumanReplies
+    )
   ) {
     return {
       allowed: false,
@@ -4692,6 +5174,15 @@ app.get('/debug-env', (req, res) => {
       instagram_account_id_present:
         Boolean(INSTAGRAM_ACCOUNT_ID),
 
+      meta_app_secret_present:
+        Boolean(META_APP_SECRET),
+
+      instagram_app_secret_present:
+        Boolean(INSTAGRAM_APP_SECRET),
+
+      whatsapp_app_secret_present:
+        Boolean(WHATSAPP_APP_SECRET),
+
       gemini_api_key_present:
         Boolean(GEMINI_API_KEY),
 
@@ -4808,38 +5299,63 @@ app.get('/webhook', (req, res) => {
 // WEBHOOK POST
 // ============================================================
 
+function validMetaWebhookSignature(req) {
+  const object = safeString(req?.body?.object);
+  const appSecret =
+    object === 'instagram'
+      ? INSTAGRAM_APP_SECRET
+      : object === 'whatsapp_business_account'
+        ? WHATSAPP_APP_SECRET
+        : META_APP_SECRET;
+
+  if (!appSecret) return null;
+
+  const header = safeString(req.headers['x-hub-signature-256']);
+  if (!header.startsWith('sha256=')) return false;
+  if (!Buffer.isBuffer(req.rawBody)) return false;
+
+  const expected = `sha256=${crypto
+    .createHmac('sha256', appSecret)
+    .update(req.rawBody)
+    .digest('hex')}`;
+
+  try {
+    const left = Buffer.from(header, 'utf8');
+    const right = Buffer.from(expected, 'utf8');
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
+}
+
 app.post('/webhook', (req, res) => {
   const object =
     safeString(
       req.body?.object
     );
 
-  console.log('');
-  console.log(
-    '=============================================='
-  );
+  const signatureValid =
+    validMetaWebhookSignature(req);
+
+  if (signatureValid === false) {
+    console.warn('❌ Webhook Meta rejeté : signature X-Hub-Signature-256 invalide.');
+    return res.sendStatus(401);
+  }
+
+  if (signatureValid === null) {
+    console.warn('⚠️ App Secret Meta absent pour ce canal : signature webhook non vérifiée.');
+  }
+
   console.log(
     object === 'instagram'
-      ? '📩 WEBHOOK INSTAGRAM REÇU'
-      : '📩 WEBHOOK WHATSAPP REÇU'
-  );
-  console.log(
-    '🕐 Date :',
-    new Date().toISOString()
-  );
-  console.log(
-    '📦 Payload :',
-    JSON.stringify(
-      req.body,
-      null,
-      2
-    )
-  );
-  console.log(
-    '=============================================='
+      ? '📩 Webhook Instagram reçu'
+      : object === 'whatsapp_business_account'
+        ? '📩 Webhook WhatsApp reçu'
+        : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
   );
 
-  // Meta doit recevoir 200 rapidement
+  // Meta doit recevoir 200 rapidement. Le payload complet n'est plus écrit
+  // dans les logs afin d'éviter d'exposer des messages clients sur Railway.
   res.sendStatus(200);
 
   if (object === 'instagram') {
@@ -5316,10 +5832,12 @@ async function processSingleInstagramEvent(event) {
   const isNewCustomer =
     !previousState?.firstSeenAt;
 
-  const profile =
+  const shouldRefreshProfile =
     isNewCustomer ||
-    !previousState?.profileName ||
-    !previousState?.profilePicture
+    instagramProfileNeedsRefresh(previousState);
+
+  const profile =
+    shouldRefreshProfile
       ? await getInstagramProfile(
           senderId
         )
@@ -5347,6 +5865,14 @@ async function processSingleInstagramEvent(event) {
       ? message.attachments
       : [];
 
+  const sourceContext =
+    instagramSourceContext(
+      event,
+      message,
+      referral,
+      attachments
+    );
+
   // On télécharge les médias immédiatement car les URL Meta peuvent expirer.
   const storedAttachments =
     attachments.length
@@ -5358,6 +5884,40 @@ async function processSingleInstagramEvent(event) {
           }
         )
       : [];
+
+  // Conserver aussi le visuel de contexte (Story/Reel/share/publicité) quand
+  // Meta fournit une URL temporaire, sans le confondre avec le média envoyé
+  // par le client.
+  const sourceRemoteUrl =
+    sourceContext?.type === 'ad'
+      ? safeString(sourceContext?.ad?.mediaUrl)
+      : safeString(sourceContext?.url);
+
+  if (sourceRemoteUrl) {
+    try {
+      const sourceType =
+        sourceContext?.type === 'ad'
+          ? (safeString(sourceContext?.ad?.mediaType) || 'image')
+          : (sourceContext?.type === 'reel' ? 'video' : 'image');
+      const savedSource = await persistInstagramAttachments(
+        [{ type: sourceType, payload: { url: sourceRemoteUrl } }],
+        {
+          messageId: `${messageId || Date.now()}-source`,
+          direction: 'source'
+        }
+      );
+      const localPreview = safeString(savedSource?.[0]?.url);
+      if (localPreview && !savedSource?.[0]?.temporary) {
+        sourceContext.previewUrl = localPreview;
+        sourceContext.previewType = safeString(savedSource?.[0]?.type);
+        if (sourceContext.type === 'ad' && sourceContext.ad) {
+          sourceContext.ad.storedMediaUrl = localPreview;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Visuel source Instagram non sauvegardé :', error.message);
+    }
+  }
 
   const attachmentFields =
     firstAttachmentLogFields(
@@ -5391,7 +5951,12 @@ async function processSingleInstagramEvent(event) {
     },
     referral:
       referral ||
-      undefined
+      undefined,
+    reply_to:
+      message?.reply_to ||
+      undefined,
+    source_context:
+      sourceContext
   };
 
   markCustomerMessage(
@@ -5416,7 +5981,15 @@ async function processSingleInstagramEvent(event) {
         safeString(
           profile?.stored_profile_picture ||
           previousState?.profilePicture
-        )
+        ),
+      profileUpdatedAt:
+        shouldRefreshProfile &&
+        profile &&
+        typeof profile === 'object' &&
+        Object.keys(profile).length
+          ? new Date().toISOString()
+          : safeString(previousState?.profileUpdatedAt),
+      sourceContext
     }
   );
 
@@ -5425,6 +5998,19 @@ async function processSingleInstagramEvent(event) {
       contact,
       referral
     );
+
+    if (sourceContext?.ad && typeof sourceContext.ad === 'object') {
+      updateConversationState(
+        contact,
+        current => ({
+          ...current,
+          adReferral: {
+            ...(current.adReferral || {}),
+            ...sourceContext.ad
+          }
+        })
+      );
+    }
   }
 
   console.log(
