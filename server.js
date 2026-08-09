@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.1
 // server.js
 //
 // Ajouts V5 :
@@ -271,7 +271,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.1');
 console.log(
   '=============================================='
 );
@@ -1564,8 +1564,11 @@ function markCustomerMessage(
   isAdReferral,
   metadata = {}
 ) {
-  const now =
-    new Date().toISOString();
+  const metadataEventTime = safeString(metadata?.eventTime);
+  const metadataEventMs = Date.parse(metadataEventTime);
+  const now = Number.isFinite(metadataEventMs)
+    ? new Date(metadataEventMs).toISOString()
+    : new Date().toISOString();
 
   return updateConversationState(
     contact,
@@ -6290,6 +6293,30 @@ async function processWhatsAppWebhook(body) {
 // WEBHOOK INSTAGRAM
 // ============================================================
 
+function metaMessagingEventIsoTime(event) {
+  const raw = event?.timestamp ?? event?.time ?? event?.created_time ?? '';
+
+  if (typeof raw === 'number' || /^\d+(?:\.\d+)?$/.test(safeString(raw))) {
+    let numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      // Les webhooks Meta utilisent généralement des millisecondes, mais
+      // certains payloads/fixtures peuvent fournir des secondes UNIX.
+      if (numeric < 1e12) numeric *= 1000;
+      const date = new Date(numeric);
+      if (Number.isFinite(date.getTime())) return date.toISOString();
+    }
+  }
+
+  const parsed = Date.parse(safeString(raw));
+  if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+
+  return new Date().toISOString();
+}
+
+function instagramEventIsoTime(event) {
+  return metaMessagingEventIsoTime(event);
+}
+
 async function processInstagramWebhook(body) {
   if (body?.object !== 'instagram') {
     return;
@@ -6358,6 +6385,8 @@ async function processInstagramBusinessOutboundEvent({
       postback?.title ||
       postback?.payload
     );
+
+  const eventTime = instagramEventIsoTime(event);
 
   // Les événements is_self sont les tests où le compte s'écrit à lui-même.
   // Ils ne correspondent pas à une réponse commerciale à un client.
@@ -6466,7 +6495,7 @@ async function processInstagramBusinessOutboundEvent({
       externalContact:
         customerId,
       lastHumanAt:
-        new Date().toISOString(),
+        eventTime,
       lastHumanSource:
         'instagram_app',
       aiModePreference:
@@ -6522,7 +6551,7 @@ async function processInstagramBusinessOutboundEvent({
     commercial_user_role:
       actor.role,
     time:
-      new Date().toISOString()
+      eventTime
   });
 
   console.log(
@@ -6554,6 +6583,8 @@ async function processSingleInstagramEvent(event) {
   const postback =
     event?.postback ||
     null;
+
+  const eventTime = instagramEventIsoTime(event);
 
   if (!senderId) {
     return;
@@ -6754,6 +6785,7 @@ async function processSingleInstagramEvent(event) {
     {
       channel:
         'instagram',
+      eventTime,
       externalContact:
         senderId,
       profileName:
@@ -6862,7 +6894,7 @@ async function processSingleInstagramEvent(event) {
         reply_sent:
           true,
         time:
-          new Date().toISOString()
+          eventTime
       });
     }
 
@@ -6894,7 +6926,7 @@ async function processSingleInstagramEvent(event) {
       reply_sent:
         false,
       time:
-        new Date().toISOString()
+        eventTime
     });
 
     return;
@@ -6947,7 +6979,7 @@ async function processSingleInstagramEvent(event) {
         action: 'commercial_required',
         source: isAdReferral ? 'meta_ad' : 'organic',
         reply_sent: confirmationSent,
-        time: new Date().toISOString()
+        time: eventTime
       });
 
       return;
@@ -6992,7 +7024,7 @@ async function processSingleInstagramEvent(event) {
         action: 'ai_error_no_reply',
         source: isAdReferral ? 'meta_ad' : 'organic',
         reply_sent: false,
-        time: new Date().toISOString()
+        time: eventTime
       });
       return;
     }
@@ -7014,7 +7046,7 @@ async function processSingleInstagramEvent(event) {
         action: 'ai_needs_commercial',
         source: isAdReferral ? 'meta_ad' : 'organic',
         reply_sent: false,
-        time: new Date().toISOString()
+        time: eventTime
       });
       return;
     }
@@ -7042,7 +7074,7 @@ async function processSingleInstagramEvent(event) {
           metaResult?.messages?.[0]?.id
         ) || null,
       reply_sent: true,
-      time: new Date().toISOString()
+      time: eventTime
     });
 
     return;
@@ -7091,7 +7123,7 @@ async function processSingleInstagramEvent(event) {
           metaResult?.messages?.[0]?.id
         ) || null,
       reply_sent: true,
-      time: new Date().toISOString()
+      time: eventTime
     });
 
     return;
@@ -7138,7 +7170,7 @@ async function processSingleInstagramEvent(event) {
       reply_sent:
         false,
       time:
-        new Date().toISOString()
+        eventTime
     });
 
     return;
@@ -7174,7 +7206,7 @@ async function processSingleInstagramEvent(event) {
       reply_sent:
         false,
       time:
-        new Date().toISOString()
+        eventTime
     });
 
     return;
@@ -7204,7 +7236,7 @@ async function processSingleInstagramEvent(event) {
       reply_sent:
         false,
       time:
-        new Date().toISOString()
+        eventTime
     });
 
     return;
@@ -7220,7 +7252,7 @@ async function processSingleInstagramEvent(event) {
       action: 'ai_needs_commercial',
       source: isAdReferral ? 'meta_ad' : 'organic',
       reply_sent: false,
-      time: new Date().toISOString()
+      time: eventTime
     });
     return;
   }
@@ -7261,7 +7293,7 @@ async function processSingleInstagramEvent(event) {
     reply_sent:
       true,
     time:
-      new Date().toISOString()
+      eventTime
   });
 }
 
