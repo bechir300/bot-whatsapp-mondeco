@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -32,6 +32,11 @@ const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerpr
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
+const SCHEDULES_PATH = path.join(DATA_DIR, 'schedules.json');
+const TASKS_PATH = path.join(DATA_DIR, 'tasks.json');
+const SLA_EVENTS_PATH = path.join(DATA_DIR, 'sla-events.json');
+const DAILY_REPORTS_PATH = path.join(DATA_DIR, 'daily-reports.json');
+const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 
@@ -503,7 +508,12 @@ function snapshotFiles() {
     {
       source: WOOCOMMERCE_SYNC_PATH,
       name: 'woocommerce-sync.json'
-    }
+    },
+    { source: SCHEDULES_PATH, name: 'schedules.json' },
+    { source: TASKS_PATH, name: 'tasks.json' },
+    { source: SLA_EVENTS_PATH, name: 'sla-events.json' },
+    { source: DAILY_REPORTS_PATH, name: 'daily-reports.json' },
+    { source: ATTENDANCE_PATH, name: 'attendance-log.json' }
   ];
 }
 
@@ -2145,6 +2155,7 @@ const LOGIN_BLOCK_MS =
 const ALLOWED_USER_ROLES =
   new Set([
     'admin',
+    'responsable_commercial',
     'editor',
     'commercial'
   ]);
@@ -2152,6 +2163,8 @@ const ALLOWED_USER_ROLES =
 const ROLE_LABELS = {
   admin:
     'Administrateur',
+  responsable_commercial:
+    'Responsable commercial',
   editor:
     'Éditeur',
   commercial:
@@ -2882,7 +2895,9 @@ function roleCanAccess(
     '/api/commercial/send',
     '/api/commercial/send-media',
     '/api/notifications',
-    '/api/quick-replies'
+    '/api/quick-replies',
+    '/api/tasks',
+    '/api/my-workday'
   ];
 
   if (
@@ -2895,6 +2910,24 @@ function roleCanAccess(
     )
   ) {
     return true;
+  }
+
+  if (
+    role ===
+    'responsable_commercial'
+  ) {
+    return (
+      pathStarts(reqPath, '/api/conversations') ||
+      pathStarts(reqPath, '/api/commercial/send') ||
+      pathStarts(reqPath, '/api/commercial/send-media') ||
+      pathStarts(reqPath, '/api/notifications') ||
+      pathStarts(reqPath, '/api/quick-replies') ||
+      pathStarts(reqPath, '/api/presence') ||
+      pathStarts(reqPath, '/api/users') ||
+      pathStarts(reqPath, '/api/schedules') ||
+      pathStarts(reqPath, '/api/tasks') ||
+      pathStarts(reqPath, '/api/team/operations')
+    );
   }
 
   if (
@@ -2998,6 +3031,17 @@ function requireAuth(
     user;
 
   if (
+    user.role === 'commercial' &&
+    pathStarts(req.path, '/api/conversations') &&
+    safeString(req.params?.contact)
+  ) {
+    const contactState = loadConversationStatesAdmin()[safeString(req.params.contact)] || {};
+    if (safeString(contactState.assignedUserId) !== safeString(user.id)) {
+      return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
+    }
+  }
+
+  if (
     !roleCanAccess(
       user.role,
       req.method,
@@ -3062,6 +3106,38 @@ function requireAdmin(
     user;
 
   return next();
+}
+
+
+function requireAdminOrCommercialManager(
+  req,
+  res,
+  next
+) {
+  const user =
+    getAuthenticatedUser(req);
+
+  if (!user) {
+    return res
+      .status(401)
+      .json({ error: 'Non authentifié' });
+  }
+
+  if (
+    user.role !== 'admin' &&
+    user.role !== 'responsable_commercial'
+  ) {
+    return res
+      .status(403)
+      .json({ error: 'Responsable commercial ou administrateur requis.' });
+  }
+
+  req.user = user;
+  return next();
+}
+
+function isCommercialManager(user) {
+  return safeString(user?.role) === 'responsable_commercial';
 }
 
 function secureCookie(req) {
@@ -3337,11 +3413,11 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
   <aside class="brand-side">
     <div>
       <img class="brand-logo" src="${MONDECO_LOGO_DATA_URL}" alt="MONDECO">
-      <div class="brand-kicker">Agent WhatsApp • Administration</div>
+      <div class="brand-kicker">Agent WhatsApp + Instagram • Administration</div>
     </div>
     <div class="brand-copy">
       <h1>Centre de pilotage MONDECO</h1>
-      <p>Gérez l'agent WhatsApp, les produits, les instructions et les paramètres depuis une interface unique.</p>
+      <p>Gérez l'agent WhatsApp + Instagram, l’équipe commerciale, les produits et les paramètres depuis une interface unique.</p>
     </div>
     <div class="brand-foot">Accès réservé</div>
   </aside>
@@ -3351,7 +3427,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.16.3</span>
+        <span class="login-version">V6.19</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -4312,6 +4388,8 @@ router.post(
         req.body?.page
       );
 
+    recordAttendance(req.user);
+
     return res.json({
       success: true,
       lastSeenAt:
@@ -4324,7 +4402,7 @@ router.post(
 
 router.get(
   '/api/presence',
-  requireAdmin,
+  requireAdminOrCommercialManager,
   (
     req,
     res
@@ -4383,13 +4461,17 @@ router.get(
 
 router.get(
   '/api/users',
-  requireAdmin,
+  requireAdminOrCommercialManager,
   (
     req,
     res
   ) => {
+    const visibleUsers = isCommercialManager(req.user)
+      ? loadUsers().filter(user => user.role === 'commercial')
+      : loadUsers();
+
     return res.json(
-      loadUsers()
+      visibleUsers
         .map(
           sanitizeUserForClient
         )
@@ -4406,7 +4488,7 @@ router.get(
 
 router.post(
   '/api/users',
-  requireAdmin,
+  requireAdminOrCommercialManager,
   (
     req,
     res
@@ -4430,6 +4512,15 @@ router.post(
       safeString(
         req.body?.password
       );
+
+    if (
+      isCommercialManager(req.user) &&
+      role !== 'commercial'
+    ) {
+      return res.status(403).json({
+        error: 'Le responsable commercial peut uniquement créer des comptes commerciaux.'
+      });
+    }
 
     if (
       !name ||
@@ -4551,7 +4642,7 @@ router.post(
 
 router.put(
   '/api/users/:id',
-  requireAdmin,
+  requireAdminOrCommercialManager,
   (
     req,
     res
@@ -4579,6 +4670,15 @@ router.put(
 
     const current =
       users[index];
+
+    if (
+      isCommercialManager(req.user) &&
+      current.role !== 'commercial'
+    ) {
+      return res.status(403).json({
+        error: 'Le responsable commercial peut uniquement modifier les comptes commerciaux.'
+      });
+    }
 
     const name =
       safeString(
@@ -4610,6 +4710,15 @@ router.put(
       safeString(
         req.body?.password
       );
+
+    if (
+      isCommercialManager(req.user) &&
+      role !== 'commercial'
+    ) {
+      return res.status(403).json({
+        error: 'Le responsable commercial ne peut pas changer le rôle d’un commercial.'
+      });
+    }
 
     if (
       !name ||
@@ -4746,7 +4855,7 @@ router.put(
 
 router.delete(
   '/api/users/:id',
-  requireAdmin,
+  requireAdminOrCommercialManager,
   (
     req,
     res
@@ -4774,6 +4883,15 @@ router.delete(
 
     const user =
       users[index];
+
+    if (
+      isCommercialManager(req.user) &&
+      user.role !== 'commercial'
+    ) {
+      return res.status(403).json({
+        error: 'Le responsable commercial peut uniquement supprimer des comptes commerciaux.'
+      });
+    }
 
     if (
       user.id ===
@@ -4831,13 +4949,547 @@ router.get(
     req,
     res
   ) => {
-    return res.json(
-      getCommercialDailyReport(
-        req.query?.date
-      )
-    );
+    const requested = safeString(req.query?.date);
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const today = dateKeyInTimezone(new Date(), timezone);
+    const reports = loadDailyReports();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : today;
+    const report = reports[date] || ensureDailyReportGenerated(true, date);
+    return res.json(report);
   }
 );
+
+
+// ============================================================
+// V6.19 — RESPONSABLE COMMERCIAL / PLANNING / TÂCHES / SLA
+// ============================================================
+
+const DEFAULT_COMMERCIAL_SLA_MINUTES = 5;
+const DAILY_REPORT_HOUR_TUNIS = 20;
+const attendanceWriteThrottle = new Map();
+
+function loadSchedules() {
+  return readJsonArray(SCHEDULES_PATH, 'schedules.json');
+}
+
+function saveSchedules(items) {
+  writeJsonAtomic(SCHEDULES_PATH, Array.isArray(items) ? items : []);
+}
+
+function taskEffectiveStatus(item) {
+  const status = safeString(item?.status || 'todo');
+  if (['done','cancelled'].includes(status)) return status;
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const today = dateKeyInTimezone(new Date(), timezone);
+  const date = safeString(item?.date);
+  if (date && date < today) return 'late';
+  if (date === today) {
+    const due = timeMinutes(item?.dueTime);
+    if (due !== null && tunisMinutesNow() > due) return 'late';
+  }
+  return status;
+}
+
+function loadTasks() {
+  return readJsonArray(TASKS_PATH, 'tasks.json').map(item => ({
+    ...item,
+    status: taskEffectiveStatus(item)
+  }));
+}
+
+function saveTasks(items) {
+  writeJsonAtomic(TASKS_PATH, Array.isArray(items) ? items : []);
+}
+
+function loadSlaEvents() {
+  return readJsonArray(SLA_EVENTS_PATH, 'sla-events.json');
+}
+
+function saveSlaEvents(items) {
+  const list = Array.isArray(items) ? items : [];
+  writeJsonAtomic(SLA_EVENTS_PATH, list.slice(-5000));
+}
+
+function appendSlaEvent(event) {
+  const items = loadSlaEvents();
+  items.push({
+    id: safeString(event?.id) || crypto.randomUUID(),
+    ...event,
+    time: safeString(event?.time) || new Date().toISOString()
+  });
+  saveSlaEvents(items);
+}
+
+function loadDailyReports() {
+  try {
+    if (!fs.existsSync(DAILY_REPORTS_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(DAILY_REPORTS_PATH, 'utf8') || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    console.warn('⚠️ Lecture daily-reports.json :', error.message);
+    return {};
+  }
+}
+
+function saveDailyReports(items) {
+  writeJsonAtomic(DAILY_REPORTS_PATH, items && typeof items === 'object' ? items : {});
+}
+
+function loadAttendance() {
+  try {
+    if (!fs.existsSync(ATTENDANCE_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(ATTENDANCE_PATH, 'utf8') || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    console.warn('⚠️ Lecture attendance-log.json :', error.message);
+    return {};
+  }
+}
+
+function saveAttendance(items) {
+  writeJsonAtomic(ATTENDANCE_PATH, items && typeof items === 'object' ? items : {});
+}
+
+function timeMinutes(value) {
+  const match = safeString(value).match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function tunisClockParts(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Tunis',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(new Date(value));
+  const get = type => Number(parts.find(part => part.type === type)?.value || 0);
+  return { hour: get('hour'), minute: get('minute') };
+}
+
+function tunisMinutesNow(value = new Date()) {
+  const parts = tunisClockParts(value);
+  return parts.hour * 60 + parts.minute;
+}
+
+function normalizeChannels(value) {
+  const raw = Array.isArray(value) ? value : [value];
+  const allowed = new Set(['whatsapp', 'instagram']);
+  const channels = [...new Set(raw.map(item => safeString(item).toLowerCase()).filter(item => allowed.has(item)))];
+  return channels.length ? channels : ['whatsapp', 'instagram'];
+}
+
+function scheduleIsActiveNow(schedule, now = new Date(), channel = '') {
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const today = dateKeyInTimezone(now, timezone);
+  if (safeString(schedule?.date) !== today || schedule?.active === false) return false;
+  const start = timeMinutes(schedule?.startTime);
+  const end = timeMinutes(schedule?.endTime);
+  const current = tunisMinutesNow(now);
+  if (start === null || end === null || current < start || current >= end) return false;
+  const breakStart = timeMinutes(schedule?.breakStart);
+  const breakEnd = timeMinutes(schedule?.breakEnd);
+  if (breakStart !== null && breakEnd !== null && current >= breakStart && current < breakEnd) return false;
+  const requestedChannel = safeString(channel).toLowerCase();
+  return !requestedChannel || normalizeChannels(schedule?.channels).includes(requestedChannel);
+}
+
+function recordAttendance(user) {
+  if (!user?.id || user.role !== 'commercial') return;
+  const nowMs = Date.now();
+  const previousWrite = Number(attendanceWriteThrottle.get(user.id) || 0);
+  if (nowMs - previousWrite < 60 * 1000) return;
+  attendanceWriteThrottle.set(user.id, nowMs);
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const date = dateKeyInTimezone(new Date(), timezone);
+  const key = `${date}:${user.id}`;
+  const now = new Date().toISOString();
+  const attendance = loadAttendance();
+  const current = attendance[key] || {};
+  attendance[key] = {
+    date,
+    userId: user.id,
+    name: safeString(user.name),
+    firstSeenAt: current.firstSeenAt || now,
+    lastSeenAt: now,
+    heartbeats: Number(current.heartbeats || 0) + 1
+  };
+  saveAttendance(attendance);
+}
+
+function getSchedulesForDate(date) {
+  return loadSchedules()
+    .filter(item => safeString(item.date) === safeString(date))
+    .sort((a,b) => safeString(a.startTime).localeCompare(safeString(b.startTime)));
+}
+
+function findAutomaticCommercial(channel, now = new Date()) {
+  const users = loadUsers().filter(user => user.role === 'commercial' && user.active !== false);
+  const validIds = new Set(users.map(user => user.id));
+  const candidates = loadSchedules().filter(item => validIds.has(safeString(item.userId)) && scheduleIsActiveNow(item, now, channel));
+  if (!candidates.length) return null;
+  const states = loadConversationStatesAdmin();
+  const loadByUser = new Map();
+  for (const state of Object.values(states)) {
+    const userId = safeString(state?.assignedUserId);
+    const slaStatus = safeString(state?.sla?.status || state?.slaStatus);
+    if (!userId || !['pending','late'].includes(slaStatus)) continue;
+    loadByUser.set(userId, Number(loadByUser.get(userId) || 0) + 1);
+  }
+  candidates.sort((a,b) => {
+    const loadDiff = Number(loadByUser.get(a.userId) || 0) - Number(loadByUser.get(b.userId) || 0);
+    if (loadDiff) return loadDiff;
+    return safeString(a.startTime).localeCompare(safeString(b.startTime));
+  });
+  const schedule = candidates[0];
+  const user = users.find(item => item.id === schedule.userId);
+  return user ? { user, schedule } : null;
+}
+
+function registerCommercialEscalation({
+  contact,
+  channel = 'whatsapp',
+  reason = '',
+  messageId = '',
+  source = ''
+} = {}) {
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return null;
+  const states = loadConversationStatesAdmin();
+  const existing = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  const existingStatus = safeString(existing?.sla?.status || existing?.slaStatus);
+  if (['pending','late'].includes(existingStatus)) return existing;
+
+  const match = findAutomaticCommercial(channel, new Date());
+  const slaMinutes = Math.max(1, Math.min(120, Number(match?.schedule?.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES) || DEFAULT_COMMERCIAL_SLA_MINUTES));
+  const startedAt = new Date();
+  const dueAt = new Date(startedAt.getTime() + slaMinutes * 60 * 1000);
+  const slaId = crypto.randomUUID();
+  const updated = {
+    ...existing,
+    channel: safeString(channel) || safeString(existing.channel) || 'whatsapp',
+    commercialAttention: true,
+    commercialAttentionReason: safeString(reason) || safeString(existing.commercialAttentionReason) || 'Intervention commerciale requise.',
+    assignedTo: match ? (safeString(match.user.name) || safeString(match.user.email)) : safeString(existing.assignedTo),
+    assignedUserId: match ? safeString(match.user.id) : safeString(existing.assignedUserId),
+    assignedAt: match ? startedAt.toISOString() : safeString(existing.assignedAt),
+    sla: {
+      id: slaId,
+      status: 'pending',
+      startedAt: startedAt.toISOString(),
+      dueAt: dueAt.toISOString(),
+      minutes: slaMinutes,
+      reason: safeString(reason),
+      assignedUserId: match ? safeString(match.user.id) : safeString(existing.assignedUserId),
+      messageId: safeString(messageId),
+      source: safeString(source)
+    }
+  };
+  states[cleanContact] = updated;
+  saveConversationStatesAdmin(states);
+  appendSlaEvent({
+    id: slaId,
+    event: 'started',
+    contact: cleanContact,
+    channel: updated.channel,
+    reason: safeString(reason),
+    messageId: safeString(messageId),
+    assignedUserId: safeString(updated.assignedUserId),
+    assignedTo: safeString(updated.assignedTo),
+    startedAt: startedAt.toISOString(),
+    dueAt: dueAt.toISOString(),
+    slaMinutes
+  });
+  return updated;
+}
+
+function resolveCommercialSla({ contact, actor = {} } = {}) {
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return null;
+  const states = loadConversationStatesAdmin();
+  const current = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  const sla = current.sla && typeof current.sla === 'object' ? current.sla : null;
+  if (!sla || !['pending','late'].includes(safeString(sla.status))) return current;
+  const answeredAt = new Date();
+  const startedMs = Date.parse(sla.startedAt || '');
+  const dueMs = Date.parse(sla.dueAt || '');
+  const responseSeconds = Number.isFinite(startedMs) ? Math.max(0, Math.round((answeredAt.getTime() - startedMs) / 1000)) : null;
+  const late = Number.isFinite(dueMs) && answeredAt.getTime() > dueMs;
+  const updatedSla = {
+    ...sla,
+    status: late ? 'late_resolved' : 'resolved',
+    answeredAt: answeredAt.toISOString(),
+    responseSeconds,
+    lateSeconds: late && Number.isFinite(dueMs) ? Math.max(0, Math.round((answeredAt.getTime() - dueMs) / 1000)) : 0,
+    answeredByUserId: safeString(actor?.id),
+    answeredBy: safeString(actor?.name) || safeString(actor?.email)
+  };
+  const updated = {
+    ...current,
+    commercialAttention: false,
+    commercialAttentionReason: '',
+    imageNeedsCommercial: false,
+    sla: updatedSla
+  };
+  states[cleanContact] = updated;
+  saveConversationStatesAdmin(states);
+  appendSlaEvent({
+    event: 'resolved',
+    slaId: safeString(sla.id),
+    contact: cleanContact,
+    channel: safeString(current.channel),
+    assignedUserId: safeString(current.assignedUserId),
+    answeredByUserId: safeString(actor?.id),
+    answeredBy: safeString(actor?.name) || safeString(actor?.email),
+    startedAt: safeString(sla.startedAt),
+    dueAt: safeString(sla.dueAt),
+    answeredAt: answeredAt.toISOString(),
+    responseSeconds,
+    late
+  });
+  return updated;
+}
+
+function computeLiveSla(state) {
+  const sla = state?.sla && typeof state.sla === 'object' ? state.sla : null;
+  if (!sla) return null;
+  const dueMs = Date.parse(sla.dueAt || '');
+  const nowMs = Date.now();
+  const rawStatus = safeString(sla.status);
+  const open = ['pending','late'].includes(rawStatus);
+  const remainingMs = Number.isFinite(dueMs) ? dueMs - nowMs : null;
+  const status = open && Number.isFinite(remainingMs) && remainingMs < 0 ? 'late' : rawStatus;
+  return { ...sla, status, remainingMs };
+}
+
+function buildDetailedCommercialDailyReport(requestedDate) {
+  const base = getCommercialDailyReport(requestedDate);
+  const date = base.date;
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const schedules = getSchedulesForDate(date);
+  const tasks = loadTasks().filter(item => safeString(item.date) === date);
+  const attendance = loadAttendance();
+  const slaEvents = loadSlaEvents();
+  const started = slaEvents.filter(item => item.event === 'started' && dateKeyInTimezone(item.startedAt || item.time, timezone) === date);
+  const resolved = slaEvents.filter(item => item.event === 'resolved' && dateKeyInTimezone(item.answeredAt || item.time, timezone) === date);
+  const currentStates = loadConversationStatesAdmin();
+  const nowMs = Date.now();
+
+  const ranking = (base.ranking || []).map(item => {
+    const userId = safeString(item.userId);
+    const userSchedules = schedules.filter(s => safeString(s.userId) === userId);
+    const userTasks = tasks.filter(t => safeString(t.userId) === userId);
+    const userStarted = started.filter(e => safeString(e.assignedUserId) === userId);
+    const userResolved = resolved.filter(e => safeString(e.answeredByUserId) === userId || (!safeString(e.answeredByUserId) && safeString(e.assignedUserId) === userId));
+    const slaOnTime = userResolved.filter(e => e.late !== true).length;
+    const slaLate = userResolved.filter(e => e.late === true).length;
+    const resolvedIds = new Set(userResolved.map(e => safeString(e.slaId)).filter(Boolean));
+    const slaMissed = userStarted.filter(e => {
+      const id = safeString(e.id || e.slaId);
+      if (resolvedIds.has(id)) return false;
+      const dueMs = Date.parse(e.dueAt || '');
+      return Number.isFinite(dueMs) && dueMs < nowMs;
+    }).length;
+    const slaTotal = Math.max(userStarted.length, slaOnTime + slaLate + slaMissed);
+    const slaScore = slaTotal > 0 ? 40 * (slaOnTime / slaTotal) : 40;
+    const missedScore = slaMissed === 0 ? 25 : Math.max(0, 25 - slaMissed * 8);
+
+    const completedTasks = userTasks.filter(t => safeString(t.status) === 'done').length;
+    const taskScore = userTasks.length ? 10 * (completedTasks / userTasks.length) : 10;
+
+    const attendanceRecord = attendance[`${date}:${userId}`] || {};
+    let lateStartMinutes = 0;
+    let earlyLeaveMinutes = 0;
+    if (userSchedules.length && attendanceRecord.firstSeenAt) {
+      const earliestStart = Math.min(...userSchedules.map(s => timeMinutes(s.startTime)).filter(v => v !== null));
+      const latestEnd = Math.max(...userSchedules.map(s => timeMinutes(s.endTime)).filter(v => v !== null));
+      const first = tunisMinutesNow(attendanceRecord.firstSeenAt);
+      const last = attendanceRecord.lastSeenAt ? tunisMinutesNow(attendanceRecord.lastSeenAt) : first;
+      lateStartMinutes = Math.max(0, first - earliestStart);
+      earlyLeaveMinutes = Math.max(0, latestEnd - last);
+    } else if (userSchedules.length) {
+      lateStartMinutes = 999;
+      earlyLeaveMinutes = 999;
+    }
+    const planningPenalty = Math.min(15, Math.ceil(lateStartMinutes / 5) + Math.ceil(earlyLeaveMinutes / 10));
+    const planningScore = userSchedules.length ? Math.max(0, 15 - planningPenalty) : 15;
+
+    const openAssigned = Object.values(currentStates).filter(state => safeString(state?.assignedUserId) === userId && state?.resolved !== true && ['pending','late'].includes(safeString(state?.sla?.status)) && dateKeyInTimezone(state?.sla?.startedAt || '', timezone) === date).length;
+    const followScore = Math.max(0, 10 - openAssigned * 3);
+    const noActivityExpected = userSchedules.length === 0 && userTasks.length === 0 && Number(item.replies || 0) === 0 && slaTotal === 0;
+    let score = noActivityExpected
+      ? null
+      : Math.round(Math.max(0, Math.min(100, slaScore + missedScore + planningScore + taskScore + followScore)));
+
+    // Une absence complète pendant un service planifié ne peut jamais produire
+    // une bonne note uniquement parce qu'il n'y avait aucun dossier SLA.
+    if (userSchedules.length > 0 && !attendanceRecord.firstSeenAt) {
+      score = Math.min(Number(score ?? 0), 40);
+    }
+
+    const avgResponseSeconds = userResolved.length
+      ? Math.round(userResolved.reduce((sum,e) => sum + Number(e.responseSeconds || 0), 0) / userResolved.length)
+      : 0;
+
+    return {
+      ...item,
+      schedules: userSchedules,
+      tasksAssigned: userTasks.length,
+      tasksCompleted: completedTasks,
+      slaTotal,
+      slaOnTime,
+      slaLate,
+      slaMissed,
+      slaCompliance: slaTotal ? Math.round((slaOnTime / slaTotal) * 1000) / 10 : 100,
+      averageResponseSeconds: avgResponseSeconds,
+      lateStartMinutes: lateStartMinutes === 999 ? null : lateStartMinutes,
+      earlyLeaveMinutes: earlyLeaveMinutes === 999 ? null : earlyLeaveMinutes,
+      attendanceFirstSeenAt: safeString(attendanceRecord.firstSeenAt),
+      attendanceLastSeenAt: safeString(attendanceRecord.lastSeenAt),
+      openAssigned,
+      scoreBreakdown: {
+        sla: Math.round(slaScore * 10) / 10,
+        noMissed: Math.round(missedScore * 10) / 10,
+        planning: Math.round(planningScore * 10) / 10,
+        tasks: Math.round(taskScore * 10) / 10,
+        followUp: Math.round(followScore * 10) / 10
+      },
+      score,
+      rating: score === null ? 'Non planifié' : score >= 90 ? 'Excellent' : score >= 80 ? 'Très bien' : score >= 70 ? 'Bien' : score >= 60 ? 'À améliorer' : 'Insuffisant'
+    };
+  }).sort((a,b) => Number(b.score ?? -1) - Number(a.score ?? -1) || b.slaCompliance - a.slaCompliance || b.replies - a.replies)
+    .map((item,index) => ({...item, rank:index+1}));
+
+  return {
+    ...base,
+    generatedAt: new Date().toISOString(),
+    reportHour: `${String(DAILY_REPORT_HOUR_TUNIS).padStart(2,'0')}:00`,
+    scoreWeights: { sla:40, noMissed:25, planning:15, tasks:10, followUp:10 },
+    ranking,
+    summary: {
+      ...base.summary,
+      totalSla: ranking.reduce((sum,item) => sum + item.slaTotal, 0),
+      slaOnTime: ranking.reduce((sum,item) => sum + item.slaOnTime, 0),
+      slaMissed: ranking.reduce((sum,item) => sum + item.slaMissed, 0),
+      tasksAssigned: ranking.reduce((sum,item) => sum + item.tasksAssigned, 0),
+      tasksCompleted: ranking.reduce((sum,item) => sum + item.tasksCompleted, 0)
+    }
+  };
+}
+
+function ensureDailyReportGenerated(force = false, requestedDate = '') {
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const today = dateKeyInTimezone(new Date(), timezone);
+  const date = safeString(requestedDate) || today;
+  const reports = loadDailyReports();
+  const clock = tunisClockParts();
+  const isToday = date === today;
+  const finalWindowOpen = !isToday || clock.hour >= DAILY_REPORT_HOUR_TUNIS;
+
+  // Avant 20h, une consultation Admin peut créer un brouillon, mais aucune
+  // notification "rapport quotidien" n'est envoyée.
+  if (!force && !finalWindowOpen) {
+    return null;
+  }
+
+  if (
+    reports[date] &&
+    !force &&
+    reports[date].finalized === true
+  ) {
+    return reports[date];
+  }
+
+  const report = {
+    ...buildDetailedCommercialDailyReport(date),
+    finalized: finalWindowOpen
+  };
+
+  reports[date] = report;
+  const keys = Object.keys(reports).sort().slice(-90);
+  const compact = {};
+  for (const key of keys) compact[key] = reports[key];
+  saveDailyReports(compact);
+  return report;
+}
+
+router.get('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
+  const date = safeString(req.query?.date);
+  const items = date ? getSchedulesForDate(date) : loadSchedules();
+  return res.json(items);
+});
+
+router.post('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
+  const userId = safeString(req.body?.userId);
+  const user = loadUsers().find(item => item.id === userId && item.role === 'commercial' && item.active !== false);
+  const date = safeString(req.body?.date);
+  const startTime = safeString(req.body?.startTime);
+  const endTime = safeString(req.body?.endTime);
+  if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date) || timeMinutes(startTime) === null || timeMinutes(endTime) === null || timeMinutes(endTime) <= timeMinutes(startTime)) {
+    return res.status(400).json({error:'Commercial, date ou horaires invalides.'});
+  }
+  const now = new Date().toISOString();
+  const item = {
+    id: crypto.randomUUID(), userId, userName:safeString(user.name), date, startTime, endTime,
+    breakStart:safeString(req.body?.breakStart), breakEnd:safeString(req.body?.breakEnd),
+    channels:normalizeChannels(req.body?.channels), mission:safeString(req.body?.mission).slice(0,1000),
+    priority:safeString(req.body?.priority || 'normal'), slaMinutes:Math.max(1,Math.min(120,Number(req.body?.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),
+    active:true, createdBy:safeString(req.user?.id), createdAt:now, updatedAt:now
+  };
+  const items=loadSchedules(); items.push(item); saveSchedules(items); return res.status(201).json(item);
+});
+
+router.put('/api/schedules/:id', requireAdminOrCommercialManager, (req,res) => {
+  const items=loadSchedules(); const index=items.findIndex(item=>item.id===req.params.id); if(index<0)return res.status(404).json({error:'Planning introuvable.'});
+  const current=items[index]; const userId=safeString(req.body?.userId ?? current.userId); const user=loadUsers().find(item=>item.id===userId&&item.role==='commercial');
+  const startTime=safeString(req.body?.startTime ?? current.startTime); const endTime=safeString(req.body?.endTime ?? current.endTime);
+  if(!user||timeMinutes(startTime)===null||timeMinutes(endTime)===null||timeMinutes(endTime)<=timeMinutes(startTime))return res.status(400).json({error:'Planning invalide.'});
+  items[index]={...current,userId,userName:safeString(user.name),date:safeString(req.body?.date??current.date),startTime,endTime,breakStart:safeString(req.body?.breakStart??current.breakStart),breakEnd:safeString(req.body?.breakEnd??current.breakEnd),channels:normalizeChannels(req.body?.channels??current.channels),mission:safeString(req.body?.mission??current.mission).slice(0,1000),priority:safeString(req.body?.priority??current.priority),slaMinutes:Math.max(1,Math.min(120,Number(req.body?.slaMinutes??current.slaMinutes??DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),active:req.body?.active===undefined?current.active!==false:req.body.active===true,updatedAt:new Date().toISOString()};
+  saveSchedules(items); return res.json(items[index]);
+});
+
+router.delete('/api/schedules/:id', requireAdminOrCommercialManager, (req,res) => { const items=loadSchedules(); const next=items.filter(item=>item.id!==req.params.id); if(next.length===items.length)return res.status(404).json({error:'Planning introuvable.'}); saveSchedules(next); return res.json({success:true}); });
+
+router.get('/api/tasks', requireAuth, (req,res) => { const date=safeString(req.query?.date); let items=loadTasks().filter(item=>!date||safeString(item.date)===date); if(req.user?.role==='commercial'){items=items.filter(item=>safeString(item.userId)===safeString(req.user.id));}else if(!['admin','responsable_commercial'].includes(safeString(req.user?.role))){return res.status(403).json({error:'Accès non autorisé.'});} return res.json(items.sort((a,b)=>safeString(a.startTime).localeCompare(safeString(b.startTime)))); });
+
+router.post('/api/tasks', requireAdminOrCommercialManager, (req,res) => {
+  const userId=safeString(req.body?.userId); const user=loadUsers().find(item=>item.id===userId&&item.role==='commercial'&&item.active!==false); const title=safeString(req.body?.title); const date=safeString(req.body?.date);
+  if(!user||!title||!/^\d{4}-\d{2}-\d{2}$/.test(date))return res.status(400).json({error:'Commercial, date et tâche sont obligatoires.'});
+  const now=new Date().toISOString(); const item={id:crypto.randomUUID(),userId,userName:safeString(user.name),date,channel:safeString(req.body?.channel||'both'),startTime:safeString(req.body?.startTime),dueTime:safeString(req.body?.dueTime),title:title.slice(0,180),details:safeString(req.body?.details).slice(0,1500),priority:safeString(req.body?.priority||'normal'),status:'todo',createdBy:safeString(req.user?.id),createdAt:now,updatedAt:now}; const items=loadTasks();items.push(item);saveTasks(items);return res.status(201).json(item);
+});
+
+router.put('/api/tasks/:id', requireAuth, (req,res) => {
+  const items=loadTasks();const index=items.findIndex(item=>item.id===req.params.id);if(index<0)return res.status(404).json({error:'Tâche introuvable.'});const current=items[index];
+  const manager=req.user.role==='admin'||req.user.role==='responsable_commercial'; if(!manager&&!(req.user.role==='commercial'&&safeString(current.userId)===safeString(req.user.id)))return res.status(403).json({error:'Accès non autorisé à cette tâche.'});
+  const allowedStatus=new Set(['todo','in_progress','done','late','cancelled']);const requestedStatus=safeString(req.body?.status||current.status);if(!allowedStatus.has(requestedStatus))return res.status(400).json({error:'Statut de tâche invalide.'});
+  const editable=manager?{...current,...req.body}:{...current,status:requestedStatus}; items[index]={...editable,id:current.id,userId:current.userId,userName:current.userName,status:requestedStatus,completedAt:requestedStatus==='done'?(current.completedAt||new Date().toISOString()):null,updatedAt:new Date().toISOString()};saveTasks(items);return res.json(items[index]);
+});
+
+router.delete('/api/tasks/:id', requireAdminOrCommercialManager, (req,res) => {const items=loadTasks();const next=items.filter(item=>item.id!==req.params.id);if(next.length===items.length)return res.status(404).json({error:'Tâche introuvable.'});saveTasks(next);return res.json({success:true});});
+
+router.get('/api/my-workday', requireAuth, (req,res) => {
+  if(req.user?.role!=='commercial') return res.status(403).json({error:'Compte commercial requis.'});
+  const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');
+  const date=safeString(req.query?.date)||dateKeyInTimezone(new Date(),timezone);
+  const schedules=getSchedulesForDate(date).filter(item=>safeString(item.userId)===safeString(req.user.id));
+  const tasks=loadTasks().filter(item=>safeString(item.date)===date&&safeString(item.userId)===safeString(req.user.id));
+  return res.json({date,schedules,tasks});
+});
+
+router.get('/api/team/operations', requireAdminOrCommercialManager, (req,res) => {
+  const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');const date=safeString(req.query?.date)||dateKeyInTimezone(new Date(),timezone);const states=loadConversationStatesAdmin();
+  const users=loadUsers().filter(user=>user.role==='commercial').map(user=>{const presence=getPresenceForUser(user.id);const shifts=getSchedulesForDate(date).filter(s=>s.userId===user.id);const tasks=loadTasks().filter(t=>t.date===date&&t.userId===user.id);const assigned=Object.values(states).filter(st=>safeString(st?.assignedUserId)===user.id&&st?.resolved!==true);const slas=assigned.map(st=>computeLiveSla(st)).filter(Boolean);return {...sanitizeUserForClient(user),presence,shifts,tasks,activeConversations:assigned.length,pendingSla:slas.filter(s=>['pending','late'].includes(s.status)).length,lateSla:slas.filter(s=>s.status==='late').length,nextSlaRemainingMs:slas.filter(s=>['pending','late'].includes(s.status)&&Number.isFinite(s.remainingMs)).sort((a,b)=>a.remainingMs-b.remainingMs)[0]?.remainingMs??null};});
+  const allSla=Object.values(states).map(st=>computeLiveSla(st)).filter(Boolean);const tasks=loadTasks().filter(t=>t.date===date);return res.json({date,generatedAt:new Date().toISOString(),pendingSla:allSla.filter(s=>s.status==='pending').length,lateSla:allSla.filter(s=>s.status==='late').length,tasksLate:tasks.filter(t=>t.status==='late').length,users});
+});
+
+router.get('/api/reports/commercial-daily-v2', requireAdmin, (req,res) => { const report=ensureDailyReportGenerated(true, safeString(req.query?.date)); return res.json(report); });
+
+setInterval(() => {
+  try { ensureDailyReportGenerated(false); } catch (error) { console.warn('⚠️ Génération rapport quotidien :', error.message); }
+}, 60 * 1000).unref?.();
 
 // ============================================================
 // WOOCOMMERCE — SYNCHRONISATION SITE
@@ -7089,6 +7741,14 @@ router.post(
           });
       }
 
+      if (req.user?.role === 'commercial') {
+        const conversationKey = normalizePhone(externalContact);
+        const state = loadConversationStatesAdmin()[conversationKey] || {};
+        if (safeString(state.assignedUserId) !== safeString(req.user.id)) {
+          return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
+        }
+      }
+
       if (!req.file) {
         return res
           .status(400)
@@ -7720,6 +8380,16 @@ router.post(
     try {
       const text =
         safeString(req.body?.text);
+
+      if (req.user?.role === 'commercial') {
+        const conversationKey = channel === 'instagram'
+          ? `instagram:${externalContact}`
+          : normalizePhone(externalContact);
+        const state = loadConversationStatesAdmin()[conversationKey] || {};
+        if (safeString(state.assignedUserId) !== safeString(req.user.id)) {
+          return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
+        }
+      }
 
       if (!text) {
         return res
@@ -9876,6 +10546,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         unreadCount: Number(state.unreadCount || 0),
         priority: Boolean(state.priority),
         assignedTo: safeString(state?.assignedTo),
+        assignedUserId: safeString(state?.assignedUserId),
+        sla: computeLiveSla(state),
+        slaStatus: safeString(computeLiveSla(state)?.status),
+        slaDueAt: safeString(computeLiveSla(state)?.dueAt),
+        slaRemainingMs: computeLiveSla(state)?.remainingMs ?? null,
         resolved: Boolean(state.resolved),
         resolvedAt: safeString(state?.resolvedAt),
         activeProductName: safeString(state?.activeProductName),
@@ -9887,7 +10562,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       };
     }).sort((a, b) => new Date(b.lastTime || 0) - new Date(a.lastTime || 0));
 
-    return res.json(conversations);
+    const visibleConversations = req.user?.role === 'commercial'
+      ? conversations.filter(item => safeString(item.assignedUserId) === safeString(req.user.id))
+      : conversations;
+
+    return res.json(visibleConversations);
   } catch (error) {
     console.error('❌ Liste conversations :', error);
     return res.status(500).json({ error: 'Impossible de lire les conversations.' });
@@ -9900,13 +10579,18 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const log = loadWhatsAppLog();
     const states = loadConversationStatesAdmin();
 
+    const state = states[contact] || {};
+    if (req.user?.role === 'commercial' && safeString(state.assignedUserId) !== safeString(req.user.id)) {
+      return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
+    }
+
     const entries = log
       .filter(entry => safeString(entry.contact) === contact)
       .sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
 
     return res.json({
       contact,
-      state: states[contact] || {},
+      state: { ...state, sla: computeLiveSla(state) },
       entries
     });
   } catch (error) {
@@ -9997,6 +10681,11 @@ router.post(
         100
       );
 
+    const requestedAssignedUserId = safeString(req.body?.assignedUserId);
+    const requestedUser = requestedAssignedUserId
+      ? loadUsers().find(user => user.id === requestedAssignedUserId && user.role === 'commercial' && user.active !== false)
+      : null;
+
     const assignedTo =
       req.user?.role ===
         'commercial'
@@ -10015,16 +10704,12 @@ router.post(
         contact,
         current => ({
           ...current,
-          assignedTo,
+          assignedTo: requestedUser ? (safeString(requestedUser.name) || safeString(requestedUser.email)) : assignedTo,
           assignedUserId:
             req.user?.role ===
               'commercial'
-              ? safeString(
-                  req.user?.id
-                )
-              : safeString(
-                  current.assignedUserId
-                ),
+              ? safeString(req.user?.id)
+              : (requestedUser ? safeString(requestedUser.id) : safeString(current.assignedUserId)),
           assignedAt:
             assignedTo
               ? new Date().toISOString()
@@ -10094,9 +10779,9 @@ router.post(
               current.assignedTo
             ),
           assignedUserId:
-            safeString(
-              req.user?.id
-            ),
+            req.user?.role === 'commercial'
+              ? safeString(req.user?.id)
+              : safeString(current.assignedUserId),
           takeoverAt:
             new Date().toISOString()
         })
@@ -10203,6 +10888,9 @@ router.get(
           'ai_error_fallback_sent',
           'ai_error_no_reply',
           'commercial_required',
+          'human_pause',
+          'ai_disabled',
+          'audience',
           'secure_image_commercial_required',
           'secure_image_analysis_error',
           'image_analysis_error'
@@ -10286,10 +10974,85 @@ router.get(
             };
           });
 
+      const states = loadConversationStatesAdmin();
+      const scopedEvents = events.filter(event => {
+        if (req.user?.role !== 'commercial') return true;
+        return safeString(states[event.contact]?.assignedUserId) === safeString(req.user.id);
+      }).map(event => ({
+        ...event,
+        channel: safeString(states[event.contact]?.channel) || (safeString(event.contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+        assignedTo: safeString(states[event.contact]?.assignedTo),
+        kind: event.urgent ? 'commercial' : 'message'
+      }));
+
+      const liveSlaEvents = [];
+      for (const [contact,state] of Object.entries(states)) {
+        if (req.user?.role === 'commercial' && safeString(state?.assignedUserId) !== safeString(req.user.id)) continue;
+        const sla = computeLiveSla(state);
+        if (!sla || !['pending','late'].includes(sla.status)) continue;
+        const remaining = Number(sla.remainingMs);
+        if (!Number.isFinite(remaining)) continue;
+        let threshold = '';
+        if (remaining <= 0) threshold = 'breached';
+        else if (remaining <= 60 * 1000) threshold = 'one_minute';
+        else if (remaining <= (Number(sla.minutes || DEFAULT_COMMERCIAL_SLA_MINUTES) * 60 * 1000) / 2) threshold = 'half';
+        if (!threshold) continue;
+        liveSlaEvents.push({
+          id:`sla-${safeString(sla.id)}-${threshold}`,
+          contact,
+          time:new Date().toISOString(),
+          preview: threshold === 'breached' ? 'Délai commercial dépassé' : `Client en attente — ${Math.max(0,Math.ceil(remaining/1000))} s restantes`,
+          action: threshold === 'breached' ? 'sla_breached' : 'sla_warning',
+          urgent:true,
+          kind:'sla',
+          channel:safeString(state?.channel),
+          assignedTo:safeString(state?.assignedTo),
+          remainingMs:remaining
+        });
+      }
+
+      const taskEvents = [];
+      if (req.user?.role === 'commercial') {
+        const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+        const today = dateKeyInTimezone(new Date(), timezone);
+        for (const task of loadTasks()) {
+          if (safeString(task.userId) !== safeString(req.user.id)) continue;
+          if (safeString(task.date) !== today) continue;
+          if (['done','cancelled'].includes(safeString(task.status))) continue;
+          taskEvents.push({
+            id:`task-${safeString(task.id)}`,
+            contact:'',
+            time:safeString(task.createdAt) || new Date().toISOString(),
+            preview:`${safeString(task.title)}${task.dueTime ? ` — avant ${safeString(task.dueTime)}` : ''}`,
+            action:'task_assigned',
+            urgent:safeString(task.priority)==='urgent',
+            kind:'task',
+            taskId:safeString(task.id)
+          });
+        }
+      }
+
+      const reportEvents = [];
+      if (req.user?.role === 'admin') {
+        const report = ensureDailyReportGenerated(false);
+        if (report?.finalized === true) {
+          reportEvents.push({
+            id:`daily-report-${report.date}`,
+            contact:'',
+            time:report.generatedAt,
+            preview:`Rapport commercial du ${report.date} disponible`,
+            action:'daily_report_ready',
+            urgent:false,
+            kind:'report',
+            reportDate:report.date
+          });
+        }
+      }
+
       return res.json({
         serverTime:
           new Date().toISOString(),
-        events
+        events:[...scopedEvents,...liveSlaEvents,...taskEvents,...reportEvents]
       });
     } catch (error) {
       console.error(
@@ -10472,5 +11235,7 @@ module.exports = {
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
-  createCommercialCorrectionCandidate
+  createCommercialCorrectionCandidate,
+  registerCommercialEscalation,
+  resolveCommercialSla
 };
