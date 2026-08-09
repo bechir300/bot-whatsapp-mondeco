@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.2
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.3
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -1022,7 +1022,10 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  const tempPath = `${filePath}.tmp`;
+  // V6.20.3 : chaque écriture reçoit son propre fichier temporaire.
+  // L'ancien `${filePath}.tmp` pouvait être renommé par une autre requête
+  // entre writeFileSync() et renameSync(), ce qui produisait un ENOENT.
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   const backupPath = `${filePath}.bak`;
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -1037,13 +1040,19 @@ function writeJsonAtomic(filePath, data) {
     }
   }
 
-  fs.writeFileSync(
-    tempPath,
-    JSON.stringify(data, null, 2),
-    'utf8'
-  );
+  try {
+    fs.writeFileSync(
+      tempPath,
+      JSON.stringify(data, null, 2),
+      'utf8'
+    );
 
-  fs.renameSync(tempPath, filePath);
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {}
+  }
 }
 
 function readJsonArray(filePath, label) {
@@ -3589,7 +3598,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.2</span>
+        <span class="login-version">V6.20.3</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11607,6 +11616,7 @@ async function runInstagramHistorySync() {
     skippedMessages: 0,
     errorCount: 0,
     lastError: '',
+    warning: '',
     truncated: false,
     metaMessageDetailLimit: 20,
     chronologyVersion: 3,
@@ -11643,6 +11653,13 @@ async function runInstagramHistorySync() {
 
     instagramHistorySyncJob.truncated =
       Boolean(listed.truncated);
+
+    if (!conversations.length) {
+      instagramHistorySyncJob.warning =
+        'Meta a retourné 0 conversation Instagram. Vérifiez que INSTAGRAM_ACCOUNT_ID correspond au compte professionnel, que le token possède instagram_business_manage_messages (Instagram Login) ou instagram_manage_messages avec accès à la Page liée (Facebook Login), et que le niveau d’accès Meta permet les conversations de vrais clients.';
+      console.warn('⚠️ Instagram historique :', instagramHistorySyncJob.warning);
+    }
+
     saveInstagramHistorySyncState(instagramHistorySyncJob);
 
     const live =
@@ -12071,35 +12088,40 @@ router.get(
   '/api/instagram-history/status',
   requireAuth,
   (req, res) => {
-    let persisted =
-      loadInstagramHistorySyncState();
+    try {
+      const persisted = loadInstagramHistorySyncState();
 
-    // Après un redémarrage Railway, un ancien fichier peut encore indiquer
-    // running=true alors qu'aucun job n'existe dans le nouveau processus.
-    // On le marque interrompu afin que l'interface puisse relancer proprement.
-    if (!instagramHistorySyncJob.running && persisted?.running === true) {
-      persisted = {
-        ...persisted,
-        running: false,
-        interrupted: true,
-        phase: 'interrupted',
-        interruptedAt: new Date().toISOString(),
-        lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
-      };
-      saveInstagramHistorySyncState(persisted);
+      // GET = lecture seule. Après un redémarrage Railway, on présente
+      // l'ancien running=true comme interrompu sans réécrire /data.
+      const effectivePersisted =
+        !instagramHistorySyncJob.running && persisted?.running === true
+          ? {
+              ...persisted,
+              running: false,
+              interrupted: true,
+              phase: 'interrupted',
+              interruptedAt: safeString(persisted?.interruptedAt) || new Date().toISOString(),
+              lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
+            }
+          : persisted;
+
+      return res.json({
+        configured:
+          Boolean(
+            INSTAGRAM_ACCESS_TOKEN &&
+            INSTAGRAM_ACCOUNT_ID
+          ),
+        ...effectivePersisted,
+        ...(instagramHistorySyncJob.running
+          ? instagramHistorySyncJob
+          : {})
+      });
+    } catch (error) {
+      console.error('❌ Statut historique Instagram :', error);
+      return res.status(500).json({
+        error: 'Impossible de lire l’état Instagram. Consultez les logs Railway.'
+      });
     }
-
-    return res.json({
-      configured:
-        Boolean(
-          INSTAGRAM_ACCESS_TOKEN &&
-          INSTAGRAM_ACCOUNT_ID
-        ),
-      ...persisted,
-      ...(instagramHistorySyncJob.running
-        ? instagramHistorySyncJob
-        : {})
-    });
   }
 );
 
@@ -12151,7 +12173,7 @@ router.post(
 );
 
 // ============================================================
-// V6.20.2 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// V6.20.3 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
 // ============================================================
 
 let facebookHistorySyncJob = {
@@ -12886,25 +12908,34 @@ async function runFacebookHistorySync() {
 }
 
 router.get('/api/facebook-history/status', requireAuth, (req, res) => {
-  let persisted = loadFacebookHistorySyncState();
+  try {
+    const persisted = loadFacebookHistorySyncState();
 
-  if (!facebookHistorySyncJob.running && persisted?.running === true) {
-    persisted = {
-      ...persisted,
-      running: false,
-      interrupted: true,
-      phase: 'interrupted',
-      interruptedAt: new Date().toISOString(),
-      lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
-    };
-    saveFacebookHistorySyncState(persisted);
+    // GET = lecture seule : aucune écriture concurrente dans le fichier
+    // d'état pendant le polling du navigateur.
+    const effectivePersisted =
+      !facebookHistorySyncJob.running && persisted?.running === true
+        ? {
+            ...persisted,
+            running: false,
+            interrupted: true,
+            phase: 'interrupted',
+            interruptedAt: safeString(persisted?.interruptedAt) || new Date().toISOString(),
+            lastError: safeString(persisted?.lastError) || 'Synchronisation interrompue par un redémarrage du service Railway.'
+          }
+        : persisted;
+
+    return res.json({
+      configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+      ...effectivePersisted,
+      ...(facebookHistorySyncJob.running ? facebookHistorySyncJob : {})
+    });
+  } catch (error) {
+    console.error('❌ Statut historique Facebook :', error);
+    return res.status(500).json({
+      error: 'Impossible de lire l’état Facebook. Consultez les logs Railway.'
+    });
   }
-
-  return res.json({
-    configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
-    ...persisted,
-    ...(facebookHistorySyncJob.running ? facebookHistorySyncJob : {})
-  });
 });
 
 router.post(
