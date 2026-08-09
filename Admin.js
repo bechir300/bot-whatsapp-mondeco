@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.3
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.4
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -83,11 +83,57 @@ const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
 const SNAPSHOTS_DIR = path.join(BACKUPS_DIR, 'snapshots');
 const RECYCLE_DIR = path.join(BACKUPS_DIR, 'recycle');
 
-const MAX_JSON_BACKUPS_PER_FILE = 50;
-const MAX_FULL_SNAPSHOTS = 20;
-
 const IS_RAILWAY = Boolean(
   process.env.RAILWAY_ENVIRONMENT_NAME
+);
+
+// V6.20.4 — mode stockage compact.
+// Sur Railway Free, le Volume est limité et les snapshots binaires complets
+// peuvent dupliquer plusieurs fois les mêmes médias. Le mode compact conserve
+// les données actives mais réduit fortement les copies de sauvegarde redondantes.
+const COMPACT_STORAGE_MODE =
+  String(
+    process.env.MONDECO_STORAGE_MODE ||
+    (IS_RAILWAY ? 'compact' : 'standard')
+  )
+    .trim()
+    .toLowerCase() !== 'standard';
+
+const MAX_JSON_BACKUPS_PER_FILE = Math.max(
+  1,
+  Math.min(
+    50,
+    Number(
+      process.env.MONDECO_JSON_BACKUPS ||
+      (COMPACT_STORAGE_MODE ? 2 : 50)
+    ) || (COMPACT_STORAGE_MODE ? 2 : 50)
+  )
+);
+
+const MAX_FULL_SNAPSHOTS = Math.max(
+  1,
+  Math.min(
+    20,
+    Number(
+      process.env.MONDECO_FULL_SNAPSHOTS ||
+      (COMPACT_STORAGE_MODE ? 1 : 20)
+    ) || (COMPACT_STORAGE_MODE ? 1 : 20)
+  )
+);
+
+const VERSIONED_BACKUP_MAX_BYTES = Math.max(
+  256 * 1024,
+  Number(
+    process.env.MONDECO_VERSIONED_BACKUP_MAX_BYTES ||
+    (COMPACT_STORAGE_MODE ? 2 * 1024 * 1024 : Number.MAX_SAFE_INTEGER)
+  ) || (COMPACT_STORAGE_MODE ? 2 * 1024 * 1024 : Number.MAX_SAFE_INTEGER)
+);
+
+const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
+  8 * 1024 * 1024,
+  (Number(process.env.MONDECO_STORAGE_RESCUE_FREE_MB || 40) || 40) *
+    1024 *
+    1024
 );
 
 const PERSISTENCE_STRICT =
@@ -225,7 +271,7 @@ function deleteFileIfExists(filePath) {
   }
 }
 
-function storageIsWritable() {
+function storageWriteProbe() {
   const testFile = path.join(
     DATA_DIR,
     `.write-test-${process.pid}-${Date.now()}`
@@ -234,10 +280,247 @@ function storageIsWritable() {
   try {
     fs.writeFileSync(testFile, 'ok', 'utf8');
     fs.unlinkSync(testFile);
-    return true;
-  } catch {
-    return false;
+    return {
+      writable: true,
+      errorCode: '',
+      errorMessage: ''
+    };
+  } catch (error) {
+    try {
+      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+    } catch {}
+
+    return {
+      writable: false,
+      errorCode: safeString(error?.code),
+      errorMessage: safeString(error?.message)
+    };
   }
+}
+
+function storageIsWritable() {
+  return storageWriteProbe().writable;
+}
+
+function storageSpaceInfo() {
+  try {
+    if (typeof fs.statfsSync !== 'function') return null;
+
+    const stat = fs.statfsSync(DATA_DIR);
+    const blockSize = Number(stat?.bsize || stat?.frsize || 0);
+    const totalBlocks = Number(stat?.blocks || 0);
+    const availableBlocks = Number(stat?.bavail ?? stat?.bfree ?? 0);
+
+    if (!blockSize || !totalBlocks) return null;
+
+    const totalBytes = blockSize * totalBlocks;
+    const freeBytes = Math.max(0, blockSize * availableBlocks);
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+
+    return {
+      totalBytes,
+      freeBytes,
+      usedBytes,
+      freeRatio: totalBytes > 0 ? freeBytes / totalBytes : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+function humanBytes(bytes) {
+  const value = Math.max(0, Number(bytes || 0));
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function pathSizeBytes(targetPath) {
+  try {
+    if (!targetPath || !fs.existsSync(targetPath)) return 0;
+    const stat = fs.lstatSync(targetPath);
+    if (stat.isSymbolicLink()) return 0;
+    if (stat.isFile()) return Number(stat.size || 0);
+    if (!stat.isDirectory()) return 0;
+
+    return fs.readdirSync(targetPath).reduce(
+      (sum, name) => sum + pathSizeBytes(path.join(targetPath, name)),
+      0
+    );
+  } catch {
+    return 0;
+  }
+}
+
+function removePathForStorageRescue(targetPath, label = '') {
+  try {
+    if (!targetPath || !fs.existsSync(targetPath)) return 0;
+    const bytes = pathSizeBytes(targetPath);
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    if (bytes > 0) {
+      console.log(
+        `🧹 Storage Rescue : ${label || path.basename(targetPath)} supprimé (${humanBytes(bytes)} estimés).`
+      );
+    }
+    return bytes;
+  } catch (error) {
+    console.warn(
+      `⚠️ Storage Rescue : suppression impossible (${label || targetPath}) :`,
+      error.message
+    );
+    return 0;
+  }
+}
+
+function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_FILE) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(JSON_BACKUPS_DIR)) return 0;
+
+    for (const entry of fs.readdirSync(JSON_BACKUPS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dir = path.join(JSON_BACKUPS_DIR, entry.name);
+      const files = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(item => item.isFile())
+        .map(item => {
+          const fullPath = path.join(dir, item.name);
+          try {
+            const stat = fs.statSync(fullPath);
+            return { fullPath, mtimeMs: stat.mtimeMs, size: Number(stat.size || 0) };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      for (const file of files.slice(Math.max(0, keepPerFile))) {
+        try {
+          fs.unlinkSync(file.fullPath);
+          freed += file.size;
+        } catch (error) {
+          console.warn('⚠️ Storage Rescue : ancien backup JSON non supprimé :', error.message);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : nettoyage backups JSON impossible :', error.message);
+  }
+  return freed;
+}
+
+function compactExistingSnapshotBinaryCopies() {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(SNAPSHOTS_DIR)) return 0;
+    const duplicatedDirectories = [
+      'uploads',
+      'customizations',
+      'conversation-media',
+      'conversation-profile',
+      'conversation-events'
+    ];
+
+    for (const entry of fs.readdirSync(SNAPSHOTS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const snapshotDir = path.join(SNAPSHOTS_DIR, entry.name);
+      for (const name of duplicatedDirectories) {
+        const target = path.join(snapshotDir, name);
+        if (!fs.existsSync(target)) continue;
+        freed += removePathForStorageRescue(
+          target,
+          `${entry.name}/${name} (copie redondante)`
+        );
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : compactage snapshots impossible :', error.message);
+  }
+  return freed;
+}
+
+function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS) {
+  let freed = 0;
+  try {
+    const snapshots = listFullSnapshots();
+    for (const snapshot of snapshots.slice(Math.max(0, keep))) {
+      freed += removePathForStorageRescue(
+        path.join(SNAPSHOTS_DIR, snapshot.id),
+        `snapshot ${snapshot.id}`
+      );
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : nettoyage snapshots impossible :', error.message);
+  }
+  return freed;
+}
+
+function cleanupStaleStorageTempFiles() {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(DATA_DIR)) return 0;
+    const now = Date.now();
+    for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const name = entry.name;
+      const isTemp = name.includes('.tmp') || name.startsWith('.write-test-');
+      if (!isTemp) continue;
+      const fullPath = path.join(DATA_DIR, name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (now - stat.mtimeMs < 10 * 60 * 1000) continue;
+        fs.unlinkSync(fullPath);
+        freed += Number(stat.size || 0);
+      } catch {}
+    }
+  } catch {}
+  return freed;
+}
+
+function runStartupStorageRescue() {
+  if (!COMPACT_STORAGE_MODE) return;
+
+  const before = storageSpaceInfo();
+  const beforeProbe = storageWriteProbe();
+  const lowSpace =
+    !before ||
+    before.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
+    (Number.isFinite(before.freeRatio) && before.freeRatio < 0.15) ||
+    !beforeProbe.writable;
+
+  let estimatedFreed = 0;
+
+  // Même hors urgence, conserver les limites compactes pour éviter une
+  // nouvelle saturation progressive du Volume Free.
+  estimatedFreed += cleanupStaleStorageTempFiles();
+  estimatedFreed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
+  estimatedFreed += compactExistingSnapshotBinaryCopies();
+  estimatedFreed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+
+  if (lowSpace && fs.existsSync(RECYCLE_DIR)) {
+    // Le recycle ne contient que des copies de fichiers déjà supprimés de
+    // l'application active. En situation de saturation, il est sûr de le vider.
+    for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
+      estimatedFreed += removePathForStorageRescue(
+        path.join(RECYCLE_DIR, entry.name),
+        `recycle/${entry.name}`
+      );
+    }
+  }
+
+  const after = storageSpaceInfo();
+  const afterProbe = storageWriteProbe();
+
+  console.log('🛟 MONDECO Storage Rescue', {
+    mode: 'compact',
+    estimatedFreed: humanBytes(estimatedFreed),
+    freeBefore: before ? humanBytes(before.freeBytes) : 'inconnu',
+    freeAfter: after ? humanBytes(after.freeBytes) : 'inconnu',
+    writableBefore: beforeProbe.writable,
+    writableAfter: afterProbe.writable,
+    errorCode: afterProbe.errorCode || null
+  });
 }
 
 
@@ -292,9 +575,18 @@ function ensurePersistenceSafety() {
     );
   }
 
-  if (!storageIsWritable()) {
+  const writeProbe = storageWriteProbe();
+  if (!writeProbe.writable) {
+    const space = storageSpaceInfo();
+    const details = [
+      writeProbe.errorCode ? `code=${writeProbe.errorCode}` : '',
+      space ? `libre=${humanBytes(space.freeBytes)}/${humanBytes(space.totalBytes)}` : '',
+      writeProbe.errorMessage ? writeProbe.errorMessage : ''
+    ].filter(Boolean).join(' • ');
+
     throw new Error(
-      `Le dossier de données ${DATA_DIR} n'est pas accessible en écriture.`
+      `Le dossier de données ${DATA_DIR} n'est pas accessible en écriture` +
+      `${details ? ` (${details})` : ''}.`
     );
   }
 }
@@ -346,6 +638,18 @@ function pruneFiles(directory, maxFiles) {
 function backupJsonVersion(filePath) {
   try {
     if (!fileExistsWithContent(filePath)) return null;
+
+    if (COMPACT_STORAGE_MODE) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (Number(stat.size || 0) > VERSIONED_BACKUP_MAX_BYTES) {
+          // Les gros historiques disposent déjà de leur fichier actif et de
+          // l'écriture atomique. Ne pas multiplier les copies versionnées sur
+          // un Volume Free de 500 MB.
+          return null;
+        }
+      } catch {}
+    }
 
     const baseName =
       path.basename(filePath, path.extname(filePath));
@@ -697,7 +1001,26 @@ function createFullSnapshot(reason = 'manual') {
     { recursive: true }
   );
 
-  for (const item of snapshotFiles()) {
+  const compactSnapshotNames = new Set([
+    'products.json',
+    'instructions.json',
+    'settings.json',
+    'customization-requests.json',
+    'commercial-corrections.json',
+    'quick-replies.json',
+    'users.json',
+    'conversation-state.json',
+    'woocommerce-sync.json',
+    'schedules.json',
+    'tasks.json',
+    'daily-reports.json'
+  ]);
+
+  const filesToSnapshot = COMPACT_STORAGE_MODE
+    ? snapshotFiles().filter(item => compactSnapshotNames.has(item.name))
+    : snapshotFiles();
+
+  for (const item of filesToSnapshot) {
     if (fs.existsSync(item.source)) {
       fs.copyFileSync(
         item.source,
@@ -709,45 +1032,47 @@ function createFullSnapshot(reason = 'manual') {
     }
   }
 
-  copyDirectoryRecursive(
-    UPLOADS_DIR,
-    path.join(
-      snapshotDir,
-      'uploads'
-    )
-  );
+  if (!COMPACT_STORAGE_MODE) {
+    copyDirectoryRecursive(
+      UPLOADS_DIR,
+      path.join(
+        snapshotDir,
+        'uploads'
+      )
+    );
 
-  copyDirectoryRecursive(
-    CUSTOMIZATIONS_DIR,
-    path.join(
-      snapshotDir,
-      'customizations'
-    )
-  );
+    copyDirectoryRecursive(
+      CUSTOMIZATIONS_DIR,
+      path.join(
+        snapshotDir,
+        'customizations'
+      )
+    );
 
-  copyDirectoryRecursive(
-    CONVERSATION_MEDIA_DIR,
-    path.join(
-      snapshotDir,
-      'conversation-media'
-    )
-  );
+    copyDirectoryRecursive(
+      CONVERSATION_MEDIA_DIR,
+      path.join(
+        snapshotDir,
+        'conversation-media'
+      )
+    );
 
-  copyDirectoryRecursive(
-    CONVERSATION_PROFILE_DIR,
-    path.join(
-      snapshotDir,
-      'conversation-profile'
-    )
-  );
+    copyDirectoryRecursive(
+      CONVERSATION_PROFILE_DIR,
+      path.join(
+        snapshotDir,
+        'conversation-profile'
+      )
+    );
 
-  copyDirectoryRecursive(
-    CONVERSATION_EVENTS_DIR,
-    path.join(
-      snapshotDir,
-      'conversation-events'
-    )
-  );
+    copyDirectoryRecursive(
+      CONVERSATION_EVENTS_DIR,
+      path.join(
+        snapshotDir,
+        'conversation-events'
+      )
+    );
+  }
 
   const products =
     readJsonArray(
@@ -778,7 +1103,11 @@ function createFullSnapshot(reason = 'manual') {
     instructionCount:
       instructions.length,
     customizationCount:
-      customizations.length
+      customizations.length,
+    storageMode:
+      COMPACT_STORAGE_MODE ? 'compact' : 'standard',
+    includesBinaryCopies:
+      !COMPACT_STORAGE_MODE
   };
 
   fs.writeFileSync(
@@ -988,7 +1317,9 @@ function createExternalDataExport() {
     woocommerceSync:
       loadWooCommerceSyncState(),
     note:
-      'Cet export JSON contient les données structurées. Les images restent protégées dans le Volume et les snapshots complets /data/backups/snapshots.'
+      COMPACT_STORAGE_MODE
+        ? 'Cet export JSON contient les données structurées. En mode stockage compact, les médias restent dans leurs dossiers actifs du Volume et ne sont pas dupliqués dans les snapshots.'
+        : 'Cet export JSON contient les données structurées. Les images restent protégées dans le Volume et les snapshots complets /data/backups/snapshots.'
   };
 }
 
@@ -1022,28 +1353,42 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.20.3 : chaque écriture reçoit son propre fichier temporaire.
-  // L'ancien `${filePath}.tmp` pouvait être renommé par une autre requête
-  // entre writeFileSync() et renameSync(), ce qui produisait un ENOENT.
+  // V6.20.4 : fichier temporaire unique + stratégie compacte pour les gros JSON.
+  // L'écriture atomique garde le fichier actif intact jusqu'au rename final.
+  // Sur un Volume Free, les gros historiques ne reçoivent pas en plus une
+  // copie .bak complète à chaque sauvegarde : cela évite 2 à 3 copies du même
+  // gros fichier pendant une seule écriture.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   const backupPath = `${filePath}.bak`;
+  const serialized = JSON.stringify(data, null, 2);
+  const serializedBytes = Buffer.byteLength(serialized, 'utf8');
+  const keepFullBackup =
+    !COMPACT_STORAGE_MODE ||
+    serializedBytes <= VERSIONED_BACKUP_MAX_BYTES;
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
   if (fileExistsWithContent(filePath)) {
     backupJsonVersion(filePath);
 
-    try {
-      fs.copyFileSync(filePath, backupPath);
-    } catch (error) {
-      console.warn('⚠️ Backup JSON impossible :', error.message);
+    if (keepFullBackup) {
+      try {
+        fs.copyFileSync(filePath, backupPath);
+      } catch (error) {
+        console.warn('⚠️ Backup JSON impossible :', error.message);
+      }
+    } else {
+      // Une ancienne copie .bak volumineuse peut empêcher l'écriture atomique.
+      // Le fichier actif reste encore présent tant que le nouveau .tmp n'est
+      // pas complètement écrit et renommé.
+      deleteFileIfExists(backupPath);
     }
   }
 
   try {
     fs.writeFileSync(
       tempPath,
-      JSON.stringify(data, null, 2),
+      serialized,
       'utf8'
     );
 
@@ -2100,6 +2445,10 @@ function saveBotSettings(settings) {
 // INITIALISATION
 // ============================================================
 
+// V6.20.4 : tenter d'abord de libérer uniquement les copies de sauvegarde
+// redondantes. Cela permet à un Volume Railway Free presque plein de retrouver
+// quelques dizaines de Mo avant le test d'écriture strict.
+runStartupStorageRescue();
 ensurePersistenceSafety();
 migrateLegacyData();
 initializePersistentInstructions();
@@ -3598,7 +3947,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.3</span>
+        <span class="login-version">V6.20.4</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -8893,18 +9242,31 @@ router.get(
       const snapshots =
         listFullSnapshots();
 
+      const space = storageSpaceInfo();
+      const probe = storageWriteProbe();
+
       return res.json({
         dataDir:
           DATA_DIR,
         persistentConfigured:
           !samePath(DATA_DIR, APP_DIR),
         writable:
-          storageIsWritable(),
+          probe.writable,
+        writeErrorCode:
+          probe.errorCode || null,
         persistenceStrict:
           PERSISTENCE_STRICT,
         railwayVolumeMountPath:
           process.env.RAILWAY_VOLUME_MOUNT_PATH ||
           null,
+        storageMode:
+          COMPACT_STORAGE_MODE ? 'compact' : 'standard',
+        totalBytes:
+          space?.totalBytes ?? null,
+        freeBytes:
+          space?.freeBytes ?? null,
+        usedBytes:
+          space?.usedBytes ?? null,
         backupDirectory:
           BACKUPS_DIR,
         snapshotCount:
@@ -12173,7 +12535,7 @@ router.post(
 );
 
 // ============================================================
-// V6.20.3 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// V6.20.4 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
 // ============================================================
 
 let facebookHistorySyncJob = {
@@ -13769,6 +14131,9 @@ router.get(
   '/api/storage-status',
   requireAuth,
   (req, res) => {
+    const space = storageSpaceInfo();
+    const probe = storageWriteProbe();
+
     return res.json({
       dataDir: DATA_DIR,
 
@@ -13783,8 +14148,23 @@ router.get(
         process.env.DATA_DIR ||
         null,
 
+      storageMode:
+        COMPACT_STORAGE_MODE ? 'compact' : 'standard',
+
       writable:
-        storageIsWritable(),
+        probe.writable,
+
+      writeErrorCode:
+        probe.errorCode || null,
+
+      totalBytes:
+        space?.totalBytes ?? null,
+
+      freeBytes:
+        space?.freeBytes ?? null,
+
+      usedBytes:
+        space?.usedBytes ?? null,
 
       productsFile:
         fs.existsSync(PRODUCTS_PATH),
