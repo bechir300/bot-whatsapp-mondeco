@@ -10533,6 +10533,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         hasAdReferral: Boolean(state.cameFromAd || state.adReferral),
         adHeadline: safeString(state?.adReferral?.headline),
         adBody: safeString(state?.adReferral?.body),
+        adProductHint:
+          safeString(
+            state?.adReferral?.productHint ||
+            safeString(state?.adReferral?.headline).split('|')[0]
+          ),
         adSourceId: safeString(state?.adReferral?.sourceId),
         adSourceUrl: safeString(state?.adReferral?.sourceUrl),
         imageNeedsCommercial: Boolean(state.imageNeedsCommercial),
@@ -10588,9 +10593,26 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       .filter(entry => safeString(entry.contact) === contact)
       .sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
 
+    const adReferral =
+      state?.adReferral &&
+      typeof state.adReferral === 'object'
+        ? {
+            ...state.adReferral,
+            productHint:
+              safeString(
+                state?.adReferral?.productHint ||
+                safeString(state?.adReferral?.headline).split('|')[0]
+              )
+          }
+        : state?.adReferral;
+
     return res.json({
       contact,
-      state: { ...state, sla: computeLiveSla(state) },
+      state: {
+        ...state,
+        ...(adReferral ? { adReferral } : {}),
+        sla: computeLiveSla(state)
+      },
       entries
     });
   } catch (error) {
