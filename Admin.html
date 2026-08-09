@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20 — Inbox commerciale WhatsApp + Instagram + Facebook
+   MONDECO V6.20.1 — Historique complet + chronologie Meta
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20</span>
+                <span class="inbox-version">V6.20.1</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -6931,6 +6931,20 @@ let conversationServerCounts = null;
 let notificationPanelItems = [];
 let notificationPanelFilter = 'all';
 
+function conversationUiTimeMs(value){
+  const raw=String(value ?? '').trim();
+  if(!raw) return 0;
+  if(/^\d+(?:\.\d+)?$/.test(raw)){
+    let numeric=Number(raw);
+    if(Number.isFinite(numeric)){
+      if(numeric<1e12) numeric*=1000;
+      return numeric;
+    }
+  }
+  const parsed=Date.parse(raw);
+  return Number.isFinite(parsed)?parsed:0;
+}
+
 function canManageInstagramHistory(){
   return ['admin','responsable_commercial'].includes(
     String(currentUser?.role || '')
@@ -7019,7 +7033,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
       !instagramHistoryAutoSyncChecked &&
       status.configured &&
       !running &&
-      !status.completedAt
+      (!status.completedAt || Number(status.chronologyVersion || 0) < 2)
     ){
       instagramHistoryAutoSyncChecked = true;
       await startInstagramHistorySync({ silent: true });
@@ -7100,7 +7114,8 @@ function renderFacebookHistoryStatus(status = {}){
     const total = Number(status.totalConversations || 0);
     const imported = Number(status.importedMessages || 0);
     const discovered = Number(status.messageIdsDiscovered || 0);
-    label.textContent = `Facebook : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+    const pageName = String(status.pageName || '').trim();
+    label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
     return;
   }
 
@@ -7111,7 +7126,16 @@ function renderFacebookHistoryStatus(status = {}){
     const discovered = Number(status.messageIdsDiscovered || 0);
     const unavailable = Number(status.contentUnavailableMessages || 0);
     const errors = Number(status.errorCount || 0);
-    label.textContent = `Facebook : historique synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    const warning = String(status.warning || '').trim();
+    const lastError = String(status.lastError || '').trim();
+    const pageName = String(status.pageName || '').trim();
+    if(lastError && errors){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation terminée avec erreur • ${lastError}`;
+    }else if(total === 0){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
+    }else{
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    }
   }else{
     label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
   }
@@ -7133,7 +7157,11 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
       !facebookHistoryAutoSyncChecked &&
       status.configured &&
       !running &&
-      !status.completedAt
+      (
+        !status.completedAt ||
+        Number(status.syncVersion || 0) < 2 ||
+        Number(status.totalConversations || 0) === 0
+      )
     ){
       facebookHistoryAutoSyncChecked = true;
       await startFacebookHistorySync({ silent: true });
@@ -8597,7 +8625,7 @@ window.loadOlderConversationMessages = async function(contact, before){
     const entries=merged.filter(entry=>{
       const key=String(entry.message_id||entry.meta_message_id||`${entry.time}|${entry.incoming||''}|${entry.reply||''}`);
       if(seen.has(key))return false;seen.add(key);return true;
-    }).sort((a,b)=>new Date(a.time||0)-new Date(b.time||0));
+    }).sort((a,b)=>conversationUiTimeMs(a.time)-conversationUiTimeMs(b.time));
     // Render older messages without losing already loaded ones.
     selectedConversationData={...selectedConversationData,...older,entries};
     const detail=document.getElementById('conversationDetail');
