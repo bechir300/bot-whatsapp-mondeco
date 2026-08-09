@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + IA + RESPONSABLE COMMERCIAL + SLA — V6.19.6
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20
 // server.js
 //
 // Ajouts V5 :
@@ -85,6 +85,21 @@ const INSTAGRAM_ACCOUNT_ID =
     ''
   ).trim();
 
+// V6.20 — Facebook Messenger est un canal de supervision MONDECO.
+// Les réponses restent gérées côté Meta Business AI / Business Suite :
+// l'IA MONDECO n'envoie jamais de réponse automatique sur ce canal.
+const FACEBOOK_PAGE_ID =
+  (
+    process.env.FACEBOOK_PAGE_ID ||
+    ''
+  ).trim();
+
+const FACEBOOK_PAGE_ACCESS_TOKEN =
+  (
+    process.env.FACEBOOK_PAGE_ACCESS_TOKEN ||
+    ''
+  ).trim();
+
 // V6.19.6 — validation cryptographique des webhooks Meta lorsqu'un
 // App Secret est configuré dans Railway. Aucun secret n'est exposé au frontend.
 const META_APP_SECRET =
@@ -104,6 +119,12 @@ const INSTAGRAM_APP_SECRET =
 const WHATSAPP_APP_SECRET =
   (
     process.env.WHATSAPP_APP_SECRET ||
+    META_APP_SECRET
+  ).trim();
+
+const FACEBOOK_APP_SECRET =
+  (
+    process.env.FACEBOOK_APP_SECRET ||
     META_APP_SECRET
   ).trim();
 
@@ -250,7 +271,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO WHATSAPP + INSTAGRAM BOT V6.19.6');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20');
 console.log(
   '=============================================='
 );
@@ -294,7 +315,7 @@ console.log(
 console.log('DATA_DIR :', DATA_DIR);
 console.log(
   'META APP SECRET(S) :',
-  INSTAGRAM_APP_SECRET || WHATSAPP_APP_SECRET
+  INSTAGRAM_APP_SECRET || WHATSAPP_APP_SECRET || FACEBOOK_APP_SECRET
     ? '✅ configuré(s) — validation X-Hub-Signature-256 active par canal'
     : '⚠️ MANQUANT — ajoutez META_APP_SECRET (ou les secrets par canal)'
 );
@@ -332,37 +353,38 @@ function normalizePhone(value) {
 }
 
 function normalizeChannel(value) {
-  return safeString(value).toLowerCase() === 'instagram'
-    ? 'instagram'
-    : 'whatsapp';
+  const channel = safeString(value).toLowerCase();
+  if (channel === 'instagram') return 'instagram';
+  if (channel === 'facebook' || channel === 'messenger') return 'facebook';
+  return 'whatsapp';
 }
 
 function makeConversationKey(channel, externalId) {
   const cleanChannel = normalizeChannel(channel);
-  const cleanExternal = cleanChannel === 'instagram'
-    ? safeString(externalId)
-    : normalizePhone(externalId);
+  const cleanExternal = cleanChannel === 'whatsapp'
+    ? normalizePhone(externalId)
+    : safeString(externalId);
 
   if (!cleanExternal) return '';
 
-  return cleanChannel === 'instagram'
-    ? `instagram:${cleanExternal}`
-    : cleanExternal;
+  if (cleanChannel === 'instagram') return `instagram:${cleanExternal}`;
+  if (cleanChannel === 'facebook') return `facebook:${cleanExternal}`;
+  return cleanExternal;
 }
 
 function conversationExternalId(contact) {
   const clean = safeString(contact);
-  return clean.startsWith('instagram:')
-    ? clean.slice('instagram:'.length)
-    : normalizePhone(clean);
+  if (clean.startsWith('instagram:')) return clean.slice('instagram:'.length);
+  if (clean.startsWith('facebook:')) return clean.slice('facebook:'.length);
+  return normalizePhone(clean);
 }
 
 function conversationChannel(contact, state = null) {
-  const stateChannel = normalizeChannel(state?.channel || '');
-  if (safeString(state?.channel)) return stateChannel;
-  return safeString(contact).startsWith('instagram:')
-    ? 'instagram'
-    : 'whatsapp';
+  if (safeString(state?.channel)) return normalizeChannel(state.channel);
+  const clean = safeString(contact);
+  if (clean.startsWith('instagram:')) return 'instagram';
+  if (clean.startsWith('facebook:')) return 'facebook';
+  return 'whatsapp';
 }
 
 function writeJsonAtomic(filePath, data) {
@@ -536,9 +558,14 @@ function registerConversationNotification(entry) {
   const incoming = safeString(entry?.incoming);
   const type = safeString(entry?.type || entry?.attachment_type);
   const hasAttachments = Array.isArray(entry?.attachments) && entry.attachments.length > 0;
+  const direction = safeString(entry?.direction).toLowerCase();
+  const senderKind = safeString(entry?.sender_kind).toLowerCase();
 
-  // Les notifications concernent uniquement les nouveaux messages clients réels.
-  if (!contact || (!incoming && !type && !hasAttachments)) return;
+  // Les notifications concernent uniquement les nouveaux messages CLIENTS.
+  // Les accusés lu/livré, réactions, messages sortants Meta et autres événements
+  // système restent dans l'historique mais ne créent jamais un nouveau non-lu.
+  const clientInbound = direction === 'incoming' || senderKind === 'client';
+  if (!contact || !clientInbound || (!incoming && !type && !hasAttachments)) return;
   if (entry?.history_import === true) return;
 
   const source = safeString(entry?.source);
@@ -566,7 +593,7 @@ function registerConversationNotification(entry) {
       channel: normalizeChannel(
         entry?.channel ||
         state?.channel ||
-        (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')
+        conversationChannel(contact, state)
       ),
       externalContact: safeString(entry?.external_contact || state?.externalContact || conversationExternalId(contact)),
       username: safeString(state?.instagramUsername),
@@ -1000,6 +1027,131 @@ async function persistInstagramAttachments(
 }
 
 // ============================================================
+// V6.20 — MÉDIAS FACEBOOK MESSENGER
+// ============================================================
+
+function facebookAttachmentRemoteUrl(attachment) {
+  return safeString(
+    attachment?.payload?.url ||
+    attachment?.url
+  );
+}
+
+async function fetchFacebookMediaUrl(remoteUrl) {
+  let response = null;
+
+  if (FACEBOOK_PAGE_ACCESS_TOKEN) {
+    response = await fetch(
+      remoteUrl,
+      {
+        headers: {
+          Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`
+        }
+      }
+    );
+  }
+
+  // Les URL CDN Meta sont souvent déjà signées. On retente sans token si
+  // l'URL refuse l'en-tête Authorization.
+  if (!response || !response.ok) {
+    response = await fetch(remoteUrl);
+  }
+
+  return response;
+}
+
+async function persistFacebookAttachments(
+  attachments,
+  {
+    messageId = '',
+    direction = 'incoming'
+  } = {}
+) {
+  const source = Array.isArray(attachments) ? attachments : [];
+  const saved = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    const attachment = source[index] || {};
+    const type = normalizeConversationMediaType(attachment?.type);
+    const remoteUrl = facebookAttachmentRemoteUrl(attachment);
+
+    if (!remoteUrl) {
+      saved.push({
+        type,
+        name:
+          type === 'image'
+            ? 'Photo Facebook'
+            : type === 'video'
+              ? 'Vidéo Facebook'
+              : type === 'audio'
+                ? 'Audio Facebook'
+                : 'Pièce jointe Facebook',
+        url: '',
+        remote_url: '',
+        error: 'URL média non fournie par Meta.'
+      });
+      continue;
+    }
+
+    try {
+      const response = await fetchFacebookMediaUrl(remoteUrl);
+      if (!response.ok) {
+        throw new Error(`Téléchargement Facebook impossible (${response.status}).`);
+      }
+
+      const declaredLength = Number(response.headers.get('content-length') || 0);
+      if (declaredLength > MAX_CONVERSATION_MEDIA_BYTES) {
+        throw new Error('Média Facebook trop volumineux.');
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const mimetype =
+        response.headers.get('content-type') ||
+        (
+          type === 'image'
+            ? 'image/jpeg'
+            : type === 'video'
+              ? 'video/mp4'
+              : type === 'audio'
+                ? 'audio/mpeg'
+                : 'application/octet-stream'
+        );
+
+      saved.push(
+        saveConversationMediaBuffer({
+          buffer,
+          mimetype,
+          type,
+          messageId,
+          index,
+          channel: 'facebook',
+          direction
+        })
+      );
+    } catch (error) {
+      console.warn('⚠️ Média Facebook non sauvegardé :', error.message);
+      saved.push({
+        type,
+        name:
+          type === 'image'
+            ? 'Photo Facebook'
+            : type === 'video'
+              ? 'Vidéo Facebook'
+              : type === 'audio'
+                ? 'Audio Facebook'
+                : 'Pièce jointe Facebook',
+        url: remoteUrl,
+        remote_url: remoteUrl,
+        temporary: true,
+        error: error.message
+      });
+    }
+  }
+
+  return saved;
+}
+
+// ============================================================
 // LOG CONVERSATIONS
 // ============================================================
 
@@ -1222,7 +1374,7 @@ function logConversation(entry) {
       try {
         registerCommercialEscalation({
           contact,
-          channel: safeString(entry?.channel) || (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+          channel: safeString(entry?.channel) || conversationChannel(contact, getConversationState(contact)),
           reason: safeString(entry?.image_reason || entry?.error || action),
           messageId: safeString(entry?.message_id),
           source: safeString(entry?.source)
@@ -1278,7 +1430,7 @@ function logConversation(entry) {
       ...entry,
       direction: safeString(entry?.direction) || direction,
       sender_kind: safeString(entry?.sender_kind) || senderKind,
-      channel: safeString(entry?.channel || state?.channel || (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')),
+      channel: safeString(entry?.channel || state?.channel || conversationChannel(contact, state)),
       external_contact: safeString(entry?.external_contact || state?.externalContact || conversationExternalId(contact)),
       profile_name: safeString(entry?.profile_name || state?.profileName),
       instagram_username: safeString(entry?.instagram_username || state?.instagramUsername),
@@ -1291,6 +1443,10 @@ function logConversation(entry) {
       source_context: entry?.source_context || (state?.sourceContext && typeof state.sourceContext === 'object' ? state.sourceContext : undefined),
       ad_referral: entry?.ad_referral || (state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : undefined),
       instagram_conversation_id: safeString(entry?.instagram_conversation_id || state?.instagramHistoryConversationId),
+      facebook_conversation_id: safeString(entry?.facebook_conversation_id || state?.facebookHistoryConversationId),
+      facebook_page_id: safeString(entry?.facebook_page_id || state?.facebookPageId),
+      facebook_response_mode: safeString(entry?.facebook_response_mode || state?.facebookResponseMode),
+      mondeco_ai_enabled: state?.mondecoAiEnabled !== false,
       unread_at_ingest: Boolean(incoming)
     };
 
@@ -1420,7 +1576,7 @@ function markCustomerMessage(
         normalizeChannel(
           metadata.channel ||
           current.channel ||
-          (safeString(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp')
+          conversationChannel(contact, current)
         ),
 
       externalContact:
@@ -2055,10 +2211,20 @@ function normalizeAdReferral(referral) {
       safeString(referral?.creative_id || adsContext?.creative_id),
     creativeName:
       safeString(referral?.creative_name || adsContext?.creative_name),
+    sourceType:
+      safeString(referral?.source_type),
     mediaType:
-      safeString(adsContext?.video_url) ? 'video' : (safeString(adsContext?.photo_url) ? 'image' : ''),
+      safeString(referral?.video_url || adsContext?.video_url)
+        ? 'video'
+        : (safeString(referral?.image_url || referral?.thumbnail_url || adsContext?.photo_url) ? 'image' : ''),
     mediaUrl:
-      safeString(adsContext?.video_url || adsContext?.photo_url),
+      safeString(
+        referral?.video_url ||
+        referral?.image_url ||
+        referral?.thumbnail_url ||
+        adsContext?.video_url ||
+        adsContext?.photo_url
+      ),
     productHint:
       inferAdProductHint(referral),
     raw:
@@ -4226,8 +4392,14 @@ setCommercialSendHandler(
     const resolvedChannel =
       normalizeChannel(
         channel ||
-        (safeString(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp')
+        conversationChannel(contact, getConversationState(contact))
       );
+
+    if (resolvedChannel === 'facebook') {
+      throw new Error(
+        'Facebook est en mode supervision : les réponses restent gérées dans Meta Business AI / Business Suite.'
+      );
+    }
 
     if (
       file &&
@@ -4767,6 +4939,51 @@ function instagramSourceContext(event, message, referral, attachments = []) {
   };
 }
 
+function facebookSourceContext(event, message, referral, attachments = []) {
+  const ad = normalizeAdReferral(referral);
+  const referralLooksLikeAd =
+    safeString(referral?.source).toUpperCase() === 'ADS' ||
+    safeString(referral?.source_type).toLowerCase() === 'ad' ||
+    Boolean(referral?.ad_id);
+
+  if (ad && referralLooksLikeAd) {
+    return {
+      type: 'ad',
+      label: 'Publicité Meta',
+      ad
+    };
+  }
+
+  if (referral && typeof referral === 'object') {
+    return {
+      type: 'referral',
+      label: safeString(referral?.source_type) === 'post'
+        ? 'Publication Facebook'
+        : 'Lien / entrée Facebook',
+      id: safeString(referral?.source_id || referral?.ad_id),
+      url: safeString(referral?.source_url),
+      caption: safeString(referral?.headline || referral?.body || referral?.ref),
+      raw: referral
+    };
+  }
+
+  const first = Array.isArray(attachments) ? attachments.find(Boolean) : null;
+  const attachmentType = safeString(first?.type).toLowerCase();
+  if (attachmentType === 'share') {
+    return {
+      type: 'share',
+      label: 'Contenu partagé Facebook',
+      url: facebookAttachmentRemoteUrl(first),
+      raw: first
+    };
+  }
+
+  return {
+    type: 'direct',
+    label: 'Messenger direct'
+  };
+}
+
 function profilePictureExtension(contentType) {
   const type = safeString(contentType).toLowerCase();
   if (type.includes('png')) return 'png';
@@ -4885,6 +5102,93 @@ async function getInstagramProfile(
 
     return {
       ...data,
+      stored_profile_picture: storedProfilePicture
+    };
+  } catch {
+    return {};
+  }
+}
+
+// ============================================================
+// V6.20 — PROFIL FACEBOOK MESSENGER
+// ============================================================
+
+async function persistFacebookProfilePicture(profilePictureUrl, psid) {
+  const remoteUrl = safeString(profilePictureUrl);
+  const scopedId = safeString(psid).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!remoteUrl || !scopedId) return '';
+
+  try {
+    const response = await fetch(remoteUrl);
+    if (!response.ok) return '';
+
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_PROFILE_PICTURE_BYTES) {
+      return '';
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > MAX_PROFILE_PICTURE_BYTES) return '';
+
+    const extension = profilePictureExtension(response.headers.get('content-type'));
+    const filename = `facebook-${scopedId}.${extension}`;
+
+    for (const ext of ['jpg', 'png', 'webp', 'gif']) {
+      const candidate = path.join(CONVERSATION_PROFILE_DIR, `facebook-${scopedId}.${ext}`);
+      if (ext !== extension && fs.existsSync(candidate)) {
+        try { fs.unlinkSync(candidate); } catch {}
+      }
+    }
+
+    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+  } catch (error) {
+    console.warn('⚠️ Photo profil Facebook non sauvegardée :', error.message);
+    return '';
+  }
+}
+
+function facebookProfileNeedsRefresh(state) {
+  if (!state?.profileName || !state?.profilePicture) return true;
+  const updatedAt = Date.parse(safeString(state?.profileUpdatedAt));
+  if (!Number.isFinite(updatedAt)) return true;
+  return Date.now() - updatedAt > 7 * 24 * 60 * 60 * 1000;
+}
+
+async function getFacebookProfile(psid) {
+  if (!FACEBOOK_PAGE_ACCESS_TOKEN || !psid) return {};
+
+  const fetchFields = async fields => {
+    const url =
+      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(psid)}` +
+      `?fields=${encodeURIComponent(fields)}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}` }
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data && typeof data === 'object' ? data : null;
+  };
+
+  try {
+    const data =
+      await fetchFields('first_name,last_name,name,profile_pic') ||
+      await fetchFields('first_name,last_name,profile_pic') ||
+      {};
+
+    const profileName = safeString(
+      data?.name ||
+      [safeString(data?.first_name), safeString(data?.last_name)].filter(Boolean).join(' ')
+    );
+
+    const storedProfilePicture = await persistFacebookProfilePicture(
+      data?.profile_pic,
+      psid
+    );
+
+    return {
+      ...data,
+      name: profileName,
       stored_profile_picture: storedProfilePicture
     };
   } catch {
@@ -5105,7 +5409,7 @@ app.get('/', (req, res) => {
   res
     .status(200)
     .send(
-      '✅ Agent MONDECO WhatsApp + Instagram actif.'
+      '✅ MONDECO Omnicanal WhatsApp + Instagram + Facebook actif.'
     );
 });
 
@@ -5174,6 +5478,12 @@ app.get('/debug-env', (req, res) => {
       instagram_account_id_present:
         Boolean(INSTAGRAM_ACCOUNT_ID),
 
+      facebook_page_id_present:
+        Boolean(FACEBOOK_PAGE_ID),
+
+      facebook_page_access_token_present:
+        Boolean(FACEBOOK_PAGE_ACCESS_TOKEN),
+
       meta_app_secret_present:
         Boolean(META_APP_SECRET),
 
@@ -5182,6 +5492,9 @@ app.get('/debug-env', (req, res) => {
 
       whatsapp_app_secret_present:
         Boolean(WHATSAPP_APP_SECRET),
+
+      facebook_app_secret_present:
+        Boolean(FACEBOOK_APP_SECRET),
 
       gemini_api_key_present:
         Boolean(GEMINI_API_KEY),
@@ -5306,7 +5619,9 @@ function validMetaWebhookSignature(req) {
       ? INSTAGRAM_APP_SECRET
       : object === 'whatsapp_business_account'
         ? WHATSAPP_APP_SECRET
-        : META_APP_SECRET;
+        : object === 'page'
+          ? FACEBOOK_APP_SECRET
+          : META_APP_SECRET;
 
   if (!appSecret) return null;
 
@@ -5351,7 +5666,9 @@ app.post('/webhook', (req, res) => {
       ? '📩 Webhook Instagram reçu'
       : object === 'whatsapp_business_account'
         ? '📩 Webhook WhatsApp reçu'
-        : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
+        : object === 'page'
+          ? '📩 Webhook Facebook Messenger reçu'
+          : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
   );
 
   // Meta doit recevoir 200 rapidement. Le payload complet n'est plus écrit
@@ -5384,6 +5701,19 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
+  if (object === 'page') {
+    processFacebookWebhook(
+      req.body
+    ).catch(error => {
+      console.error(
+        '❌ Erreur globale webhook Facebook :',
+        error
+      );
+    });
+
+    return;
+  }
+
   console.log(
     `ℹ️ Webhook Meta ignoré : ${object || 'objet inconnu'}`
   );
@@ -5392,6 +5722,464 @@ app.post('/webhook', (req, res) => {
 // ============================================================
 // WEBHOOK PROCESSING
 // ============================================================
+
+// ============================================================
+// V6.20 — WEBHOOK FACEBOOK MESSENGER (SUPERVISION UNIQUEMENT)
+// ============================================================
+
+function facebookEventIsoTime(event, entry = null) {
+  const raw = Number(event?.timestamp || entry?.time || 0);
+  if (Number.isFinite(raw) && raw > 0) {
+    const milliseconds = raw < 10_000_000_000 ? raw * 1000 : raw;
+    const date = new Date(milliseconds);
+    if (Number.isFinite(date.getTime())) return date.toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function facebookCustomerIdFromEvent(event, pageId = '') {
+  const senderId = safeString(event?.sender?.id);
+  const recipientId = safeString(event?.recipient?.id);
+  const knownPageId = safeString(pageId || FACEBOOK_PAGE_ID);
+
+  if (knownPageId) {
+    if (senderId && senderId !== knownPageId) return senderId;
+    if (recipientId && recipientId !== knownPageId) return recipientId;
+  }
+
+  // Sans PAGE_ID configuré, un echo Messenger indique explicitement que le
+  // message est sortant : le destinataire est alors le client.
+  if (event?.message?.is_echo === true && recipientId) return recipientId;
+  return senderId || recipientId;
+}
+
+async function processFacebookBusinessOutboundEvent({
+  event,
+  entryPageId = '',
+  stream = 'messaging'
+}) {
+  const message = event?.message || null;
+  if (!message) return;
+
+  const messageId = safeString(message?.mid);
+  if (messageId && isDuplicateMessage(messageId)) return;
+
+  const customerId = facebookCustomerIdFromEvent(event, entryPageId);
+  if (!customerId || customerId === safeString(entryPageId || FACEBOOK_PAGE_ID)) return;
+
+  const contact = makeConversationKey('facebook', customerId);
+  const text = safeString(message?.text);
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+  const storedAttachments = attachments.length
+    ? await persistFacebookAttachments(attachments, {
+        messageId,
+        direction: 'outgoing-meta'
+      })
+    : [];
+
+  const attachmentFields = firstAttachmentLogFields(storedAttachments);
+  const time = facebookEventIsoTime(event);
+
+  updateConversationState(
+    contact,
+    current => ({
+      ...current,
+      channel: 'facebook',
+      externalContact: customerId,
+      facebookPsid: customerId,
+      facebookPageId: safeString(entryPageId || FACEBOOK_PAGE_ID),
+      facebookResponseMode: 'meta_business_ai',
+      mondecoAiEnabled: false,
+      aiModePreference: 'meta',
+      aiModeChoicePending: false,
+      lastBusinessAt: time,
+      lastFacebookOutboundAt: time
+    })
+  );
+
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: customerId,
+    channel: 'facebook',
+    action: 'facebook_outbound_observed',
+    source: stream === 'standby' ? 'facebook_meta_outbound_standby' : 'facebook_meta_outbound',
+    direction: 'outgoing',
+    sender_kind: 'meta',
+    reply: text,
+    reply_sent: true,
+    ...attachmentFields,
+    attachment_direction: 'outgoing',
+    facebook_page_id: safeString(entryPageId || FACEBOOK_PAGE_ID),
+    facebook_response_owner: 'meta_or_business_suite',
+    time
+  });
+
+  console.log(
+    '🔵 Réponse Facebook synchronisée :',
+    customerId,
+    '|',
+    text || (storedAttachments.length ? 'média' : 'message')
+  );
+}
+
+async function processFacebookIncomingEvent({
+  event,
+  entryPageId = '',
+  stream = 'messaging'
+}) {
+  const message = event?.message || null;
+  const postback = event?.postback || null;
+  const referral = message?.referral || postback?.referral || event?.referral || null;
+  const senderId = safeString(event?.sender?.id);
+  const recipientId = safeString(event?.recipient?.id);
+  const pageId = safeString(entryPageId || FACEBOOK_PAGE_ID);
+
+  if (!senderId || (pageId && senderId === pageId)) return;
+  if (pageId && recipientId && recipientId !== pageId) return;
+
+  const messageId = safeString(message?.mid);
+  if (messageId && isDuplicateMessage(messageId)) return;
+
+  const contact = makeConversationKey('facebook', senderId);
+  const previousState = getConversationState(contact) || {};
+  const shouldRefreshProfile = !previousState?.firstSeenAt || facebookProfileNeedsRefresh(previousState);
+  const profile = shouldRefreshProfile ? await getFacebookProfile(senderId) : {};
+
+  const text = safeString(message?.text || postback?.title);
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+  const sourceContext = facebookSourceContext(event, message, referral, attachments);
+  const normalizedAd = normalizeAdReferral(referral);
+  const isAdReferral = Boolean(
+    normalizedAd && (
+      safeString(referral?.source).toUpperCase() === 'ADS' ||
+      safeString(referral?.source_type).toLowerCase() === 'ad' ||
+      Boolean(referral?.ad_id)
+    )
+  );
+
+  const storedAttachments = attachments.length
+    ? await persistFacebookAttachments(attachments, {
+        messageId,
+        direction: 'incoming'
+      })
+    : [];
+
+  // Le visuel d'une publicité/référence est également copié dans /data si
+  // Meta fournit une URL. Il reste distinct du média réellement envoyé.
+  const sourceRemoteUrl = sourceContext?.type === 'ad'
+    ? safeString(sourceContext?.ad?.mediaUrl)
+    : safeString(sourceContext?.url);
+
+  if (sourceRemoteUrl) {
+    try {
+      const sourceType = sourceContext?.type === 'ad'
+        ? (safeString(sourceContext?.ad?.mediaType) || 'image')
+        : 'image';
+      const savedSource = await persistFacebookAttachments(
+        [{ type: sourceType, payload: { url: sourceRemoteUrl } }],
+        {
+          messageId: `${messageId || Date.now()}-source`,
+          direction: 'source'
+        }
+      );
+      const localPreview = safeString(savedSource?.[0]?.url);
+      if (localPreview && !savedSource?.[0]?.temporary) {
+        sourceContext.previewUrl = localPreview;
+        sourceContext.previewType = safeString(savedSource?.[0]?.type);
+        if (sourceContext.type === 'ad' && sourceContext.ad) {
+          sourceContext.ad.storedMediaUrl = localPreview;
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️ Visuel source Facebook non sauvegardé :', error.message);
+    }
+  }
+
+  const firstMediaType = safeString(storedAttachments?.[0]?.type || attachments?.[0]?.type);
+  const pseudoMessage = {
+    id: messageId,
+    type: attachments.length
+      ? (firstMediaType === 'image' ? 'image' : 'attachment')
+      : (text ? 'text' : (postback ? 'postback' : 'unknown')),
+    text: { body: text },
+    referral: referral || undefined,
+    source_context: sourceContext
+  };
+
+  markCustomerMessage(
+    contact,
+    pseudoMessage,
+    isAdReferral,
+    {
+      channel: 'facebook',
+      externalContact: senderId,
+      profileName: safeString(profile?.name || previousState?.profileName),
+      profilePicture: safeString(profile?.stored_profile_picture || previousState?.profilePicture),
+      profileUpdatedAt:
+        shouldRefreshProfile && profile && Object.keys(profile).length
+          ? new Date().toISOString()
+          : safeString(previousState?.profileUpdatedAt),
+      sourceContext
+    }
+  );
+
+  updateConversationState(
+    contact,
+    current => ({
+      ...current,
+      channel: 'facebook',
+      externalContact: senderId,
+      facebookPsid: senderId,
+      facebookPageId: pageId,
+      facebookResponseMode: 'meta_business_ai',
+      mondecoAiEnabled: false,
+      aiModePreference: 'meta',
+      aiModeChoicePending: false,
+      aiModePendingCustomerText: '',
+      manualTakeover: false,
+      humanPaused: false,
+      pausedUntil: null
+    })
+  );
+
+  if (isAdReferral) {
+    rememberAdReferral(contact, referral);
+    if (sourceContext?.ad && typeof sourceContext.ad === 'object') {
+      updateConversationState(
+        contact,
+        current => ({
+          ...current,
+          adReferral: {
+            ...(current.adReferral || {}),
+            ...sourceContext.ad
+          }
+        })
+      );
+    }
+  }
+
+  const attachmentFields = firstAttachmentLogFields(storedAttachments);
+  const time = facebookEventIsoTime(event);
+
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: senderId,
+    channel: 'facebook',
+    incoming: text,
+    type: pseudoMessage.type,
+    action: postback ? 'facebook_postback_observed' : 'facebook_inbound_observed',
+    source: isAdReferral
+      ? 'meta_ad'
+      : (stream === 'standby' ? 'facebook_standby' : 'facebook_messenger'),
+    direction: 'incoming',
+    sender_kind: 'client',
+    ...attachmentFields,
+    attachment_direction: 'incoming',
+    postback_payload: safeString(postback?.payload),
+    facebook_page_id: pageId,
+    facebook_stream: stream,
+    source_context: sourceContext,
+    reply_sent: false,
+    time
+  });
+}
+
+function logFacebookStatusEvent({ event, entryPageId = '', stream = 'messaging' }) {
+  const customerId = facebookCustomerIdFromEvent(event, entryPageId);
+  if (!customerId || customerId === safeString(entryPageId || FACEBOOK_PAGE_ID)) return;
+
+  const contact = makeConversationKey('facebook', customerId);
+  const time = facebookEventIsoTime(event);
+  const pageId = safeString(entryPageId || FACEBOOK_PAGE_ID);
+
+  if (event?.read) {
+    logConversation({
+      contact,
+      external_contact: customerId,
+      channel: 'facebook',
+      type: 'read_receipt',
+      action: 'facebook_message_read',
+      source: 'facebook_status',
+      direction: 'system',
+      sender_kind: 'system',
+      watermark: event.read?.watermark || null,
+      facebook_page_id: pageId,
+      facebook_stream: stream,
+      time
+    });
+    return;
+  }
+
+  if (event?.delivery) {
+    logConversation({
+      contact,
+      external_contact: customerId,
+      channel: 'facebook',
+      type: 'delivery_receipt',
+      action: 'facebook_message_delivery',
+      source: 'facebook_status',
+      direction: 'system',
+      sender_kind: 'system',
+      delivered_mids: Array.isArray(event.delivery?.mids) ? event.delivery.mids : [],
+      watermark: event.delivery?.watermark || null,
+      facebook_page_id: pageId,
+      facebook_stream: stream,
+      time
+    });
+    return;
+  }
+
+  if (event?.reaction) {
+    logConversation({
+      contact,
+      external_contact: customerId,
+      channel: 'facebook',
+      type: 'reaction',
+      action: 'facebook_message_reaction',
+      source: 'facebook_status',
+      direction: 'system',
+      sender_kind: 'system',
+      related_message_id: safeString(event.reaction?.mid),
+      reaction_action: safeString(event.reaction?.action),
+      reaction: safeString(event.reaction?.reaction || event.reaction?.emoji),
+      facebook_page_id: pageId,
+      facebook_stream: stream,
+      time
+    });
+  }
+}
+
+async function processFacebookMessageEdit({ event, entryPageId = '', stream = 'messaging' }) {
+  const edit = event?.message_edit;
+  if (!edit || typeof edit !== 'object') return;
+
+  const customerId = facebookCustomerIdFromEvent(event, entryPageId);
+  if (!customerId || customerId === safeString(entryPageId || FACEBOOK_PAGE_ID)) return;
+
+  const originalMid = safeString(edit?.mid);
+  const editNumber = Number(edit?.num_edit || 1) || 1;
+  const syntheticId = originalMid ? `fb-edit-${originalMid}-${editNumber}` : '';
+  if (syntheticId && isDuplicateMessage(syntheticId)) return;
+
+  const contact = makeConversationKey('facebook', customerId);
+  const text = safeString(edit?.text);
+  const time = facebookEventIsoTime(event);
+
+  if (text) {
+    markCustomerMessage(
+      contact,
+      { id: syntheticId, type: 'text', text: { body: text } },
+      false,
+      {
+        channel: 'facebook',
+        externalContact: customerId
+      }
+    );
+  }
+
+  updateConversationState(
+    contact,
+    current => ({
+      ...current,
+      channel: 'facebook',
+      externalContact: customerId,
+      facebookPsid: customerId,
+      facebookPageId: safeString(entryPageId || FACEBOOK_PAGE_ID),
+      facebookResponseMode: 'meta_business_ai',
+      mondecoAiEnabled: false,
+      aiModePreference: 'meta'
+    })
+  );
+
+  logConversation({
+    message_id: syntheticId || null,
+    related_message_id: originalMid,
+    contact,
+    external_contact: customerId,
+    channel: 'facebook',
+    incoming: text,
+    type: 'message_edit',
+    action: 'facebook_message_edit',
+    source: 'facebook_messenger',
+    direction: 'incoming',
+    sender_kind: 'client',
+    edit_number: editNumber,
+    facebook_stream: stream,
+    reply_sent: false,
+    time
+  });
+}
+
+async function processSingleFacebookEvent(event, entryPageId = '', stream = 'messaging') {
+  if (!event || typeof event !== 'object') return;
+
+  const message = event?.message || null;
+  const senderId = safeString(event?.sender?.id);
+  const pageId = safeString(entryPageId || FACEBOOK_PAGE_ID);
+  const isBusinessOutbound = Boolean(
+    message && (
+      message?.is_echo === true ||
+      (pageId && senderId === pageId)
+    )
+  );
+
+  if (isBusinessOutbound) {
+    await processFacebookBusinessOutboundEvent({ event, entryPageId, stream });
+    return;
+  }
+
+  if (event?.message_edit) {
+    await processFacebookMessageEdit({ event, entryPageId, stream });
+    return;
+  }
+
+  if (message || event?.postback || event?.referral) {
+    await processFacebookIncomingEvent({ event, entryPageId, stream });
+    return;
+  }
+
+  if (event?.read || event?.delivery || event?.reaction) {
+    logFacebookStatusEvent({ event, entryPageId, stream });
+  }
+}
+
+async function processFacebookWebhook(body) {
+  if (body?.object !== 'page') return;
+
+  const entries = Array.isArray(body?.entry) ? body.entry : [];
+
+  for (const entry of entries) {
+    const entryPageId = safeString(entry?.id);
+
+    if (
+      FACEBOOK_PAGE_ID &&
+      entryPageId &&
+      entryPageId !== FACEBOOK_PAGE_ID
+    ) {
+      console.log(`🧪 Webhook Facebook autre Page ignoré : ${entryPageId}`);
+      continue;
+    }
+
+    const streams = [
+      ['messaging', Array.isArray(entry?.messaging) ? entry.messaging : []],
+      // Handover Protocol : une app en secondaire peut recevoir des événements
+      // dans standby. On les conserve aussi pour ne pas perdre le suivi.
+      ['standby', Array.isArray(entry?.standby) ? entry.standby : []]
+    ];
+
+    for (const [stream, events] of streams) {
+      for (const event of events) {
+        try {
+          await processSingleFacebookEvent(event, entryPageId, stream);
+        } catch (error) {
+          console.error('❌ Erreur message Facebook :', error);
+        }
+      }
+    }
+  }
+}
 
 async function processWhatsAppWebhook(body) {
   if (
