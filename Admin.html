@@ -7943,6 +7943,7 @@ window.openConversation = async function(contact){
       ? `
         <div class="inbox-ad-context">
           <strong>📣 Conversation issue d’une publicité Meta</strong>
+          ${ad.productHint ? `<div style="margin-top:5px;font-weight:800">🎯 Produit associé : ${escapeHtml(ad.productHint)}</div>` : ''}
           ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
         </div>
       `
@@ -9092,6 +9093,7 @@ async function softRefreshSelectedConversation(){
         ? `
           <div class="inbox-ad-context">
             <strong>📣 Conversation issue d’une publicité Meta</strong>
+            ${ad.productHint ? `<div style="margin-top:5px;font-weight:800">🎯 Produit associé : ${escapeHtml(ad.productHint)}</div>` : ''}
             ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
           </div>
         `
