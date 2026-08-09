@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20.1 — Historique complet + chronologie Meta
+   MONDECO V6.20.2 — Historique complet + chronologie Meta
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20.1</span>
+                <span class="inbox-version">V6.20.2</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -6998,7 +6998,13 @@ function renderInstagramHistoryStatus(status = {}){
     const imported = Number(status.importedMessages || 0);
     const discovered = Number(status.messageIdsDiscovered || 0);
     const unavailable = Number(status.contentUnavailableMessages || 0);
-    label.textContent = `Instagram : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+    const listed = Number(status.listedConversations || total || 0);
+    const phase = String(status.phase || '').trim();
+    if(phase === 'listing'){
+      label.textContent = `Instagram : lecture de l’historique Meta… ${listed} discussion(s) détectée(s) • page ${Number(status.listPages || 0) || 1}`;
+    }else{
+      label.textContent = `Instagram : synchronisation historique ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+    }
     return;
   }
 
@@ -7033,7 +7039,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
       !instagramHistoryAutoSyncChecked &&
       status.configured &&
       !running &&
-      (!status.completedAt || Number(status.chronologyVersion || 0) < 2)
+      (!status.completedAt || Number(status.chronologyVersion || 0) < 3)
     ){
       instagramHistoryAutoSyncChecked = true;
       await startInstagramHistorySync({ silent: true });
@@ -7115,7 +7121,13 @@ function renderFacebookHistoryStatus(status = {}){
     const imported = Number(status.importedMessages || 0);
     const discovered = Number(status.messageIdsDiscovered || 0);
     const pageName = String(status.pageName || '').trim();
-    label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+    const listed = Number(status.listedConversations || total || 0);
+    const phase = String(status.phase || '').trim();
+    if(phase === 'listing'){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : lecture de l’historique Meta… ${listed} discussion(s) détectée(s) • page ${Number(status.listPages || 0) || 1}`;
+    }else{
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation historique ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+    }
     return;
   }
 
@@ -7159,7 +7171,7 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
       !running &&
       (
         !status.completedAt ||
-        Number(status.syncVersion || 0) < 2 ||
+        Number(status.syncVersion || 0) < 3 ||
         Number(status.totalConversations || 0) === 0
       )
     ){
@@ -7688,17 +7700,20 @@ function conversationListTags(item){
 function renderConversationsList(){
   updateConversationFilterCounts();
 
+  // V6.20.2 : la boîte de réception suit strictement la chronologie du
+  // dernier message réel. Le SLA reste visuellement prioritaire (badge/rouge),
+  // mais ne déplace plus artificiellement une ancienne conversation au-dessus
+  // d'une conversation plus récente.
   const filtered =
     conversations
       .slice()
       .sort((a,b) => {
-        const sa=liveSlaForConversation(a);
-        const sb=liveSlaForConversation(b);
-        const rank=s=>!s?2:s.status==='late'?0:1;
-        const diff=rank(sa)-rank(sb);
-        if(diff)return diff;
-        if(sa&&sb)return Number(sa.remainingMs)-Number(sb.remainingMs);
-        return new Date(b.lastTime||0)-new Date(a.lastTime||0);
+        const aMs = Date.parse(String(a?.lastTime || ''));
+        const bMs = Date.parse(String(b?.lastTime || ''));
+        const safeA = Number.isFinite(aMs) ? aMs : 0;
+        const safeB = Number.isFinite(bMs) ? bMs : 0;
+        if(safeB !== safeA) return safeB - safeA;
+        return String(a?.contact || '').localeCompare(String(b?.contact || ''));
       });
 
   const label =
