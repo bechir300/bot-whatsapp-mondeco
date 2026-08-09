@@ -6,7 +6,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <meta name="theme-color" content="#11100f">
-<title>MONDECO — Agent WhatsApp</title>
+<title>MONDECO — Agent Omnicanal</title>
 
 <style>
 :root{
@@ -4278,6 +4278,22 @@ tbody tr:hover{
   }
 }
 
+
+/* ==========================================================
+   MONDECO V6.19 — Responsable commercial, planning & SLA
+   ========================================================== */
+.team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
+.operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.ops-stat span{display:block;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.ops-stat strong{display:block;font-size:28px;margin-top:8px}.ops-stat.danger strong{color:#c62828}
+.operations-live-card{margin-bottom:14px}.manager-work-grid{margin-bottom:14px}.manager-form{display:grid;gap:10px}.manager-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.channel-checks{display:flex;gap:14px;flex-wrap:wrap;padding:9px 0}.channel-checks label{display:flex;align-items:center;gap:6px;font-weight:700}
+.manager-list{display:grid;gap:8px;margin-top:14px}.manager-item{border:1px solid var(--line);border-radius:12px;padding:11px;background:#fff}.manager-item-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.manager-item-meta{font-size:9px;color:var(--muted);margin-top:5px}.manager-item-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.operations-user{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(150px,1fr) repeat(3,minmax(90px,.7fr));gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}.operations-user:last-child{border-bottom:0}.ops-platform{font-weight:800}.sla-countdown{font-variant-numeric:tabular-nums;font-weight:900}.sla-countdown.warning{color:#ad6500}.sla-countdown.late{color:#c62828}.sla-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 7px;background:#fff3e0;border:1px solid #ffd099;color:#975600;font-size:8px;font-weight:900}.sla-pill.late{background:#ffebee;border-color:#ffcdd2;color:#b71c1c}
+.workday-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.workday-card{padding:16px;border:1px solid var(--line);border-radius:14px;background:#fff}.workday-platforms{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.task-row:last-child{border-bottom:0}.task-status-select{min-width:130px}.compact-date-input{min-height:38px;border:1px solid var(--line);border-radius:9px;padding:6px 9px;background:#fff}
+@media(max-width:1000px){.operations-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.operations-user{grid-template-columns:1fr 1fr}.manager-work-grid{grid-template-columns:1fr!important}}
+@media(max-width:620px){.operations-summary-grid,.workday-grid,.manager-form-row{grid-template-columns:1fr}.operations-user{grid-template-columns:1fr}.task-row{grid-template-columns:1fr}.task-status-select{width:100%}}
+
 </style>
 </head>
 
@@ -4327,6 +4343,10 @@ tbody tr:hover{
         <span>Conversations</span>
         <span id="conversationNavBadge" class="nav-count hidden">0</span>
       </button>
+      <button data-page="mywork">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h3M13 14h3M8 17h3"/></svg></span>
+        <span>Mon planning</span>
+      </button>
       <button data-page="corrections">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13 7 4 4"/><path d="M12 20h8"/></svg></span>
         <span>Corrections</span>
@@ -4345,7 +4365,7 @@ tbody tr:hover{
       </button>
       <button data-page="team">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 20c.5-4 2.4-6 5.5-6s5 2 5.5 6"/><path d="M14 15c3.6-.4 5.8 1.3 6.5 5"/></svg></span>
-        <span>Équipe & rapports</span>
+        <span>Équipe & planning</span>
       </button>
     </nav>
 
@@ -4565,7 +4585,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.18</span>
+                <span class="inbox-version">V6.19</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
             </div>
@@ -4607,6 +4627,9 @@ tbody tr:hover{
             <button class="inbox-filter" data-filter="commercial">
               Commercial <span id="filterCountCommercial">0</span>
             </button>
+            <button class="inbox-filter" data-filter="sla">
+              SLA <span id="filterCountSla">0</span>
+            </button>
             <button class="inbox-filter" data-filter="ads">
               Publicités <span id="filterCountAds">0</span>
             </button>
@@ -4646,6 +4669,27 @@ tbody tr:hover{
             <span>Les informations du client apparaîtront ici.</span>
           </div>
         </aside>
+      </div>
+    </section>
+
+    <!-- ================================================== -->
+    <!-- MON PLANNING COMMERCIAL -->
+    <!-- ================================================== -->
+    <section id="page-mywork" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Mon planning</h2>
+          <p class="page-subtitle">Vos horaires, plateformes et tâches affectées pour la journée.</p>
+        </div>
+        <div class="actions">
+          <input id="myWorkDate" type="date" class="compact-date-input">
+          <button class="btn" id="refreshMyWorkBtn" type="button">↻ Actualiser</button>
+        </div>
+      </div>
+      <div id="myWorkScheduleCards" class="workday-grid"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="team-card-head"><div><h3>Mes tâches</h3><p>Mettez à jour l’état au fur et à mesure.</p></div></div>
+        <div id="myWorkTasks"><div class="empty">Chargement...</div></div>
       </div>
     </section>
 
@@ -5429,14 +5473,14 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
     <section id="page-team" class="page">
       <div class="page-header">
         <div>
-          <h2 class="page-title">Équipe & rapports</h2>
+          <h2 class="page-title">Équipe commerciale & planning</h2>
           <p class="page-subtitle">
-            Gérez les accès de l’équipe MONDECO et suivez l’activité commerciale quotidienne.
+            Planifiez les commerciaux, répartissez WhatsApp / Instagram et suivez les clients en attente.
           </p>
         </div>
 
         <div class="actions">
-          <label class="team-date-field">
+          <label class="team-date-field admin-report-section">
             <span>Rapport du</span>
             <input id="teamReportDate" type="date">
           </label>
@@ -5446,13 +5490,13 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             <span class="presence-count" id="teamOnlineCount">0</span>
           </button>
 
-          <button class="btn" id="refreshTeamReportBtn" type="button">
+          <button class="btn admin-report-section" id="refreshTeamReportBtn" type="button">
             ↻ Actualiser
           </button>
         </div>
       </div>
 
-      <div class="team-summary-grid">
+      <div class="team-summary-grid admin-report-section">
         <div class="card team-stat-card">
           <span>Réponses commerciales</span>
           <strong id="teamStatReplies">0</strong>
@@ -5474,7 +5518,7 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
         </div>
       </div>
 
-      <div class="card team-ranking-card">
+      <div class="card team-ranking-card admin-report-section">
         <div class="team-card-head">
           <div>
             <h3>Classement commercial du jour</h3>
@@ -5493,6 +5537,51 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
         </div>
 
         <div id="teamReportWarning" class="notice warning hidden" style="margin-top:12px"></div>
+      </div>
+
+      <div class="operations-summary-grid">
+        <div class="card ops-stat"><span>Clients en attente</span><strong id="opsPendingSla">0</strong></div>
+        <div class="card ops-stat danger"><span>SLA dépassés</span><strong id="opsLateSla">0</strong></div>
+        <div class="card ops-stat"><span>Tâches en retard</span><strong id="opsLateTasks">0</strong></div>
+        <div class="card ops-stat"><span>En ligne</span><strong id="opsOnlineUsers">0</strong></div>
+      </div>
+
+      <div class="card operations-live-card">
+        <div class="team-card-head">
+          <div><h3>Équipe en direct</h3><p>Charge actuelle, plateforme planifiée et prochain délai client.</p></div>
+          <input id="operationsDate" type="date" class="compact-date-input">
+        </div>
+        <div id="operationsLive"><div class="empty">Chargement...</div></div>
+      </div>
+
+      <div class="grid grid-2 manager-work-grid">
+        <div class="card">
+          <div class="team-card-head"><div><h3>Planning des commerciaux</h3><p>Définissez horaires, pause, plateforme, mission et SLA.</p></div></div>
+          <form id="scheduleForm" class="manager-form">
+            <div class="field"><label>Commercial</label><select id="scheduleUser" required></select></div>
+            <div class="manager-form-row"><div class="field"><label>Date</label><input id="scheduleDate" type="date" required></div><div class="field"><label>SLA (minutes)</label><input id="scheduleSla" type="number" min="1" max="120" value="5" required></div></div>
+            <div class="manager-form-row"><div class="field"><label>Début</label><input id="scheduleStart" type="time" value="09:00" required></div><div class="field"><label>Fin</label><input id="scheduleEnd" type="time" value="17:00" required></div></div>
+            <div class="manager-form-row"><div class="field"><label>Début pause</label><input id="scheduleBreakStart" type="time" value="13:00"></div><div class="field"><label>Fin pause</label><input id="scheduleBreakEnd" type="time" value="14:00"></div></div>
+            <div class="field"><label>Plateformes</label><div class="channel-checks"><label><input id="scheduleWhatsApp" type="checkbox" checked> WhatsApp</label><label><input id="scheduleInstagram" type="checkbox" checked> Instagram</label></div></div>
+            <div class="field"><label>Mission</label><textarea id="scheduleMission" rows="3" placeholder="Ex. Traiter les demandes salons et reprendre tous les transferts IA."></textarea></div>
+            <button class="btn primary" type="submit">Ajouter au planning</button>
+          </form>
+          <div id="scheduleList" class="manager-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="team-card-head"><div><h3>Tâches commerciales</h3><p>Créez des missions avec heure de début, échéance et plateforme.</p></div></div>
+          <form id="taskForm" class="manager-form">
+            <div class="field"><label>Commercial</label><select id="taskUser" required></select></div>
+            <div class="manager-form-row"><div class="field"><label>Date</label><input id="taskDate" type="date" required></div><div class="field"><label>Plateforme</label><select id="taskChannel"><option value="both">WhatsApp + Instagram</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option></select></div></div>
+            <div class="manager-form-row"><div class="field"><label>Début</label><input id="taskStart" type="time"></div><div class="field"><label>À terminer avant</label><input id="taskDue" type="time"></div></div>
+            <div class="field"><label>Tâche</label><input id="taskTitle" required placeholder="Ex. Reprendre toutes les demandes chambres enfants"></div>
+            <div class="field"><label>Détails</label><textarea id="taskDetails" rows="3"></textarea></div>
+            <div class="field"><label>Priorité</label><select id="taskPriority"><option value="normal">Normale</option><option value="high">Haute</option><option value="urgent">Urgente</option></select></div>
+            <button class="btn primary" type="submit">Créer la tâche</button>
+          </form>
+          <div id="taskList" class="manager-list"></div>
+        </div>
       </div>
 
       <div class="grid grid-2 team-management-grid">
@@ -5536,6 +5625,7 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
               <label>Rôle</label>
               <select id="teamUserRole">
                 <option value="commercial">Commercial</option>
+                <option value="responsable_commercial">Responsable commercial</option>
                 <option value="editor">Éditeur</option>
                 <option value="admin">Administrateur</option>
               </select>
@@ -5547,7 +5637,8 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             </div>
 
             <div class="role-help">
-              <div><strong>Commercial</strong><span>Conversations, réponses rapides, fichiers, notifications.</span></div>
+              <div><strong>Commercial</strong><span>Conversations affectées, planning personnel, tâches et notifications.</span></div>
+              <div><strong>Responsable commercial</strong><span>Conversations, planning, tâches et gestion des comptes commerciaux. Aucun accès aux rapports.</span></div>
               <div><strong>Éditeur</strong><span>Commercial + produits, WooCommerce, instructions, corrections et suivi.</span></div>
               <div><strong>Administrateur</strong><span>Accès complet, équipe, paramètres, sauvegardes et rapports.</span></div>
             </div>
@@ -5795,6 +5886,10 @@ let teamUsers = [];
 let teamReport = null;
 let teamPresence = {onlineCount:0,idleCount:0,totalCount:0,users:[]};
 let teamPresenceOnly = false;
+let teamSchedules = [];
+let teamTasks = [];
+let teamOperations = null;
+let slaUiTimer = null;
 let presenceHeartbeatTimer = null;
 let presenceRefreshTimer = null;
 
@@ -5821,7 +5916,9 @@ const PAGE_ROLES = {
   instructions:
     ['admin','editor'],
   conversations:
-    ['admin','editor','commercial'],
+    ['admin','editor','responsable_commercial','commercial'],
+  mywork:
+    ['commercial'],
   corrections:
     ['admin','editor'],
   customization:
@@ -5831,7 +5928,7 @@ const PAGE_ROLES = {
   settings:
     ['admin'],
   team:
-    ['admin']
+    ['admin','responsable_commercial']
 };
 
 function roleCanOpenPage(
@@ -5963,6 +6060,16 @@ function applyRoleAccess(){
             'admin'
         )
     );
+
+  document.querySelectorAll('.admin-report-section').forEach(element => {
+    element.classList.toggle('hidden', currentUser?.role !== 'admin');
+  });
+
+  const roleSelect = document.getElementById('teamUserRole');
+  if(roleSelect && currentUser?.role === 'responsable_commercial'){
+    roleSelect.value = 'commercial';
+    roleSelect.disabled = true;
+  }
 }
 
 function showPage(name){
@@ -6007,6 +6114,7 @@ function showPage(name){
     loadProducts().then(loadCustomizations);
   }
   if(name === 'settings') loadSettings();
+  if(name === 'mywork') loadMyWorkday();
   if(name === 'team') loadTeamAdmin();
 }
 
@@ -6657,6 +6765,7 @@ let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
 let notificationAudioContext = null;
+const notificationSeenIds = new Set();
 
 
 async function loadConversations(){
@@ -6929,6 +7038,13 @@ function conversationMatchesFilter(item){
 
   if(
     conversationFilter ===
+    'sla'
+  ){
+    return Boolean(liveSlaForConversation(item));
+  }
+
+  if(
+    conversationFilter ===
     'ads'
   ){
     return item.hasAdReferral === true;
@@ -6976,6 +7092,10 @@ function updateConversationFilterCounts(){
           item.commercialAttention ||
           item.imageNeedsCommercial
       ).length,
+    sla:
+      open.filter(
+        item => Boolean(liveSlaForConversation(item))
+      ).length,
     ads:
       open.filter(
         item =>
@@ -6995,6 +7115,7 @@ function updateConversationFilterCounts(){
     filterCountUnread:'unread',
     filterCountPriority:'priority',
     filterCountCommercial:'commercial',
+    filterCountSla:'sla',
     filterCountAds:'ads',
     filterCountResolved:'resolved'
   };
@@ -7025,6 +7146,24 @@ function updateConversationFilterCounts(){
     );
 
   updateNotificationBadges();
+}
+
+
+function formatSlaClock(ms){
+  if(ms === null || ms === undefined || !Number.isFinite(Number(ms))) return '';
+  const negative = Number(ms) < 0;
+  const total = Math.abs(Math.floor(Number(ms) / 1000));
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${negative ? '+' : ''}${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function liveSlaForConversation(item){
+  const due = Date.parse(item?.slaDueAt || item?.sla?.dueAt || '');
+  const status = String(item?.slaStatus || item?.sla?.status || '');
+  if(!Number.isFinite(due) || !['pending','late'].includes(status)) return null;
+  const remainingMs = due - Date.now();
+  return {remainingMs,status:remainingMs < 0 ? 'late' : 'pending'};
 }
 
 function conversationListTags(item){
@@ -7065,6 +7204,11 @@ function conversationListTags(item){
     tags.push(
       `<span class="inbox-tag">${escapeHtml(item.assignedTo)}</span>`
     );
+  }
+
+  const liveSla = liveSlaForConversation(item);
+  if(liveSla){
+    tags.push(`<span class="sla-pill ${liveSla.status === 'late' ? 'late' : ''}">⏱ ${liveSla.status === 'late' ? 'Retard ' : ''}${formatSlaClock(liveSla.remainingMs)}</span>`);
   }
 
   return tags.join('');
@@ -7123,6 +7267,15 @@ function renderConversationsList(){
                 search
               )
           );
+      })
+      .sort((a,b) => {
+        const sa=liveSlaForConversation(a);
+        const sb=liveSlaForConversation(b);
+        const rank=s=>!s?2:s.status==='late'?0:1;
+        const diff=rank(sa)-rank(sb);
+        if(diff)return diff;
+        if(sa&&sb)return Number(sa.remainingMs)-Number(sb.remainingMs);
+        return new Date(b.lastTime||0)-new Date(a.lastTime||0);
       });
 
   const label =
@@ -7263,6 +7416,11 @@ function renderConversationHeader(
       state.humanPaused
     );
 
+  const slaDueMs = Date.parse(state?.sla?.dueAt || '');
+  const selectedSlaRemaining = Number.isFinite(slaDueMs) && ['pending','late'].includes(String(state?.sla?.status || ''))
+    ? slaDueMs - Date.now()
+    : null;
+
   header.innerHTML = `
     <div class="inbox-header-left">
       <button
@@ -7288,6 +7446,7 @@ function renderConversationHeader(
         <div class="inbox-status-line">
           <span class="inbox-live-dot"></span>
           ${paused ? 'Conversation prise en main par un commercial' : 'Agent MONDECO actif'}
+          ${selectedSlaRemaining !== null ? `<span class="sla-pill ${selectedSlaRemaining < 0 ? 'late' : ''}">⏱ ${selectedSlaRemaining < 0 ? 'Retard ' : 'Réponse avant '}${formatSlaClock(selectedSlaRemaining)}</span>` : ''}
         </div>
       </div>
     </div>
@@ -7919,27 +8078,29 @@ window.toggleConversationPriority = async function(
 };
 
 window.assignConversation = async function(contact){
-  const current =
-    selectedConversationData
-      ?.state
-      ?.assignedTo ||
-    '';
+  const current = selectedConversationData?.state?.assignedTo || '';
+  let assignedTo = current;
+  let assignedUserId = '';
 
-  let assignedTo =
-    currentUser?.role ===
-      'commercial'
-      ? (
-          currentUser?.name ||
-          currentUser?.email ||
-          ''
-        )
-      : prompt(
-          'Affecter cette conversation à :',
-          current
-        );
-
-  if(assignedTo === null){
-    return;
+  if(currentUser?.role === 'commercial'){
+    assignedTo = currentUser?.name || currentUser?.email || '';
+    assignedUserId = currentUser?.id || '';
+  }else if(['admin','responsable_commercial'].includes(currentUser?.role)){
+    try{
+      const users = await apiFetch(`${API}/users`);
+      const commercials = (users || []).filter(user => user.role === 'commercial' && user.active !== false);
+      if(!commercials.length){ alert('Aucun commercial actif.'); return; }
+      const choices = commercials.map((user,index)=>`${index+1}. ${user.name || user.email}`).join('\n');
+      const answer = prompt(`Choisissez le commercial :\n\n${choices}\n\nEntrez le numéro :`, '1');
+      if(answer === null) return;
+      const selected = commercials[Number(answer)-1];
+      if(!selected){ alert('Choix invalide.'); return; }
+      assignedTo = selected.name || selected.email;
+      assignedUserId = selected.id;
+    }catch(error){ alert(error.message); return; }
+  }else{
+    assignedTo = prompt('Affecter cette conversation à :', current);
+    if(assignedTo === null) return;
   }
 
   try{
@@ -7947,24 +8108,15 @@ window.assignConversation = async function(contact){
       `${API}/conversations/${encodeURIComponent(contact)}/assign`,
       {
         method:'POST',
-        headers:{
-          'Content-Type':'application/json'
-        },
+        headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
-          assignedTo:
-            String(
-              assignedTo ||
-              ''
-            )
-              .trim()
+          assignedTo:String(assignedTo || '').trim(),
+          assignedUserId:String(assignedUserId || '').trim()
         })
       }
     );
-
     await refreshSelectedConversation();
-  }catch(error){
-    alert(error.message);
-  }
+  }catch(error){ alert(error.message); }
 };
 
 window.takeOverConversation = async function(contact){
@@ -8678,7 +8830,7 @@ function updateNotificationBadges(){
   }
 }
 
-function playNotificationTone(urgent = false){
+function playNotificationTone(kind = 'message'){
   try{
     if(!notificationAudioContext){
       notificationAudioContext =
@@ -8696,18 +8848,25 @@ function playNotificationTone(urgent = false){
         ctx.currentTime;
 
       const melody =
-        urgent
+        kind === 'report'
           ? [
-              {f:659.25,t:0.00,d:0.13,v:0.16},
-              {f:783.99,t:0.16,d:0.13,v:0.16},
-              {f:987.77,t:0.32,d:0.18,v:0.18},
-              {f:783.99,t:0.55,d:0.16,v:0.14}
+              {f:392.00,t:0.00,d:0.16,v:0.13},
+              {f:523.25,t:0.20,d:0.16,v:0.14},
+              {f:659.25,t:0.40,d:0.16,v:0.14},
+              {f:783.99,t:0.62,d:0.32,v:0.16}
             ]
-          : [
-              {f:523.25,t:0.00,d:0.12,v:0.13},
-              {f:659.25,t:0.15,d:0.12,v:0.13},
-              {f:783.99,t:0.30,d:0.20,v:0.15}
-            ];
+          : kind === 'sla' || kind === 'commercial'
+            ? [
+                {f:659.25,t:0.00,d:0.13,v:0.16},
+                {f:783.99,t:0.16,d:0.13,v:0.16},
+                {f:987.77,t:0.32,d:0.18,v:0.18},
+                {f:783.99,t:0.55,d:0.16,v:0.14}
+              ]
+            : [
+                {f:523.25,t:0.00,d:0.12,v:0.13},
+                {f:659.25,t:0.15,d:0.12,v:0.13},
+                {f:783.99,t:0.30,d:0.20,v:0.15}
+              ];
 
       for(const note of melody){
         const oscillator =
@@ -8773,16 +8932,26 @@ function playNotificationTone(urgent = false){
 }
 
 function showClientBrowserNotification(event){
-  const urgent =
-    event.urgent === true;
+  const urgent = event.urgent === true;
+  const kind = String(event.kind || (urgent ? 'commercial' : 'message'));
+  const channel = String(event.channel || '').toLowerCase();
 
-  const title =
-    urgent
-      ? '⚠️ MONDECO — Commercial requis'
-      : '💬 Nouveau message WhatsApp';
+  const title = kind === 'report'
+    ? '📊 MONDECO — Rapport quotidien disponible'
+    : kind === 'task'
+      ? '📋 MONDECO — Nouvelle tâche'
+      : kind === 'sla'
+        ? '⏱️ MONDECO — Délai client'
+        : urgent
+          ? '⚠️ MONDECO — Commercial requis'
+          : `💬 Nouveau message ${channel === 'instagram' ? 'Instagram' : 'WhatsApp'}`;
 
-  const body =
-    `+${event.contact || ''}\n${event.preview || 'Nouveau message client'}`;
+  const displayContact = String(event.contact || '').replace(/^instagram:/,'');
+  const body = kind === 'report'
+    ? (event.preview || 'Le rapport commercial quotidien est disponible.')
+    : kind === 'task'
+      ? (event.preview || 'Une nouvelle tâche vous a été affectée.')
+      : `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • ${displayContact}\n${event.preview || 'Nouveau message client'}`;
 
   if(
     'Notification' in window &&
@@ -8801,15 +8970,16 @@ function showClientBrowserNotification(event){
 
       notification.onclick = () => {
         window.focus();
+        if(kind === 'report' && currentUser?.role === 'admin'){
+          showPage('team');
+          return;
+        }
+        if(kind === 'task' && currentUser?.role === 'commercial'){
+          showPage('mywork');
+          return;
+        }
         showPage('conversations');
-
-        setTimeout(() => {
-          if(event.contact){
-            window.openConversation(
-              event.contact
-            );
-          }
-        }, 100);
+        setTimeout(() => { if(event.contact){ window.openConversation(event.contact); } }, 100);
       };
     }catch(error){
       console.debug(
@@ -8830,9 +9000,7 @@ function showClientBrowserNotification(event){
     );
 
   if(soundEnabled){
-    playNotificationTone(
-      urgent
-    );
+    playNotificationTone(kind);
   }
 }
 
@@ -9009,6 +9177,19 @@ async function softRefreshSelectedConversation(){
   }
 }
 
+
+function seenTaskNotificationIds(){
+  try{
+    const parsed=JSON.parse(localStorage.getItem('mondecoSeenTaskNotifications')||'[]');
+    return new Set(Array.isArray(parsed)?parsed:[]);
+  }catch{return new Set();}
+}
+function rememberTaskNotification(id){
+  if(!id)return;
+  const seen=seenTaskNotificationIds();seen.add(String(id));
+  localStorage.setItem('mondecoSeenTaskNotifications',JSON.stringify([...seen].slice(-100)));
+}
+
 async function pollCommercialNotifications(){
   try{
     if(!conversationNotificationCursor){
@@ -9039,7 +9220,29 @@ async function pollCommercialNotifications(){
         : [];
 
     for(const event of events){
-      conversationNotificationUnread += 1;
+      const eventId = String(event?.id || '');
+      if(eventId && notificationSeenIds.has(eventId)) continue;
+
+      if(event?.kind === 'report'){
+        const reportDate = String(event.reportDate || '');
+        const lastReport = localStorage.getItem('mondecoLastReportNotification') || '';
+        if(reportDate && lastReport === reportDate){
+          if(eventId) notificationSeenIds.add(eventId);
+          continue;
+        }
+        if(reportDate) localStorage.setItem('mondecoLastReportNotification', reportDate);
+      }else if(event?.kind === 'task'){
+        const taskId=String(event.taskId||eventId||'');
+        if(taskId && seenTaskNotificationIds().has(taskId)){
+          if(eventId)notificationSeenIds.add(eventId);
+          continue;
+        }
+        rememberTaskNotification(taskId);
+      }else{
+        conversationNotificationUnread += 1;
+      }
+
+      if(eventId) notificationSeenIds.add(eventId);
       showClientBrowserNotification(event);
     }
 
@@ -10481,7 +10684,7 @@ function tunisDateKey(){
 }
 
 async function loadTeamPresence(){
-  if(currentUser?.role !== 'admin'){
+  if(!['admin','responsable_commercial'].includes(currentUser?.role)){
     return teamPresence;
   }
 
@@ -10538,10 +10741,11 @@ function currentPresencePage(){
     woocommerce:'Site web',
     instructions:'Instructions IA',
     conversations:'Conversations',
+    mywork:'Mon planning',
     corrections:'Corrections',
     customization:'Personnalisation',
     test:'Discussion de test',
-    team:'Équipe & rapports',
+    team:'Équipe & planning',
     settings:'Paramètres'
   };
 
@@ -10602,7 +10806,7 @@ function startPresenceTracking(){
       20000
     );
 
-  if(currentUser?.role === 'admin'){
+  if(['admin','responsable_commercial'].includes(currentUser?.role)){
     loadTeamPresence();
 
     presenceRefreshTimer =
@@ -10621,7 +10825,7 @@ document.addEventListener(
     if(document.visibilityState === 'visible'){
       sendPresenceHeartbeat();
 
-      if(currentUser?.role === 'admin'){
+      if(['admin','responsable_commercial'].includes(currentUser?.role)){
         loadTeamPresence();
       }
     }
@@ -10725,6 +10929,7 @@ async function loadTeamUsers(){
     );
 
   renderTeamUsers();
+  fillCommercialSelects();
   return teamUsers;
 }
 
@@ -10941,8 +11146,8 @@ window.editTeamUser = async function(id){
 
   const role =
     prompt(
-      'Rôle : admin, editor ou commercial',
-      user.role || 'commercial'
+      currentUser?.role === 'responsable_commercial' ? 'Rôle : commercial' : 'Rôle : admin, responsable_commercial, editor ou commercial',
+      currentUser?.role === 'responsable_commercial' ? 'commercial' : (user.role || 'commercial')
     );
 
   if(role === null){
@@ -10970,7 +11175,8 @@ window.editTeamUser = async function(id){
     );
 
     await loadTeamUsers();
-    await loadTeamReport();
+    await loadTeamOperations();
+    if(currentUser?.role === 'admin') await loadTeamReport();
   }catch(error){
     alert(error.message);
   }
@@ -11036,7 +11242,8 @@ window.toggleTeamUserActive = async function(
     );
 
     await loadTeamUsers();
-    await loadTeamReport();
+    await loadTeamOperations();
+    if(currentUser?.role === 'admin') await loadTeamReport();
   }catch(error){
     alert(error.message);
   }
@@ -11066,7 +11273,8 @@ window.deleteTeamUser = async function(id){
     );
 
     await loadTeamUsers();
-    await loadTeamReport();
+    await loadTeamOperations();
+    if(currentUser?.role === 'admin') await loadTeamReport();
   }catch(error){
     alert(error.message);
   }
@@ -11183,11 +11391,12 @@ function renderTeamReport(
         <tr>
           <th>Rang</th>
           <th>Commercial</th>
+          <th>Note</th>
+          <th>SLA</th>
+          <th>Oubliés</th>
+          <th>Tâches</th>
           <th>Réponses</th>
           <th>Conversations</th>
-          <th>Fichiers</th>
-          <th>Première réponse</th>
-          <th>Dernière réponse</th>
         </tr>
       </thead>
 
@@ -11211,13 +11420,16 @@ function renderTeamReport(
             <td>
               <strong>${escapeHtml(item.name || item.email)}</strong>
               <div class="help">${escapeHtml(item.email)}</div>
+              <div class="help">Moy. réponse : ${item.averageResponseSeconds ? `${Math.floor(item.averageResponseSeconds/60)} min ${item.averageResponseSeconds%60} s` : '—'} • Retard prise de poste : ${item.lateStartMinutes === null || item.lateStartMinutes === undefined ? '—' : `${item.lateStartMinutes} min`}</div>
+              ${item.scoreBreakdown ? `<div class="help">Note : SLA ${item.scoreBreakdown.sla}/40 • suivi ${item.scoreBreakdown.noMissed}/25 • planning ${item.scoreBreakdown.planning}/15 • tâches ${item.scoreBreakdown.tasks}/10 • suivi final ${item.scoreBreakdown.followUp}/10</div>` : ''}
             </td>
 
+            <td><strong>${item.score === null || item.score === undefined ? '—' : `${Number(item.score)}/100`}</strong><div class="help">${escapeHtml(item.rating || '')}</div></td>
+            <td>${Number(item.slaCompliance ?? 100)}%</td>
+            <td>${Number(item.slaMissed || 0)}</td>
+            <td>${Number(item.tasksCompleted || 0)}/${Number(item.tasksAssigned || 0)}</td>
             <td><strong>${Number(item.replies || 0)}</strong></td>
             <td>${Number(item.conversations || 0)}</td>
-            <td>${Number(item.files || 0)}</td>
-            <td>${escapeHtml(item.firstReplyTime || '—')}</td>
-            <td>${escapeHtml(item.lastReplyTime || '—')}</td>
           </tr>
         `).join('')}
       </tbody>
@@ -11245,7 +11457,7 @@ async function loadTeamReport(){
 
   const report =
     await apiFetch(
-      `${API}/reports/commercial-daily?date=${encodeURIComponent(date)}`
+      `${API}/reports/commercial-daily-v2?date=${encodeURIComponent(date)}`
     );
 
   renderTeamReport(
@@ -11256,18 +11468,23 @@ async function loadTeamReport(){
 }
 
 async function loadTeamAdmin(){
-  if(
-    currentUser?.role !==
-    'admin'
-  ){
+  if(!['admin','responsable_commercial'].includes(currentUser?.role)){
     return;
   }
 
-  await Promise.all([
+  const jobs = [
     loadTeamUsers(),
-    loadTeamReport(),
-    loadTeamPresence()
-  ]);
+    loadTeamPresence(),
+    loadTeamOperations(),
+    loadTeamSchedules(),
+    loadTeamTasks()
+  ];
+
+  if(currentUser?.role === 'admin'){
+    jobs.push(loadTeamReport());
+  }
+
+  await Promise.all(jobs);
 }
 
 document
@@ -11355,7 +11572,8 @@ document
         event.target.reset();
 
         await loadTeamUsers();
-        await loadTeamReport();
+        if(currentUser?.role === 'admin') await loadTeamReport();
+        await loadTeamOperations();
       }catch(error){
         alert(error.message);
       }finally{
@@ -11368,6 +11586,87 @@ document
       }
     }
   );
+
+
+// ============================================================
+// V6.19 — PLANNING / TÂCHES / SLA
+// ============================================================
+
+function setTodayInputs(){
+  const today=tunisDateKey();
+  for(const id of ['scheduleDate','taskDate','operationsDate','myWorkDate']){
+    const el=document.getElementById(id); if(el&&!el.value)el.value=today;
+  }
+}
+
+function commercialUsers(){
+  return teamUsers.filter(user=>user.role==='commercial'&&user.active!==false);
+}
+
+function fillCommercialSelects(){
+  const options=commercialUsers().map(user=>`<option value="${escapeHtml(user.id)}">${escapeHtml(user.name||user.email)}</option>`).join('');
+  for(const id of ['scheduleUser','taskUser']){const el=document.getElementById(id);if(el)el.innerHTML=options||'<option value="">Aucun commercial actif</option>';}
+}
+
+async function loadTeamSchedules(){
+  setTodayInputs(); const date=document.getElementById('scheduleDate')?.value||tunisDateKey();
+  try{teamSchedules=await apiFetch(`${API}/schedules?date=${encodeURIComponent(date)}`);renderTeamSchedules();}catch(error){console.warn(error.message);} return teamSchedules;
+}
+
+function renderTeamSchedules(){
+  const host=document.getElementById('scheduleList');if(!host)return;
+  if(!teamSchedules.length){host.innerHTML='<div class="empty">Aucun planning pour cette date.</div>';return;}
+  host.innerHTML=teamSchedules.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')}</strong><div class="manager-item-meta">${escapeHtml(item.date)} • ${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)} • SLA ${Number(item.slaMinutes||5)} min</div></div><span class="badge">${(item.channels||[]).map(c=>c==='instagram'?'Instagram':'WhatsApp').join(' + ')}</span></div>${item.mission?`<div style="margin-top:7px">${escapeHtml(item.mission)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editSchedule('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteSchedule('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');
+}
+
+window.editSchedule=async function(id){
+  const item=teamSchedules.find(x=>x.id===id);if(!item)return;
+  const startTime=prompt('Heure de début :',item.startTime||'09:00');if(startTime===null)return;
+  const endTime=prompt('Heure de fin :',item.endTime||'17:00');if(endTime===null)return;
+  const slaMinutes=prompt('Délai maximum de réponse client (minutes) :',String(item.slaMinutes||5));if(slaMinutes===null)return;
+  const channelsRaw=prompt('Plateformes : whatsapp, instagram ou les deux séparées par une virgule',(item.channels||[]).join(','));if(channelsRaw===null)return;
+  const mission=prompt('Mission :',item.mission||'');if(mission===null)return;
+  const channels=channelsRaw.split(',').map(v=>v.trim().toLowerCase()).filter(v=>['whatsapp','instagram'].includes(v));
+  try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({startTime:startTime.trim(),endTime:endTime.trim(),slaMinutes:Number(slaMinutes||5),channels,mission})});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}
+};
+
+window.deleteSchedule=async function(id){if(!confirm('Supprimer ce planning ?'))return;try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}};
+
+document.getElementById('scheduleForm')?.addEventListener('submit',async event=>{event.preventDefault();const channels=[];if(document.getElementById('scheduleWhatsApp')?.checked)channels.push('whatsapp');if(document.getElementById('scheduleInstagram')?.checked)channels.push('instagram');if(!channels.length){alert('Sélectionnez au moins une plateforme.');return;}try{await apiFetch(`${API}/schedules`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('scheduleUser').value,date:document.getElementById('scheduleDate').value,startTime:document.getElementById('scheduleStart').value,endTime:document.getElementById('scheduleEnd').value,breakStart:document.getElementById('scheduleBreakStart').value,breakEnd:document.getElementById('scheduleBreakEnd').value,channels,mission:document.getElementById('scheduleMission').value,slaMinutes:Number(document.getElementById('scheduleSla').value||5)})});document.getElementById('scheduleMission').value='';await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}});
+
+async function loadTeamTasks(){setTodayInputs();const date=document.getElementById('taskDate')?.value||tunisDateKey();try{teamTasks=await apiFetch(`${API}/tasks?date=${encodeURIComponent(date)}`);renderTeamTasks();}catch(error){console.warn(error.message);}return teamTasks;}
+
+function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(item.channel)}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editTask('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteTask('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');}
+window.editTask=async function(id){
+  const item=teamTasks.find(x=>x.id===id);if(!item)return;
+  const title=prompt('Tâche :',item.title||'');if(title===null)return;
+  const dueTime=prompt('Heure limite (HH:MM) :',item.dueTime||'');if(dueTime===null)return;
+  const details=prompt('Détails :',item.details||'');if(details===null)return;
+  const channel=prompt('Plateforme : both, whatsapp ou instagram',item.channel||'both');if(channel===null)return;
+  const priority=prompt('Priorité : normal, high ou urgent',item.priority||'normal');if(priority===null)return;
+  try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.trim(),dueTime:dueTime.trim(),details:details.trim(),channel:channel.trim().toLowerCase(),priority:priority.trim().toLowerCase(),status:item.status})});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}
+};
+
+window.deleteTask=async function(id){if(!confirm('Supprimer cette tâche ?'))return;try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}};
+
+document.getElementById('taskForm')?.addEventListener('submit',async event=>{event.preventDefault();const selectedDate=document.getElementById('taskDate').value;try{await apiFetch(`${API}/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('taskUser').value,date:selectedDate,channel:document.getElementById('taskChannel').value,startTime:document.getElementById('taskStart').value,dueTime:document.getElementById('taskDue').value,title:document.getElementById('taskTitle').value,details:document.getElementById('taskDetails').value,priority:document.getElementById('taskPriority').value})});event.target.reset();setTodayInputs();document.getElementById('taskDate').value=selectedDate;await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}});
+
+function platformLabel(shifts){const channels=[...new Set((shifts||[]).flatMap(s=>s.channels||[]))];return channels.length?channels.map(c=>c==='instagram'?'Instagram':'WhatsApp').join(' + '):'Non planifié';}
+function formatCountdownMs(ms){if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return '—';return formatSlaClock(Number(ms));}
+async function loadTeamOperations(){setTodayInputs();const date=document.getElementById('operationsDate')?.value||tunisDateKey();try{teamOperations=await apiFetch(`${API}/team/operations?date=${encodeURIComponent(date)}`);renderTeamOperations();}catch(error){console.warn(error.message);}return teamOperations;}
+function renderTeamOperations(){const data=teamOperations||{};const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=String(v??0)};set('opsPendingSla',data.pendingSla);set('opsLateSla',data.lateSla);set('opsLateTasks',data.tasksLate);set('opsOnlineUsers',(data.users||[]).filter(u=>u.presence?.status==='online').length);const host=document.getElementById('operationsLive');if(!host)return;const users=data.users||[];if(!users.length){host.innerHTML='<div class="empty">Aucun commercial.</div>';return;}host.innerHTML=users.map(user=>`<div class="operations-user"><div><strong>${escapeHtml(user.name||user.email)}</strong><div class="manager-item-meta"><span class="presence-dot ${escapeHtml(user.presence?.status||'offline')}"></span> ${escapeHtml(user.presence?.status==='online'?'En ligne':user.presence?.status==='idle'?'Inactif':'Hors ligne')}</div></div><div><span class="ops-platform">${escapeHtml(platformLabel(user.shifts))}</span><div class="manager-item-meta">${(user.shifts||[]).map(s=>`${escapeHtml(s.startTime)}–${escapeHtml(s.endTime)}`).join(', ')||'Aucun horaire'}</div></div><div><strong>${Number(user.activeConversations||0)}</strong><div class="manager-item-meta">clients actifs</div></div><div><strong>${Number(user.pendingSla||0)}</strong><div class="manager-item-meta">en attente</div></div><div class="sla-countdown ${Number(user.nextSlaRemainingMs)<0?'late':Number(user.nextSlaRemainingMs)<=60000?'warning':''}">${formatCountdownMs(user.nextSlaRemainingMs)}</div></div>`).join('');}
+
+document.getElementById('scheduleDate')?.addEventListener('change',loadTeamSchedules);
+document.getElementById('taskDate')?.addEventListener('change',loadTeamTasks);
+document.getElementById('operationsDate')?.addEventListener('change',()=>{const date=document.getElementById('operationsDate').value;for(const id of ['scheduleDate','taskDate']){const el=document.getElementById(id);if(el)el.value=date;}Promise.all([loadTeamSchedules(),loadTeamTasks(),loadTeamOperations()]);});
+
+async function loadMyWorkday(){setTodayInputs();const date=document.getElementById('myWorkDate')?.value||tunisDateKey();try{const data=await apiFetch(`${API}/my-workday?date=${encodeURIComponent(date)}`);renderMyWorkday(data);}catch(error){const host=document.getElementById('myWorkTasks');if(host)host.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`;}}
+function renderMyWorkday(data){const cards=document.getElementById('myWorkScheduleCards');const shifts=data?.schedules||[];if(cards){cards.innerHTML=shifts.length?shifts.map(s=>`<div class="workday-card"><strong>${escapeHtml(s.startTime)} → ${escapeHtml(s.endTime)}</strong><div class="manager-item-meta">Pause ${escapeHtml(s.breakStart||'—')}–${escapeHtml(s.breakEnd||'—')} • SLA ${Number(s.slaMinutes||5)} min</div><div class="workday-platforms">${(s.channels||[]).map(c=>`<span class="badge">${c==='instagram'?'Instagram':'WhatsApp'}</span>`).join('')}</div>${s.mission?`<div style="margin-top:10px">${escapeHtml(s.mission)}</div>`:''}</div>`).join(''):'<div class="empty">Aucun horaire planifié.</div>';}const host=document.getElementById('myWorkTasks');const tasks=data?.tasks||[];if(host){host.innerHTML=tasks.length?tasks.map(t=>`<div class="task-row"><div><strong>${escapeHtml(t.title)}</strong><div class="manager-item-meta">${t.startTime?escapeHtml(t.startTime):'—'} ${t.dueTime?`→ ${escapeHtml(t.dueTime)}`:''} • ${t.channel==='both'?'WhatsApp + Instagram':escapeHtml(t.channel)}</div>${t.details?`<div style="margin-top:5px">${escapeHtml(t.details)}</div>`:''}</div><select class="task-status-select" onchange="updateMyTask('${escapeHtml(t.id)}',this.value)"><option value="todo" ${t.status==='todo'?'selected':''}>À faire</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>En cours</option><option value="done" ${t.status==='done'?'selected':''}>Terminée</option><option value="late" ${t.status==='late'?'selected':''}>En retard</option></select></div>`).join(''):'<div class="empty">Aucune tâche pour cette date.</div>';}}
+window.updateMyTask=async function(id,status){try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});await loadMyWorkday();}catch(error){alert(error.message);}};
+document.getElementById('refreshMyWorkBtn')?.addEventListener('click',loadMyWorkday);document.getElementById('myWorkDate')?.addEventListener('change',loadMyWorkday);
+
+// Le responsable et l'admin voient les compteurs SLA évoluer sans recharger la page.
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){renderConversationsList();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 
 // ============================================================
 // LOGOUT / INIT
@@ -11394,10 +11693,11 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     startPresenceTracking();
 
     const defaultPage =
-      currentUser?.role ===
-        'commercial'
+      currentUser?.role === 'commercial'
         ? 'conversations'
-        : 'home';
+        : currentUser?.role === 'responsable_commercial'
+          ? 'team'
+          : 'home';
 
     showPage(
       defaultPage
