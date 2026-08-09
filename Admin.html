@@ -2941,6 +2941,50 @@ tbody tr:hover{
   color:#fff;
   font-weight:900;
   font-size:13px;
+  position:relative;
+  overflow:hidden;
+  flex:0 0 auto;
+}
+.inbox-avatar .avatar-fallback{
+  position:relative;
+  z-index:1;
+}
+.inbox-avatar img{
+  position:absolute;
+  inset:0;
+  z-index:2;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  border-radius:inherit;
+}
+.ai-answer-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  margin-left:5px;
+  padding:3px 7px;
+  border-radius:999px;
+  background:#eef7ff;
+  border:1px solid #b9dcff;
+  color:#075985;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.02em;
+}
+.inbox-status-ai{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  font-weight:900;
+  color:#075985;
+}
+.inbox-status-human{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  font-weight:900;
+  color:#166534;
 }
 .inbox-avatar.ad{
   background:#ed1c24;
@@ -4332,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.19.3 — Responsable commercial, planning & SLA + handoff strict
+   MONDECO V6.19.4 — Responsable commercial, planning & SLA + handoff strict
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4637,19 +4681,21 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.19.3</span>
+                <span class="inbox-version">V6.19.4</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
             </div>
 
             <div class="inbox-head-actions">
-              <button class="icon-btn" id="enableNotificationsBtn" type="button" title="Notifications">
+              <button class="icon-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser les anciennes conversations Instagram" style="display:none">IG↻</button>
+              <button class="icon-btn" id="enableNotificationsBtn" type="button" title="Voir tous les nouveaux messages">
                 🔔
                 <span id="notificationHeaderCount" class="notification-count hidden">0</span>
               </button>
               <button class="icon-btn" id="refreshConversationsBtn" type="button" title="Actualiser">↻</button>
             </div>
           </div>
+          <div id="instagramHistorySyncStatus" class="inbox-mini-sub" style="display:none;margin-top:5px"></div>
 
           <div class="inbox-search-wrap">
             <input
@@ -6158,6 +6204,7 @@ function showPage(name){
       loadConversations(),
       loadQuickReplies()
     ]);
+    refreshInstagramHistoryStatus({ autoStart: true });
   }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
@@ -6818,6 +6865,151 @@ let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
 let notificationAudioContext = null;
 const notificationSeenIds = new Set();
+let instagramHistoryAutoSyncChecked = false;
+let instagramHistoryStatusTimer = null;
+let instagramHistoryWasRunning = false;
+
+function canManageInstagramHistory(){
+  return ['admin','responsable_commercial'].includes(
+    String(currentUser?.role || '')
+  );
+}
+
+function setConversationFilter(filter){
+  conversationFilter = filter || 'all';
+
+  document
+    .querySelectorAll(
+      '#conversationFilters .inbox-filter'
+    )
+    .forEach(button => {
+      button.classList.toggle(
+        'active',
+        button.dataset.filter === conversationFilter
+      );
+    });
+
+  renderConversationsList();
+}
+
+function openAllNewMessages(){
+  setConversationFilter('unread');
+  showPage('conversations');
+}
+
+function renderInstagramHistoryStatus(status = {}){
+  const button = document.getElementById('syncInstagramHistoryBtn');
+  const label = document.getElementById('instagramHistorySyncStatus');
+
+  if(!button || !label) return;
+
+  const allowed = canManageInstagramHistory();
+  button.style.display = allowed ? '' : 'none';
+  label.style.display = allowed ? '' : 'none';
+
+  if(!allowed) return;
+
+  if(!status.configured){
+    button.disabled = true;
+    label.textContent = 'Instagram : historique non disponible — vérifiez la configuration Railway.';
+    return;
+  }
+
+  if(status.running){
+    button.disabled = true;
+    const done = Number(status.processedConversations || 0);
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    label.textContent = `Instagram : synchronisation historique ${done}/${total || '…'} discussions • ${imported} messages importés`;
+    return;
+  }
+
+  button.disabled = false;
+
+  if(status.completedAt){
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const errors = Number(status.errorCount || 0);
+    label.textContent = `Instagram : historique synchronisé • ${total} discussions analysées • ${imported} nouveaux messages importés${errors ? ` • ${errors} erreur(s)` : ''}`;
+  }else{
+    label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
+  }
+}
+
+async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
+  if(!canManageInstagramHistory()){
+    renderInstagramHistoryStatus({});
+    return;
+  }
+
+  try{
+    const status = await apiFetch(`${API}/instagram-history/status`);
+    renderInstagramHistoryStatus(status);
+
+    const running = Boolean(status.running);
+
+    if(
+      autoStart &&
+      !instagramHistoryAutoSyncChecked &&
+      status.configured &&
+      !running &&
+      !status.completedAt
+    ){
+      instagramHistoryAutoSyncChecked = true;
+      await startInstagramHistorySync({ silent: true });
+      return;
+    }
+
+    if(instagramHistoryWasRunning && !running){
+      await loadConversations();
+    }
+
+    instagramHistoryWasRunning = running;
+
+    if(instagramHistoryStatusTimer){
+      clearTimeout(instagramHistoryStatusTimer);
+      instagramHistoryStatusTimer = null;
+    }
+
+    if(running){
+      instagramHistoryStatusTimer = setTimeout(
+        () => refreshInstagramHistoryStatus(),
+        1800
+      );
+    }
+  }catch(error){
+    const label = document.getElementById('instagramHistorySyncStatus');
+    if(label && canManageInstagramHistory()){
+      label.style.display = '';
+      label.textContent = `Instagram : impossible de lire l’état de synchronisation (${error.message}).`;
+    }
+  }
+}
+
+async function startInstagramHistorySync({ silent = false } = {}){
+  if(!canManageInstagramHistory()) return;
+
+  const button = document.getElementById('syncInstagramHistoryBtn');
+  if(button) button.disabled = true;
+
+  try{
+    await apiFetch(
+      `${API}/instagram-history/sync`,
+      { method: 'POST' }
+    );
+
+    instagramHistoryWasRunning = true;
+    await refreshInstagramHistoryStatus();
+  }catch(error){
+    if(!silent){
+      alert(
+        'Synchronisation Instagram impossible : ' +
+        error.message
+      );
+    }
+    await refreshInstagramHistoryStatus();
+  }
+}
 
 
 async function loadConversations(){
@@ -6874,6 +7066,8 @@ function actionLabel(action){
     ai_error_no_reply:'Erreur IA — sans réponse',
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
+    ai_mode_choice:'Choix IA / Commercial',
+    history_import:'Historique Instagram',
     product_image_sent:'Image produit envoyée',
     product_image_unavailable:'Image produit indisponible',
     product_image_need_name:'Nom produit demandé',
@@ -7033,6 +7227,30 @@ function conversationInitials(item){
   return name
     .slice(0,2)
     .toUpperCase();
+}
+
+
+function conversationProfilePicture(item){
+  return String(
+    item?.profilePicture ||
+    item?.state?.profilePicture ||
+    ''
+  ).trim();
+}
+
+function conversationAvatarHtml(item, extraClass = ''){
+  const picture = conversationProfilePicture(item);
+  const initials = escapeHtml(conversationInitials(item));
+  const className = String(extraClass || '').trim();
+
+  return `
+    <span class="inbox-avatar ${escapeHtml(className)}">
+      <span class="avatar-fallback">${initials}</span>
+      ${picture
+        ? `<img src="${escapeHtml(picture)}" alt="Photo profil" loading="lazy" onerror="this.remove()">`
+        : ''}
+    </span>
+  `;
 }
 
 function conversationMatchesFilter(item){
@@ -7242,7 +7460,15 @@ function conversationListTags(item){
 
   if(item.humanPaused || item.manualTakeover){
     tags.push(
-      '<span class="inbox-tag green">👤 Pris en charge</span>'
+      '<span class="inbox-tag green">👤 Commercial • IA en pause</span>'
+    );
+  }else if(item.aiModeChoicePending){
+    tags.push(
+      '<span class="inbox-tag" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⏳ Choix IA/Commercial</span>'
+    );
+  }else{
+    tags.push(
+      '<span class="inbox-tag" style="background:#eef7ff;border-color:#b9dcff;color:#075985">🤖 IA active</span>'
     );
   }
 
@@ -7399,9 +7625,7 @@ function renderConversationsList(){
             type="button"
             onclick="openConversation('${escapeHtml(item.contact)}')"
           >
-            <span class="inbox-avatar ${item.hasAdReferral ? 'ad' : ''}">
-              ${escapeHtml(conversationInitials(item))}
-            </span>
+            ${conversationAvatarHtml(item, item.hasAdReferral ? 'ad' : '')}
 
             <span class="inbox-item-main">
               <span class="inbox-item-name-row">
@@ -7452,6 +7676,9 @@ function renderConversationHeader(
         '',
       profileName:
         state.profileName ||
+        '',
+      profilePicture:
+        state.profilePicture ||
         ''
     };
 
@@ -7488,9 +7715,7 @@ function renderConversationHeader(
         onclick="backToInboxList()"
       >←</button>
 
-      <span class="inbox-avatar ${state.cameFromAd || state.adReferral ? 'ad' : ''}">
-        ${escapeHtml(conversationInitials(item))}
-      </span>
+      ${conversationAvatarHtml(item, state.cameFromAd || state.adReferral ? 'ad' : '')}
 
       <div class="inbox-header-identity">
         <div class="inbox-header-name">
@@ -7503,8 +7728,11 @@ function renderConversationHeader(
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
         <div class="inbox-status-line">
-          <span class="inbox-live-dot"></span>
-          ${paused ? 'Conversation prise en main par un commercial' : 'Agent MONDECO actif'}
+          ${paused
+            ? '<span class="inbox-status-human">👤 Commercial en charge • IA en pause</span>'
+            : state.aiModeChoicePending
+              ? '<span class="inbox-status-ai">⏳ Le client choisit IA ou Commercial</span>'
+              : '<span class="inbox-status-ai">🤖 IA MONDECO active • réponses automatiques</span>'}
           ${selectedSlaRemaining !== null ? `<span class="sla-pill ${selectedSlaRemaining < 0 ? 'late' : ''}">⏱ ${selectedSlaRemaining < 0 ? 'Retard ' : 'Réponse avant '}${formatSlaClock(selectedSlaRemaining)}</span>` : ''}
         </div>
       </div>
@@ -7712,6 +7940,13 @@ function renderThreadMessage(
     String(entry?.source || '') ===
       'commercial_instagram_app';
 
+  const isRoutingMessage =
+    ['ai_mode_choice','commercial_required'].includes(
+      String(entry?.action || '')
+    ) &&
+    type !== 'incoming' &&
+    !commercial;
+
   const label =
     type === 'incoming'
       ? 'Client'
@@ -7721,13 +7956,18 @@ function renderThreadMessage(
               ? `${commercialRoleLabel} MONDECO • ${commercialName}${directInstagram ? ' • Instagram' : ''}`
               : `${commercialRoleLabel} MONDECO${directInstagram ? ' • Instagram' : ''}`
           )
-        : 'Agent MONDECO';
+        : isRoutingMessage
+          ? '🤖 Assistant IA MONDECO • Choix de prise en charge'
+          : '🤖 IA MONDECO • Réponse automatique';
 
   return `
     <div class="inbox-message-row ${type === 'incoming' ? 'incoming' : commercial ? 'commercial' : 'bot'}">
       <div class="inbox-message-wrap">
         <div class="inbox-message-label">
           ${label}
+          ${type !== 'incoming' && !commercial
+            ? '<span class="ai-answer-badge">🤖 IA</span>'
+            : ''}
         </div>
         ${
           text
@@ -7916,6 +8156,9 @@ function renderCustomerPanel(
         '',
       profileName:
         state.profileName ||
+        '',
+      profilePicture:
+        state.profilePicture ||
         ''
     };
 
@@ -7938,9 +8181,7 @@ function renderCustomerPanel(
 
   panel.innerHTML = `
     <div class="inbox-profile-card">
-      <div class="inbox-avatar ${ad ? 'ad' : ''}">
-        ${escapeHtml(conversationInitials(item))}
-      </div>
+      ${conversationAvatarHtml(item, ad ? 'ad' : '')}
       <div class="inbox-profile-name">
         ${escapeHtml(name)}
       </div>
@@ -7971,7 +8212,22 @@ function renderCustomerPanel(
 
       <div class="inbox-info-row">
         <span>Statut IA</span>
-        <strong>${state.manualTakeover || state.humanPaused ? 'Pause commerciale' : 'Active'}</strong>
+        <strong>${state.manualTakeover || state.humanPaused
+          ? '👤 En pause — Commercial'
+          : state.aiModeChoicePending
+            ? '⏳ Choix du client en attente'
+            : '🤖 Active — Réponse automatique'}</strong>
+      </div>
+
+      <div class="inbox-info-row">
+        <span>Préférence client</span>
+        <strong>${state.aiModePreference === 'commercial'
+          ? '👤 Commercial'
+          : state.aiModePreference === 'ai'
+            ? '🤖 IA'
+            : state.aiModeChoicePending
+              ? 'En attente du choix'
+              : '—'}</strong>
       </div>
 
       <div class="inbox-info-row">
@@ -8463,23 +8719,10 @@ document
     button.addEventListener(
       'click',
       () => {
-        conversationFilter =
+        setConversationFilter(
           button.dataset.filter ||
-          'all';
-
-        document
-          .querySelectorAll(
-            '#conversationFilters .inbox-filter'
-          )
-          .forEach(
-            item =>
-              item.classList.toggle(
-                'active',
-                item === button
-              )
-          );
-
-        renderConversationsList();
+          'all'
+        );
       }
     );
   });
@@ -9153,8 +9396,9 @@ function showClientBrowserNotification(event){
           showPage('mywork');
           return;
         }
-        showPage('conversations');
-        setTimeout(() => { if(event.contact){ window.openConversation(event.contact); } }, 100);
+        // Une notification client ouvre la vue de TOUS les nouveaux messages,
+        // pas seulement une conversation isolée.
+        openAllNewMessages();
       };
     }catch(error){
       console.debug(
@@ -9455,58 +9699,47 @@ async function pollCommercialNotifications(){
 }
 
 document.getElementById('enableNotificationsBtn').addEventListener('click', async () => {
-  if(!('Notification' in window)){
-    alert('Les notifications navigateur ne sont pas disponibles sur cet appareil.');
-    return;
-  }
+  // Le clic sur la cloche sert d'abord à voir tous les messages non lus.
+  // Au premier clic seulement, on profite de l'interaction utilisateur pour
+  // demander l'autorisation des notifications navigateur et activer le son.
+  if('Notification' in window && Notification.permission === 'default'){
+    try{
+      const permission = await Notification.requestPermission();
 
-  try{
-    const permission =
-      await Notification.requestPermission();
-
-    if(permission === 'granted'){
-      try{
-        if(!notificationAudioContext){
-          notificationAudioContext =
-            new (
+      if(permission === 'granted'){
+        try{
+          if(!notificationAudioContext){
+            notificationAudioContext = new (
               window.AudioContext ||
               window.webkitAudioContext
             )();
+          }
+
+          if(notificationAudioContext.state === 'suspended'){
+            await notificationAudioContext.resume();
+          }
+        }catch(error){
+          console.debug('Initialisation audio :', error);
         }
 
-        if(
-          notificationAudioContext.state ===
-          'suspended'
-        ){
-          await notificationAudioContext.resume();
-        }
-      }catch(error){
-        console.debug(
-          'Initialisation audio :',
-          error
-        );
+        localStorage.setItem('mondecoNotificationSound','1');
+        playNotificationTone('message');
       }
-
-      localStorage.setItem(
-        'mondecoNotificationSound',
-        '1'
-      );
-
-      playNotificationTone(false);
-
-      alert(
-        'Notifications MONDECO activées. Le son de notification est également actif.'
-      );
-    }else{
-      alert('Autorisation de notification non accordée.');
+    }catch(error){
+      console.debug('Autorisation notification :', error);
     }
-  }catch(error){
-    alert(
-      'Impossible d’activer les notifications : ' +
-      error.message
-    );
   }
+
+  openAllNewMessages();
 });
+
+const syncInstagramHistoryBtn = document.getElementById('syncInstagramHistoryBtn');
+if(syncInstagramHistoryBtn){
+  syncInstagramHistoryBtn.addEventListener('click', () => {
+    startInstagramHistorySync();
+  });
+}
+
 
 setInterval(
   pollCommercialNotifications,
