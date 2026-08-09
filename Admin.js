@@ -32,7 +32,6 @@ const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerpr
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
-const CALLS_PATH = path.join(DATA_DIR, 'calls.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 
@@ -504,10 +503,6 @@ function snapshotFiles() {
     {
       source: WOOCOMMERCE_SYNC_PATH,
       name: 'woocommerce-sync.json'
-    },
-    {
-      source: CALLS_PATH,
-      name: 'calls.json'
     }
   ];
 }
@@ -828,8 +823,6 @@ function createExternalDataExport() {
       loadCommercialCorrections(),
     quickReplies:
       loadQuickReplies(),
-    calls:
-      loadCallLogs(),
     woocommerceSync:
       loadWooCommerceSyncState(),
     note:
@@ -3582,19 +3575,14 @@ const ALLOWED_COMMERCIAL_MEDIA_TYPES = new Set([
   'image/webp',
   'application/pdf',
   'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'audio/aac',
-  'audio/mp4',
-  'audio/mpeg',
-  'audio/amr',
-  'audio/ogg'
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 ]);
 
 function commercialMediaFileFilter(req, file, callback) {
   if (!ALLOWED_COMMERCIAL_MEDIA_TYPES.has(file.mimetype)) {
     return callback(
       new Error(
-        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG, WEBP, OGG/Opus, M4A/MP4, MP3, AAC ou AMR.'
+        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG ou WEBP.'
       )
     );
   }
@@ -8836,469 +8824,6 @@ router.post(
 );
 
 // ============================================================
-// V6.19 — CENTRE D'APPELS WHATSAPP (AUDIO)
-// ============================================================
-
-const MAX_CALL_LOGS = 500;
-let callActionHandler = null;
-
-function loadCallLogs() {
-  return readJsonArray(
-    CALLS_PATH,
-    'calls.json'
-  );
-}
-
-function saveCallLogs(items) {
-  const clean = Array.isArray(items)
-    ? items.slice(-MAX_CALL_LOGS)
-    : [];
-
-  writeJsonAtomic(
-    CALLS_PATH,
-    clean
-  );
-
-  return clean;
-}
-
-function callEventTime(call) {
-  const raw =
-    call?.timestamp ||
-    call?.event_timestamp ||
-    call?.start_time ||
-    '';
-
-  if (!raw) {
-    return new Date().toISOString();
-  }
-
-  if (/^\d{10,13}$/.test(String(raw))) {
-    const number = Number(raw);
-    const ms = String(raw).length === 10
-      ? number * 1000
-      : number;
-    return new Date(ms).toISOString();
-  }
-
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString()
-    : parsed.toISOString();
-}
-
-function normalizeCallStatus(call) {
-  const event = safeString(
-    call?.event ||
-    call?.status ||
-    call?.state
-  ).toLowerCase();
-
-  if (Array.isArray(call?.errors) && call.errors.length) {
-    return 'failed';
-  }
-
-  if (['terminate', 'terminated', 'completed', 'ended'].includes(event)) {
-    return 'ended';
-  }
-
-  if (['rejected', 'reject'].includes(event)) {
-    return 'rejected';
-  }
-
-  if (['accepted', 'accept', 'in_progress', 'connected'].includes(event)) {
-    return 'active';
-  }
-
-  if (['ringing', 'connect', 'incoming'].includes(event)) {
-    return 'ringing';
-  }
-
-  return event || 'ringing';
-}
-
-function recordWhatsAppCallEvent(
-  call,
-  metadata = {}
-) {
-  const id = safeString(
-    call?.id ||
-    call?.call_id
-  );
-
-  if (!id) {
-    return null;
-  }
-
-  const calls = loadCallLogs();
-  const index = calls.findIndex(
-    item => item.id === id
-  );
-
-  const current = index >= 0
-    ? calls[index]
-    : {};
-
-  const event = safeString(
-    call?.event ||
-    call?.status ||
-    call?.state
-  ).toLowerCase();
-
-  const status = normalizeCallStatus(call);
-  const now = callEventTime(call);
-  const session = call?.session && typeof call.session === 'object'
-    ? call.session
-    : {};
-
-  const from = safeString(
-    call?.from ||
-    current.from
-  ).replace(/\D+/g, '');
-
-  const to = safeString(
-    call?.to ||
-    current.to
-  ).replace(/\D+/g, '');
-
-  const sdp = safeString(
-    session?.sdp ||
-    current.offerSdp
-  );
-
-  const hasVideo = /(?:^|\r?\n)m=video\s/im.test(sdp);
-
-  const next = {
-    ...current,
-    id,
-    from,
-    to,
-    phoneNumberId: safeString(
-      metadata?.phoneNumberId ||
-      current.phoneNumberId
-    ),
-    event: event || current.event || 'connect',
-    status,
-    direction: safeString(
-      call?.direction ||
-      current.direction ||
-      'inbound'
-    ),
-    mediaType: hasVideo ? 'video' : 'audio',
-    offerSdp: sdp || current.offerSdp || '',
-    sdpType: safeString(
-      session?.sdp_type ||
-      current.sdpType ||
-      (sdp ? 'offer' : '')
-    ),
-    errors: Array.isArray(call?.errors)
-      ? call.errors
-      : (current.errors || []),
-    startTime: safeString(
-      call?.start_time ||
-      current.startTime
-    ),
-    endTime: safeString(
-      call?.end_time ||
-      current.endTime
-    ),
-    duration: Number(
-      call?.duration ??
-      current.duration ??
-      0
-    ) || 0,
-    createdAt: current.createdAt || now,
-    updatedAt: now,
-    lastWebhookAt: now,
-    read: current.read === true,
-    answeredByUserId: safeString(current.answeredByUserId),
-    answeredByName: safeString(current.answeredByName),
-    answeredAt: safeString(current.answeredAt),
-    rejectedAt: safeString(current.rejectedAt),
-    endedAt:
-      status === 'ended'
-        ? now
-        : safeString(current.endedAt)
-  };
-
-  if (index >= 0) {
-    calls[index] = next;
-  } else {
-    calls.push(next);
-  }
-
-  saveCallLogs(calls);
-  return next;
-}
-
-function updateCallLog(id, updater) {
-  const calls = loadCallLogs();
-  const index = calls.findIndex(
-    item => item.id === id
-  );
-
-  if (index < 0) {
-    return null;
-  }
-
-  const next = updater({ ...calls[index] });
-  calls[index] = {
-    ...calls[index],
-    ...next,
-    updatedAt: new Date().toISOString()
-  };
-
-  saveCallLogs(calls);
-  return calls[index];
-}
-
-function setCallActionHandler(fn) {
-  if (typeof fn !== 'function') {
-    throw new Error(
-      'setCallActionHandler attend une fonction.'
-    );
-  }
-
-  callActionHandler = fn;
-}
-
-router.get(
-  '/api/calls',
-  requireAuth,
-  (req, res) => {
-    const limit = Math.max(
-      1,
-      Math.min(
-        100,
-        Number(req.query?.limit || 50) || 50
-      )
-    );
-
-    const calls = loadCallLogs()
-      .sort(
-        (a, b) =>
-          new Date(b.updatedAt || b.createdAt || 0).getTime() -
-          new Date(a.updatedAt || a.createdAt || 0).getTime()
-      )
-      .slice(0, limit);
-
-    return res.json(calls);
-  }
-);
-
-router.post(
-  '/api/calls/:id/read',
-  requireAuth,
-  (req, res) => {
-    const updated = updateCallLog(
-      req.params.id,
-      current => ({
-        ...current,
-        read: true
-      })
-    );
-
-    if (!updated) {
-      return res.status(404).json({
-        error: 'Appel introuvable.'
-      });
-    }
-
-    return res.json(updated);
-  }
-);
-
-router.get(
-  '/api/calls/meta-status',
-  requireAuth,
-  async (req, res) => {
-    if (!callActionHandler) {
-      return res.status(503).json({
-        error: 'Le centre d’appels n’est pas connecté au serveur.'
-      });
-    }
-
-    try {
-      const result = await callActionHandler({
-        action: 'get_settings',
-        actor: req.user
-      });
-
-      return res.json({
-        success: true,
-        settings: result
-      });
-    } catch (error) {
-      return res.status(502).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-
-router.get(
-  '/api/calls/webrtc-config',
-  requireAuth,
-  (req, res) => {
-    const stunUrl = safeString(
-      process.env.WEBRTC_STUN_URL ||
-      'stun:stun.l.google.com:19302'
-    );
-
-    const turnUrl = safeString(
-      process.env.WEBRTC_TURN_URL
-    );
-
-    const iceServers = [];
-
-    if (stunUrl) {
-      iceServers.push({
-        urls: stunUrl
-      });
-    }
-
-    if (turnUrl) {
-      iceServers.push({
-        urls: turnUrl,
-        username: safeString(
-          process.env.WEBRTC_TURN_USERNAME
-        ),
-        credential: safeString(
-          process.env.WEBRTC_TURN_CREDENTIAL
-        )
-      });
-    }
-
-    return res.json({
-      iceServers,
-      audioOnly: true,
-      videoSupported: false
-    });
-  }
-);
-
-router.post(
-  '/api/calls/:id/action',
-  requireAuth,
-  async (req, res) => {
-    if (!callActionHandler) {
-      return res.status(503).json({
-        error: 'Le centre d’appels n’est pas connecté au serveur.'
-      });
-    }
-
-    const action = safeString(
-      req.body?.action
-    ).toLowerCase();
-
-    const allowed = new Set([
-      'pre_accept',
-      'accept',
-      'reject',
-      'terminate'
-    ]);
-
-    if (!allowed.has(action)) {
-      return res.status(400).json({
-        error: 'Action d’appel invalide.'
-      });
-    }
-
-    const current = loadCallLogs().find(
-      item => item.id === req.params.id
-    );
-
-    if (!current) {
-      return res.status(404).json({
-        error: 'Appel introuvable.'
-      });
-    }
-
-    if (
-      current.mediaType === 'video' &&
-      ['pre_accept', 'accept'].includes(action)
-    ) {
-      return res.status(409).json({
-        error: 'Les appels vidéo ne sont pas encore pris en charge par WhatsApp Business Calling API.'
-      });
-    }
-
-    const sdp = safeString(
-      req.body?.sdp
-    );
-
-    if (
-      ['pre_accept', 'accept'].includes(action) &&
-      !sdp
-    ) {
-      return res.status(400).json({
-        error: 'Réponse SDP WebRTC manquante.'
-      });
-    }
-
-    try {
-      const result = await callActionHandler({
-        action,
-        callId: current.id,
-        sdp,
-        phoneNumberId:
-          current.phoneNumberId,
-        actor: req.user
-      });
-
-      const now = new Date().toISOString();
-      const updated = updateCallLog(
-        current.id,
-        item => ({
-          ...item,
-          read: true,
-          status:
-            action === 'accept'
-              ? 'active'
-              : action === 'reject'
-                ? 'rejected'
-                : action === 'terminate'
-                  ? 'ended'
-                  : item.status,
-          answeredByUserId:
-            action === 'accept'
-              ? safeString(req.user?.id)
-              : item.answeredByUserId,
-          answeredByName:
-            action === 'accept'
-              ? safeString(req.user?.name || req.user?.email)
-              : item.answeredByName,
-          answeredAt:
-            action === 'accept'
-              ? now
-              : item.answeredAt,
-          rejectedAt:
-            action === 'reject'
-              ? now
-              : item.rejectedAt,
-          endedAt:
-            action === 'terminate'
-              ? now
-              : item.endedAt
-        })
-      );
-
-      return res.json({
-        success: true,
-        call: updated,
-        meta: result
-      });
-    } catch (error) {
-      return res.status(502).json({
-        success: false,
-        error: error.message
-      });
-    }
-  }
-);
-
-// ============================================================
 // DISCUSSION DE TEST
 // ============================================================
 
@@ -9350,8 +8875,35 @@ router.post(
           });
       }
 
+      const contact =
+        safeString(
+          req.body?.contact ||
+          req.body?.phone
+        );
+
+      const requestedChannel =
+        safeString(
+          req.body?.channel
+        ).toLowerCase();
+
+      const channel =
+        requestedChannel === 'instagram' ||
+        contact.startsWith('instagram:')
+          ? 'instagram'
+          : 'whatsapp';
+
+      const externalContact =
+        safeString(
+          req.body?.externalContact
+        ) ||
+        (channel === 'instagram'
+          ? contact.replace(/^instagram:/, '')
+          : normalizePhone(contact));
+
       const phone =
-        normalizePhone(req.body?.phone);
+        channel === 'whatsapp'
+          ? normalizePhone(externalContact)
+          : '';
 
       const text =
         safeString(req.body?.text);
@@ -9359,12 +8911,12 @@ router.post(
       const question =
         safeString(req.body?.question);
 
-      if (!phone) {
+      if (!externalContact) {
         return res
           .status(400)
           .json({
             error:
-              'Numéro client obligatoire.'
+              'Contact client obligatoire.'
           });
       }
 
@@ -9380,6 +8932,9 @@ router.post(
       const result =
         await commercialSendHandler({
           phone,
+          contact,
+          channel,
+          externalContact,
           text,
           question,
           actor: {
@@ -9444,8 +8999,42 @@ router.post(
           });
       }
 
+      const contact =
+        safeString(
+          req.body?.contact ||
+          req.body?.phone
+        );
+
+      const requestedChannel =
+        safeString(
+          req.body?.channel
+        ).toLowerCase();
+
+      const channel =
+        requestedChannel === 'instagram' ||
+        contact.startsWith('instagram:')
+          ? 'instagram'
+          : 'whatsapp';
+
+      const externalContact =
+        safeString(
+          req.body?.externalContact
+        ) ||
+        (channel === 'instagram'
+          ? contact.replace(/^instagram:/, '')
+          : normalizePhone(contact));
+
+      if (channel === 'instagram') {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Pour Instagram, utilisez pour le moment une réponse texte. Les pièces jointes seront ajoutées dans une prochaine version.'
+          });
+      }
+
       const phone =
-        normalizePhone(req.body?.phone);
+        normalizePhone(externalContact);
 
       const text =
         safeString(req.body?.text);
@@ -9467,20 +9056,21 @@ router.post(
           .status(400)
           .json({
             error:
-              'Ajoutez un PDF, un document Word, une photo ou un message vocal.'
+              'Ajoutez un PDF, un document Word ou une photo.'
           });
       }
 
       const mediaKind =
         req.file.mimetype.startsWith('image/')
           ? 'image'
-          : req.file.mimetype.startsWith('audio/')
-            ? 'audio'
-            : 'document';
+          : 'document';
 
       const result =
         await commercialSendHandler({
           phone,
+          contact,
+          channel,
+          externalContact,
           text,
           question,
           mediaKind,
@@ -10252,6 +9842,24 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         lastAction: safeString(last?.action),
         lastReplySent: Boolean(last?.reply_sent),
         lastSource: safeString(last?.source),
+        channel:
+          safeString(
+            last?.channel ||
+            state?.channel ||
+            (contact.startsWith('instagram:') ? 'instagram' : 'whatsapp')
+          ).toLowerCase() === 'instagram'
+            ? 'instagram'
+            : 'whatsapp',
+        externalContact:
+          safeString(
+            last?.external_contact ||
+            state?.externalContact ||
+            (contact.startsWith('instagram:')
+              ? contact.slice('instagram:'.length)
+              : contact)
+          ),
+        instagramUsername:
+          safeString(state?.instagramUsername),
         hasAdReferral: Boolean(state.cameFromAd || state.adReferral),
         adHeadline: safeString(state?.adReferral?.headline),
         adBody: safeString(state?.adReferral?.body),
@@ -10864,7 +10472,5 @@ module.exports = {
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
-  setCallActionHandler,
-  recordWhatsAppCallEvent,
   createCommercialCorrectionCandidate
 };
