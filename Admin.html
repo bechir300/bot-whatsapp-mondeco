@@ -4279,104 +4279,6 @@ tbody tr:hover{
 }
 
 </style>
-
-<style>
-/* ============================================================
-   MONDECO V6.18 — Messages vocaux
-   ============================================================ */
-.voice-recorder-btn{
-  position:relative;
-  min-width:86px;
-}
-.voice-recorder-btn.recording{
-  background:#ed1c24 !important;
-  color:#fff !important;
-  border-color:#ed1c24 !important;
-}
-.voice-recorder-btn.recording::before{
-  content:'';
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:#fff;
-  display:inline-block;
-  margin-right:6px;
-  animation:voicePulse 1s infinite;
-}
-@keyframes voicePulse{
-  0%,100%{opacity:1;transform:scale(1)}
-  50%{opacity:.35;transform:scale(.75)}
-}
-.voice-recorder-status{
-  display:none;
-  align-items:center;
-  gap:8px;
-  flex:1 1 100%;
-  padding:8px 10px;
-  border:1px solid var(--border);
-  border-radius:10px;
-  background:#fff;
-  font-size:12px;
-}
-.voice-recorder-status.active{
-  display:flex;
-}
-.voice-recorder-status audio{
-  width:min(320px,100%);
-  height:34px;
-}
-.voice-recorder-time{
-  font-weight:700;
-  min-width:44px;
-}
-.voice-recorder-remove{
-  border:0;
-  background:transparent;
-  cursor:pointer;
-  font-size:16px;
-}
-.inbox-voice-card{
-  min-width:min(330px,75vw);
-  padding:10px 12px;
-  border-radius:12px;
-  border:1px solid rgba(0,0,0,.08);
-  background:rgba(255,255,255,.7);
-}
-.inbox-voice-card audio{
-  width:100%;
-  max-width:320px;
-  height:38px;
-}
-.inbox-voice-transcript{
-  margin-top:8px;
-  font-size:12px;
-  line-height:1.45;
-  white-space:pre-wrap;
-}
-.inbox-voice-transcript strong{
-  display:block;
-  margin-bottom:3px;
-  font-size:11px;
-  color:var(--muted);
-}
-@media (max-width:700px){
-  .voice-recorder-btn{
-    min-width:0;
-  }
-  .voice-recorder-status{
-    width:100%;
-  }
-}
-</style>
-
-
-<style id="v619-call-center-style">
-  .wa-call-fab{position:fixed;right:22px;bottom:22px;z-index:1600;border:0;border-radius:999px;background:#11100f;color:#fff;box-shadow:0 14px 38px rgba(0,0,0,.22);padding:12px 17px;font:700 13px/1 system-ui;display:flex;align-items:center;gap:9px;cursor:pointer}.wa-call-fab .dot{width:9px;height:9px;border-radius:50%;background:#36c96c}.wa-call-fab .count{min-width:21px;height:21px;padding:0 6px;border-radius:999px;background:#ed1c24;display:inline-flex;align-items:center;justify-content:center;font-size:11px}.wa-call-fab .count:empty{display:none}
-  .wa-call-drawer{position:fixed;right:22px;bottom:76px;width:min(390px,calc(100vw - 28px));max-height:62vh;overflow:auto;z-index:1598;background:#fff;border:1px solid #e8e2dc;border-radius:18px;box-shadow:0 18px 55px rgba(0,0,0,.22);padding:14px;display:none}.wa-call-drawer.open{display:block}.wa-call-drawer h3{margin:0 0 4px;font-size:16px}.wa-call-drawer .sub{font-size:12px;color:#746e68;margin-bottom:12px}.wa-call-row{padding:11px 0;border-top:1px solid #eee8e2;display:flex;gap:10px;align-items:center}.wa-call-row:first-of-type{border-top:0}.wa-call-icon{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#f4f1ed;font-size:18px}.wa-call-main{min-width:0;flex:1}.wa-call-main strong,.wa-call-main span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.wa-call-main span{font-size:11px;color:#807972;margin-top:3px}.wa-call-status{font-size:11px;font-weight:800;border-radius:999px;padding:5px 8px;background:#f4f1ed}.wa-call-status.ringing{background:#e8f8ed;color:#17753a}.wa-call-status.active{background:#e8f8ed;color:#17753a}.wa-call-status.rejected,.wa-call-status.failed{background:#fff0f0;color:#b51e25}
-  .wa-call-overlay{position:fixed;inset:0;z-index:2000;background:rgba(12,11,10,.72);backdrop-filter:blur(7px);display:none;align-items:center;justify-content:center;padding:18px}.wa-call-overlay.show{display:flex}.wa-call-card{width:min(420px,100%);background:#11100f;color:white;border-radius:28px;padding:28px 22px;text-align:center;box-shadow:0 25px 80px rgba(0,0,0,.5)}.wa-call-avatar{width:88px;height:88px;border-radius:50%;margin:0 auto 16px;background:#292623;display:grid;place-items:center;font-size:32px;font-weight:800}.wa-call-title{font-size:22px;font-weight:850;margin:0}.wa-call-phone{font-size:14px;color:#c7c1bb;margin-top:7px}.wa-call-state{font-size:13px;color:#9ee4b3;margin-top:12px;min-height:20px}.wa-call-actions{display:flex;justify-content:center;gap:26px;margin-top:28px}.wa-call-action{border:0;width:68px;height:68px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:25px;cursor:pointer}.wa-call-action.reject{background:#e33139}.wa-call-action.accept{background:#2dbb62}.wa-call-action.hangup{background:#e33139}.wa-call-action:disabled{opacity:.45;cursor:wait}.wa-call-labels{display:flex;justify-content:center;gap:32px;margin-top:8px;font-size:11px;color:#c8c2bc}.wa-call-video-warning{background:#392b20;border:1px solid #725136;border-radius:12px;padding:10px 12px;color:#ffd8b5;font-size:12px;margin-top:14px}.wa-call-error{color:#ffb8bb;font-size:12px;margin-top:12px;white-space:pre-wrap}.wa-call-remote-audio{width:1px;height:1px;opacity:.01;position:absolute;pointer-events:none}
-  @media(max-width:700px){.wa-call-fab{right:12px;bottom:82px}.wa-call-drawer{right:12px;bottom:136px;max-height:55vh}.wa-call-card{border-radius:24px}.wa-call-action{width:64px;height:64px}}
-</style>
-
 </head>
 
 <body>
@@ -4400,7 +4302,7 @@ tbody tr:hover{
       <div class="brand-panel">
         <img class="brand-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASQAAABbCAMAAADtJAh+AAAACXBIWXMAAAsTAAALEwEAmpwYAAA7p2lUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgNS42LWMwNjcgNzkuMTU3NzQ3LCAyMDE1LzAzLzMwLTIzOjQwOjQyICAgICAgICAiPgogICA8cmRmOlJERiB4bWxuczpyZGY9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkvMDIvMjItcmRmLXN5bnRheC1ucyMiPgogICAgICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgICAgICAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOnhtcE1NPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvbW0vIgogICAgICAgICAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgICAgICAgICB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iCiAgICAgICAgICAgIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICAgICAgICAgIHhtbG5zOmV4aWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20vZXhpZi8xLjAvIj4KICAgICAgICAgPHhtcDpDcmVhdG9yVG9vbD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3htcDpDcmVhdG9yVG9vbD4KICAgICAgICAgPHhtcDpDcmVhdGVEYXRlPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3htcDpDcmVhdGVEYXRlPgogICAgICAgICA8eG1wOk1ldGFkYXRhRGF0ZT4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC94bXA6TWV0YWRhdGFEYXRlPgogICAgICAgICA8eG1wOk1vZGlmeURhdGU+MjAyMC0xMi0wNFQxMDo1MjowMyswMTowMDwveG1wOk1vZGlmeURhdGU+CiAgICAgICAgIDx4bXBNTTpJbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC94bXBNTTpJbnN0YW5jZUlEPgogICAgICAgICA8eG1wTU06RG9jdW1lbnRJRD5hZG9iZTpkb2NpZDpwaG90b3Nob3A6NGQ2OWRjZDEtMzYxNi0xMWViLTgwNjctYjIxZWYyZjliMGMyPC94bXBNTTpEb2N1bWVudElEPgogICAgICAgICA8eG1wTU06T3JpZ2luYWxEb2N1bWVudElEPnhtcC5kaWQ6NWEyZDhkOGQtNzUxNS1mMDQ2LWFlZjAtODQwZGY5MDdjN2M4PC94bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ+CiAgICAgICAgIDx4bXBNTTpIaXN0b3J5PgogICAgICAgICAgICA8cmRmOlNlcT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+Y3JlYXRlZDwvc3RFdnQ6YWN0aW9uPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6aW5zdGFuY2VJRD54bXAuaWlkOjVhMmQ4ZDhkLTc1MTUtZjA0Ni1hZWYwLTg0MGRmOTA3YzdjODwvc3RFdnQ6aW5zdGFuY2VJRD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OndoZW4+MjAyMC0wNS0yMVQxMzo0ODowNiswMTowMDwvc3RFdnQ6d2hlbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OnNvZnR3YXJlQWdlbnQ+QWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpPC9zdEV2dDpzb2Z0d2FyZUFnZW50PgogICAgICAgICAgICAgICA8L3JkZjpsaT4KICAgICAgICAgICAgICAgPHJkZjpsaSByZGY6cGFyc2VUeXBlPSJSZXNvdXJjZSI+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDphY3Rpb24+c2F2ZWQ8L3N0RXZ0OmFjdGlvbj4KICAgICAgICAgICAgICAgICAgPHN0RXZ0Omluc3RhbmNlSUQ+eG1wLmlpZDphNWZhOGMyNS1jYjU4LTkyNDgtYTFlNi0xOTI0ZDg1MGVlNWY8L3N0RXZ0Omluc3RhbmNlSUQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDp3aGVuPjIwMjAtMDUtMjFUMTM6NDg6MDYrMDE6MDA8L3N0RXZ0OndoZW4+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpzb2Z0d2FyZUFnZW50PkFkb2JlIFBob3Rvc2hvcCBDQyAyMDE1IChXaW5kb3dzKTwvc3RFdnQ6c29mdHdhcmVBZ2VudD4KICAgICAgICAgICAgICAgICAgPHN0RXZ0OmNoYW5nZWQ+Lzwvc3RFdnQ6Y2hhbmdlZD4KICAgICAgICAgICAgICAgPC9yZGY6bGk+CiAgICAgICAgICAgICAgIDxyZGY6bGkgcmRmOnBhcnNlVHlwZT0iUmVzb3VyY2UiPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6YWN0aW9uPnNhdmVkPC9zdEV2dDphY3Rpb24+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDppbnN0YW5jZUlEPnhtcC5paWQ6Y2NkYjllNGYtNzVhNC1iMTQ1LTkxZmQtNGEwMjIwNWY2NzQ1PC9zdEV2dDppbnN0YW5jZUlEPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6d2hlbj4yMDIwLTEyLTA0VDEwOjUyOjAzKzAxOjAwPC9zdEV2dDp3aGVuPgogICAgICAgICAgICAgICAgICA8c3RFdnQ6c29mdHdhcmVBZ2VudD5BZG9iZSBQaG90b3Nob3AgQ0MgMjAxNSAoV2luZG93cyk8L3N0RXZ0OnNvZnR3YXJlQWdlbnQ+CiAgICAgICAgICAgICAgICAgIDxzdEV2dDpjaGFuZ2VkPi88L3N0RXZ0OmNoYW5nZWQ+CiAgICAgICAgICAgICAgIDwvcmRmOmxpPgogICAgICAgICAgICA8L3JkZjpTZXE+CiAgICAgICAgIDwveG1wTU06SGlzdG9yeT4KICAgICAgICAgPGRjOmZvcm1hdD5pbWFnZS9wbmc8L2RjOmZvcm1hdD4KICAgICAgICAgPHBob3Rvc2hvcDpDb2xvck1vZGU+MzwvcGhvdG9zaG9wOkNvbG9yTW9kZT4KICAgICAgICAgPHRpZmY6T3JpZW50YXRpb24+MTwvdGlmZjpPcmllbnRhdGlvbj4KICAgICAgICAgPHRpZmY6WFJlc29sdXRpb24+NzIwMDAwLzEwMDAwPC90aWZmOlhSZXNvbHV0aW9uPgogICAgICAgICA8dGlmZjpZUmVzb2x1dGlvbj43MjAwMDAvMTAwMDA8L3RpZmY6WVJlc29sdXRpb24+CiAgICAgICAgIDx0aWZmOlJlc29sdXRpb25Vbml0PjI8L3RpZmY6UmVzb2x1dGlvblVuaXQ+CiAgICAgICAgIDxleGlmOkNvbG9yU3BhY2U+NjU1MzU8L2V4aWY6Q29sb3JTcGFjZT4KICAgICAgICAgPGV4aWY6UGl4ZWxYRGltZW5zaW9uPjI5MjwvZXhpZjpQaXhlbFhEaW1lbnNpb24+CiAgICAgICAgIDxleGlmOlBpeGVsWURpbWVuc2lvbj45MTwvZXhpZjpQaXhlbFlEaW1lbnNpb24+CiAgICAgIDwvcmRmOkRlc2NyaXB0aW9uPgogICA8L3JkZjpSREY+CjwveDp4bXBtZXRhPgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+9Yhc8wAAAvdQTFRFR3BM7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7Rwk7RwkS8mN9wAAAPx0Uk5TAM+EjNXAL26kutQ/iCEQh+/GdMVv88ELzuABMQTu/DnD2gL9Bd3C02sell1QjvQ6HxLnx+UXmQPKeFr3PiPNIBVWE7glhr5D9VUZ+iskDP4i1+23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" alt="MONDECO">
       </div>
-      <div class="brand-meta"><strong>Agent WhatsApp</strong> • Centre de pilotage</div>
+      <div class="brand-meta"><strong>Agent omnicanal</strong> • Centre de pilotage</div>
     </div>
 
     <nav class="nav">
@@ -4472,7 +4374,7 @@ tbody tr:hover{
       <div class="dashboard-hero">
         <div>
           <div class="dashboard-kicker">MONDECO • Centre de pilotage</div>
-          <h2>Pilotez votre agent WhatsApp</h2>
+          <h2>Pilotez votre agent WhatsApp & Instagram</h2>
           <p>
             Gérez votre catalogue, les connaissances de l'IA, les simulations client
             et les règles de réponse depuis une interface unique.
@@ -4481,7 +4383,7 @@ tbody tr:hover{
 
         <div class="dashboard-hero-actions">
           <span id="homeAiBadge" class="status-pill">IA activée</span>
-          <span class="premium-badge"><span class="dot"></span> WhatsApp connecté</span>
+          <span class="premium-badge"><span class="dot"></span> WhatsApp + Instagram</span>
         </div>
       </div>
 
@@ -4663,9 +4565,9 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.17</span>
+                <span class="inbox-version">V6.18</span>
               </div>
-              <div class="inbox-mini-sub">Boîte de réception WhatsApp MONDECO</div>
+              <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
             </div>
 
             <div class="inbox-head-actions">
@@ -4682,13 +4584,19 @@ tbody tr:hover{
               id="conversationSearch"
               class="inbox-search"
               type="search"
-              placeholder="Rechercher client, numéro, publicité..."
+              placeholder="Rechercher client, WhatsApp, Instagram, publicité..."
             >
           </div>
 
           <div class="inbox-filters" id="conversationFilters">
             <button class="inbox-filter active" data-filter="all">
               Tous <span id="filterCountAll">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="whatsapp">
+              WhatsApp <span id="filterCountWhatsApp">0</span>
+            </button>
+            <button class="inbox-filter" data-filter="instagram">
+              Instagram <span id="filterCountInstagram">0</span>
             </button>
             <button class="inbox-filter" data-filter="unread">
               Non lus <span id="filterCountUnread">0</span>
@@ -6750,15 +6658,6 @@ let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
 let notificationAudioContext = null;
 
-// V6.18 — enregistrement vocal commercial
-let conversationVoiceRecorder = null;
-let conversationVoiceStream = null;
-let conversationVoiceChunks = [];
-let conversationVoiceFile = null;
-let conversationVoiceObjectUrl = '';
-let conversationVoiceStartedAt = 0;
-let conversationVoiceTimer = null;
-
 
 async function loadConversations(){
   try{
@@ -6814,10 +6713,6 @@ function actionLabel(action){
     ai_error_no_reply:'Erreur IA — sans réponse',
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
-    commercial_voice_reply:'Message vocal commercial',
-    voice_transcribed_and_replied:'Vocal transcrit + réponse IA',
-    voice_transcribed_commercial_required:'Vocal transcrit • commercial requis',
-    voice_commercial_required:'Vocal à écouter',
     product_image_sent:'Image produit envoyée',
     product_image_unavailable:'Image produit indisponible',
     product_image_need_name:'Nom produit demandé',
@@ -6883,20 +6778,81 @@ function formatShortTime(value){
   }
 }
 
+function conversationChannel(item){
+  const explicit =
+    String(
+      item?.channel ||
+      ''
+    )
+      .trim()
+      .toLowerCase();
+
+  if(explicit === 'instagram'){
+    return 'instagram';
+  }
+
+  return String(item?.contact || '').startsWith('instagram:')
+    ? 'instagram'
+    : 'whatsapp';
+}
+
+function conversationExternalContact(item){
+  const explicit =
+    String(
+      item?.externalContact ||
+      ''
+    ).trim();
+
+  if(explicit){
+    return explicit;
+  }
+
+  const contact =
+    String(item?.contact || '');
+
+  return contact.startsWith('instagram:')
+    ? contact.slice('instagram:'.length)
+    : contact;
+}
+
 function conversationDisplayName(item){
-  return (
+  const channel =
+    conversationChannel(item);
+
+  const username =
+    String(
+      item?.instagramUsername ||
+      ''
+    ).trim();
+
+  const profile =
     String(
       item?.profileName ||
       ''
-    ).trim() ||
-    `+${String(item?.contact || '')}`
-  );
+    ).trim();
+
+  if(channel === 'instagram' && username){
+    return username.startsWith('@')
+      ? username
+      : `@${username}`;
+  }
+
+  if(profile){
+    return profile;
+  }
+
+  const external =
+    conversationExternalContact(item);
+
+  return channel === 'instagram'
+    ? `Instagram • ${external}`
+    : `+${external}`;
 }
 
 function conversationInitials(item){
   const name =
     conversationDisplayName(item)
-      .replace(/^\+/, '')
+      .replace(/^[+@]/, '')
       .trim();
 
   if(!name) return 'M';
@@ -6928,6 +6884,20 @@ function conversationMatchesFilter(item){
 
   if(item.resolved){
     return false;
+  }
+
+  if(
+    conversationFilter ===
+    'whatsapp'
+  ){
+    return conversationChannel(item) === 'whatsapp';
+  }
+
+  if(
+    conversationFilter ===
+    'instagram'
+  ){
+    return conversationChannel(item) === 'instagram';
   }
 
   if(
@@ -6977,6 +6947,16 @@ function updateConversationFilterCounts(){
   const counts = {
     all:
       open.length,
+    whatsapp:
+      open.filter(
+        item =>
+          conversationChannel(item) === 'whatsapp'
+      ).length,
+    instagram:
+      open.filter(
+        item =>
+          conversationChannel(item) === 'instagram'
+      ).length,
     unread:
       open.filter(
         item =>
@@ -7010,6 +6990,8 @@ function updateConversationFilterCounts(){
 
   const mapping = {
     filterCountAll:'all',
+    filterCountWhatsApp:'whatsapp',
+    filterCountInstagram:'instagram',
     filterCountUnread:'unread',
     filterCountPriority:'priority',
     filterCountCommercial:'commercial',
@@ -7047,6 +7029,16 @@ function updateConversationFilterCounts(){
 
 function conversationListTags(item){
   const tags = [];
+
+  if(conversationChannel(item) === 'instagram'){
+    tags.push(
+      '<span class="inbox-tag" style="background:#fff0f6;border-color:#f4bfd8;color:#a21caf">◎ Instagram</span>'
+    );
+  }else{
+    tags.push(
+      '<span class="inbox-tag green">● WhatsApp</span>'
+    );
+  }
 
   if(
     item.commercialAttention ||
@@ -7105,6 +7097,9 @@ function renderConversationsList(){
 
         return [
           item.contact,
+          item.externalContact,
+          item.channel,
+          item.instagramUsername,
           item.profileName,
           item.lastIncoming,
           item.lastReply,
@@ -7234,6 +7229,15 @@ function renderConversationHeader(
         contact
     ) || {
       contact,
+      channel:
+        state.channel ||
+        (String(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+      externalContact:
+        state.externalContact ||
+        (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : contact),
+      instagramUsername:
+        state.instagramUsername ||
+        '',
       profileName:
         state.profileName ||
         ''
@@ -7276,7 +7280,9 @@ function renderConversationHeader(
           ${escapeHtml(name)}
         </div>
         <div class="inbox-header-sub">
-          +${escapeHtml(contact)}
+          ${conversationChannel(item) === 'instagram'
+            ? `Instagram • ${escapeHtml(conversationExternalContact(item))}`
+            : `WhatsApp • +${escapeHtml(conversationExternalContact(item))}`}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
         <div class="inbox-status-line">
@@ -7345,8 +7351,7 @@ function renderThreadMessage(
 ){
   if(
     !text &&
-    !entry?.attachment_name &&
-    !entry?.audio_url
+    !entry?.attachment_name
   ){
     return '';
   }
@@ -7391,11 +7396,7 @@ function renderThreadMessage(
           ${label}
         </div>
         ${
-          text &&
-          !(
-            entry?.type === 'audio' &&
-            entry?.transcription
-          )
+          text
             ? `
               <div class="inbox-bubble">
                 ${escapeHtml(text)}
@@ -7404,50 +7405,14 @@ function renderThreadMessage(
             : ''
         }
         ${
-          entry.audio_url
-            ? `
-              <div class="inbox-voice-card">
-                <audio
-                  controls
-                  preload="metadata"
-                  src="${escapeHtml(entry.audio_url)}"
-                ></audio>
-                ${
-                  entry.transcription
-                    ? `
-                      <div class="inbox-voice-transcript">
-                        <strong>Transcription</strong>
-                        ${escapeHtml(entry.transcription)}
-                      </div>
-                    `
-                    : ''
-                }
-              </div>
-            `
-            : ''
-        }
-        ${
           entry.attachment_name &&
           type !== 'incoming'
-            ? (
-                entry.attachment_type === 'audio' &&
-                entry.attachment_url
-                  ? `
-                    <div class="inbox-voice-card">
-                      <audio
-                        controls
-                        preload="metadata"
-                        src="${escapeHtml(entry.attachment_url)}"
-                      ></audio>
-                    </div>
-                  `
-                  : `
-                    <div class="inbox-attachment">
-                      ${entry.attachment_type === 'image' ? '📷' : entry.attachment_type === 'audio' ? '🎙️' : '📎'}
-                      ${escapeHtml(entry.attachment_name)}
-                    </div>
-                  `
-              )
+            ? `
+              <div class="inbox-attachment">
+                ${entry.attachment_type === 'image' ? '📷' : '📎'}
+                ${escapeHtml(entry.attachment_name)}
+              </div>
+            `
             : ''
         }
         <div class="inbox-message-meta">
@@ -7462,6 +7427,11 @@ function renderThreadMessage(
 function buildConversationComposer(
   contact
 ){
+  const composerItem =
+    conversations.find(item => item.contact === contact) || { contact };
+  const composerChannel =
+    conversationChannel(composerItem);
+
   return `
     <div class="inbox-composer conversation-composer" id="commercialComposer">
       <div class="inbox-composer-toolbar">
@@ -7526,6 +7496,7 @@ function buildConversationComposer(
       ></textarea>
 
       <div class="conversation-composer-actions">
+        ${composerChannel === 'whatsapp' ? `
         <label class="btn small composer-file-label">
           📎 Fichier
           <input
@@ -7560,47 +7531,13 @@ function buildConversationComposer(
           >
         </label>
 
-        <button
-          class="btn small voice-recorder-btn"
-          id="conversationVoiceBtn"
-          type="button"
-          onclick="toggleConversationVoiceRecording()"
-          title="Enregistrer un message vocal"
-        >
-          🎙 Vocal
-        </button>
-
+        ` : `<span class="inbox-tag" style="align-self:center">Instagram • texte</span>`}
         <span
           id="conversationAttachmentName"
           class="composer-file-name"
         >
           Aucun fichier sélectionné
         </span>
-
-        <div
-          id="conversationVoiceStatus"
-          class="voice-recorder-status"
-        >
-          <span
-            id="conversationVoiceTime"
-            class="voice-recorder-time"
-          >
-            00:00
-          </span>
-          <audio
-            id="conversationVoicePreview"
-            controls
-            preload="metadata"
-          ></audio>
-          <button
-            class="voice-recorder-remove"
-            type="button"
-            onclick="clearConversationVoiceRecording()"
-            title="Supprimer le vocal"
-          >
-            🗑
-          </button>
-        </div>
 
         <button
           class="btn primary"
@@ -7635,6 +7572,15 @@ function renderCustomerPanel(
         contact
     ) || {
       contact,
+      channel:
+        state.channel ||
+        (String(contact).startsWith('instagram:') ? 'instagram' : 'whatsapp'),
+      externalContact:
+        state.externalContact ||
+        (String(contact).startsWith('instagram:') ? String(contact).slice('instagram:'.length) : contact),
+      instagramUsername:
+        state.instagramUsername ||
+        '',
       profileName:
         state.profileName ||
         ''
@@ -7649,10 +7595,13 @@ function renderCustomerPanel(
     state.adReferral ||
     null;
 
+  const channel =
+    conversationChannel(item);
+
   const source =
     ad
-      ? 'Publicité Meta'
-      : 'WhatsApp';
+      ? `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • Publicité Meta`
+      : (channel === 'instagram' ? 'Instagram' : 'WhatsApp');
 
   panel.innerHTML = `
     <div class="inbox-profile-card">
@@ -7663,7 +7612,9 @@ function renderCustomerPanel(
         ${escapeHtml(name)}
       </div>
       <div class="inbox-profile-phone">
-        +${escapeHtml(contact)}
+        ${channel === 'instagram'
+          ? `Instagram • ${escapeHtml(conversationExternalContact(item))}`
+          : `+${escapeHtml(conversationExternalContact(item))}`}
       </div>
     </div>
 
@@ -7739,14 +7690,9 @@ function renderCustomerPanel(
           👤 Affecter la conversation
         </button>
 
-        <a
-          class="btn"
-          href="https://wa.me/${escapeHtml(contact)}"
-          target="_blank"
-          rel="noopener"
-        >
-          WhatsApp ↗
-        </a>
+        ${channel === 'whatsapp'
+          ? `<a class="btn" href="https://wa.me/${escapeHtml(conversationExternalContact(item))}" target="_blank" rel="noopener">WhatsApp ↗</a>`
+          : `<span class="btn" style="cursor:default">Instagram DM</span>`}
 
         <button
           class="btn"
@@ -8532,470 +8478,7 @@ function applyStoredComposerMode(){
   }
 }
 
-
-function voiceMimeCandidate(){
-  if(
-    typeof MediaRecorder ===
-      'undefined'
-  ){
-    return null;
-  }
-
-  const candidates = [
-    {
-      mime:
-        'audio/ogg;codecs=opus',
-      extension:
-        'ogg'
-    },
-    {
-      mime:
-        'audio/mp4',
-      extension:
-        'm4a'
-    },
-    {
-      mime:
-        'audio/aac',
-      extension:
-        'aac'
-    },
-    {
-      mime:
-        'audio/mpeg',
-      extension:
-        'mp3'
-    }
-  ];
-
-  return candidates.find(
-    candidate =>
-      typeof MediaRecorder.isTypeSupported !==
-        'function' ||
-      MediaRecorder.isTypeSupported(
-        candidate.mime
-      )
-  ) || null;
-}
-
-function formatVoiceDuration(
-  seconds
-){
-  const safe =
-    Math.max(
-      0,
-      Number(
-        seconds ||
-        0
-      )
-    );
-
-  const minutes =
-    Math.floor(
-      safe /
-      60
-    );
-
-  const rest =
-    Math.floor(
-      safe %
-      60
-    );
-
-  return `${String(minutes).padStart(2,'0')}:${String(rest).padStart(2,'0')}`;
-}
-
-function updateConversationVoiceUi(){
-  const button =
-    document.getElementById(
-      'conversationVoiceBtn'
-    );
-
-  const status =
-    document.getElementById(
-      'conversationVoiceStatus'
-    );
-
-  const time =
-    document.getElementById(
-      'conversationVoiceTime'
-    );
-
-  const preview =
-    document.getElementById(
-      'conversationVoicePreview'
-    );
-
-  const recording =
-    conversationVoiceRecorder &&
-    conversationVoiceRecorder.state ===
-      'recording';
-
-  if(button){
-    button.classList.toggle(
-      'recording',
-      Boolean(
-        recording
-      )
-    );
-
-    button.textContent =
-      recording
-        ? '⏹ Arrêter'
-        : conversationVoiceFile
-          ? '🎙 Refaire'
-          : '🎙 Vocal';
-  }
-
-  if(status){
-    status.classList.toggle(
-      'active',
-      Boolean(
-        recording ||
-        conversationVoiceFile
-      )
-    );
-  }
-
-  if(time){
-    if(recording){
-      const elapsed =
-        Math.floor(
-          (
-            Date.now() -
-            conversationVoiceStartedAt
-          ) /
-          1000
-        );
-
-      time.textContent =
-        formatVoiceDuration(
-          elapsed
-        );
-    }else if(
-      conversationVoiceFile
-    ){
-      time.textContent =
-        'Prêt';
-    }else{
-      time.textContent =
-        '00:00';
-    }
-  }
-
-  if(
-    preview &&
-    conversationVoiceObjectUrl
-  ){
-    preview.src =
-      conversationVoiceObjectUrl;
-  }else if(preview){
-    preview.removeAttribute(
-      'src'
-    );
-    preview.load();
-  }
-
-  const label =
-    document.getElementById(
-      'conversationAttachmentName'
-    );
-
-  if(
-    label &&
-    conversationVoiceFile
-  ){
-    label.textContent =
-      'Vocal prêt à envoyer';
-  }
-}
-
-window.clearConversationVoiceRecording = function(){
-  try{
-    if(
-      conversationVoiceRecorder &&
-      conversationVoiceRecorder.state ===
-        'recording'
-    ){
-      conversationVoiceRecorder.stop();
-    }
-  }catch{}
-
-  if(
-    conversationVoiceStream
-  ){
-    for(
-      const track
-      of conversationVoiceStream.getTracks()
-    ){
-      try{
-        track.stop();
-      }catch{}
-    }
-  }
-
-  if(
-    conversationVoiceObjectUrl
-  ){
-    try{
-      URL.revokeObjectURL(
-        conversationVoiceObjectUrl
-      );
-    }catch{}
-  }
-
-  if(
-    conversationVoiceTimer
-  ){
-    clearInterval(
-      conversationVoiceTimer
-    );
-  }
-
-  conversationVoiceRecorder =
-    null;
-
-  conversationVoiceStream =
-    null;
-
-  conversationVoiceChunks =
-    [];
-
-  conversationVoiceFile =
-    null;
-
-  conversationVoiceObjectUrl =
-    '';
-
-  conversationVoiceStartedAt =
-    0;
-
-  conversationVoiceTimer =
-    null;
-
-  updateConversationVoiceUi();
-
-  const label =
-    document.getElementById(
-      'conversationAttachmentName'
-    );
-
-  if(label){
-    label.textContent =
-      'Aucun fichier sélectionné';
-  }
-};
-
-window.toggleConversationVoiceRecording = async function(){
-  if(
-    conversationVoiceRecorder &&
-    conversationVoiceRecorder.state ===
-      'recording'
-  ){
-    conversationVoiceRecorder.stop();
-    return;
-  }
-
-  window.clearConversationVoiceRecording();
-
-  if(
-    !navigator
-      .mediaDevices
-      ?.getUserMedia
-  ){
-    alert(
-      'Le micro n’est pas disponible dans ce navigateur.'
-    );
-    return;
-  }
-
-  const candidate =
-    voiceMimeCandidate();
-
-  if(!candidate){
-    alert(
-      'Ce navigateur ne peut pas enregistrer dans un format audio compatible WhatsApp. Essayez Safari/Chrome à jour ou envoyez un fichier audio.'
-    );
-    return;
-  }
-
-  try{
-    conversationVoiceStream =
-      await navigator
-        .mediaDevices
-        .getUserMedia({
-          audio:{
-            echoCancellation:
-              true,
-            noiseSuppression:
-              true,
-            autoGainControl:
-              true
-          }
-        });
-
-    conversationVoiceChunks =
-      [];
-
-    conversationVoiceRecorder =
-      new MediaRecorder(
-        conversationVoiceStream,
-        {
-          mimeType:
-            candidate.mime,
-          audioBitsPerSecond:
-            64000
-        }
-      );
-
-    conversationVoiceRecorder.addEventListener(
-      'dataavailable',
-      event => {
-        if(
-          event.data &&
-          event.data.size >
-            0
-        ){
-          conversationVoiceChunks.push(
-            event.data
-          );
-        }
-      }
-    );
-
-    conversationVoiceRecorder.addEventListener(
-      'stop',
-      () => {
-        try{
-          for(
-            const track
-            of conversationVoiceStream
-              ?.getTracks?.() ||
-            []
-          ){
-            track.stop();
-          }
-        }catch{}
-
-        conversationVoiceStream =
-          null;
-
-        if(
-          conversationVoiceTimer
-        ){
-          clearInterval(
-            conversationVoiceTimer
-          );
-          conversationVoiceTimer =
-            null;
-        }
-
-        const blob =
-          new Blob(
-            conversationVoiceChunks,
-            {
-              type:
-                candidate.mime
-            }
-          );
-
-        conversationVoiceChunks =
-          [];
-
-        if(
-          !blob.size
-        ){
-          alert(
-            'Aucun son enregistré.'
-          );
-          conversationVoiceRecorder =
-            null;
-          updateConversationVoiceUi();
-          return;
-        }
-
-        const baseMime =
-          candidate.mime
-            .split(';')[0];
-
-        conversationVoiceFile =
-          new File(
-            [
-              blob
-            ],
-            `vocal-mondeco-${Date.now()}.${candidate.extension}`,
-            {
-              type:
-                baseMime
-            }
-          );
-
-        conversationVoiceObjectUrl =
-          URL.createObjectURL(
-            blob
-          );
-
-        conversationVoiceRecorder =
-          null;
-
-        updateConversationVoiceUi();
-      }
-    );
-
-    conversationVoiceRecorder.start(
-      250
-    );
-
-    conversationVoiceStartedAt =
-      Date.now();
-
-    conversationVoiceTimer =
-      setInterval(
-        updateConversationVoiceUi,
-        500
-      );
-
-    // Un vocal remplace les autres pièces jointes.
-    for(const id of [
-      'conversationDocumentFile',
-      'conversationCameraFile',
-      'conversationImageFile'
-    ]){
-      const input =
-        document.getElementById(
-          id
-        );
-
-      if(input){
-        input.value =
-          '';
-      }
-    }
-
-    updateConversationVoiceUi();
-  }catch(error){
-    window.clearConversationVoiceRecording();
-
-    alert(
-      error?.name ===
-        'NotAllowedError'
-        ? 'Autorisez l’accès au micro pour enregistrer un vocal.'
-        : `Impossible d’utiliser le micro : ${error.message || error}`
-    );
-  }
-};
-
 window.selectConversationAttachment = function(input, type){
-  if(
-    conversationVoiceFile ||
-    (
-      conversationVoiceRecorder &&
-      conversationVoiceRecorder.state === 'recording'
-    )
-  ){
-    window.clearConversationVoiceRecording();
-  }
-
   const ids = [
     'conversationDocumentFile',
     'conversationCameraFile',
@@ -9029,7 +8512,6 @@ window.sendConversationCommercialReply = async function(contact){
     String(textEl?.value || '').trim();
 
   const file =
-    conversationVoiceFile ||
     document.getElementById('conversationCameraFile')?.files?.[0] ||
     document.getElementById('conversationImageFile')?.files?.[0] ||
     document.getElementById('conversationDocumentFile')?.files?.[0] ||
@@ -9042,6 +8524,24 @@ window.sendConversationCommercialReply = async function(contact){
 
   const data =
     selectedConversationData || {};
+
+  const currentConversation =
+    conversations.find(item => item.contact === contact) || {
+      contact,
+      channel: data?.state?.channel,
+      externalContact: data?.state?.externalContact
+    };
+
+  const channel =
+    conversationChannel(currentConversation);
+
+  const externalContact =
+    conversationExternalContact(currentConversation);
+
+  if(channel === 'instagram' && file){
+    alert('Pour Instagram, envoyez pour le moment une réponse texte.');
+    return;
+  }
 
   const entries =
     Array.isArray(data.entries)
@@ -9074,7 +8574,22 @@ window.sendConversationCommercialReply = async function(contact){
 
       form.append(
         'phone',
+        externalContact
+      );
+
+      form.append(
+        'contact',
         contact
+      );
+
+      form.append(
+        'channel',
+        channel
+      );
+
+      form.append(
+        'externalContact',
+        externalContact
       );
 
       form.append(
@@ -9109,18 +8624,15 @@ window.sendConversationCommercialReply = async function(contact){
             'Content-Type':'application/json'
           },
           body:JSON.stringify({
-            phone:contact,
+            phone:channel === 'whatsapp' ? externalContact : '',
+            contact,
+            channel,
+            externalContact,
             question:lastIncoming,
             text
           })
         }
       );
-    }
-
-    if(
-      conversationVoiceFile
-    ){
-      window.clearConversationVoiceRecording();
     }
 
     await loadConversations();
@@ -11960,262 +11472,6 @@ for (const shortcut of document.querySelectorAll('[data-shortcut-page]')) {
       setMenu(false);
     }
   });
-})();
-</script>
-
-
-<button id="waCallFab" class="wa-call-fab" type="button" title="Centre d’appels WhatsApp">
-  <span class="dot"></span>
-  <span>Appels</span>
-  <span id="waCallBadge" class="count"></span>
-</button>
-<div id="waCallDrawer" class="wa-call-drawer" aria-live="polite">
-  <h3>☎️ Appels WhatsApp</h3>
-  <div class="sub">Appels audio entrants • actualisation en temps réel</div>
-  <div style="display:flex;gap:8px;margin-bottom:10px">
-    <button id="waEnableCallAlerts" class="btn small" type="button">🔔 Activer son & notifications</button>
-    <button id="waCheckCalling" class="btn small" type="button">Vérifier Meta Calling</button>
-  </div>
-  <div id="waCallingStatus" class="help" style="margin-bottom:8px"></div>
-  <div id="waCallList"><div class="empty">Aucun appel pour le moment.</div></div>
-</div>
-<div id="waCallOverlay" class="wa-call-overlay" role="dialog" aria-modal="true">
-  <div class="wa-call-card">
-    <div id="waCallAvatar" class="wa-call-avatar">☎</div>
-    <h3 id="waCallTitle" class="wa-call-title">Appel WhatsApp</h3>
-    <div id="waCallPhone" class="wa-call-phone"></div>
-    <div id="waCallState" class="wa-call-state">Appel entrant…</div>
-    <div id="waCallVideoWarning" class="wa-call-video-warning" style="display:none">📹 La vidéo n’est pas encore prise en charge par WhatsApp Business Calling API. Vous pouvez refuser l’appel et poursuivre par chat.</div>
-    <div id="waCallError" class="wa-call-error"></div>
-    <div id="waCallIncomingActions" class="wa-call-actions">
-      <button id="waRejectCall" class="wa-call-action reject" type="button" title="Refuser">✕</button>
-      <button id="waAcceptCall" class="wa-call-action accept" type="button" title="Répondre">☎</button>
-    </div>
-    <div id="waCallIncomingLabels" class="wa-call-labels"><span>Refuser</span><span>Répondre</span></div>
-    <div id="waCallActiveActions" class="wa-call-actions" style="display:none">
-      <button id="waMuteCall" class="wa-call-action" style="background:#373330" type="button" title="Micro">🎙</button>
-      <button id="waHangupCall" class="wa-call-action hangup" type="button" title="Raccrocher">☎</button>
-    </div>
-    <div id="waCallActiveLabels" class="wa-call-labels" style="display:none"><span>Micro</span><span>Raccrocher</span></div>
-    <audio id="waCallRemoteAudio" class="wa-call-remote-audio" autoplay playsinline></audio>
-  </div>
-</div>
-
-
-<script id="v619-call-center-script">
-(function(){
-  const API_BASE = '/admin/api';
-  let calls = [];
-  let currentCall = null;
-  let peer = null;
-  let localStream = null;
-  let lastRingingId = '';
-  let ringTimer = null;
-  let audioCtx = null;
-  let alertsEnabled = localStorage.getItem('mondecoCallAlerts') === '1';
-
-  const $ = id => document.getElementById(id);
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
-
-  async function callFetch(url, options={}){
-    const response = await fetch(url, {credentials:'same-origin', ...options});
-    let data = {};
-    try{ data = await response.json(); }catch{}
-    if(!response.ok){ throw new Error(data?.error || `HTTP ${response.status}`); }
-    return data;
-  }
-
-  function callName(call){
-    const phone = String(call?.from || '').replace(/\D+/g,'');
-    const convo = (typeof conversations !== 'undefined' && Array.isArray(conversations)) ? conversations.find(x => String(x.contact||'') === phone) : null;
-    return String(convo?.profileName || '').trim() || (phone ? `+${phone}` : 'Client WhatsApp');
-  }
-
-  function initials(name){
-    const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
-    return (parts.length > 1 ? parts[0][0]+parts[1][0] : String(name||'☎').slice(0,2)).toUpperCase();
-  }
-
-  function statusLabel(call){
-    const map={ringing:'Entrant',active:'En cours',ended:'Terminé',rejected:'Refusé',failed:'Échec'};
-    return map[call?.status] || call?.status || 'Appel';
-  }
-
-  function fmtTime(value){
-    if(!value) return '';
-    try{return new Date(value).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}catch{return '';}
-  }
-
-  function renderCallList(){
-    const list = $('waCallList');
-    if(!list) return;
-    if(!calls.length){ list.innerHTML='<div class="empty">Aucun appel pour le moment.</div>'; return; }
-    list.innerHTML = calls.slice(0,20).map(call=>{
-      const name = callName(call);
-      return `<div class="wa-call-row"><div class="wa-call-icon">${call.mediaType==='video'?'📹':'☎️'}</div><div class="wa-call-main"><strong>${esc(name)}</strong><span>${esc(fmtTime(call.updatedAt||call.createdAt))}${call.answeredByName?` • ${esc(call.answeredByName)}`:''}${call.duration?` • ${Math.round(Number(call.duration))}s`:''}</span></div><span class="wa-call-status ${esc(call.status)}">${esc(statusLabel(call))}</span></div>`;
-    }).join('');
-    const unread = calls.filter(c => c.status==='ringing' && !c.read).length;
-    $('waCallBadge').textContent = unread ? String(unread) : '';
-  }
-
-  function ensureAudioContext(){
-    if(!audioCtx){ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-    if(audioCtx.state === 'suspended') audioCtx.resume().catch(()=>{});
-    return audioCtx;
-  }
-
-  function ringOnce(){
-    if(!alertsEnabled) return;
-    try{
-      const ctx = ensureAudioContext();
-      const now = ctx.currentTime;
-      [0,0.34].forEach(offset=>{
-        const osc=ctx.createOscillator(); const gain=ctx.createGain();
-        osc.type='sine'; osc.frequency.value=740;
-        gain.gain.setValueAtTime(0.0001,now+offset);
-        gain.gain.exponentialRampToValueAtTime(0.10,now+offset+0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.22);
-        osc.connect(gain); gain.connect(ctx.destination); osc.start(now+offset); osc.stop(now+offset+0.24);
-      });
-    }catch{}
-  }
-
-  function startRing(){
-    stopRing(); ringOnce(); ringTimer=setInterval(ringOnce,1600);
-  }
-  function stopRing(){ if(ringTimer){clearInterval(ringTimer);ringTimer=null;} }
-
-  function notifyCall(call){
-    if(!alertsEnabled || !('Notification' in window) || Notification.permission!=='granted') return;
-    try{ new Notification('Appel WhatsApp entrant',{body:callName(call),tag:`wa-call-${call.id}`,renotify:true}); }catch{}
-  }
-
-  function showIncoming(call){
-    currentCall = call;
-    const name=callName(call);
-    $('waCallAvatar').textContent=initials(name);
-    $('waCallTitle').textContent=name;
-    $('waCallPhone').textContent=call.from?`+${call.from}`:'';
-    $('waCallState').textContent=call.mediaType==='video'?'Appel vidéo entrant':'Appel audio entrant…';
-    $('waCallError').textContent='';
-    $('waCallVideoWarning').style.display=call.mediaType==='video'?'block':'none';
-    $('waAcceptCall').style.display=call.mediaType==='video'?'none':'grid';
-    $('waCallIncomingActions').style.display='flex';
-    $('waCallIncomingLabels').style.display='flex';
-    $('waCallActiveActions').style.display='none';
-    $('waCallActiveLabels').style.display='none';
-    $('waCallOverlay').classList.add('show');
-    if(lastRingingId!==call.id){lastRingingId=call.id;startRing();notifyCall(call);}
-  }
-
-  function hideCall(){ $('waCallOverlay')?.classList.remove('show'); stopRing(); }
-
-  async function waitIce(pc, timeout=6500){
-    if(pc.iceGatheringState==='complete') return;
-    await new Promise(resolve=>{
-      let done=false;
-      const finish=()=>{if(done)return;done=true;pc.removeEventListener('icegatheringstatechange',onchange);resolve();};
-      const onchange=()=>{if(pc.iceGatheringState==='complete')finish();};
-      pc.addEventListener('icegatheringstatechange',onchange);
-      setTimeout(finish,timeout);
-    });
-  }
-
-  function preferOpus(pc){
-    try{
-      const caps=RTCRtpReceiver.getCapabilities?.('audio');
-      const trans=pc.getTransceivers().find(t=>t.receiver?.track?.kind==='audio'||t.sender?.track?.kind==='audio');
-      if(!caps||!trans?.setCodecPreferences)return;
-      const opus=caps.codecs.filter(c=>/opus/i.test(c.mimeType));
-      const rest=caps.codecs.filter(c=>!/opus/i.test(c.mimeType));
-      trans.setCodecPreferences([...opus,...rest]);
-    }catch{}
-  }
-
-  async function answerCall(){
-    if(!currentCall || !currentCall.offerSdp) throw new Error('Offre WebRTC de Meta manquante. Vérifiez le webhook calls.');
-    if(!navigator.mediaDevices?.getUserMedia) throw new Error('Le navigateur ne permet pas l’accès au micro.');
-    $('waAcceptCall').disabled=true; $('waRejectCall').disabled=true; stopRing();
-    $('waCallState').textContent='Connexion au micro…';
-    try{
-      const cfg=await callFetch(`${API_BASE}/calls/webrtc-config`);
-      localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
-      peer=new RTCPeerConnection({iceServers:Array.isArray(cfg.iceServers)?cfg.iceServers:[]});
-      peer.ontrack=e=>{ const audio=$('waCallRemoteAudio'); audio.srcObject=e.streams?.[0] || new MediaStream([e.track]); audio.play().catch(()=>{}); };
-      localStream.getAudioTracks().forEach(track=>peer.addTrack(track,localStream));
-      await peer.setRemoteDescription({type:'offer',sdp:currentCall.offerSdp});
-      preferOpus(peer);
-      const answer=await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      await waitIce(peer);
-      const sdp=peer.localDescription?.sdp;
-      if(!sdp) throw new Error('Impossible de générer la réponse WebRTC.');
-      $('waCallState').textContent='Préparation de la ligne…';
-      await callFetch(`${API_BASE}/calls/${encodeURIComponent(currentCall.id)}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'pre_accept',sdp})});
-      await callFetch(`${API_BASE}/calls/${encodeURIComponent(currentCall.id)}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'accept',sdp})});
-      $('waCallState').textContent='En communication';
-      $('waCallIncomingActions').style.display='none'; $('waCallIncomingLabels').style.display='none';
-      $('waCallActiveActions').style.display='flex'; $('waCallActiveLabels').style.display='flex';
-      peer.onconnectionstatechange=()=>{
-        if(['failed','closed'].includes(peer?.connectionState)){ $('waCallState').textContent='Appel terminé'; setTimeout(hideCall,1200); }
-      };
-    }catch(error){
-      $('waCallError').textContent=error.message; $('waCallState').textContent='Impossible de répondre';
-      try{peer?.close();}catch{}; peer=null;
-      try{localStream?.getTracks().forEach(t=>t.stop());}catch{}; localStream=null;
-    }finally{$('waAcceptCall').disabled=false;$('waRejectCall').disabled=false;}
-  }
-
-  async function rejectCall(){
-    if(!currentCall)return; stopRing();
-    try{await callFetch(`${API_BASE}/calls/${encodeURIComponent(currentCall.id)}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reject'})});}catch(e){$('waCallError').textContent=e.message;return;}
-    hideCall();
-  }
-
-  async function hangupCall(){
-    if(currentCall){ try{await callFetch(`${API_BASE}/calls/${encodeURIComponent(currentCall.id)}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'terminate'})});}catch{} }
-    try{peer?.close();}catch{}; peer=null;
-    try{localStream?.getTracks().forEach(t=>t.stop());}catch{}; localStream=null;
-    hideCall();
-  }
-
-  function toggleMute(){
-    const track=localStream?.getAudioTracks?.()[0]; if(!track)return;
-    track.enabled=!track.enabled; $('waMuteCall').textContent=track.enabled?'🎙':'🔇';
-  }
-
-  async function pollCalls(){
-    try{
-      calls=await callFetch(`${API_BASE}/calls?limit=50`);
-      renderCallList();
-      const ringing=calls.find(c=>c.status==='ringing');
-      if(ringing && (!currentCall || currentCall.id!==ringing.id || !$('waCallOverlay').classList.contains('show'))){showIncoming(ringing);}
-      if(currentCall){
-        const updated=calls.find(c=>c.id===currentCall.id);
-        if(updated) currentCall={...currentCall,...updated};
-        if(updated && ['ended','rejected','failed'].includes(updated.status)){ hangupCall(); }
-      }
-    }catch(error){ /* session may still be initializing */ }
-  }
-
-  $('waCallFab')?.addEventListener('click',()=>{$('waCallDrawer').classList.toggle('open'); if(alertsEnabled) ensureAudioContext();});
-  $('waEnableCallAlerts')?.addEventListener('click',async()=>{
-    alertsEnabled=true; localStorage.setItem('mondecoCallAlerts','1'); ensureAudioContext();
-    if('Notification' in window && Notification.permission==='default'){try{await Notification.requestPermission();}catch{}}
-    $('waEnableCallAlerts').textContent='✅ Son & notifications activés'; ringOnce();
-  });
-  $('waCheckCalling')?.addEventListener('click',async()=>{
-    const box=$('waCallingStatus'); box.textContent='Vérification…';
-    try{const data=await callFetch(`${API_BASE}/calls/meta-status`); const raw=JSON.stringify(data.settings); box.textContent=/enabled/i.test(raw)?'✅ Meta Calling répond. Vérifiez que le champ webhook “calls” est abonné.':'ℹ️ Meta répond, mais vérifiez que Calling est activé sur le numéro.';}catch(e){box.textContent=`⚠️ ${e.message}`;}
-  });
-  $('waAcceptCall')?.addEventListener('click',()=>answerCall().catch(e=>$('waCallError').textContent=e.message));
-  $('waRejectCall')?.addEventListener('click',rejectCall);
-  $('waHangupCall')?.addEventListener('click',hangupCall);
-  $('waMuteCall')?.addEventListener('click',toggleMute);
-  window.addEventListener('beforeunload',()=>{try{peer?.close();localStream?.getTracks().forEach(t=>t.stop());}catch{}});
-
-  setTimeout(pollCalls,1800);
-  setInterval(pollCalls,2200);
 })();
 </script>
 
