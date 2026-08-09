@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.1
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -3589,7 +3589,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20</span>
+        <span class="login-version">V6.20.1</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -10706,6 +10706,248 @@ function conversationLogDedupeKey(entry) {
   ].join('|');
 }
 
+function conversationEntryMessageIds(entry) {
+  return [...new Set([
+    safeString(entry?.message_id),
+    safeString(entry?.meta_message_id)
+  ].filter(Boolean))];
+}
+
+function conversationTimeMs(value) {
+  const raw = safeString(value);
+  if (!raw) return Number.NaN;
+
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    let numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      if (numeric < 1e12) numeric *= 1000;
+      return numeric;
+    }
+  }
+
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function normalizedConversationTime(entry) {
+  const candidates = [
+    entry?.meta_created_time,
+    entry?.event_time,
+    entry?.created_time,
+    entry?.time,
+    entry?.timestamp
+  ];
+
+  for (const candidate of candidates) {
+    const ms = conversationTimeMs(candidate);
+    if (Number.isFinite(ms)) return ms;
+  }
+
+  return 0;
+}
+
+function conversationEntryComparator(a, b) {
+  const aMs = normalizedConversationTime(a);
+  const bMs = normalizedConversationTime(b);
+  if (aMs !== bMs) return aMs - bMs;
+
+  // À heure égale : message client avant réponse, puis événements système.
+  const rank = entry => {
+    if (safeString(entry?.incoming)) return 0;
+    if (safeString(entry?.reply)) return 1;
+    return 2;
+  };
+  const rankDiff = rank(a) - rank(b);
+  if (rankDiff) return rankDiff;
+
+  return safeString(a?.message_id || a?.meta_message_id)
+    .localeCompare(safeString(b?.message_id || b?.meta_message_id));
+}
+
+function authoritativeConversationTime(entry) {
+  const candidates = [
+    safeString(entry?.meta_created_time),
+    safeString(entry?.event_time),
+    entry?.history_import === true ? safeString(entry?.time) : ''
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (Number.isFinite(conversationTimeMs(candidate))) return candidate;
+  }
+  return '';
+}
+
+function mergeConversationLogEntries(existing, incoming) {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  // Les champs temps provenant de l'API Meta sont prioritaires sur l'heure
+  // locale de traitement d'un ancien webhook.
+  const preferredTime =
+    safeString(existing?.meta_created_time) ||
+    safeString(incoming?.meta_created_time) ||
+    safeString(existing?.event_time) ||
+    safeString(incoming?.event_time) ||
+    authoritativeConversationTime(existing) ||
+    authoritativeConversationTime(incoming) ||
+    safeString(incoming?.time) ||
+    safeString(existing?.time);
+
+  const existingAttachments = Array.isArray(existing?.attachments)
+    ? existing.attachments.filter(Boolean)
+    : [];
+  const incomingAttachments = Array.isArray(incoming?.attachments)
+    ? incoming.attachments.filter(Boolean)
+    : [];
+  const attachmentMap = new Map();
+  for (const item of [...existingAttachments, ...incomingAttachments]) {
+    const key = [safeString(item?.url), safeString(item?.filename), safeString(item?.metaAttachmentId)].join('|');
+    if (!attachmentMap.has(key)) attachmentMap.set(key, item);
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    time: preferredTime || safeString(incoming?.time || existing?.time),
+    meta_created_time:
+      safeString(existing?.meta_created_time || incoming?.meta_created_time) || undefined,
+    event_time:
+      safeString(incoming?.event_time || existing?.event_time) || undefined,
+    attachments: attachmentMap.size
+      ? [...attachmentMap.values()]
+      : (incoming?.attachments || existing?.attachments)
+  };
+}
+
+function normalizeInstagramThreadEntries(rawEntries) {
+  const sourceEntries = Array.isArray(rawEntries) ? rawEntries.filter(Boolean) : [];
+  if (!sourceEntries.length) return [];
+
+  const isInstagram = sourceEntries.some(entry =>
+    safeString(entry?.channel).toLowerCase() === 'instagram' ||
+    safeString(entry?.contact).startsWith('instagram:')
+  );
+  if (!isInstagram) return [...sourceEntries].sort(conversationEntryComparator);
+
+  // Index des heures exactes fournies par Meta pour chaque message_id.
+  const exactTimeByMessageId = new Map();
+  for (const entry of sourceEntries) {
+    const primaryId = safeString(entry?.message_id);
+    if (!primaryId) continue;
+    const exact =
+      safeString(entry?.meta_created_time) ||
+      (entry?.history_import === true ? safeString(entry?.time) : '') ||
+      safeString(entry?.event_time);
+    if (exact && Number.isFinite(conversationTimeMs(exact))) {
+      const current = exactTimeByMessageId.get(primaryId);
+      if (!current || safeString(entry?.meta_created_time)) {
+        exactTimeByMessageId.set(primaryId, exact);
+      }
+    }
+  }
+
+  const linkedOutboundIds = new Set();
+  for (const entry of sourceEntries) {
+    const inboundId = safeString(entry?.message_id);
+    const outboundId = safeString(entry?.meta_message_id);
+    if (
+      safeString(entry?.incoming) &&
+      safeString(entry?.reply) &&
+      inboundId && outboundId && inboundId !== outboundId
+    ) {
+      linkedOutboundIds.add(outboundId);
+    }
+  }
+
+  const expanded = [];
+  for (const entry of sourceEntries) {
+    const primaryId = safeString(entry?.message_id);
+
+    // Si l'historique Meta contient séparément une réponse qui est déjà liée
+    // à une entrée live (meta_message_id), on garde son heure comme ancre mais
+    // on ne l'affiche pas une deuxième fois.
+    if (
+      entry?.history_import === true &&
+      primaryId &&
+      linkedOutboundIds.has(primaryId)
+    ) {
+      continue;
+    }
+
+    const inboundId = safeString(entry?.message_id);
+    const outboundId = safeString(entry?.meta_message_id);
+    const hasCombinedPair =
+      safeString(entry?.incoming) &&
+      safeString(entry?.reply) &&
+      inboundId && outboundId && inboundId !== outboundId;
+
+    if (!hasCombinedPair) {
+      const exact = primaryId ? exactTimeByMessageId.get(primaryId) : '';
+      expanded.push({
+        ...entry,
+        time: exact || safeString(entry?.event_time || entry?.meta_created_time || entry?.time)
+      });
+      continue;
+    }
+
+    const inboundTime =
+      exactTimeByMessageId.get(inboundId) ||
+      safeString(entry?.event_time || entry?.meta_created_time || entry?.time);
+
+    const inboundMs = conversationTimeMs(inboundTime);
+    const outboundTime =
+      exactTimeByMessageId.get(outboundId) ||
+      safeString(entry?.reply_time) ||
+      (Number.isFinite(inboundMs)
+        ? new Date(inboundMs + 1).toISOString()
+        : safeString(entry?.time));
+
+    expanded.push({
+      ...entry,
+      reply: '',
+      reply_sent: false,
+      meta_message_id: inboundId,
+      linked_reply_message_id: outboundId,
+      time: inboundTime,
+      direction: 'incoming',
+      sender_kind: 'client',
+      _thread_split: 'incoming'
+    });
+
+    expanded.push({
+      ...entry,
+      incoming: '',
+      message_id: outboundId,
+      meta_message_id: outboundId,
+      linked_incoming_message_id: inboundId,
+      time: outboundTime,
+      direction: 'outgoing',
+      _thread_split: 'outgoing',
+      image_reason: undefined,
+      error: undefined
+    });
+  }
+
+  const deduped = new Map();
+  for (const entry of expanded) {
+    const key = conversationLogDedupeKey(entry);
+    const current = deduped.get(key);
+    if (!current) {
+      deduped.set(key, entry);
+      continue;
+    }
+    // Préférer l'entrée riche/non historique pour l'affichage, tout en
+    // conservant l'heure exacte déjà réconciliée.
+    const currentScore = (current?.history_import ? 0 : 10) + (safeString(current?.incoming || current?.reply) ? 2 : 0);
+    const entryScore = (entry?.history_import ? 0 : 10) + (safeString(entry?.incoming || entry?.reply) ? 2 : 0);
+    const winner = entryScore >= currentScore ? entry : current;
+    const loser = winner === entry ? current : entry;
+    deduped.set(key, mergeConversationLogEntries(loser, winner));
+  }
+
+  return [...deduped.values()].sort(conversationEntryComparator);
+}
+
 let persistentConversationEventsCache = {
   stamp: '',
   entries: []
@@ -10837,14 +11079,15 @@ function loadWhatsAppLog() {
   const merged = new Map();
 
   for (const entry of [...historical, ...facebookHistorical, ...persistent, ...live]) {
+    const key = conversationLogDedupeKey(entry);
     merged.set(
-      conversationLogDedupeKey(entry),
-      entry
+      key,
+      mergeConversationLogEntries(merged.get(key), entry)
     );
   }
 
   const entries =
-    [...merged.values()];
+    [...merged.values()].sort(conversationEntryComparator);
 
   combinedConversationLogCache = {
     liveStamp,
@@ -11354,6 +11597,7 @@ async function runInstagramHistorySync() {
     lastError: '',
     truncated: false,
     metaMessageDetailLimit: 20,
+    chronologyVersion: 2,
     messageIdsDiscovered: 0,
     contentUnavailableMessages: 0
   };
@@ -11387,13 +11631,12 @@ async function runInstagramHistorySync() {
         'instagram-history.json'
       );
 
+    const persistent = loadPersistentConversationEvents();
+
     const knownMessageIds =
       new Set(
-        [...live, ...historical]
-          .map(entry =>
-            safeString(entry?.message_id) ||
-            safeString(entry?.meta_message_id)
-          )
+        [...live, ...historical, ...persistent]
+          .flatMap(entry => conversationEntryMessageIds(entry))
           .filter(Boolean)
       );
 
@@ -11524,6 +11767,29 @@ async function runInstagramHistorySync() {
             messageId &&
             knownMessageIds.has(messageId)
           ) {
+            // Même si le message existe déjà dans le live log, conserver
+            // l'heure créée par Meta. Cette ancre corrige les anciens
+            // événements enregistrés à l'heure de traitement du serveur.
+            const anchorKey = `mid:${messageId}`;
+            const existingAnchor = historyByKey.get(anchorKey) || {};
+            const anchorTime = safeString(message?.created_time);
+            if (anchorTime) {
+              historyByKey.set(anchorKey, {
+                ...existingAnchor,
+                message_id: messageId,
+                meta_message_id: safeString(existingAnchor?.meta_message_id) || messageId,
+                contact,
+                external_contact: customerId,
+                channel: 'instagram',
+                action: safeString(existingAnchor?.action) || 'history_timestamp_anchor',
+                source: safeString(existingAnchor?.source) || 'instagram_history_timestamp',
+                direction: safeString(existingAnchor?.direction) || 'unknown',
+                history_import: true,
+                meta_timestamp_anchor: true,
+                meta_created_time: anchorTime,
+                time: anchorTime
+              });
+            }
             instagramHistorySyncJob.skippedMessages += 1;
             continue;
           }
@@ -11595,6 +11861,7 @@ async function runInstagramHistorySync() {
               message?.meta_content_available !== false,
             meta_detail_limit_reason:
               safeString(message?.meta_detail_limit_reason),
+            meta_created_time: time,
             time
           };
 
@@ -11945,21 +12212,38 @@ async function listAllFacebookConversations() {
 
 async function listAllFacebookConversationMessageRefs(conversationId) {
   const encodedId = encodeURIComponent(safeString(conversationId));
-  let nextUrl =
-    `https://graph.facebook.com/${META_API_VERSION}/${encodedId}` +
-    `?fields=${encodeURIComponent('messages.limit(100){id,created_time}')}`;
+  const fieldSets = [
+    'messages.limit(100){id,created_time,from,to,message,reply_to,attachments}',
+    'messages.limit(100){id,created_time,from,to,message,reply_to}',
+    'messages.limit(100){id,created_time}'
+  ];
+
+  let firstData = null;
+  let selectedFields = '';
+  let lastError = null;
+
+  for (const fields of fieldSets) {
+    try {
+      firstData = await facebookGraphGet(
+        `https://graph.facebook.com/${META_API_VERSION}/${encodedId}` +
+        `?fields=${encodeURIComponent(fields)}`
+      );
+      selectedFields = fields;
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!firstData) {
+    throw lastError || new Error('Impossible de lire les messages Facebook.');
+  }
 
   const refs = [];
   const seenIds = new Set();
   const seenUrls = new Set();
-
-  while (nextUrl) {
-    if (seenUrls.has(nextUrl)) {
-      throw new Error('Pagination Facebook messages en boucle.');
-    }
-    seenUrls.add(nextUrl);
-
-    const data = await facebookGraphGet(nextUrl);
+  let data = firstData;
+  while (data) {
     const pageData = Array.isArray(data?.messages?.data)
       ? data.messages.data
       : (Array.isArray(data?.data) ? data.data : []);
@@ -11968,18 +12252,40 @@ async function listAllFacebookConversationMessageRefs(conversationId) {
       const id = safeString(item?.id);
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
+      const hasInlineDetail = Boolean(
+        item?.from ||
+        item?.to ||
+        Object.prototype.hasOwnProperty.call(item || {}, 'message') ||
+        item?.reply_to ||
+        item?.attachments
+      );
       refs.push({
+        ...item,
         id,
-        created_time: safeString(item?.created_time)
+        created_time: safeString(item?.created_time),
+        _facebook_inline_detail: hasInlineDetail
       });
     }
 
-    nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
+    const nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
+    if (!nextUrl) break;
+    if (seenUrls.has(nextUrl)) {
+      throw new Error('Pagination Facebook messages en boucle.');
+    }
+    seenUrls.add(nextUrl);
+    data = await facebookGraphGet(nextUrl);
   }
 
-  return refs.sort((a, b) =>
-    new Date(b?.created_time || 0) - new Date(a?.created_time || 0)
+  console.log(
+    `📘 Facebook conversation ${safeString(conversationId)} : ${refs.length} message(s) paginé(s)` +
+    `${selectedFields.includes('from,to,message') ? ' avec détails groupés' : ' (IDs/dates, détails à enrichir)'}.`
   );
+
+  return refs.sort((a, b) => {
+    const aMs = conversationTimeMs(a?.created_time);
+    const bMs = conversationTimeMs(b?.created_time);
+    return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
+  });
 }
 
 async function getFacebookMessageDetail(ref) {
@@ -12020,11 +12326,22 @@ async function getAllFacebookConversationMessages(conversationId) {
   const refs = await listAllFacebookConversationMessageRefs(conversationId);
   const messages = [];
 
-  // Aucune limite artificielle : tous les IDs accessibles sont demandés.
-  // On limite seulement la concurrence pour ménager les quotas Graph API.
+  // Aucune limite artificielle. Les messages déjà détaillés dans la
+  // pagination sont utilisés directement ; seuls les autres nécessitent un
+  // GET individuel. Cela réduit énormément les appels Graph sur les gros
+  // historiques.
   for (let index = 0; index < refs.length; index += 8) {
     const batch = refs.slice(index, index + 8);
-    const details = await Promise.all(batch.map(getFacebookMessageDetail));
+    const details = await Promise.all(
+      batch.map(ref =>
+        ref?._facebook_inline_detail
+          ? Promise.resolve({
+              ...ref,
+              meta_content_available: true
+            })
+          : getFacebookMessageDetail(ref)
+      )
+    );
     messages.push(...details);
   }
 
@@ -12219,6 +12536,34 @@ async function getFacebookHistoryProfile(customerId) {
   return {};
 }
 
+async function validateFacebookHistoryConfiguration() {
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+    throw new Error('FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  }
+
+  const tokenOwner = await facebookGraphGet(
+    `https://graph.facebook.com/${META_API_VERSION}/me?fields=${encodeURIComponent('id,name')}`
+  );
+
+  const tokenOwnerId = safeString(tokenOwner?.id);
+  if (tokenOwnerId && tokenOwnerId !== safeString(FACEBOOK_PAGE_ID)) {
+    throw new Error(
+      `FACEBOOK_PAGE_ACCESS_TOKEN appartient à l’ID ${tokenOwnerId}, mais FACEBOOK_PAGE_ID vaut ${FACEBOOK_PAGE_ID}. Générez un vrai Page Access Token pour cette Page.`
+    );
+  }
+
+  const page = await facebookGraphGet(
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}` +
+    `?fields=${encodeURIComponent('id,name')}`
+  );
+
+  const returnedId = safeString(page?.id || tokenOwnerId);
+  return {
+    pageId: returnedId || safeString(FACEBOOK_PAGE_ID),
+    pageName: safeString(page?.name || tokenOwner?.name)
+  };
+}
+
 async function runFacebookHistorySync() {
   const startedAt = new Date().toISOString();
 
@@ -12235,14 +12580,31 @@ async function runFacebookHistorySync() {
     contentUnavailableMessages: 0,
     errorCount: 0,
     lastError: '',
+    warning: '',
+    pageTokenValidated: false,
+    pageName: '',
+    tokenPageId: '',
+    syncVersion: 2,
     truncated: false
   };
   saveFacebookHistorySyncState(facebookHistorySyncJob);
 
   try {
+    const validation = await validateFacebookHistoryConfiguration();
+    facebookHistorySyncJob.pageTokenValidated = true;
+    facebookHistorySyncJob.pageName = safeString(validation?.pageName);
+    facebookHistorySyncJob.tokenPageId = safeString(validation?.pageId);
+    saveFacebookHistorySyncState(facebookHistorySyncJob);
+
     const listed = await listAllFacebookConversations();
     const conversations = listed.conversations;
     facebookHistorySyncJob.totalConversations = conversations.length;
+
+    if (!conversations.length) {
+      facebookHistorySyncJob.warning =
+        'Meta a retourné 0 conversation Messenger. Vérifiez que le token est bien un Page Access Token de cette Page, que pages_messaging/pages_read_engagement/pages_manage_metadata sont accordées et, pour les vrais clients, que l’accès avancé requis est approuvé.';
+      console.warn('⚠️ Facebook historique :', facebookHistorySyncJob.warning);
+    }
 
     const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
     const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
@@ -12250,7 +12612,7 @@ async function runFacebookHistorySync() {
 
     const knownMessageIds = new Set(
       [...live, ...existingHistory, ...persistent]
-        .map(entry => safeString(entry?.message_id || entry?.meta_message_id))
+        .flatMap(entry => conversationEntryMessageIds(entry))
         .filter(Boolean)
     );
 
@@ -12355,6 +12717,7 @@ async function runFacebookHistorySync() {
             attachments: storedAttachments,
             attachment_direction: directionKnown ? (outgoing ? 'outgoing' : 'incoming') : 'unknown',
             raw_attachments: message?.attachments || undefined,
+            meta_created_time: time,
             time
           };
 
@@ -12534,9 +12897,9 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     }
 
     const conversations = Object.keys(byContact).map(contact => {
-      const entries = byContact[contact].sort(
-        (a, b) => new Date(a.time || 0) - new Date(b.time || 0)
-      );
+      const entries = contact.startsWith('instagram:')
+        ? normalizeInstagramThreadEntries(byContact[contact])
+        : byContact[contact].sort(conversationEntryComparator);
       const lastActivity = entries[entries.length - 1];
       const last = [...entries].reverse().find(item => {
         const attachments = Array.isArray(item?.attachments) ? item.attachments.filter(Boolean) : [];
@@ -12634,7 +12997,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         awaitingResponse: Boolean(state.awaitingResponse),
         followUpsSent: Number(state.followUpsSent || 0)
       };
-    }).sort((a, b) => new Date(b.lastTime || 0) - new Date(a.lastTime || 0));
+    }).sort((a, b) => {
+      const aMs = conversationTimeMs(a.lastTime);
+      const bMs = conversationTimeMs(b.lastTime);
+      return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
+    });
 
     let visibleConversations = req.user?.role === 'commercial'
       ? conversations.filter(item => safeString(item.assignedUserId) === safeString(req.user.id))
@@ -12743,9 +13110,9 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
     }
 
-    let entries = log
-      .filter(entry => safeString(entry.contact) === contact)
-      .sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+    let entries = normalizeInstagramThreadEntries(
+      log.filter(entry => safeString(entry.contact) === contact)
+    );
 
     const targetMessageId = safeString(req.query?.messageId);
     let targetWindowApplied = false;
@@ -12764,7 +13131,7 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const beforeTime = Date.parse(safeString(req.query?.before));
     if (!targetWindowApplied && Number.isFinite(beforeTime)) {
       entries = entries.filter(entry => {
-        const ms = Date.parse(entry?.time || '');
+        const ms = normalizedConversationTime(entry);
         return Number.isFinite(ms) && ms < beforeTime;
       });
     }
