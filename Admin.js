@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA — V6.19.5
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -30,7 +30,27 @@ const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
+// V6.19.4 — historique Instagram importé via Conversations API.
+// Il reste séparé du journal temps réel afin de ne jamais être tronqué par
+// la rotation du fichier conversation-log.json.
+const INSTAGRAM_HISTORY_PATH = path.join(DATA_DIR, 'instagram-history.json');
+const INSTAGRAM_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'instagram-history-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
+
+const INSTAGRAM_ACCESS_TOKEN = (
+  process.env.INSTAGRAM_ACCESS_TOKEN ||
+  ''
+).trim();
+
+const INSTAGRAM_ACCOUNT_ID = (
+  process.env.INSTAGRAM_ACCOUNT_ID ||
+  ''
+).trim();
+
+const META_API_VERSION = (
+  process.env.META_API_VERSION ||
+  'v26.0'
+).trim();
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const SCHEDULES_PATH = path.join(DATA_DIR, 'schedules.json');
 const TASKS_PATH = path.join(DATA_DIR, 'tasks.json');
@@ -40,6 +60,7 @@ const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
+const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
@@ -135,6 +156,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_MEDIA_DIR, { recursive: true });
+fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true });
 fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
@@ -505,6 +527,14 @@ function snapshotFiles() {
     {
       source: CONVERSATIONS_LOG_PATH,
       name: 'conversation-log.json'
+    },
+    {
+      source: INSTAGRAM_HISTORY_PATH,
+      name: 'instagram-history.json'
+    },
+    {
+      source: INSTAGRAM_HISTORY_SYNC_STATE_PATH,
+      name: 'instagram-history-sync.json'
     }
 ,
     {
@@ -670,6 +700,14 @@ function createFullSnapshot(reason = 'manual') {
     )
   );
 
+  copyDirectoryRecursive(
+    CONVERSATION_PROFILE_DIR,
+    path.join(
+      snapshotDir,
+      'conversation-profile'
+    )
+  );
+
   const products =
     readJsonArray(
       PRODUCTS_PATH,
@@ -831,6 +869,27 @@ function restoreFullSnapshot(snapshotId) {
     copyDirectoryRecursive(
       snapshotConversationMedia,
       CONVERSATION_MEDIA_DIR
+    );
+  }
+
+  const snapshotConversationProfile =
+    path.join(
+      snapshotDir,
+      'conversation-profile'
+    );
+
+  if (
+    fs.existsSync(
+      snapshotConversationProfile
+    )
+  ) {
+    clearDirectory(
+      CONVERSATION_PROFILE_DIR
+    );
+
+    copyDirectoryRecursive(
+      snapshotConversationProfile,
+      CONVERSATION_PROFILE_DIR
     );
   }
 
@@ -2956,6 +3015,7 @@ function roleCanAccess(
       pathStarts(reqPath, '/api/commercial/send') ||
       pathStarts(reqPath, '/api/commercial/send-media') ||
       pathStarts(reqPath, '/api/notifications') ||
+      pathStarts(reqPath, '/api/instagram-history') ||
       pathStarts(reqPath, '/api/quick-replies') ||
       pathStarts(reqPath, '/api/presence') ||
       pathStarts(reqPath, '/api/users') ||
@@ -3462,7 +3522,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.19.3</span>
+        <span class="login-version">V6.19.4</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -3915,6 +3975,35 @@ router.get(
     res.setHeader(
       'Cache-Control',
       'private, max-age=3600'
+    );
+
+    return res.sendFile(filePath);
+  }
+);
+
+
+router.get(
+  '/conversation-profile/:filename',
+  requireAuth,
+  (req, res) => {
+    const filename =
+      path.basename(req.params.filename || '');
+
+    if (!filename) return res.sendStatus(404);
+
+    const filePath =
+      path.join(
+        CONVERSATION_PROFILE_DIR,
+        filename
+      );
+
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
+    }
+
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=86400'
     );
 
     return res.sendFile(filePath);
@@ -10488,8 +10577,92 @@ router.delete(
 // API CONVERSATIONS WHATSAPP (lecture seule)
 // ============================================================
 
+function conversationLogDedupeKey(entry) {
+  const messageId =
+    safeString(entry?.message_id) ||
+    safeString(entry?.meta_message_id);
+
+  if (messageId) {
+    return `mid:${messageId}`;
+  }
+
+  return [
+    'fallback',
+    safeString(entry?.contact),
+    safeString(entry?.time),
+    safeString(entry?.incoming),
+    safeString(entry?.reply),
+    safeString(entry?.type)
+  ].join('|');
+}
+
+let combinedConversationLogCache = {
+  liveStamp: '',
+  historyStamp: '',
+  entries: []
+};
+
+function fileChangeStamp(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+}
+
 function loadWhatsAppLog() {
-  return readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
+  const liveStamp =
+    fileChangeStamp(
+      CONVERSATIONS_LOG_PATH
+    );
+
+  const historyStamp =
+    fileChangeStamp(
+      INSTAGRAM_HISTORY_PATH
+    );
+
+  if (
+    combinedConversationLogCache.liveStamp === liveStamp &&
+    combinedConversationLogCache.historyStamp === historyStamp
+  ) {
+    return combinedConversationLogCache.entries;
+  }
+
+  const historical =
+    readJsonArray(
+      INSTAGRAM_HISTORY_PATH,
+      'instagram-history.json'
+    );
+
+  const live =
+    readJsonArray(
+      CONVERSATIONS_LOG_PATH,
+      'conversation-log.json'
+    );
+
+  // L'historique est chargé en premier et le journal temps réel l'écrase en
+  // cas de doublon. Ainsi une conversation importée puis reçue par webhook
+  // ne s'affiche jamais deux fois.
+  const merged = new Map();
+
+  for (const entry of [...historical, ...live]) {
+    merged.set(
+      conversationLogDedupeKey(entry),
+      entry
+    );
+  }
+
+  const entries =
+    [...merged.values()];
+
+  combinedConversationLogCache = {
+    liveStamp,
+    historyStamp,
+    entries
+  };
+
+  return entries;
 }
 
 function loadConversationStatesAdmin() {
@@ -10545,6 +10718,851 @@ function updateConversationStateAdmin(
   return updated;
 }
 
+// ============================================================
+// V6.19.4 — SYNCHRONISATION HISTORIQUE INSTAGRAM
+// ============================================================
+
+let instagramHistorySyncJob = {
+  running: false,
+  startedAt: '',
+  completedAt: '',
+  totalConversations: 0,
+  processedConversations: 0,
+  importedConversations: 0,
+  importedMessages: 0,
+  skippedMessages: 0,
+  errorCount: 0,
+  lastError: ''
+};
+
+function loadInstagramHistorySyncState() {
+  try {
+    if (!fs.existsSync(INSTAGRAM_HISTORY_SYNC_STATE_PATH)) {
+      return {};
+    }
+
+    const parsed = JSON.parse(
+      fs.readFileSync(
+        INSTAGRAM_HISTORY_SYNC_STATE_PATH,
+        'utf8'
+      ) || '{}'
+    );
+
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveInstagramHistorySyncState(state) {
+  writeJsonAtomic(
+    INSTAGRAM_HISTORY_SYNC_STATE_PATH,
+    state && typeof state === 'object'
+      ? state
+      : {}
+  );
+}
+
+async function instagramGraphGet(url) {
+  if (!INSTAGRAM_ACCESS_TOKEN) {
+    throw new Error('INSTAGRAM_ACCESS_TOKEN manquant.');
+  }
+
+  const response = await fetch(
+    url,
+    {
+      headers: {
+        Authorization:
+          `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
+      }
+    }
+  );
+
+  let data = {};
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      safeString(data?.error?.message) ||
+      `Instagram HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+async function listAllInstagramConversations() {
+  if (!INSTAGRAM_ACCOUNT_ID) {
+    throw new Error('INSTAGRAM_ACCOUNT_ID manquant.');
+  }
+
+  const conversations = [];
+  const seenIds = new Set();
+
+  let nextUrl =
+    `https://graph.instagram.com/${META_API_VERSION}/` +
+    `${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/conversations` +
+    `?platform=instagram&fields=id,updated_time&limit=50`;
+
+  // Garde-fou très large : 250 pages = jusqu'à environ 12 500 discussions.
+  // Si MONDECO dépasse ce volume, l'état de synchronisation indiquera que
+  // la limite de sécurité a été atteinte plutôt que de saturer Railway.
+  let pageCount = 0;
+
+  while (nextUrl && pageCount < 250) {
+    const data = await instagramGraphGet(nextUrl);
+
+    for (const item of Array.isArray(data?.data) ? data.data : []) {
+      const id = safeString(item?.id);
+      if (!id || seenIds.has(id)) continue;
+      seenIds.add(id);
+      conversations.push({
+        id,
+        updatedTime:
+          safeString(item?.updated_time)
+      });
+    }
+
+    nextUrl =
+      safeString(data?.paging?.next);
+
+    pageCount += 1;
+  }
+
+  return {
+    conversations,
+    truncated:
+      Boolean(nextUrl)
+  };
+}
+
+async function getInstagramConversationRecentMessages(conversationId) {
+  const encodedId =
+    encodeURIComponent(
+      safeString(conversationId)
+    );
+
+  // Meta limite actuellement l'accès aux détails aux 20 messages les plus
+  // récents d'une discussion. On demande directement tous les champs utiles.
+  const nestedFields =
+    'messages.limit(20){id,created_time,from,to,message}';
+
+  try {
+    const nestedUrl =
+      `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
+      `?fields=${encodeURIComponent(nestedFields)}`;
+
+    const nested =
+      await instagramGraphGet(
+        nestedUrl
+      );
+
+    const data =
+      Array.isArray(nested?.messages?.data)
+        ? nested.messages.data
+        : [];
+
+    if (
+      data.length &&
+      data.some(item =>
+        safeString(item?.from?.id) ||
+        (Array.isArray(item?.to?.data) && item.to.data.some(target => safeString(target?.id)))
+      )
+    ) {
+      return data;
+    }
+  } catch (error) {
+    // Certaines versions de Graph peuvent refuser les champs imbriqués.
+    // Le fallback ci-dessous récupère alors les IDs puis leurs détails.
+    console.warn(
+      '⚠️ Historique Instagram champs imbriqués :',
+      error.message
+    );
+  }
+
+  const listUrl =
+    `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
+    `?fields=${encodeURIComponent('messages.limit(20){id,created_time}')}`;
+
+  const listing =
+    await instagramGraphGet(
+      listUrl
+    );
+
+  const refs =
+    Array.isArray(listing?.messages?.data)
+      ? listing.messages.data.slice(0, 20)
+      : [];
+
+  const details = [];
+
+  for (let index = 0; index < refs.length; index += 5) {
+    const batch = refs.slice(index, index + 5);
+
+    const responses = await Promise.all(
+      batch.map(async ref => {
+        const messageId =
+          safeString(ref?.id);
+
+        if (!messageId) return null;
+
+        try {
+          const detailUrl =
+            `https://graph.instagram.com/${META_API_VERSION}/` +
+            `${encodeURIComponent(messageId)}` +
+            `?fields=${encodeURIComponent('id,created_time,from,to,message')}`;
+
+          return await instagramGraphGet(
+            detailUrl
+          );
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    details.push(
+      ...responses.filter(Boolean)
+    );
+  }
+
+  return details;
+}
+
+function instagramMessageParticipants(message) {
+  const ids = [];
+
+  const fromId =
+    safeString(message?.from?.id);
+
+  if (fromId) {
+    ids.push(fromId);
+  }
+
+  const toData =
+    Array.isArray(message?.to?.data)
+      ? message.to.data
+      : [];
+
+  for (const item of toData) {
+    const id = safeString(item?.id);
+    if (id) ids.push(id);
+  }
+
+  return [...new Set(ids)];
+}
+
+function instagramConversationCustomerId(messages) {
+  for (const message of messages) {
+    const participants =
+      instagramMessageParticipants(
+        message
+      );
+
+    const customer = participants.find(
+      id =>
+        id &&
+        id !== INSTAGRAM_ACCOUNT_ID
+    );
+
+    if (customer) {
+      return customer;
+    }
+  }
+
+  return '';
+}
+
+function profilePictureExtensionAdmin(contentType) {
+  const type = safeString(contentType).toLowerCase();
+  if (type.includes('png')) return 'png';
+  if (type.includes('webp')) return 'webp';
+  if (type.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+async function persistInstagramHistoryProfilePicture(
+  remoteUrl,
+  customerId
+) {
+  const url = safeString(remoteUrl);
+  const scopedId = safeString(customerId)
+    .replace(/[^a-zA-Z0-9_-]/g, '');
+
+  if (!url || !scopedId) return '';
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return '';
+
+    const buffer = Buffer.from(
+      await response.arrayBuffer()
+    );
+
+    if (!buffer.length || buffer.length > 5 * 1024 * 1024) {
+      return '';
+    }
+
+    const extension = profilePictureExtensionAdmin(
+      response.headers.get('content-type')
+    );
+
+    const filename = `instagram-${scopedId}.${extension}`;
+
+    for (const ext of ['jpg', 'png', 'webp', 'gif']) {
+      const candidate = path.join(
+        CONVERSATION_PROFILE_DIR,
+        `instagram-${scopedId}.${ext}`
+      );
+      if (ext !== extension && fs.existsSync(candidate)) {
+        try { fs.unlinkSync(candidate); } catch {}
+      }
+    }
+
+    fs.writeFileSync(
+      path.join(CONVERSATION_PROFILE_DIR, filename),
+      buffer
+    );
+
+    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+  } catch {
+    return '';
+  }
+}
+
+async function getInstagramHistoryProfile(customerId) {
+  if (!customerId) return {};
+
+  try {
+    const url =
+      `https://graph.instagram.com/${META_API_VERSION}/` +
+      `${encodeURIComponent(customerId)}` +
+      `?fields=name,username,profile_pic`;
+
+    const data =
+      await instagramGraphGet(url);
+
+    if (!data || typeof data !== 'object') {
+      return {};
+    }
+
+    const profilePicture =
+      await persistInstagramHistoryProfilePicture(
+        data.profile_pic,
+        customerId
+      );
+
+    return {
+      ...data,
+      profilePicture
+    };
+  } catch {
+    return {};
+  }
+}
+
+function minIso(a, b) {
+  const aMs = Date.parse(safeString(a));
+  const bMs = Date.parse(safeString(b));
+
+  if (!Number.isFinite(aMs)) return safeString(b);
+  if (!Number.isFinite(bMs)) return safeString(a);
+
+  return aMs <= bMs
+    ? safeString(a)
+    : safeString(b);
+}
+
+function maxIso(a, b) {
+  const aMs = Date.parse(safeString(a));
+  const bMs = Date.parse(safeString(b));
+
+  if (!Number.isFinite(aMs)) return safeString(b);
+  if (!Number.isFinite(bMs)) return safeString(a);
+
+  return aMs >= bMs
+    ? safeString(a)
+    : safeString(b);
+}
+
+async function runInstagramHistorySync() {
+  const startedAt =
+    new Date().toISOString();
+
+  instagramHistorySyncJob = {
+    running: true,
+    startedAt,
+    completedAt: '',
+    totalConversations: 0,
+    processedConversations: 0,
+    importedConversations: 0,
+    importedMessages: 0,
+    skippedMessages: 0,
+    errorCount: 0,
+    lastError: '',
+    truncated: false
+  };
+
+  saveInstagramHistorySyncState(
+    instagramHistorySyncJob
+  );
+
+  try {
+    const listed =
+      await listAllInstagramConversations();
+
+    const conversations =
+      listed.conversations;
+
+    instagramHistorySyncJob.totalConversations =
+      conversations.length;
+
+    instagramHistorySyncJob.truncated =
+      Boolean(listed.truncated);
+
+    const live =
+      readJsonArray(
+        CONVERSATIONS_LOG_PATH,
+        'conversation-log.json'
+      );
+
+    const historical =
+      readJsonArray(
+        INSTAGRAM_HISTORY_PATH,
+        'instagram-history.json'
+      );
+
+    const knownMessageIds =
+      new Set(
+        [...live, ...historical]
+          .map(entry =>
+            safeString(entry?.message_id) ||
+            safeString(entry?.meta_message_id)
+          )
+          .filter(Boolean)
+      );
+
+    const historyByKey =
+      new Map(
+        historical.map(entry => [
+          conversationLogDedupeKey(entry),
+          entry
+        ])
+      );
+
+    const states =
+      loadConversationStatesAdmin();
+
+    const profileCache = new Map();
+
+    // Cinq conversations en parallèle : assez rapide tout en restant prudent
+    // avec les limites de l'API Meta.
+    for (
+      let index = 0;
+      index < conversations.length;
+      index += 5
+    ) {
+      const batch =
+        conversations.slice(
+          index,
+          index + 5
+        );
+
+      const results =
+        await Promise.all(
+          batch.map(async conversation => {
+            try {
+              const messages =
+                await getInstagramConversationRecentMessages(
+                  conversation.id
+                );
+
+              const customerId =
+                instagramConversationCustomerId(
+                  messages
+                );
+
+              if (!customerId) {
+                return {
+                  conversation,
+                  customerId: '',
+                  messages: [],
+                  error:
+                    'Client Instagram non identifiable.'
+                };
+              }
+
+              let profile =
+                profileCache.get(
+                  customerId
+                );
+
+              if (!profile) {
+                profile =
+                  await getInstagramHistoryProfile(
+                    customerId
+                  );
+
+                profileCache.set(
+                  customerId,
+                  profile
+                );
+              }
+
+              return {
+                conversation,
+                customerId,
+                messages,
+                profile,
+                error: ''
+              };
+            } catch (error) {
+              return {
+                conversation,
+                customerId: '',
+                messages: [],
+                profile: {},
+                error:
+                  error.message
+              };
+            }
+          })
+        );
+
+      for (const result of results) {
+        instagramHistorySyncJob.processedConversations += 1;
+
+        if (result.error) {
+          instagramHistorySyncJob.errorCount += 1;
+          instagramHistorySyncJob.lastError =
+            result.error;
+          continue;
+        }
+
+        const customerId =
+          result.customerId;
+
+        const contact =
+          `instagram:${customerId}`;
+
+        let conversationAdded = false;
+        let earliestTime = '';
+        let latestInboundTime = '';
+        let lastInboundType = '';
+
+        const ordered =
+          [...result.messages]
+            .sort(
+              (a, b) =>
+                new Date(a?.created_time || 0) -
+                new Date(b?.created_time || 0)
+            );
+
+        for (const message of ordered) {
+          const messageId =
+            safeString(message?.id);
+
+          if (
+            messageId &&
+            knownMessageIds.has(messageId)
+          ) {
+            instagramHistorySyncJob.skippedMessages += 1;
+            continue;
+          }
+
+          const fromId =
+            safeString(message?.from?.id);
+
+          const outgoing =
+            fromId === INSTAGRAM_ACCOUNT_ID;
+
+          const text =
+            safeString(message?.message);
+
+          const time =
+            safeString(message?.created_time) ||
+            safeString(result.conversation?.updatedTime) ||
+            startedAt;
+
+          earliestTime =
+            earliestTime
+              ? minIso(earliestTime, time)
+              : time;
+
+          if (!outgoing) {
+            latestInboundTime =
+              latestInboundTime
+                ? maxIso(latestInboundTime, time)
+                : time;
+
+            lastInboundType =
+              text
+                ? 'text'
+                : 'history';
+          }
+
+          const entry = {
+            message_id:
+              messageId || null,
+            meta_message_id:
+              messageId || null,
+            contact,
+            external_contact:
+              customerId,
+            channel:
+              'instagram',
+            action:
+              'history_import',
+            source:
+              outgoing
+                ? 'commercial_instagram_history'
+                : 'instagram_history_import',
+            history_import:
+              true,
+            instagram_conversation_id:
+              safeString(result.conversation?.id),
+            time
+          };
+
+          if (outgoing) {
+            entry.reply = text;
+            entry.reply_sent = true;
+            entry.commercial_user_name =
+              'Équipe MONDECO';
+            entry.commercial_user_role =
+              'commercial';
+          } else {
+            entry.incoming = text;
+            entry.reply_sent = false;
+            entry.type =
+              text
+                ? 'text'
+                : 'history';
+          }
+
+          historyByKey.set(
+            conversationLogDedupeKey(entry),
+            entry
+          );
+
+          if (messageId) {
+            knownMessageIds.add(
+              messageId
+            );
+          }
+
+          conversationAdded = true;
+          instagramHistorySyncJob.importedMessages += 1;
+        }
+
+        // Même si les messages sont déjà présents, on enrichit le profil et
+        // marque la discussion comme connue de la synchronisation historique.
+        const current =
+          states[contact] &&
+          typeof states[contact] === 'object'
+            ? states[contact]
+            : {};
+
+        const profileName =
+          safeString(
+            result.profile?.name ||
+            result.profile?.username ||
+            current.profileName
+          );
+
+        const username =
+          safeString(
+            result.profile?.username ||
+            current.instagramUsername
+          );
+
+        states[contact] = {
+          ...current,
+          channel:
+            'instagram',
+          externalContact:
+            customerId,
+          profileName,
+          instagramUsername:
+            username,
+          profilePicture:
+            safeString(
+              result.profile?.profilePicture ||
+              current.profilePicture
+            ),
+          firstSeenAt:
+            current.firstSeenAt
+              ? (
+                  earliestTime
+                    ? minIso(current.firstSeenAt, earliestTime)
+                    : current.firstSeenAt
+                )
+              : (
+                  earliestTime ||
+                  safeString(result.conversation?.updatedTime) ||
+                  startedAt
+                ),
+          lastCustomerAt:
+            latestInboundTime
+              ? maxIso(
+                  current.lastCustomerAt,
+                  latestInboundTime
+                )
+              : safeString(current.lastCustomerAt),
+          lastInboundType:
+            lastInboundType ||
+            safeString(current.lastInboundType),
+          unreadCount:
+            Number(current.unreadCount || 0),
+          instagramHistoryImported:
+            true,
+          instagramHistoryConversationId:
+            safeString(result.conversation?.id),
+          instagramHistoryUpdatedTime:
+            safeString(result.conversation?.updatedTime),
+          instagramHistoryImportedAt:
+            startedAt
+        };
+
+        if (conversationAdded) {
+          instagramHistorySyncJob.importedConversations += 1;
+        }
+      }
+
+      // Sauvegarde progressive par blocs de 25 discussions (et à la fin).
+      // Cela protège contre un redémarrage Railway sans réécrire un gros JSON
+      // après chaque conversation.
+      const shouldCheckpoint =
+        instagramHistorySyncJob.processedConversations % 25 === 0 ||
+        instagramHistorySyncJob.processedConversations >= conversations.length;
+
+      if (shouldCheckpoint) {
+        const historyList =
+          [...historyByKey.values()]
+            .sort(
+              (a, b) =>
+                new Date(a?.time || 0) -
+                new Date(b?.time || 0)
+            );
+
+        writeJsonAtomic(
+          INSTAGRAM_HISTORY_PATH,
+          historyList
+        );
+
+        saveConversationStatesAdmin(
+          states
+        );
+      }
+
+      saveInstagramHistorySyncState({
+        ...instagramHistorySyncJob,
+        lastProgressAt:
+          new Date().toISOString()
+      });
+    }
+
+    instagramHistorySyncJob.running = false;
+    instagramHistorySyncJob.completedAt =
+      new Date().toISOString();
+
+    saveInstagramHistorySyncState(
+      instagramHistorySyncJob
+    );
+  } catch (error) {
+    instagramHistorySyncJob.running = false;
+    instagramHistorySyncJob.completedAt =
+      new Date().toISOString();
+    instagramHistorySyncJob.errorCount += 1;
+    instagramHistorySyncJob.lastError =
+      error.message;
+
+    saveInstagramHistorySyncState(
+      instagramHistorySyncJob
+    );
+
+    console.error(
+      '❌ Synchronisation historique Instagram :',
+      error
+    );
+  }
+}
+
+router.get(
+  '/api/instagram-history/status',
+  requireAuth,
+  (req, res) => {
+    const persisted =
+      loadInstagramHistorySyncState();
+
+    return res.json({
+      configured:
+        Boolean(
+          INSTAGRAM_ACCESS_TOKEN &&
+          INSTAGRAM_ACCOUNT_ID
+        ),
+      ...persisted,
+      ...(instagramHistorySyncJob.running
+        ? instagramHistorySyncJob
+        : {})
+    });
+  }
+);
+
+router.post(
+  '/api/instagram-history/sync',
+  requireAdminOrCommercialManager,
+  (req, res) => {
+    if (
+      !INSTAGRAM_ACCESS_TOKEN ||
+      !INSTAGRAM_ACCOUNT_ID
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Instagram n’est pas complètement configuré dans Railway.'
+        });
+    }
+
+    if (instagramHistorySyncJob.running) {
+      return res
+        .status(202)
+        .json({
+          success: true,
+          alreadyRunning: true,
+          job: instagramHistorySyncJob
+        });
+    }
+
+    // Travail en arrière-plan : la requête HTTP répond immédiatement, puis
+    // l'interface suit la progression avec /status.
+    setImmediate(() => {
+      runInstagramHistorySync()
+        .catch(error => {
+          console.error(
+            '❌ Job historique Instagram :',
+            error
+          );
+        });
+    });
+
+    return res
+      .status(202)
+      .json({
+        success: true,
+        started: true
+      });
+  }
+);
+
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
     const log = loadWhatsAppLog();
@@ -10593,6 +11611,12 @@ router.get('/api/conversations', requireAuth, (req, res) => {
           ),
         instagramUsername:
           safeString(state?.instagramUsername),
+        profilePicture:
+          safeString(state?.profilePicture),
+        aiModePreference:
+          safeString(state?.aiModePreference),
+        aiModeChoicePending:
+          Boolean(state?.aiModeChoicePending),
         hasAdReferral: Boolean(state.cameFromAd || state.adReferral),
         adHeadline: safeString(state?.adReferral?.headline),
         adBody: safeString(state?.adReferral?.body),
@@ -10855,6 +11879,9 @@ router.post(
           manualTakeover: true,
           humanPaused: true,
           pausedUntil: null,
+          aiModePreference: 'commercial',
+          aiModeChoicePending: false,
+          aiModeSelectedAt: new Date().toISOString(),
           commercialAttention: false,
           commercialAttentionReason: '',
           imageNeedsCommercial: false,
@@ -10896,6 +11923,9 @@ router.post(
           manualTakeover: false,
           humanPaused: false,
           pausedUntil: null,
+          aiModePreference: 'ai',
+          aiModeChoicePending: false,
+          aiModeSelectedAt: new Date().toISOString(),
           commercialAttention: false,
           commercialAttentionReason: '',
           imageNeedsCommercial: false,
@@ -10981,8 +12011,13 @@ router.get(
           'image_analysis_error'
         ]);
 
+      // Notifications = uniquement le journal temps réel. L'historique
+      // Instagram importé ne doit jamais générer d'anciennes alertes.
       const events =
-        loadWhatsAppLog()
+        readJsonArray(
+          CONVERSATIONS_LOG_PATH,
+          'conversation-log.json'
+        )
           .filter(entry => {
             const timeMs =
               Date.parse(entry?.time || '');
@@ -11217,6 +12252,9 @@ router.get(
 
       conversationMediaDirectory:
         fs.existsSync(CONVERSATION_MEDIA_DIR),
+
+      conversationProfileDirectory:
+        fs.existsSync(CONVERSATION_PROFILE_DIR),
 
       backupsDirectory:
         fs.existsSync(BACKUPS_DIR),
