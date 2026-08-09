@@ -951,6 +951,140 @@ function messageHasAdReferral(message) {
   );
 }
 
+function inferAdProductHint(referral) {
+  const rawTitle =
+    safeString(
+      referral?.headline ||
+      referral?.ads_context_data?.ad_title ||
+      referral?.ad_title ||
+      referral?.ref ||
+      referral?.body
+    );
+
+  if (!rawTitle) {
+    return '';
+  }
+
+  // Les campagnes MONDECO utilisent souvent :
+  // "Table Opale | Image 01 | Test | Broad | WhatsApp".
+  // Le premier segment correspond au produit créatif.
+  return safeString(
+    rawTitle
+      .split('|')[0]
+      .replace(/\s+/g, ' ')
+  ).slice(0, 140);
+}
+
+function normalizeAdReferral(referral) {
+  if (!referral || typeof referral !== 'object') {
+    return null;
+  }
+
+  const headline =
+    safeString(
+      referral?.headline ||
+      referral?.ads_context_data?.ad_title ||
+      referral?.ad_title ||
+      referral?.ref
+    );
+
+  const body =
+    safeString(
+      referral?.body ||
+      referral?.ads_context_data?.ad_body ||
+      referral?.ref
+    );
+
+  const normalized = {
+    sourceId:
+      safeString(
+        referral?.ad_id ||
+        referral?.source_id
+      ),
+    sourceUrl:
+      safeString(
+        referral?.source_url
+      ),
+    headline,
+    body,
+    productHint:
+      inferAdProductHint(referral)
+  };
+
+  if (
+    !normalized.sourceId &&
+    !normalized.sourceUrl &&
+    !normalized.headline &&
+    !normalized.body
+  ) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function rememberAdReferral(contact, referral) {
+  const normalized =
+    normalizeAdReferral(referral);
+
+  if (!normalized) {
+    return null;
+  }
+
+  return updateConversationState(
+    contact,
+    current => ({
+      ...current,
+      cameFromAd: true,
+      adReferral: {
+        ...(current.adReferral || {}),
+        ...normalized,
+        // Ne pas effacer un produit déjà identifié si Meta renvoie
+        // ensuite un webhook moins riche.
+        productHint:
+          normalized.productHint ||
+          safeString(current?.adReferral?.productHint)
+      }
+    })
+  );
+}
+
+function getConversationAdContext(contact) {
+  const state =
+    getConversationState(contact) || {};
+
+  const ad =
+    state?.adReferral &&
+    typeof state.adReferral === 'object'
+      ? state.adReferral
+      : null;
+
+  if (!ad) {
+    return null;
+  }
+
+  const productHint =
+    safeString(
+      ad.productHint ||
+      inferAdProductHint({
+        headline: ad.headline,
+        body: ad.body
+      })
+    );
+
+  return {
+    headline:
+      safeString(ad.headline),
+    body:
+      safeString(ad.body),
+    sourceId:
+      safeString(ad.sourceId),
+    sourceUrl:
+      safeString(ad.sourceUrl),
+    productHint
+  };
+}
+
 function audienceAllows(
   settings,
   phone,
@@ -1681,12 +1815,59 @@ function buildSmartBusinessContext(
 
 function buildBusinessSystemPrompt(
   userText = '',
-  channel = 'whatsapp'
+  channel = 'whatsapp',
+  options = {}
 ) {
+  const contact =
+    safeString(options?.contact);
+
+  const adContext =
+    options?.adContext ||
+    (contact
+      ? getConversationAdContext(contact)
+      : null);
+
+  // Important : la recherche catalogue doit utiliser non seulement le
+  // texte du client, mais aussi le produit de la publicité d'origine.
+  // Ainsi un simple « Prix » dans une publicité Table Opale charge bien
+  // la fiche Opale dans le contexte IA.
+  const contextSearchText = [
+    safeString(userText),
+    safeString(adContext?.productHint),
+    safeString(adContext?.headline),
+    safeString(adContext?.body)
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   const businessContext =
     buildSmartBusinessContext(
-      userText
+      contextSearchText || userText
     );
+
+  const adSection =
+    adContext &&
+    (
+      adContext.productHint ||
+      adContext.headline ||
+      adContext.body
+    )
+      ? `
+==================================================
+CONTEXTE DE LA PUBLICITÉ À L'ORIGINE DE LA CONVERSATION
+==================================================
+Produit/référence publicitaire : ${safeString(adContext.productHint) || 'Non identifié'}
+Titre de la publicité : ${safeString(adContext.headline) || 'Non disponible'}
+Texte/référence : ${safeString(adContext.body) || 'Non disponible'}
+
+RÈGLE DE CONTINUITÉ PRODUIT :
+- Le contexte publicitaire indique le produit que le client est en train de consulter.
+- Tant que le client ne cite PAS explicitement un autre modèle, toute référence générique au produit (« prix », « combien », « table », « table à manger », « table de cuisine », « ce modèle », « celle-ci », « dimensions », « disponible ? », etc.) concerne ce produit publicitaire.
+- Exemple : si le produit publicitaire est « Table Opale », « Prix », « table », « table de cuisine » ou « table à manger » signifie Table Opale.
+- Si le client cite clairement un autre modèle, bascule vers ce nouveau modèle.
+- Le titre publicitaire sert uniquement à identifier le produit. Prix, dimensions, disponibilité et promotions doivent toujours provenir du catalogue MONDECO fiable ci-dessous.
+`
+      : '';
 
   return `
 Tu es l'assistant digital officiel de MONDECO, entreprise de meubles en Tunisie.
@@ -1717,7 +1898,7 @@ RÈGLES :
 - Une demande showroom doit contenir une intention de lieu/adresse (ex. وين، فين، العنوان, adresse, showroom, magasin ou une ville).
 - Si un nom de modèle accompagne une demande de prix, traite d'abord le produit et son prix avant toute information showroom.
 - Ne cite pas un produit qui n'apparaît pas dans le contexte de cette requête.
-
+${adSection}
 ==================================================
 CONTEXTE MONDECO PERTINENT
 ==================================================
@@ -2200,7 +2381,10 @@ async function generateReply(
       content:
         buildBusinessSystemPrompt(
           cleanText,
-          channel
+          channel,
+          {
+            contact: userId
+          }
         )
     },
 
@@ -4052,35 +4236,9 @@ async function processSingleInstagramEvent(event) {
   );
 
   if (isAdReferral) {
-    updateConversationState(
+    rememberAdReferral(
       contact,
-      current => ({
-        ...current,
-        cameFromAd:
-          true,
-        adReferral: {
-          ...(current.adReferral || {}),
-          sourceId:
-            safeString(
-              referral?.ad_id ||
-              referral?.source_id
-            ),
-          sourceUrl:
-            safeString(
-              referral?.source_url
-            ),
-          headline:
-            safeString(
-              referral
-                ?.ads_context_data
-                ?.ad_title
-            ),
-          body:
-            safeString(
-              referral?.ref
-            )
-        }
-      })
+      referral
     );
   }
 
@@ -4448,6 +4606,13 @@ async function processSingleMessage(message) {
       externalContact: from
     }
   );
+
+  if (isAdReferral) {
+    rememberAdReferral(
+      from,
+      message?.referral || null
+    );
+  }
 
   const decision =
     await checkWhetherBotShouldReply(
