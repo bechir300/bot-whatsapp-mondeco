@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20.3 — Historique complet + chronologie Meta
+   MONDECO V6.20.4 — Storage Rescue + historique omnicanal
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20.3</span>
+                <span class="inbox-version">V6.20.4</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -6364,8 +6364,14 @@ async function refreshHome(){
 
     if(storage.persistentConfigured && storage.writable){
       storageNotice.className = 'notice success';
+      const freeMb = Number(storage.freeBytes || 0) > 0
+        ? ` • ${(Number(storage.freeBytes) / (1024 * 1024)).toFixed(0)} MB libres`
+        : '';
+      const storageMode = storage.storageMode === 'compact'
+        ? ' • mode compact'
+        : '';
       storageNotice.textContent =
-        `Stockage persistant actif : ${storage.dataDir}`;
+        `Stockage persistant actif : ${storage.dataDir}${storageMode}${freeMb}`;
     }else{
       storageNotice.className = 'notice warning';
       storageNotice.textContent =
@@ -7708,7 +7714,7 @@ function conversationListTags(item){
 function renderConversationsList(){
   updateConversationFilterCounts();
 
-  // V6.20.3 : la boîte de réception suit strictement la chronologie du
+  // V6.20.4 : la boîte de réception suit strictement la chronologie du
   // dernier message réel. Le SLA reste visuellement prioritaire (badge/rouge),
   // mais ne déplace plus artificiellement une ancienne conversation au-dessus
   // d'une conversation plus récente.
