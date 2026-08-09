@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.19.4 — Responsable commercial, planning & SLA + handoff strict
+   MONDECO V6.19.6 — Inbox commerciale Instagram + WhatsApp
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4389,6 +4389,26 @@ tbody tr:hover{
 .workday-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.workday-card{padding:16px;border:1px solid var(--line);border-radius:14px;background:#fff}.workday-platforms{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.task-row:last-child{border-bottom:0}.task-status-select{min-width:130px}.compact-date-input{min-height:38px;border:1px solid var(--line);border-radius:9px;padding:6px 9px;background:#fff}
 @media(max-width:1000px){.operations-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.operations-user{grid-template-columns:1fr 1fr}.manager-work-grid{grid-template-columns:1fr!important}}
 @media(max-width:620px){.operations-summary-grid,.workday-grid,.manager-form-row{grid-template-columns:1fr}.operations-user{grid-template-columns:1fr}.task-row{grid-template-columns:1fr}.task-status-select{width:100%}}
+
+
+/* V6.19.6 — Inbox commerciale mobile-first */
+.inbox-conversation-item{min-height:96px!important;align-items:center!important}
+.inbox-item-main{display:flex;flex-direction:column;gap:4px}.inbox-item-name-row{justify-content:space-between;gap:8px}
+.inbox-item-platform-row,.inbox-item-status-row,.inbox-item-source-row{display:flex;align-items:center;flex-wrap:wrap;gap:7px;min-width:0;font-size:9.5px;color:var(--muted)}
+.inbox-item-platform-row .urgent-text{color:#b42318;font-weight:900}.inbox-item-status-row .ai-paused{color:#166534;font-weight:800}.inbox-item-status-row .ai-active{color:#075985;font-weight:800}.inbox-item-status-row .assigned{font-weight:800;color:#3f3a34}.inbox-item-source-row{color:#7a4b00;font-weight:800}
+.inbox-item-preview{font-size:12px!important;color:#2f2b27!important}.sla-human{font-weight:900}.sla-human.late{color:#b42318}.sla-human.pending{color:#b54708}
+.inbox-header-state{margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:9.5px;font-weight:900}.inbox-header-state.ai{color:#075985}.inbox-header-state.human{color:#166534}
+.inbox-source-context{max-width:720px;margin:10px auto 14px;padding:12px 14px;border:1px solid #d9d3cc;border-radius:12px;background:#fff;font-size:11px}.inbox-history-limit{margin:10px 14px;padding:9px 11px;border-radius:10px;background:#f6f7f9;border:1px solid #e0e4e8;color:var(--muted);font-size:11px;line-height:1.45}
+
+.inbox-source-context-media{display:block;width:min(300px,100%);max-height:220px;margin-top:9px;border-radius:10px;object-fit:cover;background:#f3f1ee}
+.inbox-media-list.gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-width:430px}.inbox-media-list.gallery .inbox-media-card{max-width:none!important}.inbox-media-list.gallery .inbox-media-image{height:180px;object-fit:cover}
+.conversation-media-lightbox{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.88)}.conversation-media-lightbox.hidden{display:none}.conversation-media-lightbox img{max-width:min(1100px,96vw);max-height:92vh;object-fit:contain;border-radius:12px}.conversation-media-lightbox-close{position:fixed;right:18px;top:18px;width:44px;height:44px;border:0;border-radius:50%;background:#fff;color:#111;font-size:28px;cursor:pointer}
+.notification-panel-backdrop{position:fixed;inset:0;z-index:9000;display:flex;justify-content:flex-end;background:rgba(17,16,15,.28)}.notification-panel-backdrop.hidden{display:none}.notification-panel{width:min(430px,100vw);height:100vh;display:flex;flex-direction:column;background:#fff;box-shadow:-16px 0 40px rgba(0,0,0,.16)}
+.notification-panel-head{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}.notification-panel-head strong{display:block;font-size:18px}.notification-panel-head span{display:block;margin-top:2px;color:var(--muted);font-size:10px}.notification-panel-actions{padding:10px 12px;border-bottom:1px solid var(--line)}
+.notification-panel-filters{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.notification-filter{flex:0 0 auto;border:1px solid var(--line);border-radius:999px;background:#fff;padding:7px 10px;font-size:10px;font-weight:800;cursor:pointer}.notification-filter.active{background:#11100f;color:#fff;border-color:#11100f}.notification-panel-links{display:flex;justify-content:space-between;gap:10px;margin-top:10px}.notification-panel-links button{border:0;background:transparent;color:#1473e6;font-size:10px;font-weight:800;cursor:pointer;padding:4px 0}.notification-panel-list{flex:1;overflow:auto}
+.notification-item{width:100%;display:grid;grid-template-columns:46px minmax(0,1fr) auto;gap:10px;align-items:start;padding:12px 14px;border:0;border-bottom:1px solid var(--line);background:#fff;text-align:left;cursor:pointer}.notification-item.unread{background:#f5f9ff}.notification-item-main{min-width:0}.notification-item-name{font-size:12px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.notification-item-meta{margin-top:2px;color:var(--muted);font-size:9px}.notification-item-preview{margin-top:5px;font-size:11px;line-height:1.4;color:#2f2b27;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.notification-item-time{font-size:9px;color:var(--muted);white-space:nowrap}.notification-item-thumb{width:52px;height:42px;border-radius:8px;object-fit:cover;margin-top:6px}.notification-unread-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#1473e6;margin-left:5px}
+.load-more-conversations,.load-older-messages{width:calc(100% - 24px);margin:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;padding:9px 12px;font-size:10px;font-weight:800;cursor:pointer}.load-older-messages{width:auto;display:block;margin:6px auto 14px}
+@media(max-width:760px){.inbox-conversation-item{min-height:100px!important;padding:12px 10px!important}.inbox-item-preview{white-space:normal!important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.inbox-header-actions{max-width:46%;overflow-x:auto;flex-wrap:nowrap;justify-content:flex-start}.inbox-header-btn{flex:0 0 auto;min-height:38px}.inbox-thread{padding-bottom:150px!important}.inbox-media-list.gallery{max-width:100%}.inbox-media-list.gallery .inbox-media-image{height:130px}.notification-panel{width:100vw}.conversation-media-lightbox{padding:8px}}
 
 </style>
 </head>
@@ -4681,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.19.4</span>
+                <span class="inbox-version">V6.19.6</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram MONDECO</div>
             </div>
@@ -4769,6 +4789,33 @@ tbody tr:hover{
         </aside>
       </div>
     </section>
+
+    <div id="notificationPanelBackdrop" class="notification-panel-backdrop hidden" onclick="closeNotificationPanel()">
+      <aside class="notification-panel" onclick="event.stopPropagation()">
+        <div class="notification-panel-head">
+          <div><strong>Notifications</strong><span>Nouveaux messages et alertes</span></div>
+          <button type="button" class="icon-btn" onclick="closeNotificationPanel()" aria-label="Fermer">×</button>
+        </div>
+        <div class="notification-panel-actions">
+          <div class="notification-panel-filters">
+            <button class="notification-filter active" data-notification-filter="all">Tous</button>
+            <button class="notification-filter" data-notification-filter="instagram">Instagram</button>
+            <button class="notification-filter" data-notification-filter="whatsapp">WhatsApp</button>
+            <button class="notification-filter" data-notification-filter="commercial">Commercial requis</button>
+          </div>
+          <div class="notification-panel-links">
+            <button type="button" onclick="showAllNotificationMessages()">Tout voir</button>
+            <button type="button" onclick="markAllNotificationsRead()">Marquer tout comme lu</button>
+          </div>
+        </div>
+        <div id="notificationPanelList" class="notification-panel-list"><div class="empty">Chargement...</div></div>
+      </aside>
+    </div>
+
+    <div id="conversationMediaLightbox" class="conversation-media-lightbox hidden" onclick="closeMediaLightbox()">
+      <button class="conversation-media-lightbox-close" type="button" onclick="closeMediaLightbox()" aria-label="Fermer">×</button>
+      <img id="conversationMediaLightboxImage" alt="Aperçu média" onclick="event.stopPropagation()">
+    </div>
 
     <!-- ================================================== -->
     <!-- MON PLANNING COMMERCIAL -->
@@ -6198,8 +6245,6 @@ function showPage(name){
   if(name === 'woocommerce') loadWooCommerceStatus();
   if(name === 'instructions') loadInstructions();
   if(name === 'conversations'){
-    conversationNotificationUnread = 0;
-    updateNotificationBadges();
     Promise.all([
       loadConversations(),
       loadQuickReplies()
@@ -6860,6 +6905,7 @@ let conversations = [];
 let quickReplies = [];
 let conversationFilter = 'all';
 let selectedConversationContact = '';
+let selectedConversationTargetMessageId = '';
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
@@ -6868,6 +6914,12 @@ const notificationSeenIds = new Set();
 let instagramHistoryAutoSyncChecked = false;
 let instagramHistoryStatusTimer = null;
 let instagramHistoryWasRunning = false;
+let conversationListTotal = 0;
+let conversationListHasMore = false;
+let conversationSearchTimer = null;
+let conversationServerCounts = null;
+let notificationPanelItems = [];
+let notificationPanelFilter = 'all';
 
 function canManageInstagramHistory(){
   return ['admin','responsable_commercial'].includes(
@@ -6889,7 +6941,7 @@ function setConversationFilter(filter){
       );
     });
 
-  renderConversationsList();
+  loadConversations();
 }
 
 function openAllNewMessages(){
@@ -6920,7 +6972,9 @@ function renderInstagramHistoryStatus(status = {}){
     const done = Number(status.processedConversations || 0);
     const total = Number(status.totalConversations || 0);
     const imported = Number(status.importedMessages || 0);
-    label.textContent = `Instagram : synchronisation historique ${done}/${total || '…'} discussions • ${imported} messages importés`;
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
+    label.textContent = `Instagram : synchronisation historique ${done}/${total || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
     return;
   }
 
@@ -6929,8 +6983,10 @@ function renderInstagramHistoryStatus(status = {}){
   if(status.completedAt){
     const total = Number(status.totalConversations || 0);
     const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
     const errors = Number(status.errorCount || 0);
-    label.textContent = `Instagram : historique synchronisé • ${total} discussions analysées • ${imported} nouveaux messages importés${errors ? ` • ${errors} erreur(s)` : ''}`;
+    label.textContent = `Instagram : historique synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
   }else{
     label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
   }
@@ -7012,41 +7068,42 @@ async function startInstagramHistorySync({ silent = false } = {}){
 }
 
 
-async function loadConversations(){
+async function loadConversations({ append = false } = {}){
   try{
-    conversations =
-      await apiFetch(
-        `${API}/conversations`
-      );
-
+    const search = String(document.getElementById('conversationSearch')?.value || '').trim();
+    const offset = append ? conversations.length : 0;
+    const params = new URLSearchParams({
+      paged:'1',
+      limit:'80',
+      offset:String(offset),
+      filter:conversationFilter
+    });
+    if(search) params.set('q',search);
+    const data = await apiFetch(`${API}/conversations?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    conversations = append
+      ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
+      : items;
+    conversationListTotal = Number(data?.total || conversations.length);
+    conversationListHasMore = data?.hasMore === true;
+    conversationServerCounts = data?.counts && typeof data.counts === 'object'
+      ? data.counts
+      : null;
     renderConversationsList();
-
-    if(
-      selectedConversationContact &&
-      conversations.some(
-        item =>
-          item.contact ===
-          selectedConversationContact
-      )
-    ){
+    if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
       updateConversationFilterCounts();
     }
   }catch(error){
-    const container =
-      document.getElementById(
-        'conversationListContainer'
-      );
-
+    const container=document.getElementById('conversationListContainer');
     if(container){
-      container.innerHTML = `
-        <div class="empty">
-          <strong>Impossible de charger les conversations</strong>
-          ${escapeHtml(error.message)}
-        </div>
-      `;
+      container.innerHTML=`<div class="empty"><strong>Impossible de charger les conversations</strong>${escapeHtml(error.message)}</div>`;
     }
   }
 }
+
+window.loadMoreConversations = async function(){
+  if(conversationListHasMore) await loadConversations({append:true});
+};
 
 function actionLabel(action){
   const map = {
@@ -7330,7 +7387,7 @@ function updateConversationFilterCounts(){
         !item.resolved
     );
 
-  const counts = {
+  const localCounts = {
     all:
       open.length,
     whatsapp:
@@ -7378,6 +7435,12 @@ function updateConversationFilterCounts(){
       ).length
   };
 
+  const counts =
+    conversationServerCounts &&
+    typeof conversationServerCounts === 'object'
+      ? conversationServerCounts
+      : localCounts;
+
   const mapping = {
     filterCountAll:'all',
     filterCountWhatsApp:'whatsapp',
@@ -7406,15 +7469,6 @@ function updateConversationFilterCounts(){
     }
   }
 
-  const unreadTotal =
-    counts.unread;
-
-  conversationNotificationUnread =
-    Math.max(
-      conversationNotificationUnread,
-      unreadTotal
-    );
-
   updateNotificationBadges();
 }
 
@@ -7428,6 +7482,25 @@ function formatSlaClock(ms){
   return `${negative ? '+' : ''}${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 
+function formatDurationHuman(ms, { includeSeconds = false } = {}){
+  const totalSeconds=Math.max(0,Math.floor(Math.abs(Number(ms))/1000));
+  const hours=Math.floor(totalSeconds/3600);
+  const minutes=Math.floor((totalSeconds%3600)/60);
+  const seconds=totalSeconds%60;
+  const parts=[];
+  if(hours) parts.push(`${hours} h`);
+  if(minutes || hours) parts.push(`${minutes} min`);
+  if(includeSeconds && !hours) parts.push(`${seconds} s`);
+  return parts.join(' ') || `${seconds} s`;
+}
+function formatSlaHuman(ms){
+  if(ms===null || ms===undefined || !Number.isFinite(Number(ms))) return '';
+  const value=Number(ms);
+  return value < 0
+    ? `🔴 En retard de ${formatDurationHuman(value)}`
+    : `🟠 Réponse attendue dans ${formatDurationHuman(value,{includeSeconds:value<5*60*1000})}`;
+}
+
 function liveSlaForConversation(item){
   const due = Date.parse(item?.slaDueAt || item?.sla?.dueAt || '');
   const status = String(item?.slaStatus || item?.sla?.status || '');
@@ -7437,115 +7510,29 @@ function liveSlaForConversation(item){
 }
 
 function conversationListTags(item){
-  const tags = [];
-
-  if(conversationChannel(item) === 'instagram'){
-    tags.push(
-      '<span class="inbox-tag" style="background:#fff0f6;border-color:#f4bfd8;color:#a21caf">◎ Instagram</span>'
-    );
-  }else{
-    tags.push(
-      '<span class="inbox-tag green">● WhatsApp</span>'
-    );
-  }
-
-  if(
-    item.commercialAttention ||
-    item.imageNeedsCommercial
-  ){
-    tags.push(
-      '<span class="inbox-tag red">⚠️ Commercial requis</span>'
-    );
-  }
-
-  if(item.humanPaused || item.manualTakeover){
-    tags.push(
-      '<span class="inbox-tag green">👤 Commercial • IA en pause</span>'
-    );
-  }else if(item.aiModeChoicePending){
-    tags.push(
-      '<span class="inbox-tag" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">⏳ Choix IA/Commercial</span>'
-    );
-  }else{
-    tags.push(
-      '<span class="inbox-tag" style="background:#eef7ff;border-color:#b9dcff;color:#075985">🤖 IA active</span>'
-    );
-  }
-
-  if(item.hasAdReferral){
-    tags.push(
-      '<span class="inbox-tag">📣 Publicité</span>'
-    );
-  }
-
-  if(item.assignedTo){
-    tags.push(
-      `<span class="inbox-tag">${escapeHtml(item.assignedTo)}</span>`
-    );
-  }
-
-  const liveSla = liveSlaForConversation(item);
-  if(liveSla){
-    tags.push(`<span class="sla-pill ${liveSla.status === 'late' ? 'late' : ''}">⏱ ${liveSla.status === 'late' ? 'Retard ' : ''}${formatSlaClock(liveSla.remainingMs)}</span>`);
-  }
-
-  return tags.join('');
+  const channel=conversationChannel(item);
+  const paused=Boolean(item.humanPaused||item.manualTakeover||item.commercialAttention||item.imageNeedsCommercial);
+  const liveSla=liveSlaForConversation(item);
+  const sourceContext=item.sourceContext||null;
+  const line2=`<span class="inbox-item-platform-row"><span>${channel==='instagram'?'Instagram':'WhatsApp'}</span>${(item.commercialAttention||item.imageNeedsCommercial)?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
+  const status=[];
+  if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
+  status.push(paused?'<span class="ai-paused">🤖 IA en pause</span>':item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
+  if(liveSla) status.push(`<span class="sla-human ${liveSla.status}">${escapeHtml(formatSlaHuman(liveSla.remainingMs))}</span>`);
+  const sourceLabel=item.hasAdReferral
+    ? `📣 ${item.adProductHint||item.adHeadline||'Publicité Meta'}`
+    : sourceContext&&sourceContext.type&&sourceContext.type!=='direct'
+      ? `${sourceContext.type==='story'?'⭕':sourceContext.type==='reel'?'🎬':sourceContext.type==='share'?'🔗':'💬'} ${sourceContext.label||'Source Instagram'}`
+      : '';
+  return `${line2}<span class="inbox-item-status-row">${status.join('')}</span>${sourceLabel?`<span class="inbox-item-source-row">${escapeHtml(sourceLabel)}</span>`:''}`;
 }
 
 function renderConversationsList(){
   updateConversationFilterCounts();
 
-  const search =
-    String(
-      document
-        .getElementById(
-          'conversationSearch'
-        )
-        ?.value ||
-      ''
-    )
-      .trim()
-      .toLowerCase();
-
   const filtered =
     conversations
-      .filter(
-        conversationMatchesFilter
-      )
-      .filter(item => {
-        if(!search){
-          return true;
-        }
-
-        return [
-          item.contact,
-          item.externalContact,
-          item.channel,
-          item.instagramUsername,
-          item.profileName,
-          item.lastIncoming,
-          item.lastReply,
-          item.adHeadline,
-          item.adBody,
-          item.adSourceId,
-          item.assignedTo,
-          item.activeProductName
-        ]
-          .map(
-            value =>
-              String(
-                value ||
-                ''
-              )
-                .toLowerCase()
-          )
-          .some(
-            value =>
-              value.includes(
-                search
-              )
-          );
-      })
+      .slice()
       .sort((a,b) => {
         const sa=liveSlaForConversation(a);
         const sb=liveSlaForConversation(b);
@@ -7563,7 +7550,7 @@ function renderConversationsList(){
 
   if(label){
     label.textContent =
-      `${filtered.length} conversation${filtered.length > 1 ? 's' : ''}`;
+      `${conversationListTotal} conversation${conversationListTotal > 1 ? 's' : ''}`;
   }
 
   const container =
@@ -7594,14 +7581,8 @@ function renderConversationsList(){
           );
 
         const preview =
+          item.lastMessagePreview ||
           item.lastIncoming ||
-          (
-            ['image','attachment'].includes(
-              String(item.lastInboundType || '').toLowerCase()
-            )
-              ? '📷 Photo / média reçu'
-              : ''
-          ) ||
           item.lastReply ||
           'Nouvelle conversation';
 
@@ -7639,9 +7620,7 @@ function renderConversationsList(){
                 ${escapeHtml(preview)}
               </span>
 
-              <span class="inbox-item-tags">
-                ${conversationListTags(item)}
-              </span>
+              ${conversationListTags(item)}
             </span>
 
             <span class="inbox-item-side">
@@ -7651,7 +7630,10 @@ function renderConversationsList(){
           </button>
         `;
       })
-      .join('');
+      .join('') +
+      (conversationListHasMore
+        ? `<button class="load-more-conversations" type="button" onclick="loadMoreConversations()">Afficher plus (${Math.max(0,conversationListTotal-conversations.length)} restantes)</button>`
+        : '');
 }
 
 function renderConversationHeader(
@@ -7699,7 +7681,9 @@ function renderConversationHeader(
   const paused =
     Boolean(
       state.manualTakeover ||
-      state.humanPaused
+      state.humanPaused ||
+      state.commercialAttention ||
+      state.imageNeedsCommercial
     );
 
   const slaDueMs = Date.parse(state?.sla?.dueAt || '');
@@ -7727,14 +7711,11 @@ function renderConversationHeader(
             : `WhatsApp • +${escapeHtml(conversationExternalContact(item))}`}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
-        <div class="inbox-status-line">
-          ${paused
-            ? '<span class="inbox-status-human">👤 Commercial en charge • IA en pause</span>'
-            : state.aiModeChoicePending
-              ? '<span class="inbox-status-ai">⏳ Le client choisit IA ou Commercial</span>'
-              : '<span class="inbox-status-ai">🤖 IA MONDECO active • réponses automatiques</span>'}
-          ${selectedSlaRemaining !== null ? `<span class="sla-pill ${selectedSlaRemaining < 0 ? 'late' : ''}">⏱ ${selectedSlaRemaining < 0 ? 'Retard ' : 'Réponse avant '}${formatSlaClock(selectedSlaRemaining)}</span>` : ''}
+        <div class="inbox-header-state ${paused ? 'human' : 'ai'}">
+          ${paused ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE' : '🤖 IA ACTIVE • Réponses automatiques'}
+          ${Number.isFinite(selectedSlaRemaining) ? ` • ${escapeHtml(formatSlaHuman(selectedSlaRemaining))}` : ''}
         </div>
+
       </div>
     </div>
 
@@ -7834,7 +7815,7 @@ function renderConversationAttachment(item){
 
   if(type === 'image' && url){
     return `
-      <a class="inbox-media-card" href="${escapeHtml(url)}" target="_blank" rel="noopener">
+      <a class="inbox-media-card" href="${escapeHtml(url)}" onclick="openMediaLightbox('${escapeHtml(url)}','${escapeHtml(name)}');return false">
         <img class="inbox-media-image" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy">
         <div class="inbox-media-caption">📷 ${escapeHtml(name)}</div>
       </a>
@@ -7961,7 +7942,7 @@ function renderThreadMessage(
           : '🤖 IA MONDECO • Réponse automatique';
 
   return `
-    <div class="inbox-message-row ${type === 'incoming' ? 'incoming' : commercial ? 'commercial' : 'bot'}">
+    <div class="inbox-message-row ${type === 'incoming' ? 'incoming' : commercial ? 'commercial' : 'bot'}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
       <div class="inbox-message-wrap">
         <div class="inbox-message-label">
           ${label}
@@ -7981,7 +7962,7 @@ function renderThreadMessage(
         ${
           attachments.length
             ? `
-              <div class="inbox-media-list">
+              <div class="inbox-media-list ${attachments.length > 1 ? 'gallery' : ''}">
                 ${attachments.map(renderConversationAttachment).join('')}
               </div>
             `
@@ -7995,6 +7976,53 @@ function renderThreadMessage(
       </div>
     </div>
   `;
+}
+
+function conversationSourceCardHtml(state = {}){
+  const source=state?.sourceContext&&typeof state.sourceContext==='object'?state.sourceContext:null;
+  const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
+  if(ad){
+    const media=ad.storedMediaUrl||source?.previewUrl||ad.mediaUrl||'';
+    const mediaType=String(source?.previewType||ad.mediaType||'').toLowerCase();
+    const title=ad.adTitle||ad.headline||'';
+    const product=ad.productHint||'';
+    const campaign=ad.campaignName||ad.campaignId||'';
+    const adset=ad.adsetName||ad.adsetId||'';
+    const creative=ad.creativeName||ad.creativeId||'';
+    const mediaHtml=mediaType==='image'&&media
+      ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Visuel publicité" loading="lazy">`
+      : mediaType==='video'&&media
+        ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
+        : '';
+    return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
+  }
+  if(!source||!source.type||source.type==='direct') return '';
+  const icon=source.type==='story'?'⭕':source.type==='reel'?'🎬':source.type==='share'?'🔗':'🖼';
+  const media=source.previewUrl||source.url||'';
+  const mediaType=String(source.previewType||'').toLowerCase();
+  const mediaHtml=mediaType==='image'&&media
+    ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Contexte Instagram" loading="lazy">`
+    : mediaType==='video'&&media
+      ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
+      : '';
+  return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||'Source Instagram')}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
+}
+
+window.openMediaLightbox=function(url,alt=''){
+  const safe=safeConversationMediaUrl(url);if(!safe)return;
+  const overlay=document.getElementById('conversationMediaLightbox');const image=document.getElementById('conversationMediaLightboxImage');if(!overlay||!image)return;
+  image.src=safe;image.alt=alt||'Aperçu média';overlay.classList.remove('hidden');document.body.style.overflow='hidden';
+};
+window.closeMediaLightbox=function(){
+  const overlay=document.getElementById('conversationMediaLightbox');const image=document.getElementById('conversationMediaLightboxImage');if(overlay)overlay.classList.add('hidden');if(image)image.removeAttribute('src');document.body.style.overflow='';
+};
+
+function historyLimitNotice(entries = []){
+  const unavailable = Array.isArray(entries)
+    ? entries.filter(entry => entry?.history_import === true && entry?.meta_content_available === false).length
+    : 0;
+  if(!unavailable) return '';
+  return `<div class="inbox-history-limit">ℹ️ ${unavailable} ancien${unavailable > 1 ? 's' : ''} message${unavailable > 1 ? 's' : ''} Instagram identifié${unavailable > 1 ? 's' : ''} par Meta dans cette portion d’historique, mais le contenu détaillé n’est plus fourni par l’API. Aucune direction ni contenu n’est inventé.</div>`;
 }
 
 function buildConversationComposer(
@@ -8174,10 +8202,13 @@ function renderCustomerPanel(
   const channel =
     conversationChannel(item);
 
+  const sourceContext = state?.sourceContext || null;
   const source =
     ad
       ? `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • Publicité Meta`
-      : (channel === 'instagram' ? 'Instagram' : 'WhatsApp');
+      : sourceContext?.label
+        ? `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • ${sourceContext.label}`
+        : (channel === 'instagram' ? 'Instagram • Message direct' : 'WhatsApp');
 
   panel.innerHTML = `
     <div class="inbox-profile-card">
@@ -8257,6 +8288,7 @@ function renderCustomerPanel(
             <div class="inbox-panel-title">Publicité d'origine</div>
             ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
             ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
+            ${(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(ad.storedMediaUrl || state?.sourceContext?.previewUrl)}" alt="Visuel publicité" loading="lazy">` : ''}
             ${
               /^https?:\/\//i.test(String(ad.sourceUrl || ''))
                 ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`
@@ -8295,9 +8327,11 @@ function renderCustomerPanel(
   `;
 }
 
-window.openConversation = async function(contact){
+window.openConversation = async function(contact, targetMessageId = ''){
   selectedConversationContact =
     String(contact || '');
+  selectedConversationTargetMessageId =
+    String(targetMessageId || '');
 
   document
     .getElementById(
@@ -8334,9 +8368,12 @@ window.openConversation = async function(contact){
 
   renderConversationsList();
 
+  const detailParams = new URLSearchParams({limit:'120'});
+  if(targetMessageId) detailParams.set('messageId',targetMessageId);
+
   const data =
     await apiFetch(
-      `${API}/conversations/${encodeURIComponent(contact)}`
+      `${API}/conversations/${encodeURIComponent(contact)}?${detailParams.toString()}`
     );
 
   selectedConversationData =
@@ -8368,16 +8405,7 @@ window.openConversation = async function(contact){
     state.adReferral ||
     null;
 
-  const adHtml =
-    ad
-      ? `
-        <div class="inbox-ad-context">
-          <strong>📣 Conversation issue d’une publicité Meta</strong>
-          ${ad.productHint ? `<div style="margin-top:5px;font-weight:800">🎯 Produit associé : ${escapeHtml(ad.productHint)}</div>` : ''}
-          ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
-        </div>
-      `
-      : '';
+  const adHtml = conversationSourceCardHtml(state);
 
   const messages =
     data.entries
@@ -8425,13 +8453,26 @@ window.openConversation = async function(contact){
       .join('');
 
   detail.innerHTML = `
+    ${data.hasMore ? `<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages('${escapeHtml(contact)}','${escapeHtml(data.nextBefore || '')}')">Afficher les messages plus anciens</button>` : ''}
     ${adHtml}
+    ${historyLimitNotice(data.entries)}
     ${messages || `
       <div class="inbox-empty-state">
         <strong>Aucun échange enregistré</strong>
       </div>
     `}
   `;
+
+  if(targetMessageId){
+    requestAnimationFrame(() => {
+      const target=[...detail.querySelectorAll('[data-message-id]')].find(el=>el.dataset.messageId===String(targetMessageId));
+      if(target){
+        target.scrollIntoView({behavior:'smooth',block:'center'});
+        target.style.outline='2px solid #1473e6';
+        setTimeout(()=>{target.style.outline='';},1800);
+      }
+    });
+  }
 
   const composerHost =
     document.getElementById(
@@ -8454,13 +8495,42 @@ window.openConversation = async function(contact){
   bindSmartKeyboardShortcuts();
   applyStoredComposerMode();
 
-  requestAnimationFrame(() => {
-    detail.scrollTop =
-      detail.scrollHeight;
-  });
+  if(!targetMessageId){
+    requestAnimationFrame(() => {
+      detail.scrollTop =
+        detail.scrollHeight;
+    });
+  }
 
   await loadConversations();
 }
+
+window.loadOlderConversationMessages = async function(contact, before){
+  if(!contact || !before) return;
+  try{
+    const older=await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}?limit=120&before=${encodeURIComponent(before)}`);
+    const current=Array.isArray(selectedConversationData?.entries)?selectedConversationData.entries:[];
+    const merged=[...(older.entries||[]),...current];
+    const seen=new Set();
+    const entries=merged.filter(entry=>{
+      const key=String(entry.message_id||entry.meta_message_id||`${entry.time}|${entry.incoming||''}|${entry.reply||''}`);
+      if(seen.has(key))return false;seen.add(key);return true;
+    }).sort((a,b)=>new Date(a.time||0)-new Date(b.time||0));
+    // Render older messages without losing already loaded ones.
+    selectedConversationData={...selectedConversationData,...older,entries};
+    const detail=document.getElementById('conversationDetail');
+    const state=selectedConversationData.state||{};
+    const sourceHtml=conversationSourceCardHtml(state);
+    const messages=entries.map(entry=>{
+      const commercial=String(entry.source||'').startsWith('commercial');
+      return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
+    }).join('');
+    if(detail){
+      detail.innerHTML=`${older.hasMore?`<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages('${escapeHtml(contact)}','${escapeHtml(older.nextBefore||'')}')">Afficher les messages plus anciens</button>`:''}${sourceHtml}${historyLimitNotice(entries)}${messages}`;
+      detail.scrollTop=0;
+    }
+  }catch(error){alert(`Impossible de charger les messages plus anciens : ${error.message}`);}
+};
 
 window.backToInboxList = function(){
   document
@@ -8708,7 +8778,10 @@ document
   )
   .addEventListener(
     'input',
-    renderConversationsList
+    () => {
+      clearTimeout(conversationSearchTimer);
+      conversationSearchTimer=setTimeout(()=>loadConversations(),260);
+    }
   );
 
 document
@@ -9350,77 +9423,39 @@ function playNotificationTone(kind = 'message'){
 }
 
 function showClientBrowserNotification(event){
-  const urgent = event.urgent === true;
-  const kind = String(event.kind || (urgent ? 'commercial' : 'message'));
-  const channel = String(event.channel || '').toLowerCase();
-
-  const title = kind === 'report'
-    ? '📊 MONDECO — Rapport quotidien disponible'
-    : kind === 'task'
-      ? '📋 MONDECO — Nouvelle tâche'
-      : kind === 'sla'
-        ? '⏱️ MONDECO — Délai client'
+  const urgent=event.urgent===true;
+  const kind=String(event.kind||(urgent?'commercial':'message'));
+  const channel=String(event.channel||'').toLowerCase();
+  const network=channel==='instagram'?'Instagram':'WhatsApp';
+  const identity=event.username
+    ? (String(event.username).startsWith('@')?event.username:`@${event.username}`)
+    : event.profileName||String(event.contact||'').replace(/^instagram:/,'');
+  const title=kind==='report'
+    ? 'MONDECO • Rapport quotidien'
+    : kind==='task'
+      ? 'MONDECO • Tâche'
+      : kind==='sla'
+        ? `MONDECO • ${network} • SLA`
         : urgent
-          ? '⚠️ MONDECO — Commercial requis'
-          : `💬 Nouveau message ${channel === 'instagram' ? 'Instagram' : 'WhatsApp'}`;
-
-  const displayContact = String(event.contact || '').replace(/^instagram:/,'');
-  const body = kind === 'report'
-    ? (event.preview || 'Le rapport commercial quotidien est disponible.')
-    : kind === 'task'
-      ? (event.preview || 'Une nouvelle tâche vous a été affectée.')
-      : `${channel === 'instagram' ? 'Instagram' : 'WhatsApp'} • ${displayContact}\n${event.preview || 'Nouveau message client'}`;
-
-  if(
-    'Notification' in window &&
-    Notification.permission === 'granted'
-  ){
+          ? `MONDECO • ${network} • Commercial requis`
+          : `MONDECO • ${network}`;
+  const body=(kind==='report'||kind==='task')
+    ? (event.preview||'')
+    : `${identity}\n${event.preview||'Nouveau message client'}`;
+  if('Notification' in window&&Notification.permission==='granted'){
     try{
-      const notification =
-        new Notification(
-          title,
-          {
-            body,
-            tag:
-              `mondeco-${event.id}`
-          }
-        );
-
-      notification.onclick = () => {
+      const notification=new Notification(title,{body,tag:`mondeco-${event.id}`});
+      notification.onclick=()=>{
         window.focus();
-        if(kind === 'report' && currentUser?.role === 'admin'){
-          showPage('team');
-          return;
-        }
-        if(kind === 'task' && currentUser?.role === 'commercial'){
-          showPage('mywork');
-          return;
-        }
-        // Une notification client ouvre la vue de TOUS les nouveaux messages,
-        // pas seulement une conversation isolée.
-        openAllNewMessages();
+        if(kind==='report'&&currentUser?.role==='admin'){showPage('team');return;}
+        if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
+        if(event.contact){openNotificationConversation(event.notificationId||event.id,event.contact,event.messageId||'');}
+        else{openAllNewMessages();}
       };
-    }catch(error){
-      console.debug(
-        'Notification navigateur indisponible',
-        error
-      );
-    }
+    }catch(error){console.debug('Notification navigateur indisponible',error);}
   }
-
-  const soundEnabled =
-    localStorage.getItem(
-      'mondecoNotificationSound'
-    ) === '1' ||
-    (
-      'Notification' in window &&
-      Notification.permission ===
-        'granted'
-    );
-
-  if(soundEnabled){
-    playNotificationTone(kind);
-  }
+  const soundEnabled=localStorage.getItem('mondecoNotificationSound')==='1'||('Notification' in window&&Notification.permission==='granted');
+  if(soundEnabled)playNotificationTone(kind);
 }
 
 
@@ -9444,9 +9479,13 @@ async function softRefreshSelectedConversation(){
     )?.textContent || '';
 
   try{
+    const refreshParams = new URLSearchParams({limit:'120'});
+    if(selectedConversationTargetMessageId){
+      refreshParams.set('messageId',selectedConversationTargetMessageId);
+    }
     const data =
       await apiFetch(
-        `${API}/conversations/${encodeURIComponent(selectedConversationContact)}`
+        `${API}/conversations/${encodeURIComponent(selectedConversationContact)}?${refreshParams.toString()}`
       );
 
     const currentEntries =
@@ -9506,16 +9545,7 @@ async function softRefreshSelectedConversation(){
       data.state?.adReferral ||
       null;
 
-    const adHtml =
-      ad
-        ? `
-          <div class="inbox-ad-context">
-            <strong>📣 Conversation issue d’une publicité Meta</strong>
-            ${ad.productHint ? `<div style="margin-top:5px;font-weight:800">🎯 Produit associé : ${escapeHtml(ad.productHint)}</div>` : ''}
-            ${ad.headline ? `<div style="margin-top:5px">${escapeHtml(ad.headline)}</div>` : ''}
-          </div>
-        `
-        : '';
+    const adHtml = conversationSourceCardHtml(data.state || {});
 
     const messages =
       nextEntries
@@ -9556,6 +9586,7 @@ async function softRefreshSelectedConversation(){
     if(detail){
       detail.innerHTML = `
         ${adHtml}
+        ${historyLimitNotice(nextEntries)}
         ${messages || '<div class="inbox-empty-state"><strong>Aucun échange enregistré</strong></div>'}
       `;
 
@@ -9612,125 +9643,103 @@ function rememberTaskNotification(id){
 
 async function pollCommercialNotifications(){
   try{
-    if(!conversationNotificationCursor){
-      const initial =
-        await apiFetch(
-          `${API}/notifications`
-        );
-
-      conversationNotificationCursor =
-        initial.serverTime;
-
-      localStorage.setItem(
-        'mondecoNotificationCursor',
-        conversationNotificationCursor
-      );
-
-      return;
-    }
-
-    const data =
-      await apiFetch(
-        `${API}/notifications?since=${encodeURIComponent(conversationNotificationCursor)}`
-      );
-
-    const events =
-      Array.isArray(data.events)
-        ? data.events
-        : [];
-
+    const url=conversationNotificationCursor
+      ? `${API}/notifications?since=${encodeURIComponent(conversationNotificationCursor)}`
+      : `${API}/notifications`;
+    const data=await apiFetch(url);
+    const events=Array.isArray(data.events)?data.events:[];
+    conversationNotificationUnread=Number(data.unreadCount||0);
+    updateNotificationBadges();
     for(const event of events){
-      const eventId = String(event?.id || '');
-      if(eventId && notificationSeenIds.has(eventId)) continue;
-
-      if(event?.kind === 'report'){
-        const reportDate = String(event.reportDate || '');
-        const lastReport = localStorage.getItem('mondecoLastReportNotification') || '';
-        if(reportDate && lastReport === reportDate){
-          if(eventId) notificationSeenIds.add(eventId);
-          continue;
-        }
-        if(reportDate) localStorage.setItem('mondecoLastReportNotification', reportDate);
-      }else if(event?.kind === 'task'){
+      const eventId=String(event?.id||'');
+      if(eventId&&notificationSeenIds.has(eventId))continue;
+      if(event?.kind==='report'){
+        const reportDate=String(event.reportDate||'');
+        const lastReport=localStorage.getItem('mondecoLastReportNotification')||'';
+        if(reportDate&&lastReport===reportDate){if(eventId)notificationSeenIds.add(eventId);continue;}
+        if(reportDate)localStorage.setItem('mondecoLastReportNotification',reportDate);
+      }else if(event?.kind==='task'){
         const taskId=String(event.taskId||eventId||'');
-        if(taskId && seenTaskNotificationIds().has(taskId)){
-          if(eventId)notificationSeenIds.add(eventId);
-          continue;
-        }
+        if(taskId&&seenTaskNotificationIds().has(taskId)){if(eventId)notificationSeenIds.add(eventId);continue;}
         rememberTaskNotification(taskId);
-      }else{
-        conversationNotificationUnread += 1;
       }
-
-      if(eventId) notificationSeenIds.add(eventId);
+      if(eventId)notificationSeenIds.add(eventId);
       showClientBrowserNotification(event);
     }
-
-    if(events.length){
-      updateNotificationBadges();
-
-      if(
-        document.getElementById('page-conversations')
-          ?.classList
-          ?.contains('active')
-      ){
-        await loadConversations();
-
-        if(selectedConversationContact){
-          await softRefreshSelectedConversation();
-        }
-      }
+    if(events.length&&document.getElementById('page-conversations')?.classList?.contains('active')){
+      await loadConversations();
+      if(selectedConversationContact)await softRefreshSelectedConversation();
     }
-
-    conversationNotificationCursor =
-      data.serverTime ||
-      new Date().toISOString();
-
-    localStorage.setItem(
-      'mondecoNotificationCursor',
-      conversationNotificationCursor
-    );
-  }catch(error){
-    console.debug(
-      'Polling notifications :',
-      error.message
-    );
-  }
+    conversationNotificationCursor=data.serverTime||new Date().toISOString();
+    localStorage.setItem('mondecoNotificationCursor',conversationNotificationCursor);
+    if(!document.getElementById('notificationPanelBackdrop')?.classList.contains('hidden'))await loadNotificationPanel();
+  }catch(error){console.debug('Polling notifications :',error.message);}
 }
 
+function relativeTime(value){
+  const ms=Date.now()-new Date(value||0).getTime();
+  if(!Number.isFinite(ms)||ms<0)return formatShortTime(value);
+  const sec=Math.floor(ms/1000);if(sec<60)return 'À l’instant';
+  const min=Math.floor(sec/60);if(min<60)return `Il y a ${min} min`;
+  const h=Math.floor(min/60);if(h<24)return `Il y a ${h} h`;
+  return formatShortTime(value);
+}
+
+async function loadNotificationPanel(){
+  const data=await apiFetch(`${API}/notifications?filter=${encodeURIComponent(notificationPanelFilter)}`);
+  notificationPanelItems=Array.isArray(data.items)?data.items:[];
+  conversationNotificationUnread=Number(data.unreadCount||0);
+  updateNotificationBadges();
+  renderNotificationPanel();
+}
+
+function renderNotificationPanel(){
+  const list=document.getElementById('notificationPanelList');if(!list)return;
+  if(!notificationPanelItems.length){list.innerHTML='<div class="empty" style="margin:18px"><strong>Aucune notification</strong>Rien de nouveau pour ce filtre.</div>';return;}
+  list.innerHTML=notificationPanelItems.map(item=>{
+    const displayName=conversationDisplayName(item);
+    return `<button class="notification-item ${item.read?'':'unread'}" type="button" onclick="openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}</span><span class="notification-item-meta">${escapeHtml(item.channel==='instagram'?'Instagram':'WhatsApp')} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||'Nouveau message')}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
+  }).join('');
+}
+
+window.closeNotificationPanel=function(){document.getElementById('notificationPanelBackdrop')?.classList.add('hidden');};
+window.openNotificationPanel=async function(){
+  document.getElementById('notificationPanelBackdrop')?.classList.remove('hidden');
+  try{await loadNotificationPanel();}catch(error){const list=document.getElementById('notificationPanelList');if(list)list.innerHTML=`<div class="empty" style="margin:18px">${escapeHtml(error.message)}</div>`;}
+};
+window.openNotificationConversation=async function(notificationId,contact,messageId){
+  try{
+    if(notificationId)await apiFetch(`${API}/notifications/${encodeURIComponent(notificationId)}/read`,{method:'POST'}).catch(()=>{});
+    closeNotificationPanel();
+    conversationFilter='all';
+    document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>{
+      button.classList.toggle('active',button.dataset.filter==='all');
+    });
+    showPage('conversations');
+    await loadConversations();
+    await window.openConversation(contact,messageId||'');
+    await pollCommercialNotifications();
+  }catch(error){alert(error.message);}
+};
+window.markAllNotificationsRead=async function(){await apiFetch(`${API}/notifications/read-all`,{method:'POST'});await loadNotificationPanel();};
+window.showAllNotificationMessages=function(){closeNotificationPanel();openAllNewMessages();};
+
 document.getElementById('enableNotificationsBtn').addEventListener('click', async () => {
-  // Le clic sur la cloche sert d'abord à voir tous les messages non lus.
-  // Au premier clic seulement, on profite de l'interaction utilisateur pour
-  // demander l'autorisation des notifications navigateur et activer le son.
-  if('Notification' in window && Notification.permission === 'default'){
+  if('Notification' in window&&Notification.permission==='default'){
     try{
-      const permission = await Notification.requestPermission();
-
-      if(permission === 'granted'){
-        try{
-          if(!notificationAudioContext){
-            notificationAudioContext = new (
-              window.AudioContext ||
-              window.webkitAudioContext
-            )();
-          }
-
-          if(notificationAudioContext.state === 'suspended'){
-            await notificationAudioContext.resume();
-          }
-        }catch(error){
-          console.debug('Initialisation audio :', error);
-        }
-
-        localStorage.setItem('mondecoNotificationSound','1');
-        playNotificationTone('message');
-      }
-    }catch(error){
-      console.debug('Autorisation notification :', error);
-    }
+      const permission=await Notification.requestPermission();
+      if(permission==='granted')localStorage.setItem('mondecoNotificationSound','1');
+    }catch(error){console.debug('Autorisation notification :',error);}
   }
+  await openNotificationPanel();
+});
 
-  openAllNewMessages();
+document.querySelectorAll('[data-notification-filter]').forEach(button=>{
+  button.addEventListener('click',async()=>{
+    notificationPanelFilter=button.dataset.notificationFilter||'all';
+    document.querySelectorAll('[data-notification-filter]').forEach(item=>item.classList.toggle('active',item===button));
+    await loadNotificationPanel();
+  });
 });
 
 const syncInstagramHistoryBtn = document.getElementById('syncInstagramHistoryBtn');
@@ -12061,7 +12070,7 @@ window.deleteTask=async function(id){if(!confirm('Supprimer cette tâche ?'))ret
 document.getElementById('taskForm')?.addEventListener('submit',async event=>{event.preventDefault();const selectedDate=document.getElementById('taskDate').value;try{await apiFetch(`${API}/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('taskUser').value,date:selectedDate,channel:document.getElementById('taskChannel').value,startTime:document.getElementById('taskStart').value,dueTime:document.getElementById('taskDue').value,title:document.getElementById('taskTitle').value,details:document.getElementById('taskDetails').value,priority:document.getElementById('taskPriority').value})});event.target.reset();setTodayInputs();document.getElementById('taskDate').value=selectedDate;await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}});
 
 function platformLabel(shifts){const channels=[...new Set((shifts||[]).flatMap(s=>s.channels||[]))];return channels.length?channels.map(c=>c==='instagram'?'Instagram':'WhatsApp').join(' + '):'Non planifié';}
-function formatCountdownMs(ms){if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return '—';return formatSlaClock(Number(ms));}
+function formatCountdownMs(ms){if(ms===null||ms===undefined||!Number.isFinite(Number(ms)))return '—';return formatSlaHuman(Number(ms));}
 async function loadTeamOperations(){setTodayInputs();const date=document.getElementById('operationsDate')?.value||tunisDateKey();try{teamOperations=await apiFetch(`${API}/team/operations?date=${encodeURIComponent(date)}`);renderTeamOperations();}catch(error){console.warn(error.message);}return teamOperations;}
 function renderTeamOperations(){const data=teamOperations||{};const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=String(v??0)};set('opsPendingSla',data.pendingSla);set('opsLateSla',data.lateSla);set('opsLateTasks',data.tasksLate);set('opsOnlineUsers',(data.users||[]).filter(u=>u.presence?.status==='online').length);const host=document.getElementById('operationsLive');if(!host)return;const users=data.users||[];if(!users.length){host.innerHTML='<div class="empty">Aucun commercial.</div>';return;}host.innerHTML=users.map(user=>`<div class="operations-user"><div><strong>${escapeHtml(user.name||user.email)}</strong><div class="manager-item-meta"><span class="presence-dot ${escapeHtml(user.presence?.status||'offline')}"></span> ${escapeHtml(user.presence?.status==='online'?'En ligne':user.presence?.status==='idle'?'Inactif':'Hors ligne')}</div></div><div><span class="ops-platform">${escapeHtml(platformLabel(user.shifts))}</span><div class="manager-item-meta">${(user.shifts||[]).map(s=>`${escapeHtml(s.startTime)}–${escapeHtml(s.endTime)}`).join(', ')||'Aucun horaire'}</div></div><div><strong>${Number(user.activeConversations||0)}</strong><div class="manager-item-meta">clients actifs</div></div><div><strong>${Number(user.pendingSla||0)}</strong><div class="manager-item-meta">en attente</div></div><div class="sla-countdown ${Number(user.nextSlaRemainingMs)<0?'late':Number(user.nextSlaRemainingMs)<=60000?'warning':''}">${formatCountdownMs(user.nextSlaRemainingMs)}</div></div>`).join('');}
 
