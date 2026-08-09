@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + IA + RESPONSABLE COMMERCIAL + SLA
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + IA + RESPONSABLE COMMERCIAL + SLA — V6.19.5
 // server.js
 //
 // Ajouts V5 :
@@ -120,11 +120,20 @@ fs.mkdirSync(DATA_DIR, {
   recursive: true
 });
 
-// V6.19.3 — médias clients conservés dans le volume Railway.
+// V6.19.4 — médias clients conservés dans le volume Railway.
 const CONVERSATION_MEDIA_DIR =
   path.join(
     DATA_DIR,
     'conversation-media'
+  );
+
+// V6.19.5 — cache persistant des photos de profil Instagram.
+// Le champ Meta profile_pic est temporaire : on conserve donc une copie
+// dans /data pour que l'avatar reste visible dans le Centre de pilotage.
+const CONVERSATION_PROFILE_DIR =
+  path.join(
+    DATA_DIR,
+    'conversation-profile'
   );
 
 fs.mkdirSync(
@@ -132,8 +141,16 @@ fs.mkdirSync(
   { recursive: true }
 );
 
+fs.mkdirSync(
+  CONVERSATION_PROFILE_DIR,
+  { recursive: true }
+);
+
 const MAX_CONVERSATION_MEDIA_BYTES =
   20 * 1024 * 1024;
+
+const MAX_PROFILE_PICTURE_BYTES =
+  5 * 1024 * 1024;
 
 const META_API_VERSION =
   (
@@ -179,7 +196,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO WHATSAPP + INSTAGRAM BOT V6.19.3');
+console.log('🚀 MONDECO WHATSAPP + INSTAGRAM BOT V6.19.4');
 console.log(
   '=============================================='
 );
@@ -334,7 +351,7 @@ function readJsonObject(filePath, fallback = {}) {
 }
 
 // ============================================================
-// V6.19.3 — MÉDIAS CONVERSATIONS
+// V6.19.4 — MÉDIAS CONVERSATIONS
 // ============================================================
 
 function mediaExtensionFromMime(
@@ -1064,6 +1081,12 @@ function markCustomerMessage(
         safeString(
           metadata.instagramUsername ||
           current.instagramUsername
+        ),
+
+      profilePicture:
+        safeString(
+          metadata.profilePicture ||
+          current.profilePicture
         ),
 
       firstSeenAt:
@@ -3836,6 +3859,16 @@ setCommercialSendHandler(
       'Conversation prise en charge par un commercial.'
     );
 
+    updateConversationState(
+      conversationKey,
+      current => ({
+        ...current,
+        aiModePreference: 'commercial',
+        aiModeChoicePending: false,
+        aiModeSelectedAt: new Date().toISOString()
+      })
+    );
+
     resolveCommercialSla({
       contact: conversationKey,
       actor
@@ -4265,6 +4298,78 @@ async function sendInstagramMessage(
   return data;
 }
 
+function profilePictureExtension(contentType) {
+  const type = safeString(contentType).toLowerCase();
+  if (type.includes('png')) return 'png';
+  if (type.includes('webp')) return 'webp';
+  if (type.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+async function persistInstagramProfilePicture(
+  profilePictureUrl,
+  instagramScopedId
+) {
+  const remoteUrl = safeString(profilePictureUrl);
+  const scopedId = safeString(instagramScopedId)
+    .replace(/[^a-zA-Z0-9_-]/g, '');
+
+  if (!remoteUrl || !scopedId) return '';
+
+  try {
+    const response = await fetch(remoteUrl);
+    if (!response.ok) return '';
+
+    const declaredLength = Number(
+      response.headers.get('content-length') || 0
+    );
+
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_PROFILE_PICTURE_BYTES
+    ) {
+      return '';
+    }
+
+    const buffer = Buffer.from(
+      await response.arrayBuffer()
+    );
+
+    if (!buffer.length || buffer.length > MAX_PROFILE_PICTURE_BYTES) {
+      return '';
+    }
+
+    const extension = profilePictureExtension(
+      response.headers.get('content-type')
+    );
+
+    const filename = `instagram-${scopedId}.${extension}`;
+
+    for (const ext of ['jpg', 'png', 'webp', 'gif']) {
+      const candidate = path.join(
+        CONVERSATION_PROFILE_DIR,
+        `instagram-${scopedId}.${ext}`
+      );
+      if (ext !== extension && fs.existsSync(candidate)) {
+        try { fs.unlinkSync(candidate); } catch {}
+      }
+    }
+
+    fs.writeFileSync(
+      path.join(CONVERSATION_PROFILE_DIR, filename),
+      buffer
+    );
+
+    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+  } catch (error) {
+    console.warn(
+      '⚠️ Photo profil Instagram non sauvegardée :',
+      error.message
+    );
+    return '';
+  }
+}
+
 async function getInstagramProfile(
   instagramScopedId
 ) {
@@ -4291,17 +4396,131 @@ async function getInstagramProfile(
       }
     );
 
-    if (!response.ok) {
-      return {};
-    }
+    if (!response.ok) return {};
 
     const data = await response.json();
-    return data && typeof data === 'object'
-      ? data
-      : {};
+    if (!data || typeof data !== 'object') return {};
+
+    const storedProfilePicture =
+      await persistInstagramProfilePicture(
+        data.profile_pic,
+        instagramScopedId
+      );
+
+    return {
+      ...data,
+      stored_profile_picture: storedProfilePicture
+    };
   } catch {
     return {};
   }
+}
+
+// ============================================================
+// V6.19.5 — CHOIX CLIENT : IA OU COMMERCIAL
+// ============================================================
+
+function textContainsArabic(value) {
+  return /[\u0600-\u06FF]/.test(safeString(value));
+}
+
+function aiModeChoicePrompt(value) {
+  if (textContainsArabic(value)) {
+    return (
+      'مرحبا بيك في MONDECO 👋 أنا المساعد الذكي. ' +
+      'تحب نجاوبك توّا بالـIA ولا تستنى مستشار تجاري؟\n' +
+      'ابعث 1 للـIA أو 2 للمستشار.'
+    );
+  }
+
+  return (
+    'Bonjour 👋 Je suis l’assistant IA de MONDECO. ' +
+    'Préférez-vous une réponse immédiate par l’IA ou attendre un conseiller commercial ?\n' +
+    'Répondez 1 pour IA ou 2 pour Commercial.'
+  );
+}
+
+function commercialChoiceConfirmation(value) {
+  if (textContainsArabic(value)) {
+    return (
+      'تمام 👍 مستشار تجاري من MONDECO باش يتكفّل بالمحادثة. ' +
+      'الـIA توّا متوقفة.'
+    );
+  }
+
+  return (
+    'Très bien 👍 Un conseiller commercial MONDECO va reprendre la conversation. ' +
+    'L’IA est maintenant en pause.'
+  );
+}
+
+function normalizedChoiceText(value) {
+  return safeString(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ')
+    .trim();
+}
+
+function choiceHasWord(normalized, word) {
+  if (!normalized || !word) return false;
+  return (
+    normalized === word ||
+    normalized.startsWith(`${word} `) ||
+    normalized.endsWith(` ${word}`) ||
+    normalized.includes(` ${word} `)
+  );
+}
+
+function detectAiModeChoice(value) {
+  const normalized = normalizedChoiceText(value);
+  if (!normalized) return '';
+
+  const commercialWords = [
+    '2', 'commercial', 'commerciale', 'conseiller', 'conseillere',
+    'humain', 'personne', 'vendeur', 'vendeuse', 'attendre',
+    'مستشار', 'تجاري', 'بائع', 'انسان', 'إنسان', 'نستنى', 'استنى'
+  ];
+
+  if (commercialWords.some(word => choiceHasWord(normalized, word))) {
+    return 'commercial';
+  }
+
+  const aiWords = [
+    '1', 'ia', 'ai', 'assistant', 'immediat', 'maintenant',
+    'الذكاء', 'الذكي', 'جاوب', 'جاوبني'
+  ];
+
+  if (aiWords.some(word => choiceHasWord(normalized, word))) {
+    return 'ai';
+  }
+
+  return '';
+}
+
+function isPureAiModeSelection(value) {
+  const normalized = normalizedChoiceText(value);
+  return [
+    '1', '2', 'ia', 'ai', 'assistant', 'commercial',
+    'commerciale', 'conseiller', 'conseillere', 'humain',
+    'مستشار', 'تجاري'
+  ].includes(normalized);
+}
+
+function shouldAskAiModeChoice({
+  isNewCustomer,
+  text,
+  hasAttachments,
+  state
+}) {
+  return Boolean(
+    isNewCustomer &&
+    safeString(text) &&
+    !hasAttachments &&
+    !safeString(state?.aiModePreference) &&
+    state?.aiModeChoicePending !== true
+  );
 }
 
 // ============================================================
@@ -4335,7 +4554,12 @@ async function checkWhetherBotShouldReply(
     };
   }
 
+  const modeChoicePending =
+    getConversationState(phone)
+      ?.aiModeChoicePending === true;
+
   if (
+    !modeChoicePending &&
     !audienceAllows(
       settings,
       phone,
@@ -4941,6 +5165,12 @@ async function processInstagramBusinessOutboundEvent({
         new Date().toISOString(),
       lastHumanSource:
         'instagram_app',
+      aiModePreference:
+        'commercial',
+      aiModeChoicePending:
+        false,
+      aiModeSelectedAt:
+        new Date().toISOString(),
       commercialAttention:
         false,
       commercialAttentionReason:
@@ -5088,7 +5318,8 @@ async function processSingleInstagramEvent(event) {
 
   const profile =
     isNewCustomer ||
-    !previousState?.profileName
+    !previousState?.profileName ||
+    !previousState?.profilePicture
       ? await getInstagramProfile(
           senderId
         )
@@ -5180,6 +5411,11 @@ async function processSingleInstagramEvent(event) {
       instagramUsername:
         safeString(
           profile?.username
+        ),
+      profilePicture:
+        safeString(
+          profile?.stored_profile_picture ||
+          previousState?.profilePicture
         )
     }
   );
@@ -5285,6 +5521,203 @@ async function processSingleInstagramEvent(event) {
         false,
       time:
         new Date().toISOString()
+    });
+
+    return;
+  }
+
+  // V6.19.5 — choix IA / Commercial demandé une seule fois au premier
+  // message texte d'une nouvelle conversation.
+  const stateAfterInbound =
+    getConversationState(contact) || {};
+
+  if (
+    previousState?.aiModeChoicePending === true &&
+    safeString(text)
+  ) {
+    const selectedMode = detectAiModeChoice(text);
+
+    if (selectedMode === 'commercial') {
+      updateConversationState(
+        contact,
+        current => ({
+          ...current,
+          aiModePreference: 'commercial',
+          aiModeChoicePending: false,
+          aiModeSelectedAt: new Date().toISOString(),
+          aiModePendingCustomerText: ''
+        })
+      );
+
+      const confirmation = commercialChoiceConfirmation(text);
+      let confirmationSent = false;
+
+      try {
+        await sendInstagramMessage(senderId, confirmation);
+        markBotMessage(contact, 'routing');
+        confirmationSent = true;
+      } catch (error) {
+        console.warn(
+          '⚠️ Confirmation choix commercial Instagram :',
+          error.message
+        );
+      }
+
+      logConversation({
+        message_id: messageId || null,
+        contact,
+        external_contact: senderId,
+        channel: 'instagram',
+        incoming: text,
+        reply: confirmationSent ? confirmation : '',
+        action: 'commercial_required',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        reply_sent: confirmationSent,
+        time: new Date().toISOString()
+      });
+
+      return;
+    }
+
+    const pendingText = safeString(
+      previousState?.aiModePendingCustomerText
+    );
+
+    updateConversationState(
+      contact,
+      current => ({
+        ...current,
+        aiModePreference: 'ai',
+        aiModeChoicePending: false,
+        aiModeSelectedAt: new Date().toISOString(),
+        aiModePendingCustomerText: ''
+      })
+    );
+
+    const effectiveText =
+      selectedMode === 'ai' && isPureAiModeSelection(text) && pendingText
+        ? pendingText
+        : text;
+
+    let choiceReply = '';
+
+    try {
+      choiceReply = await generateReply(
+        contact,
+        effectiveText,
+        'instagram'
+      );
+    } catch (error) {
+      logConversation({
+        message_id: messageId || null,
+        contact,
+        external_contact: senderId,
+        channel: 'instagram',
+        incoming: text,
+        error: error.message,
+        action: 'ai_error_no_reply',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
+      return;
+    }
+
+    const choiceNeedsCommercial =
+      /\[COMMERCIAL_REQUIRED\]/i.test(choiceReply);
+
+    choiceReply = choiceReply
+      .replace(/\[COMMERCIAL_REQUIRED\]/gi, '')
+      .trim();
+
+    if (choiceNeedsCommercial || !choiceReply) {
+      logConversation({
+        message_id: messageId || null,
+        contact,
+        external_contact: senderId,
+        channel: 'instagram',
+        incoming: text,
+        action: 'ai_needs_commercial',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
+      return;
+    }
+
+    const metaResult =
+      await sendInstagramMessage(
+        senderId,
+        choiceReply
+      );
+
+    markBotMessage(contact, 'reply');
+
+    logConversation({
+      message_id: messageId || null,
+      contact,
+      external_contact: senderId,
+      channel: 'instagram',
+      incoming: text,
+      reply: choiceReply,
+      action: 'ai_reply',
+      source: isAdReferral ? 'meta_ad' : 'organic',
+      meta_message_id:
+        safeString(
+          metaResult?.message_id ||
+          metaResult?.messages?.[0]?.id
+        ) || null,
+      reply_sent: true,
+      time: new Date().toISOString()
+    });
+
+    return;
+  }
+
+  if (
+    shouldAskAiModeChoice({
+      isNewCustomer,
+      text,
+      hasAttachments: attachments.length > 0,
+      state: stateAfterInbound
+    })
+  ) {
+    const prompt = aiModeChoicePrompt(text);
+
+    updateConversationState(
+      contact,
+      current => ({
+        ...current,
+        aiModeChoicePending: true,
+        aiModeChoiceAskedAt: new Date().toISOString(),
+        aiModePendingCustomerText: text
+      })
+    );
+
+    const metaResult =
+      await sendInstagramMessage(
+        senderId,
+        prompt
+      );
+
+    markBotMessage(contact, 'routing');
+
+    logConversation({
+      message_id: messageId || null,
+      contact,
+      external_contact: senderId,
+      channel: 'instagram',
+      incoming: text,
+      reply: prompt,
+      action: 'ai_mode_choice',
+      source: isAdReferral ? 'meta_ad' : 'organic',
+      meta_message_id:
+        safeString(
+          metaResult?.message_id ||
+          metaResult?.messages?.[0]?.id
+        ) || null,
+      reply_sent: true,
+      time: new Date().toISOString()
     });
 
     return;
@@ -5581,7 +6014,7 @@ async function processSingleMessage(message) {
       message
     );
 
-  // V6.19.3 — conserver immédiatement les photos WhatsApp pour l'interface,
+  // V6.19.4 — conserver immédiatement les photos WhatsApp pour l'interface,
   // même si l'IA est déjà en pause ou si le commercial doit intervenir.
   let preparedWhatsAppImage = null;
   let whatsappAttachmentFields = {};
@@ -5778,6 +6211,194 @@ async function processSingleMessage(message) {
       );
 
     if (!userText) return;
+
+    const stateAfterInbound =
+      getConversationState(from) || {};
+
+    if (
+      previousState?.aiModeChoicePending === true
+    ) {
+      const selectedMode = detectAiModeChoice(userText);
+
+      if (selectedMode === 'commercial') {
+        updateConversationState(
+          from,
+          current => ({
+            ...current,
+            aiModePreference: 'commercial',
+            aiModeChoicePending: false,
+            aiModeSelectedAt: new Date().toISOString(),
+            aiModePendingCustomerText: ''
+          })
+        );
+
+        const confirmation = commercialChoiceConfirmation(userText);
+        let confirmationSent = false;
+
+        try {
+          await sendWhatsAppMessage(from, confirmation);
+          markBotMessage(from, 'routing');
+          confirmationSent = true;
+        } catch (error) {
+          console.warn(
+            '⚠️ Confirmation choix commercial WhatsApp :',
+            error.message
+          );
+        }
+
+        logConversation({
+          message_id: messageId || null,
+          contact: from,
+          external_contact: from,
+          channel: 'whatsapp',
+          incoming: userText,
+          reply: confirmationSent ? confirmation : '',
+          action: 'commercial_required',
+          source: isAdReferral ? 'meta_ad' : 'organic',
+          reply_sent: confirmationSent,
+          time: new Date().toISOString()
+        });
+
+        return;
+      }
+
+      const pendingText = safeString(
+        previousState?.aiModePendingCustomerText
+      );
+
+      updateConversationState(
+        from,
+        current => ({
+          ...current,
+          aiModePreference: 'ai',
+          aiModeChoicePending: false,
+          aiModeSelectedAt: new Date().toISOString(),
+          aiModePendingCustomerText: ''
+        })
+      );
+
+      const effectiveText =
+        selectedMode === 'ai' && isPureAiModeSelection(userText) && pendingText
+          ? pendingText
+          : userText;
+
+      let choiceReply = '';
+
+      try {
+        choiceReply = await generateReply(
+          from,
+          effectiveText,
+          'whatsapp'
+        );
+      } catch (error) {
+        logConversation({
+          message_id: messageId || null,
+          contact: from,
+          external_contact: from,
+          channel: 'whatsapp',
+          incoming: userText,
+          error: error.message,
+          action: 'ai_error_no_reply',
+          source: isAdReferral ? 'meta_ad' : 'organic',
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+        return;
+      }
+
+      const choiceNeedsCommercial =
+        /\[COMMERCIAL_REQUIRED\]/i.test(choiceReply);
+
+      choiceReply = choiceReply
+        .replace(/\[COMMERCIAL_REQUIRED\]/gi, '')
+        .trim();
+
+      if (choiceNeedsCommercial || !choiceReply) {
+        logConversation({
+          message_id: messageId || null,
+          contact: from,
+          external_contact: from,
+          channel: 'whatsapp',
+          incoming: userText,
+          action: 'ai_needs_commercial',
+          source: isAdReferral ? 'meta_ad' : 'organic',
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+        return;
+      }
+
+      const metaResult =
+        await sendWhatsAppMessage(
+          from,
+          choiceReply
+        );
+
+      markBotMessage(from, 'reply');
+
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        incoming: userText,
+        reply: choiceReply,
+        action: 'ai_reply',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        meta_message_id:
+          safeString(metaResult?.messages?.[0]?.id) || null,
+        reply_sent: true,
+        time: new Date().toISOString()
+      });
+
+      return;
+    }
+
+    if (
+      shouldAskAiModeChoice({
+        isNewCustomer,
+        text: userText,
+        hasAttachments: false,
+        state: stateAfterInbound
+      })
+    ) {
+      const prompt = aiModeChoicePrompt(userText);
+
+      updateConversationState(
+        from,
+        current => ({
+          ...current,
+          aiModeChoicePending: true,
+          aiModeChoiceAskedAt: new Date().toISOString(),
+          aiModePendingCustomerText: userText
+        })
+      );
+
+      const metaResult =
+        await sendWhatsAppMessage(
+          from,
+          prompt
+        );
+
+      markBotMessage(from, 'routing');
+
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        incoming: userText,
+        reply: prompt,
+        action: 'ai_mode_choice',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        meta_message_id:
+          safeString(metaResult?.messages?.[0]?.id) || null,
+        reply_sent: true,
+        time: new Date().toISOString()
+      });
+
+      return;
+    }
 
     console.log(
       '💬 TEXTE CLIENT :',
