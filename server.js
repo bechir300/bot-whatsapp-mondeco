@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.3
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.4
 // server.js
 //
 // Ajouts V5 :
@@ -271,7 +271,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.3');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.4');
 console.log(
   '=============================================='
 );
@@ -388,7 +388,7 @@ function conversationChannel(contact, state = null) {
 }
 
 function writeJsonAtomic(filePath, data) {
-  // V6.20.3 : un nom temporaire unique évite que deux écritures
+  // V6.20.4 : un nom temporaire unique évite que deux écritures
   // simultanées se partagent le même .tmp et provoquent ENOENT/HTTP 500.
   const tmp = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
 
