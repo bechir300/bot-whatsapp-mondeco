@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.27.1
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.27.2
 // server.js
 //
 // Ajouts V5 :
@@ -6099,6 +6099,8 @@ function validMetaWebhookSignature(req) {
   }
 }
 
+const unsignedWebhookWarningChannels = new Set();
+
 app.post('/webhook', (req, res) => {
   const object =
     safeString(
@@ -6114,7 +6116,11 @@ app.post('/webhook', (req, res) => {
   }
 
   if (signatureValid === null) {
-    console.warn('⚠️ App Secret Meta absent pour ce canal : signature webhook non vérifiée.');
+    const warningKey = object || 'unknown';
+    if (!unsignedWebhookWarningChannels.has(warningKey)) {
+      unsignedWebhookWarningChannels.add(warningKey);
+      console.warn('⚠️ App Secret Meta absent pour ce canal : signature webhook non vérifiée. Ajoutez META_APP_SECRET ou le secret spécifique du canal dans Railway.');
+    }
   }
 
   console.log(
