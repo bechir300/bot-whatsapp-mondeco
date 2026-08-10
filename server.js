@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.22.0
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.23.0
 // server.js
 //
 // Ajouts V5 :
@@ -28,6 +28,7 @@ const {
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
+  setWhatsAppCallHandler,
   registerCommercialEscalation,
   resolveCommercialSla
 } = require('./Admin');
@@ -4459,6 +4460,225 @@ async function generateCustomizationSimulation({
 }
 
 // ============================================================
+// WHATSAPP BUSINESS CALLING API — V6.23.0
+// Le navigateur du commercial fournit l’agent WebRTC (micro + haut-parleur).
+// Meta assure la jambe WhatsApp ; le webhook « calls » livre la SDP Answer.
+// ============================================================
+
+const whatsappCallSessions = new Map();
+const WHATSAPP_CALL_TTL_MS = 15 * 60 * 1000;
+
+function cleanupWhatsAppCallSessions() {
+  const cutoff = Date.now() - WHATSAPP_CALL_TTL_MS;
+  for (const [callId, session] of whatsappCallSessions.entries()) {
+    const updated = Number(session?.updatedAtMs || session?.createdAtMs || 0);
+    if (updated && updated < cutoff) whatsappCallSessions.delete(callId);
+  }
+}
+
+function callStatusLabel(value) {
+  const raw = safeString(value).toLowerCase();
+  if (!raw) return 'connecting';
+  if (raw === 'ringing') return 'ringing';
+  if (raw === 'accepted' || raw === 'connected') return 'accepted';
+  if (raw === 'rejected' || raw === 'declined') return 'rejected';
+  if (raw === 'terminate' || raw === 'terminated' || raw === 'ended') return 'terminated';
+  return raw;
+}
+
+function updateWhatsAppCallSession(callId, patch = {}) {
+  const id = safeString(callId);
+  if (!id) return null;
+  const current = whatsappCallSessions.get(id) || {
+    callId: id,
+    createdAt: new Date().toISOString(),
+    createdAtMs: Date.now()
+  };
+  const next = {
+    ...current,
+    ...patch,
+    callId: id,
+    updatedAt: new Date().toISOString(),
+    updatedAtMs: Date.now()
+  };
+  whatsappCallSessions.set(id, next);
+  cleanupWhatsAppCallSessions();
+  return next;
+}
+
+async function metaWhatsAppCallRequest(body) {
+  if (!WHATSAPP_TOKEN) throw new Error('WHATSAPP_TOKEN manquant.');
+  if (!PHONE_NUMBER_ID) throw new Error('PHONE_NUMBER_ID manquant.');
+
+  const response = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${PHONE_NUMBER_ID}/calls`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }
+  );
+
+  let data = {};
+  try { data = await response.json(); } catch { data = {}; }
+
+  if (!response.ok) {
+    const code = Number(data?.error?.code || 0);
+    const subcode = Number(data?.error?.error_subcode || 0);
+    const metaMessage = safeString(data?.error?.message);
+
+    if (code === 138006 || subcode === 138006) {
+      throw new Error(
+        'Le client n’a pas encore autorisé MONDECO à l’appeler sur WhatsApp. ' +
+        'Envoyez d’abord la demande Meta « call_permission_request », attendez son accord, puis réessayez.'
+      );
+    }
+
+    throw new Error(
+      (metaMessage ? `${metaMessage} ` : '') +
+      'Vérifiez que WhatsApp Calling API est activé sur ce numéro, que l’app est autorisée et que le webhook « calls » est abonné.'
+    );
+  }
+
+  return data;
+}
+
+setWhatsAppCallHandler(async ({
+  action,
+  phone,
+  contact,
+  externalContact,
+  sdp,
+  callId,
+  actor
+}) => {
+  cleanupWhatsAppCallSessions();
+
+  if (action === 'start') {
+    const to = normalizePhone(phone || externalContact || contact);
+    const offer = safeString(sdp);
+    if (!to) throw new Error('Numéro WhatsApp client manquant.');
+    if (!offer || !offer.startsWith('v=0')) throw new Error('SDP WebRTC manquante ou invalide.');
+
+    const opaque = `mondeco:${safeString(actor?.id).slice(0, 40)}:${Date.now()}`.slice(0, 180);
+    const data = await metaWhatsAppCallRequest({
+      messaging_product: 'whatsapp',
+      to,
+      action: 'connect',
+      session: {
+        sdp_type: 'offer',
+        sdp: offer
+      },
+      biz_opaque_callback_data: opaque
+    });
+
+    const id = safeString(data?.calls?.[0]?.id || data?.call_id);
+    if (!id) throw new Error('Meta n’a pas retourné l’identifiant de l’appel WhatsApp.');
+
+    updateWhatsAppCallSession(id, {
+      phone: to,
+      contact: safeString(contact) || to,
+      actorId: safeString(actor?.id),
+      actorName: safeString(actor?.name),
+      status: 'connecting',
+      answerSdp: '',
+      direction: 'BUSINESS_INITIATED'
+    });
+
+    return {
+      callId: id,
+      status: 'connecting'
+    };
+  }
+
+  const id = safeString(callId);
+  if (!id) throw new Error('Identifiant d’appel WhatsApp manquant.');
+
+  if (action === 'status') {
+    const session = whatsappCallSessions.get(id);
+    if (!session) {
+      return {
+        callId: id,
+        status: 'unknown',
+        answerSdp: ''
+      };
+    }
+    return {
+      callId: id,
+      status: callStatusLabel(session.status),
+      answerSdp: safeString(session.answerSdp),
+      phone: safeString(session.phone),
+      updatedAt: safeString(session.updatedAt),
+      error: safeString(session.error)
+    };
+  }
+
+  if (action === 'terminate') {
+    const session = whatsappCallSessions.get(id);
+    // On tente toujours la terminaison Meta : le webhook final peut arriver ensuite.
+    await metaWhatsAppCallRequest({
+      messaging_product: 'whatsapp',
+      call_id: id,
+      action: 'terminate'
+    });
+    updateWhatsAppCallSession(id, {
+      ...(session || {}),
+      status: 'terminated'
+    });
+    return { callId: id, status: 'terminated' };
+  }
+
+  throw new Error('Action d’appel WhatsApp inconnue.');
+});
+
+function handleWhatsAppCallsWebhook(value) {
+  const calls = Array.isArray(value?.calls) ? value.calls : [];
+  const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
+
+  for (const call of calls) {
+    const id = safeString(call?.id || call?.call_id);
+    if (!id) continue;
+
+    const event = callStatusLabel(call?.event || call?.status || 'connecting');
+    const answerSdp =
+      safeString(call?.session?.sdp) ||
+      safeString(call?.connection?.webrtc?.sdp?.sdp) ||
+      safeString(call?.connection?.webrtc?.sdp);
+
+    const patch = {
+      status: event,
+      direction: safeString(call?.direction),
+      phone:
+        normalizePhone(call?.from) ||
+        normalizePhone(call?.to) ||
+        safeString(whatsappCallSessions.get(id)?.phone)
+    };
+
+    if (safeString(call?.session?.sdp_type).toLowerCase() === 'answer' && answerSdp) {
+      patch.answerSdp = answerSdp;
+      // La SDP Answer indique que Meta est prêt à établir la jambe WebRTC.
+      if (event === 'connecting' || event === 'connect') patch.status = 'ringing';
+    }
+
+    if (event === 'terminate') patch.status = 'terminated';
+    updateWhatsAppCallSession(id, patch);
+  }
+
+  for (const status of statuses) {
+    if (safeString(status?.type).toLowerCase() !== 'call') continue;
+    const id = safeString(status?.id || status?.call_id);
+    if (!id) continue;
+    updateWhatsAppCallSession(id, {
+      status: callStatusLabel(status?.status),
+      phone: normalizePhone(status?.recipient_id) || safeString(whatsappCallSessions.get(id)?.phone)
+    });
+  }
+}
+
+// ============================================================
 // CONNECTION ADMIN
 // ============================================================
 
@@ -4514,6 +4734,7 @@ setCommercialSendHandler(
       );
 
     let result;
+    let sentMediaKind = '';
 
     if (resolvedChannel === 'instagram') {
       result = await sendInstagramMessage(
@@ -4521,13 +4742,36 @@ setCommercialSendHandler(
         text
       );
     } else if (file) {
+      const resolvedMediaKind =
+        safeString(mediaKind) ||
+        (safeString(file?.mimetype).startsWith('image/')
+          ? 'image'
+          : safeString(file?.mimetype).startsWith('audio/')
+            ? 'audio'
+            : 'document');
+      sentMediaKind = resolvedMediaKind;
+
       result = await sendWhatsAppMedia(
         resolvedExternal,
         file,
-        text,
-        safeString(mediaKind) ||
-          (safeString(file?.mimetype).startsWith('image/') ? 'image' : 'document')
+        resolvedMediaKind === 'audio' ? '' : text,
+        resolvedMediaKind
       );
+
+      // Un vocal et un texte sont deux messages WhatsApp distincts.
+      if (resolvedMediaKind === 'audio' && safeString(text)) {
+        const textResult = await sendWhatsAppMessage(
+          resolvedExternal,
+          text
+        );
+        result = {
+          media: result,
+          text: textResult,
+          message_id:
+            safeString(textResult?.messages?.[0]?.id) ||
+            safeString(result?.messages?.[0]?.id)
+        };
+      }
     } else {
       result = await sendWhatsAppMessage(
         resolvedExternal,
@@ -4555,6 +4799,31 @@ setCommercialSendHandler(
       actor
     });
 
+    let outboundAttachmentFields = {};
+    if (file?.buffer && sentMediaKind) {
+      try {
+        const mediaMessageId =
+          safeString(result?.media?.messages?.[0]?.id) ||
+          safeString(result?.messages?.[0]?.id) ||
+          crypto.randomUUID();
+        const savedMedia = saveConversationMediaBuffer({
+          buffer: file.buffer,
+          mimetype: safeString(file.mimetype),
+          type: sentMediaKind === 'document' ? 'file' : sentMediaKind,
+          messageId: mediaMessageId,
+          index: 0,
+          channel: 'whatsapp',
+          direction: 'outgoing-commercial'
+        });
+        outboundAttachmentFields = {
+          ...firstAttachmentLogFields([savedMedia]),
+          attachment_direction: 'outgoing'
+        };
+      } catch (error) {
+        console.warn('⚠️ Média commercial envoyé mais non sauvegardé dans l’historique :', error.message);
+      }
+    }
+
     logConversation({
       contact:
         conversationKey,
@@ -4567,7 +4836,10 @@ setCommercialSendHandler(
       source:
         'commercial_admin',
       reply:
-        safeString(text),
+        safeString(text) || (sentMediaKind === 'audio' ? '🎤 Message vocal' : ''),
+      type:
+        sentMediaKind || 'text',
+      ...outboundAttachmentFields,
       reply_sent:
         true,
       actor_name:
@@ -4747,8 +5019,12 @@ async function uploadWhatsAppMedia(file) {
       [file.buffer],
       {
         type:
-          safeString(file.mimetype) ||
-          'application/octet-stream'
+          safeString(file.mimetype).toLowerCase().startsWith('audio/ogg')
+            ? 'audio/ogg'
+            : safeString(file.mimetype).toLowerCase().startsWith('audio/mp4')
+              ? 'audio/mp4'
+              : safeString(file.mimetype) ||
+                'application/octet-stream'
       }
     ),
     safeString(file.originalname) ||
@@ -4800,11 +5076,13 @@ async function sendWhatsAppMedia(
   const mediaId =
     await uploadWhatsAppMedia(file);
 
+  const mime = safeString(file?.mimetype).toLowerCase();
   const type =
-    mediaKind === 'image' ||
-    safeString(file?.mimetype).startsWith('image/')
+    mediaKind === 'image' || mime.startsWith('image/')
       ? 'image'
-      : 'document';
+      : mediaKind === 'audio' || mime.startsWith('audio/')
+        ? 'audio'
+        : 'document';
 
   const mediaObject = {
     id: mediaId
@@ -4813,7 +5091,8 @@ async function sendWhatsAppMedia(
   const cleanCaption =
     safeString(caption);
 
-  if (cleanCaption) {
+  // WhatsApp n’accepte pas de caption sur les messages audio.
+  if (cleanCaption && type !== 'audio') {
     mediaObject.caption =
       cleanCaption;
   }
@@ -4822,6 +5101,12 @@ async function sendWhatsAppMedia(
     mediaObject.filename =
       safeString(file?.originalname) ||
       'document';
+  }
+
+  // Meta exige OGG + OPUS pour le rendu « note vocale » natif.
+  // MP4/M4A, MP3 et AMR sont envoyés comme audio standard.
+  if (type === 'audio' && mime.startsWith('audio/ogg')) {
+    mediaObject.voice = true;
   }
 
   const response = await fetch(
@@ -6309,6 +6594,21 @@ async function processWhatsAppWebhook(body) {
           value
         );
 
+        continue;
+      }
+
+      if (field === 'calls') {
+        const incomingPhoneNumberId = safeString(value?.metadata?.phone_number_id);
+        if (
+          PHONE_NUMBER_ID &&
+          incomingPhoneNumberId &&
+          incomingPhoneNumberId !== PHONE_NUMBER_ID
+        ) {
+          console.log('🧪 Webhook appel WhatsApp autre numéro ignoré.');
+          continue;
+        }
+
+        handleWhatsAppCallsWebhook(value);
         continue;
       }
 
