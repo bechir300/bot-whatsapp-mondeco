@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.7
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.8
 // server.js
 //
 // Ajouts V5 :
@@ -274,7 +274,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.7');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.8');
 console.log(
   '=============================================='
 );
@@ -1688,7 +1688,17 @@ function markCustomerMessage(
         false,
 
       followUpsSent:
-        0
+        0,
+
+      // V6.20.8 — une conversation terminée doit se rouvrir dès qu'un
+      // nouveau message CLIENT arrive. Sinon l'inbox la garde cachée dans
+      // le filtre « terminées » alors que la notification et le webhook
+      // existent bien. Le takeover/human pause est volontairement conservé.
+      resolved:
+        false,
+
+      resolvedAt:
+        null
     })
   );
 }
