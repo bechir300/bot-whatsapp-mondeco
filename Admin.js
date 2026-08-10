@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.4
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.5
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -67,6 +67,29 @@ const META_API_VERSION = (
   process.env.META_API_VERSION ||
   'v26.0'
 ).trim();
+
+// V6.20.5 — historique Meta limité à 90 jours par défaut.
+// La valeur peut être ajustée plus tard via HISTORY_IMPORT_DAYS sans changer le code.
+const HISTORY_IMPORT_DAYS = Math.max(
+  1,
+  Math.min(3650, Number(process.env.HISTORY_IMPORT_DAYS || 90) || 90)
+);
+
+function historyImportCutoffIso(reference = new Date()) {
+  const base = reference instanceof Date ? reference : new Date(reference);
+  const safeBase = Number.isFinite(base.getTime()) ? base : new Date();
+  return new Date(
+    safeBase.getTime() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+}
+
+function historyTimeIsRecent(value, cutoffAt) {
+  const valueMs = Date.parse(safeString(value));
+  const cutoffMs = Date.parse(safeString(cutoffAt));
+  if (!Number.isFinite(cutoffMs)) return true;
+  if (!Number.isFinite(valueMs)) return false;
+  return valueMs >= cutoffMs;
+}
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const SCHEDULES_PATH = path.join(DATA_DIR, 'schedules.json');
 const TASKS_PATH = path.join(DATA_DIR, 'tasks.json');
@@ -87,7 +110,7 @@ const IS_RAILWAY = Boolean(
   process.env.RAILWAY_ENVIRONMENT_NAME
 );
 
-// V6.20.4 — mode stockage compact.
+// V6.20.5 — mode stockage compact.
 // Sur Railway Free, le Volume est limité et les snapshots binaires complets
 // peuvent dupliquer plusieurs fois les mêmes médias. Le mode compact conserve
 // les données actives mais réduit fortement les copies de sauvegarde redondantes.
@@ -3947,7 +3970,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.4</span>
+        <span class="login-version">V6.20.5</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11655,13 +11678,18 @@ async function instagramGraphGet(url) {
   return data;
 }
 
-async function listAllInstagramConversations(onProgress = null) {
+async function listAllInstagramConversations(onProgress = null, options = {}) {
   if (!INSTAGRAM_ACCOUNT_ID) {
     throw new Error('INSTAGRAM_ACCOUNT_ID manquant.');
   }
 
+  const cutoffAt = safeString(options?.cutoffAt);
+  const cutoffEnabled = Number.isFinite(Date.parse(cutoffAt));
   const conversations = [];
   const seenIds = new Set();
+  let olderSkipped = 0;
+  let undatedSkipped = 0;
+  let cutoffReached = false;
 
   let nextUrl =
     `https://graph.instagram.com/${META_API_VERSION}/` +
@@ -11678,29 +11706,65 @@ async function listAllInstagramConversations(onProgress = null) {
     seenPageUrls.add(nextUrl);
 
     const data = await instagramGraphGet(nextUrl);
+    const pageItems = Array.isArray(data?.data) ? data.data : [];
+    let pageDated = 0;
+    let pageRecent = 0;
+    let pageOlder = 0;
 
-    for (const item of Array.isArray(data?.data) ? data.data : []) {
+    for (const item of pageItems) {
       const id = safeString(item?.id);
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
-      conversations.push({
-        id,
-        updatedTime:
-          safeString(item?.updated_time)
-      });
+
+      const updatedTime = safeString(item?.updated_time);
+      const updatedMs = Date.parse(updatedTime);
+
+      if (cutoffEnabled) {
+        if (!Number.isFinite(updatedMs)) {
+          undatedSkipped += 1;
+          continue;
+        }
+        pageDated += 1;
+        if (!historyTimeIsRecent(updatedTime, cutoffAt)) {
+          olderSkipped += 1;
+          pageOlder += 1;
+          continue;
+        }
+        pageRecent += 1;
+      }
+
+      conversations.push({ id, updatedTime });
     }
 
-    nextUrl =
-      safeString(data?.paging?.next);
-
+    const metaNext = safeString(data?.paging?.next);
     pageCount += 1;
+
+    // Meta renvoie les conversations de la plus récente à la plus ancienne.
+    // Dès qu'une page entière datée est hors fenêtre, les pages suivantes le sont aussi.
+    if (
+      cutoffEnabled &&
+      pageItems.length > 0 &&
+      pageDated > 0 &&
+      pageRecent === 0 &&
+      pageOlder === pageDated
+    ) {
+      cutoffReached = true;
+      nextUrl = '';
+    } else {
+      nextUrl = metaNext;
+    }
 
     if (typeof onProgress === 'function') {
       try {
         onProgress({
           pageCount,
           conversationCount: conversations.length,
-          hasMore: Boolean(nextUrl)
+          hasMore: Boolean(nextUrl),
+          olderSkipped,
+          undatedSkipped,
+          cutoffReached,
+          cutoffAt,
+          historyDays: HISTORY_IMPORT_DAYS
         });
       } catch (progressError) {
         console.warn('⚠️ Progression historique Instagram non enregistrée :', progressError.message);
@@ -11708,17 +11772,26 @@ async function listAllInstagramConversations(onProgress = null) {
     }
   }
 
-  console.log(`📚 Instagram : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
+  console.log(
+    `📚 Instagram : ${conversations.length} conversation(s) dans les ${HISTORY_IMPORT_DAYS} derniers jours sur ${pageCount} page(s)` +
+    `${cutoffReached ? ', arrêt au seuil de rétention.' : ', pagination épuisée.'}`
+  );
 
   return {
     conversations,
     truncated: false,
-    pageCount
+    pageCount,
+    cutoffAt,
+    historyDays: HISTORY_IMPORT_DAYS,
+    olderSkipped,
+    undatedSkipped,
+    cutoffReached
   };
 }
 
-async function listAllInstagramConversationMessageRefs(conversationId) {
+async function listAllInstagramConversationMessageRefs(conversationId, cutoffAt = '') {
   const encodedId = encodeURIComponent(safeString(conversationId));
+  const cutoffEnabled = Number.isFinite(Date.parse(safeString(cutoffAt)));
   let nextUrl =
     `https://graph.instagram.com/${META_API_VERSION}/${encodedId}` +
     `?fields=${encodeURIComponent('messages.limit(100){id,created_time}')}`;
@@ -11738,17 +11811,42 @@ async function listAllInstagramConversationMessageRefs(conversationId) {
       ? data.messages.data
       : (Array.isArray(data?.data) ? data.data : []);
 
+    let datedCount = 0;
+    let recentCount = 0;
+    let olderCount = 0;
+
     for (const item of pageData) {
       const id = safeString(item?.id);
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
-      refs.push({
-        id,
-        created_time: safeString(item?.created_time)
-      });
+      const createdTime = safeString(item?.created_time);
+      const createdMs = Date.parse(createdTime);
+
+      if (cutoffEnabled) {
+        if (!Number.isFinite(createdMs)) continue;
+        datedCount += 1;
+        if (!historyTimeIsRecent(createdTime, cutoffAt)) {
+          olderCount += 1;
+          continue;
+        }
+        recentCount += 1;
+      }
+
+      refs.push({ id, created_time: createdTime });
     }
 
-    nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
+    const metaNext = safeString(data?.messages?.paging?.next || data?.paging?.next);
+    if (
+      cutoffEnabled &&
+      pageData.length > 0 &&
+      datedCount > 0 &&
+      recentCount === 0 &&
+      olderCount === datedCount
+    ) {
+      nextUrl = '';
+    } else {
+      nextUrl = metaNext;
+    }
   }
 
   return refs.sort((a, b) =>
@@ -11756,13 +11854,14 @@ async function listAllInstagramConversationMessageRefs(conversationId) {
   );
 }
 
-async function getInstagramConversationRecentMessages(conversationId) {
-  const refs = await listAllInstagramConversationMessageRefs(conversationId);
+async function getInstagramConversationRecentMessages(conversationId, cutoffAt = '') {
+  const refs = await listAllInstagramConversationMessageRefs(conversationId, cutoffAt);
   const detailedRefs = refs.slice(0, 20);
   const detailsById = new Map();
 
   // Meta documente que le détail n'est disponible que pour les 20 messages
-  // les plus récents. Les IDs/date plus anciens sont néanmoins conservés.
+  // les plus récents. En V6.20.5, seuls les IDs situés dans la fenêtre de
+  // rétention de 90 jours sont conservés/importés.
   for (let index = 0; index < detailedRefs.length; index += 5) {
     const batch = detailedRefs.slice(index, index + 5);
     const responses = await Promise.all(
@@ -11787,11 +11886,7 @@ async function getInstagramConversationRecentMessages(conversationId) {
   return refs.map((ref, index) => {
     const detail = detailsById.get(ref.id);
     if (detail) {
-      return {
-        ...ref,
-        ...detail,
-        meta_content_available: true
-      };
+      return { ...ref, ...detail, meta_content_available: true };
     }
 
     return {
@@ -11965,7 +12060,9 @@ async function runInstagramHistorySync() {
   const startedAt =
     new Date().toISOString();
 
-  console.log('📚 Instagram : pagination maximale activée. Meta ne fournit le détail complet que pour les 20 messages les plus récents de chaque discussion ; les anciens IDs/dates seront conservés sans direction inventée.');
+  const cutoffAt = historyImportCutoffIso(startedAt);
+
+  console.log(`📚 Instagram : import limité aux ${HISTORY_IMPORT_DAYS} derniers jours (depuis ${cutoffAt}).`);
 
   instagramHistorySyncJob = {
     running: true,
@@ -11981,7 +12078,11 @@ async function runInstagramHistorySync() {
     warning: '',
     truncated: false,
     metaMessageDetailLimit: 20,
-    chronologyVersion: 3,
+    chronologyVersion: 4,
+    historyDays: HISTORY_IMPORT_DAYS,
+    cutoffAt,
+    olderConversationsSkipped: 0,
+    cutoffReached: false,
     phase: 'listing',
     listedConversations: 0,
     listPages: 0,
@@ -12000,9 +12101,11 @@ async function runInstagramHistorySync() {
         instagramHistorySyncJob.phase = 'listing';
         instagramHistorySyncJob.listedConversations = Number(progress?.conversationCount || 0);
         instagramHistorySyncJob.listPages = Number(progress?.pageCount || 0);
+        instagramHistorySyncJob.olderConversationsSkipped = Number(progress?.olderSkipped || 0);
+        instagramHistorySyncJob.cutoffReached = Boolean(progress?.cutoffReached);
         instagramHistorySyncJob.lastProgressAt = new Date().toISOString();
         saveInstagramHistorySyncState(instagramHistorySyncJob);
-      });
+      }, { cutoffAt });
 
     const conversations =
       listed.conversations;
@@ -12011,6 +12114,8 @@ async function runInstagramHistorySync() {
       conversations.length;
     instagramHistorySyncJob.listedConversations = conversations.length;
     instagramHistorySyncJob.listPages = Number(listed.pageCount || instagramHistorySyncJob.listPages || 0);
+    instagramHistorySyncJob.olderConversationsSkipped = Number(listed.olderSkipped || instagramHistorySyncJob.olderConversationsSkipped || 0);
+    instagramHistorySyncJob.cutoffReached = Boolean(listed.cutoffReached);
     instagramHistorySyncJob.phase = 'messages';
 
     instagramHistorySyncJob.truncated =
@@ -12077,7 +12182,8 @@ async function runInstagramHistorySync() {
             try {
               const messages =
                 await getInstagramConversationRecentMessages(
-                  conversation.id
+                  conversation.id,
+                  cutoffAt
                 );
 
               instagramHistorySyncJob.messageIdsDiscovered += messages.length;
@@ -12535,7 +12641,7 @@ router.post(
 );
 
 // ============================================================
-// V6.20.4 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// V6.20.5 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
 // ============================================================
 
 let facebookHistorySyncJob = {
@@ -12598,15 +12704,20 @@ async function facebookGraphGet(url) {
   return data;
 }
 
-async function listAllFacebookConversations(onProgress = null) {
+async function listAllFacebookConversations(onProgress = null, options = {}) {
   if (!FACEBOOK_PAGE_ID) {
     throw new Error('FACEBOOK_PAGE_ID manquant.');
   }
 
+  const cutoffAt = safeString(options?.cutoffAt);
+  const cutoffEnabled = Number.isFinite(Date.parse(cutoffAt));
   const conversations = [];
   const seenIds = new Set();
   const seenUrls = new Set();
   let pageCount = 0;
+  let olderSkipped = 0;
+  let undatedSkipped = 0;
+  let cutoffReached = false;
   let nextUrl =
     `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
     `?fields=${encodeURIComponent('id,link,updated_time')}&limit=50`;
@@ -12618,26 +12729,66 @@ async function listAllFacebookConversations(onProgress = null) {
     seenUrls.add(nextUrl);
 
     const data = await facebookGraphGet(nextUrl);
-    for (const item of Array.isArray(data?.data) ? data.data : []) {
+    const pageItems = Array.isArray(data?.data) ? data.data : [];
+    let pageDated = 0;
+    let pageRecent = 0;
+    let pageOlder = 0;
+
+    for (const item of pageItems) {
       const id = safeString(item?.id);
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
+      const updatedTime = safeString(item?.updated_time);
+      const updatedMs = Date.parse(updatedTime);
+
+      if (cutoffEnabled) {
+        if (!Number.isFinite(updatedMs)) {
+          undatedSkipped += 1;
+          continue;
+        }
+        pageDated += 1;
+        if (!historyTimeIsRecent(updatedTime, cutoffAt)) {
+          olderSkipped += 1;
+          pageOlder += 1;
+          continue;
+        }
+        pageRecent += 1;
+      }
+
       conversations.push({
         id,
         link: safeString(item?.link),
-        updatedTime: safeString(item?.updated_time)
+        updatedTime
       });
     }
 
-    nextUrl = safeString(data?.paging?.next);
+    const metaNext = safeString(data?.paging?.next);
     pageCount += 1;
+
+    if (
+      cutoffEnabled &&
+      pageItems.length > 0 &&
+      pageDated > 0 &&
+      pageRecent === 0 &&
+      pageOlder === pageDated
+    ) {
+      cutoffReached = true;
+      nextUrl = '';
+    } else {
+      nextUrl = metaNext;
+    }
 
     if (typeof onProgress === 'function') {
       try {
         onProgress({
           pageCount,
           conversationCount: conversations.length,
-          hasMore: Boolean(nextUrl)
+          hasMore: Boolean(nextUrl),
+          olderSkipped,
+          undatedSkipped,
+          cutoffReached,
+          cutoffAt,
+          historyDays: HISTORY_IMPORT_DAYS
         });
       } catch (progressError) {
         console.warn('⚠️ Progression historique Facebook non enregistrée :', progressError.message);
@@ -12645,12 +12796,25 @@ async function listAllFacebookConversations(onProgress = null) {
     }
   }
 
-  console.log(`📘 Facebook : ${conversations.length} conversation(s) listée(s) sur ${pageCount} page(s), pagination épuisée.`);
-  return { conversations, pageCount, truncated: false };
+  console.log(
+    `📘 Facebook : ${conversations.length} conversation(s) dans les ${HISTORY_IMPORT_DAYS} derniers jours sur ${pageCount} page(s)` +
+    `${cutoffReached ? ', arrêt au seuil de rétention.' : ', pagination épuisée.'}`
+  );
+  return {
+    conversations,
+    pageCount,
+    truncated: false,
+    cutoffAt,
+    historyDays: HISTORY_IMPORT_DAYS,
+    olderSkipped,
+    undatedSkipped,
+    cutoffReached
+  };
 }
 
-async function listAllFacebookConversationMessageRefs(conversationId) {
+async function listAllFacebookConversationMessageRefs(conversationId, cutoffAt = '') {
   const encodedId = encodeURIComponent(safeString(conversationId));
+  const cutoffEnabled = Number.isFinite(Date.parse(safeString(cutoffAt)));
   const fieldSets = [
     'messages.limit(100){id,created_time,from,to,message,reply_to,attachments}',
     'messages.limit(100){id,created_time,from,to,message,reply_to}',
@@ -12687,10 +12851,27 @@ async function listAllFacebookConversationMessageRefs(conversationId) {
       ? data.messages.data
       : (Array.isArray(data?.data) ? data.data : []);
 
+    let datedCount = 0;
+    let recentCount = 0;
+    let olderCount = 0;
+
     for (const item of pageData) {
       const id = safeString(item?.id);
       if (!id || seenIds.has(id)) continue;
       seenIds.add(id);
+      const createdTime = safeString(item?.created_time);
+      const createdMs = Date.parse(createdTime);
+
+      if (cutoffEnabled) {
+        if (!Number.isFinite(createdMs)) continue;
+        datedCount += 1;
+        if (!historyTimeIsRecent(createdTime, cutoffAt)) {
+          olderCount += 1;
+          continue;
+        }
+        recentCount += 1;
+      }
+
       const hasInlineDetail = Boolean(
         item?.from ||
         item?.to ||
@@ -12701,12 +12882,21 @@ async function listAllFacebookConversationMessageRefs(conversationId) {
       refs.push({
         ...item,
         id,
-        created_time: safeString(item?.created_time),
+        created_time: createdTime,
         _facebook_inline_detail: hasInlineDetail
       });
     }
 
     const nextUrl = safeString(data?.messages?.paging?.next || data?.paging?.next);
+    if (
+      cutoffEnabled &&
+      pageData.length > 0 &&
+      datedCount > 0 &&
+      recentCount === 0 &&
+      olderCount === datedCount
+    ) {
+      break;
+    }
     if (!nextUrl) break;
     if (seenUrls.has(nextUrl)) {
       throw new Error('Pagination Facebook messages en boucle.');
@@ -12716,7 +12906,7 @@ async function listAllFacebookConversationMessageRefs(conversationId) {
   }
 
   console.log(
-    `📘 Facebook conversation ${safeString(conversationId)} : ${refs.length} message(s) paginé(s)` +
+    `📘 Facebook conversation ${safeString(conversationId)} : ${refs.length} message(s) des ${HISTORY_IMPORT_DAYS} derniers jours` +
     `${selectedFields.includes('from,to,message') ? ' avec détails groupés' : ' (IDs/dates, détails à enrichir)'}.`
   );
 
@@ -12761,23 +12951,18 @@ async function getFacebookMessageDetail(ref) {
   };
 }
 
-async function getAllFacebookConversationMessages(conversationId) {
-  const refs = await listAllFacebookConversationMessageRefs(conversationId);
+async function getAllFacebookConversationMessages(conversationId, cutoffAt = '') {
+  const refs = await listAllFacebookConversationMessageRefs(conversationId, cutoffAt);
   const messages = [];
 
-  // Aucune limite artificielle. Les messages déjà détaillés dans la
-  // pagination sont utilisés directement ; seuls les autres nécessitent un
-  // GET individuel. Cela réduit énormément les appels Graph sur les gros
-  // historiques.
+  // V6.20.5 : aucune pagination de messages au-delà de la fenêtre de 90 jours.
+  // Les messages déjà détaillés sont utilisés directement ; les autres sont enrichis.
   for (let index = 0; index < refs.length; index += 8) {
     const batch = refs.slice(index, index + 8);
     const details = await Promise.all(
       batch.map(ref =>
         ref?._facebook_inline_detail
-          ? Promise.resolve({
-              ...ref,
-              meta_content_available: true
-            })
+          ? Promise.resolve({ ...ref, meta_content_available: true })
           : getFacebookMessageDetail(ref)
       )
     );
@@ -13005,6 +13190,7 @@ async function validateFacebookHistoryConfiguration() {
 
 async function runFacebookHistorySync() {
   const startedAt = new Date().toISOString();
+  const cutoffAt = historyImportCutoffIso(startedAt);
 
   facebookHistorySyncJob = {
     running: true,
@@ -13023,7 +13209,11 @@ async function runFacebookHistorySync() {
     pageTokenValidated: false,
     pageName: '',
     tokenPageId: '',
-    syncVersion: 3,
+    syncVersion: 4,
+    historyDays: HISTORY_IMPORT_DAYS,
+    cutoffAt,
+    olderConversationsSkipped: 0,
+    cutoffReached: false,
     phase: 'validating',
     listedConversations: 0,
     listPages: 0,
@@ -13044,13 +13234,17 @@ async function runFacebookHistorySync() {
       facebookHistorySyncJob.phase = 'listing';
       facebookHistorySyncJob.listedConversations = Number(progress?.conversationCount || 0);
       facebookHistorySyncJob.listPages = Number(progress?.pageCount || 0);
+      facebookHistorySyncJob.olderConversationsSkipped = Number(progress?.olderSkipped || 0);
+      facebookHistorySyncJob.cutoffReached = Boolean(progress?.cutoffReached);
       facebookHistorySyncJob.lastProgressAt = new Date().toISOString();
       saveFacebookHistorySyncState(facebookHistorySyncJob);
-    });
+    }, { cutoffAt });
     const conversations = listed.conversations;
     facebookHistorySyncJob.totalConversations = conversations.length;
     facebookHistorySyncJob.listedConversations = conversations.length;
     facebookHistorySyncJob.listPages = Number(listed.pageCount || facebookHistorySyncJob.listPages || 0);
+    facebookHistorySyncJob.olderConversationsSkipped = Number(listed.olderSkipped || facebookHistorySyncJob.olderConversationsSkipped || 0);
+    facebookHistorySyncJob.cutoffReached = Boolean(listed.cutoffReached);
     facebookHistorySyncJob.phase = 'messages';
     saveFacebookHistorySyncState(facebookHistorySyncJob);
 
@@ -13082,7 +13276,7 @@ async function runFacebookHistorySync() {
       const results = await Promise.all(
         batch.map(async conversation => {
           try {
-            const messages = await getAllFacebookConversationMessages(conversation.id);
+            const messages = await getAllFacebookConversationMessages(conversation.id, cutoffAt);
             const customerId = facebookConversationCustomerId(messages);
             if (!customerId) {
               return { conversation, messages, error: 'Client Facebook non identifiable.' };
