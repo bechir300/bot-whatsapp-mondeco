@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.26.0
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.27.0
 // server.js
 //
 // Ajouts V5 :
@@ -4799,7 +4799,9 @@ setCommercialSendHandler(
         ...current,
         aiModePreference: 'commercial',
         aiModeChoicePending: false,
-        aiModeSelectedAt: new Date().toISOString()
+        aiModeSelectedAt: new Date().toISOString(),
+        lastHumanAt: new Date().toISOString(),
+        lastHumanSource: 'commercial_admin'
       })
     );
 
