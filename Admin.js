@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.1
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -13936,12 +13936,21 @@ function facebookGraphRequestPath(pathname, options = {}) {
   );
 }
 
-function instagramGraphRequestPath(pathname, options = {}) {
-  return graphJsonRequest(
-    `https://graph.instagram.com/${META_API_VERSION}/${String(pathname || '').replace(/^\//,'')}`,
-    INSTAGRAM_ACCESS_TOKEN,
-    options
-  );
+async function instagramGraphRequestPath(pathname, options = {}) {
+  const cleanPath = String(pathname || '').replace(/^\//,'');
+  const hosts = [
+    `https://graph.instagram.com/${META_API_VERSION}/${cleanPath}`,
+    `https://graph.facebook.com/${META_API_VERSION}/${cleanPath}`
+  ];
+  const errors = [];
+  for (const url of hosts) {
+    try {
+      return await graphJsonRequest(url, INSTAGRAM_ACCESS_TOKEN, options);
+    } catch (error) {
+      errors.push(`${url.includes('graph.instagram.com') ? 'Instagram Login' : 'Facebook Login'}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.join(' | ') || 'Instagram Graph API inaccessible.');
 }
 
 async function collectPagedMeta(firstUrl, token, { maxItems = 20000, cutoffAt = '' } = {}) {
@@ -14127,8 +14136,20 @@ async function syncFacebookComments90Days() {
   if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) throw new Error('Facebook Page ID / Page Access Token manquant.');
   const cutoffAt = historyImportCutoffIso();
   const fields = 'id,message,created_time,permalink_url,full_picture';
-  const first = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/posts?fields=${encodeURIComponent(fields)}&limit=50`;
-  const rawPosts = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
+  const rawPostMap = new Map();
+  for (const edge of ['posts','feed']) {
+    const first = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/${edge}?fields=${encodeURIComponent(fields)}&limit=50`;
+    try {
+      const rows = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
+      for (const row of rows) if (safeString(row?.id)) rawPostMap.set(safeString(row.id), row);
+    } catch (error) {
+      socialCommentsSyncJob.errors.push(`Facebook ${edge}: ${error.message}`);
+    }
+  }
+  const rawPosts = [...rawPostMap.values()];
+  if (!rawPosts.length && socialCommentsSyncJob.errors.length) {
+    throw new Error(socialCommentsSyncJob.errors.slice(-2).join(' | '));
+  }
   const posts = rawPosts.map(normalizeFacebookPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
   const comments = [];
   for (const post of posts) {
@@ -14153,16 +14174,30 @@ async function syncInstagramComments90Days() {
   if (!INSTAGRAM_ACCOUNT_ID || !INSTAGRAM_ACCESS_TOKEN) throw new Error('Instagram Account ID / Access Token manquant.');
   const cutoffAt = historyImportCutoffIso();
   const mediaFields = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp';
-  const first = `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/media?fields=${encodeURIComponent(mediaFields)}&limit=50`;
-  const rawMedia = await collectPagedMeta(first, INSTAGRAM_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
-  const posts = rawMedia.map(normalizeInstagramPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
+  const mediaPage = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/media?fields=${encodeURIComponent(mediaFields)}&limit=50`);
+  const rawMedia = Array.isArray(mediaPage?.data) ? [...mediaPage.data] : [];
+  let nextMedia = safeString(mediaPage?.paging?.next);
+  while (nextMedia && rawMedia.length < 1000) {
+    const page = await graphJsonRequest(nextMedia, INSTAGRAM_ACCESS_TOKEN);
+    rawMedia.push(...(Array.isArray(page?.data) ? page.data : []));
+    const times = (Array.isArray(page?.data) ? page.data : []).map(item => Date.parse(safeString(item?.timestamp))).filter(Number.isFinite);
+    if (times.length && Math.max(...times) < Date.parse(cutoffAt)) break;
+    nextMedia = safeString(page?.paging?.next);
+  }
+  const posts = rawMedia.slice(0,1000).map(normalizeInstagramPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
   const comments = [];
   for (const post of posts) {
     const replyFields = 'id,text,timestamp,username,from,hidden,like_count,parent_id';
     const commentFields = `${replyFields},replies.limit(100){${replyFields}}`;
-    const url = `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(post.mediaId)}/comments?fields=${encodeURIComponent(commentFields)}&limit=100`;
     try {
-      const top = await collectPagedMeta(url, INSTAGRAM_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+      const firstComments = await instagramGraphRequestPath(`${encodeURIComponent(post.mediaId)}/comments?fields=${encodeURIComponent(commentFields)}&limit=100`);
+      const top = Array.isArray(firstComments?.data) ? [...firstComments.data] : [];
+      let nextTop = safeString(firstComments?.paging?.next);
+      while (nextTop && top.length < 5000) {
+        const page = await graphJsonRequest(nextTop, INSTAGRAM_ACCESS_TOKEN);
+        top.push(...(Array.isArray(page?.data) ? page.data : []));
+        nextTop = safeString(page?.paging?.next);
+      }
       for (const raw of top) {
         const normalized = normalizeInstagramComment(raw, post.mediaId);
         if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
@@ -14328,13 +14363,149 @@ function socialCommentCounts(items, user) {
 router.get('/api/social-comments/status', requireAuth, (req,res) => {
   const saved = loadSocialCommentsSyncState();
   const current = socialCommentsSyncJob.startedAt ? socialCommentsSyncJob : { ...saved, running:false };
+  const counts = socialCommentCounts(loadSocialComments(), req.user);
   return res.json({
     ...current,
-    counts:socialCommentCounts(loadSocialComments(), req.user),
+    counts,
     facebookConfigured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
     instagramConfigured:Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN),
-    historyDays:HISTORY_IMPORT_DAYS
+    historyDays:HISTORY_IMPORT_DAYS,
+    hasData:Number(counts?.all || 0) > 0,
+    needsInitialSync:!current?.running && Number(counts?.all || 0) === 0,
+    lastErrors:Array.isArray(current?.errors) ? current.errors.slice(-10) : []
   });
+});
+
+async function diagnoseFacebookCommentsAccess() {
+  const result = {
+    channel:'facebook', configured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    page:false, posts:false, comments:false, feed:false, samplePostId:'', error:''
+  };
+  if (!result.configured) {
+    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.';
+    return result;
+  }
+  try {
+    const page = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}?fields=${encodeURIComponent('id,name')}`);
+    result.page = Boolean(page?.id);
+    result.pageName = safeString(page?.name);
+  } catch (error) {
+    result.error = `Accès Page Facebook refusé : ${error.message}`;
+    return result;
+  }
+  let sample = null;
+  try {
+    const posts = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}/posts?fields=${encodeURIComponent('id,created_time')}&limit=1`);
+    sample = Array.isArray(posts?.data) ? posts.data[0] : null;
+    result.posts = true;
+  } catch (error) {
+    result.postsError = safeString(error.message);
+  }
+  try {
+    const feed = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}/feed?fields=${encodeURIComponent('id,created_time')}&limit=1`);
+    if (!sample) sample = Array.isArray(feed?.data) ? feed.data[0] : null;
+    result.feed = true;
+  } catch (error) {
+    result.feedError = safeString(error.message);
+  }
+  result.samplePostId = safeString(sample?.id);
+  if (result.samplePostId) {
+    try {
+      await facebookGraphRequestPath(`${encodeURIComponent(result.samplePostId)}/comments?fields=${encodeURIComponent('id,message,created_time,is_hidden')}&limit=1`);
+      result.comments = true;
+    } catch (error) {
+      result.commentsError = safeString(error.message);
+    }
+  } else if (result.posts || result.feed) {
+    result.comments = true;
+  }
+  try {
+    const subscribed = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`);
+    result.webhookSubscription = Array.isArray(subscribed?.data) ? subscribed.data.length > 0 : null;
+    result.webhookFields = Array.isArray(subscribed?.data)
+      ? [...new Set(subscribed.data.flatMap(item => Array.isArray(item?.subscribed_fields) ? item.subscribed_fields : []))]
+      : [];
+  } catch (error) {
+    result.webhookError = safeString(error.message);
+  }
+  return result;
+}
+
+async function diagnoseInstagramCommentsAccess() {
+  const result = {
+    channel:'instagram', configured:Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN),
+    account:false, media:false, comments:false, sampleMediaId:'', error:''
+  };
+  if (!result.configured) {
+    result.error = 'INSTAGRAM_ACCOUNT_ID ou INSTAGRAM_ACCESS_TOKEN manquant.';
+    return result;
+  }
+  try {
+    const account = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}?fields=${encodeURIComponent('id,username')}`);
+    result.account = Boolean(account?.id);
+    result.username = safeString(account?.username);
+  } catch (error) {
+    result.error = `Accès compte Instagram refusé : ${error.message}`;
+    return result;
+  }
+  try {
+    const media = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/media?fields=${encodeURIComponent('id,timestamp')}&limit=1`);
+    const firstMedia = Array.isArray(media?.data) ? media.data[0] : null;
+    result.media = true;
+    result.sampleMediaId = safeString(firstMedia?.id);
+    if (result.sampleMediaId) {
+      try {
+        await instagramGraphRequestPath(`${encodeURIComponent(result.sampleMediaId)}/comments?fields=${encodeURIComponent('id,text,timestamp,hidden')}&limit=1`);
+        result.comments = true;
+      } catch (error) {
+        result.commentsError = safeString(error.message);
+      }
+    } else {
+      result.comments = true;
+    }
+  } catch (error) {
+    result.mediaError = safeString(error.message);
+  }
+  try {
+    const subscribed = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/subscribed_apps`);
+    result.webhookSubscription = Array.isArray(subscribed?.data) ? subscribed.data.length > 0 : null;
+    result.webhookFields = Array.isArray(subscribed?.data)
+      ? [...new Set(subscribed.data.flatMap(item => Array.isArray(item?.subscribed_fields) ? item.subscribed_fields : []))]
+      : [];
+  } catch (error) {
+    result.webhookError = safeString(error.message);
+  }
+  return result;
+}
+
+router.get('/api/social-comments/diagnostic', requireAdminOrCommercialManager, async (req,res) => {
+  try {
+    const [facebook, instagram] = await Promise.all([
+      diagnoseFacebookCommentsAccess(),
+      diagnoseInstagramCommentsAccess()
+    ]);
+    const issues = [];
+    if (!facebook.configured) issues.push('Facebook : configuration manquante.');
+    else {
+      if (!facebook.page) issues.push('Facebook : le Page Access Token ne permet pas de lire la Page.');
+      if (!facebook.posts && !facebook.feed) issues.push(`Facebook : lecture des publications refusée — ${facebook.postsError || facebook.feedError || 'permissions insuffisantes'}.`);
+      if (!facebook.comments) issues.push(`Facebook : lecture des commentaires refusée — ${facebook.commentsError || 'permissions insuffisantes'}. Vérifiez pages_read_engagement, pages_read_user_content et la tâche MODERATE sur la Page.`);
+      if (facebook.webhookSubscription === false) issues.push('Facebook : aucune souscription webhook Page détectée. Le champ feed doit être abonné pour recevoir les nouveaux commentaires en temps réel.');
+      if (Array.isArray(facebook.webhookFields) && facebook.webhookFields.length && !facebook.webhookFields.includes('feed')) issues.push('Facebook : le webhook de la Page n’est pas abonné au champ feed.');
+    }
+    if (!instagram.configured) issues.push('Instagram : configuration manquante.');
+    else {
+      if (!instagram.account) issues.push('Instagram : le token ne permet pas de lire le compte professionnel.');
+      if (!instagram.media) issues.push(`Instagram : lecture des médias refusée — ${instagram.mediaError || 'permissions insuffisantes'}.`);
+      if (!instagram.comments) issues.push(`Instagram : lecture des commentaires refusée — ${instagram.commentsError || 'permissions insuffisantes'}. Vérifiez instagram_business_manage_comments (Instagram Login) ou instagram_manage_comments (Facebook Login).`);
+      if (instagram.webhookSubscription === false) issues.push('Instagram : aucune souscription webhook détectée pour ce compte.');
+      if (Array.isArray(instagram.webhookFields) && instagram.webhookFields.length && !instagram.webhookFields.includes('comments')) issues.push('Instagram : le webhook du compte n’est pas abonné au champ comments.');
+    }
+    return res.json({ success:true, facebook, instagram, issues, checkedAt:new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ Diagnostic commentaires Meta :', error);
+    return res.status(500).json({ error:error.message || 'Diagnostic Meta impossible.' });
+  }
 });
 
 router.post('/api/social-comments/sync', requireAdminOrCommercialManager, (req,res) => {
