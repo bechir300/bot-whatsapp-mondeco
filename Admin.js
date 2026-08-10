@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.1
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.2
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -159,7 +159,7 @@ const VERSIONED_BACKUP_MAX_BYTES = Math.max(
 
 const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
   8 * 1024 * 1024,
-  (Number(process.env.MONDECO_STORAGE_RESCUE_FREE_MB || 40) || 40) *
+  (Number(process.env.MONDECO_STORAGE_RESCUE_FREE_MB || 100) || 100) *
     1024 *
     1024
 );
@@ -506,6 +506,110 @@ function cleanupStaleStorageTempFiles() {
   return freed;
 }
 
+function pruneFilesOlderThan(directory, cutoffMs, label, { recursive = false } = {}) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(directory)) return 0;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (recursive) freed += pruneFilesOlderThan(fullPath, cutoffMs, `${label}/${entry.name}`, { recursive });
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs >= cutoffMs) continue;
+        fs.unlinkSync(fullPath);
+        freed += Number(stat.size || 0);
+      } catch (error) {
+        console.warn(`⚠️ Storage Rescue : ${label} non supprimé :`, error.message);
+      }
+    }
+  } catch (error) {
+    console.warn(`⚠️ Storage Rescue : nettoyage ${label} impossible :`, error.message);
+  }
+  return freed;
+}
+
+function pruneConversationEventsByRetention() {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
+    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+    for (const entry of fs.readdirSync(CONVERSATION_EVENTS_DIR, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const match = /^conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(entry.name);
+      if (!match) continue;
+      const dayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
+      if (!Number.isFinite(dayMs) || dayMs >= cutoff) continue;
+      const fullPath = path.join(CONVERSATION_EVENTS_DIR, entry.name);
+      try {
+        const stat = fs.statSync(fullPath);
+        fs.unlinkSync(fullPath);
+        freed += Number(stat.size || 0);
+      } catch (error) {
+        console.warn('⚠️ Storage Rescue : ancien journal conversation non supprimé :', error.message);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : rétention conversation-events impossible :', error.message);
+  }
+  return freed;
+}
+
+function pruneSafeConversationCaches({ emergency = false } = {}) {
+  const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+  let freed = 0;
+  // Les médias plus anciens que l'historique visible ne sont plus nécessaires.
+  freed += pruneFilesOlderThan(CONVERSATION_MEDIA_DIR, retentionCutoff, 'conversation-media', { recursive: true });
+  freed += pruneConversationEventsByRetention();
+
+  // Les photos de profil sont un cache cosmétique. En manque d'espace, on peut
+  // retirer les anciennes sans supprimer les conversations ni les données métier.
+  if (emergency) {
+    const profileCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    freed += pruneFilesOlderThan(CONVERSATION_PROFILE_DIR, profileCutoff, 'conversation-profile', { recursive: true });
+  }
+  return freed;
+}
+
+function storageBreakdown() {
+  const sizeOfFile = filePath => {
+    try { return fs.existsSync(filePath) ? Number(fs.statSync(filePath).size || 0) : 0; } catch { return 0; }
+  };
+  return {
+    conversationMediaBytes: pathSizeBytes(CONVERSATION_MEDIA_DIR),
+    conversationProfileBytes: pathSizeBytes(CONVERSATION_PROFILE_DIR),
+    conversationEventsBytes: pathSizeBytes(CONVERSATION_EVENTS_DIR),
+    backupsBytes: pathSizeBytes(BACKUPS_DIR),
+    uploadsBytes: pathSizeBytes(UPLOADS_DIR),
+    customizationsBytes: pathSizeBytes(CUSTOMIZATIONS_DIR),
+    liveConversationLogBytes: sizeOfFile(CONVERSATIONS_LOG_PATH),
+    instagramHistoryBytes: sizeOfFile(INSTAGRAM_HISTORY_PATH),
+    facebookHistoryBytes: sizeOfFile(FACEBOOK_HISTORY_PATH),
+    socialCommentsBytes: sizeOfFile(SOCIAL_COMMENTS_PATH),
+    socialPostsBytes: sizeOfFile(SOCIAL_POSTS_PATH)
+  };
+}
+
+function runSafeStorageMaintenance({ forceEmergency = false } = {}) {
+  const before = storageSpaceInfo();
+  let freed = 0;
+  freed += cleanupStaleStorageTempFiles();
+  freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
+  freed += compactExistingSnapshotBinaryCopies();
+  freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+  freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
+  if (fs.existsSync(RECYCLE_DIR) && (forceEmergency || (before && before.freeRatio < 0.15))) {
+    for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
+      freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
+    }
+  }
+  const after = storageSpaceInfo();
+  return { before, after, freedBytes: freed, breakdown: storageBreakdown() };
+}
+
 function runStartupStorageRescue() {
   if (!COMPACT_STORAGE_MODE) return;
 
@@ -514,37 +618,18 @@ function runStartupStorageRescue() {
   const lowSpace =
     !before ||
     before.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
-    (Number.isFinite(before.freeRatio) && before.freeRatio < 0.15) ||
+    (Number.isFinite(before.freeRatio) && before.freeRatio < 0.20) ||
     !beforeProbe.writable;
 
-  let estimatedFreed = 0;
-
-  // Même hors urgence, conserver les limites compactes pour éviter une
-  // nouvelle saturation progressive du Volume Free.
-  estimatedFreed += cleanupStaleStorageTempFiles();
-  estimatedFreed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
-  estimatedFreed += compactExistingSnapshotBinaryCopies();
-  estimatedFreed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
-
-  if (lowSpace && fs.existsSync(RECYCLE_DIR)) {
-    // Le recycle ne contient que des copies de fichiers déjà supprimés de
-    // l'application active. En situation de saturation, il est sûr de le vider.
-    for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
-      estimatedFreed += removePathForStorageRescue(
-        path.join(RECYCLE_DIR, entry.name),
-        `recycle/${entry.name}`
-      );
-    }
-  }
-
-  const after = storageSpaceInfo();
+  const result = runSafeStorageMaintenance({ forceEmergency: lowSpace });
   const afterProbe = storageWriteProbe();
 
   console.log('🛟 MONDECO Storage Rescue', {
     mode: 'compact',
-    estimatedFreed: humanBytes(estimatedFreed),
-    freeBefore: before ? humanBytes(before.freeBytes) : 'inconnu',
-    freeAfter: after ? humanBytes(after.freeBytes) : 'inconnu',
+    retentionDays: HISTORY_IMPORT_DAYS,
+    estimatedFreed: humanBytes(result.freedBytes),
+    freeBefore: result.before ? humanBytes(result.before.freeBytes) : 'inconnu',
+    freeAfter: result.after ? humanBytes(result.after.freeBytes) : 'inconnu',
     writableBefore: beforeProbe.writable,
     writableAfter: afterProbe.writable,
     errorCode: afterProbe.errorCode || null
@@ -15773,6 +15858,15 @@ router.get(
       usedBytes:
         space?.usedBytes ?? null,
 
+      usagePercent:
+        space?.totalBytes ? Math.round((space.usedBytes / space.totalBytes) * 100) : null,
+
+      retentionDays:
+        HISTORY_IMPORT_DAYS,
+
+      breakdown:
+        storageBreakdown(),
+
       productsFile:
         fs.existsSync(PRODUCTS_PATH),
 
@@ -15838,6 +15932,35 @@ router.get(
       recommendedDataDir:
         '/data'
     });
+  }
+);
+
+router.post(
+  '/api/storage-cleanup',
+  requireAdmin,
+  (req, res) => {
+    try {
+      const result = runSafeStorageMaintenance({ forceEmergency: true });
+      persistentConversationEventsCache = { stamp: '', entries: [] };
+      combinedConversationLogCache = {
+        liveStamp: '',
+        historyStamp: '',
+        facebookHistoryStamp: '',
+        persistentStamp: '',
+        entries: []
+      };
+      return res.json({
+        success: true,
+        retentionDays: HISTORY_IMPORT_DAYS,
+        freedBytes: result.freedBytes,
+        freeBytesBefore: result.before?.freeBytes ?? null,
+        freeBytesAfter: result.after?.freeBytes ?? null,
+        breakdown: result.breakdown
+      });
+    } catch (error) {
+      console.error('❌ Nettoyage stockage :', error);
+      return res.status(500).json({ error: error.message || 'Nettoyage stockage impossible.' });
+    }
   }
 );
 
