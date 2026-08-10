@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.23.0
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.26.0
 // server.js
 //
 // Ajouts V5 :
@@ -30,7 +30,8 @@ const {
   setCommercialSendHandler,
   setWhatsAppCallHandler,
   registerCommercialEscalation,
-  resolveCommercialSla
+  resolveCommercialSla,
+  processSocialCommentWebhookEntry
 } = require('./Admin');
 
 const app = express();
@@ -6632,6 +6633,14 @@ async function processFacebookWebhook(body) {
         }
       }
     }
+
+    // V6.26 — les changements « feed » contiennent les nouveaux commentaires,
+    // y compris les commentaires sur des publications publicitaires lorsque Meta les expose.
+    try {
+      await processSocialCommentWebhookEntry('facebook', entry);
+    } catch (error) {
+      console.error('❌ Erreur commentaires Facebook :', error);
+    }
   }
 }
 
@@ -6824,6 +6833,13 @@ async function processInstagramWebhook(body) {
           error
         );
       }
+    }
+
+    // V6.26 — commentaires et live_comments Instagram arrivent dans entry.changes.
+    try {
+      await processSocialCommentWebhookEntry('instagram', entry);
+    } catch (error) {
+      console.error('❌ Erreur commentaires Instagram :', error);
     }
   }
 }
