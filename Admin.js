@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.25.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux — V6.26.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -38,6 +38,11 @@ const INSTAGRAM_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'instagram-history
 // V6.20 — historique Messenger importé via Conversations API.
 const FACEBOOK_HISTORY_PATH = path.join(DATA_DIR, 'facebook-history.json');
 const FACEBOOK_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'facebook-history-sync.json');
+// V6.26 — Centre d'interactions : publications + commentaires Facebook/Instagram.
+// Les médias restent distants (URL Meta) afin de ne pas remplir le Volume Railway.
+const SOCIAL_COMMENTS_PATH = path.join(DATA_DIR, 'social-comments.json');
+const SOCIAL_POSTS_PATH = path.join(DATA_DIR, 'social-posts.json');
+const SOCIAL_COMMENTS_SYNC_STATE_PATH = path.join(DATA_DIR, 'social-comments-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
@@ -889,6 +894,18 @@ function snapshotFiles() {
       name: 'facebook-history-sync.json'
     },
     {
+      source: SOCIAL_COMMENTS_PATH,
+      name: 'social-comments.json'
+    },
+    {
+      source: SOCIAL_POSTS_PATH,
+      name: 'social-posts.json'
+    },
+    {
+      source: SOCIAL_COMMENTS_SYNC_STATE_PATH,
+      name: 'social-comments-sync.json'
+    },
+    {
       source: NOTIFICATIONS_PATH,
       name: 'notifications.json'
     },
@@ -1337,6 +1354,12 @@ function createExternalDataExport() {
       loadCommercialCorrections(),
     quickReplies:
       loadQuickReplies(),
+    socialComments:
+      loadSocialComments(),
+    socialPosts:
+      loadSocialPosts(),
+    socialCommentsSync:
+      loadSocialCommentsSyncState(),
     woocommerceSync:
       loadWooCommerceSyncState(),
     note:
@@ -1457,6 +1480,222 @@ function readJsonArray(filePath, label) {
 
     return [];
   }
+}
+
+
+// ============================================================
+// V6.26 — STOCKAGE COMMENTAIRES / PUBLICATIONS SOCIALES
+// ============================================================
+
+function loadSocialComments() {
+  return readJsonArray(SOCIAL_COMMENTS_PATH, 'social-comments.json');
+}
+
+function loadSocialPosts() {
+  return readJsonArray(SOCIAL_POSTS_PATH, 'social-posts.json');
+}
+
+function pruneSocialRecords(items, timeFields = ['createdAt','updatedAt']) {
+  const cutoff = Date.parse(historyImportCutoffIso());
+  const sorted = (Array.isArray(items) ? items : [])
+    .filter(item => item && typeof item === 'object')
+    .filter(item => {
+      const candidates = timeFields.map(field => Date.parse(safeString(item?.[field]))).filter(Number.isFinite);
+      if (!candidates.length) return true;
+      return Math.max(...candidates) >= cutoff;
+    })
+    .sort((a,b) => {
+      const aMs = Date.parse(safeString(a?.createdAt || a?.updatedAt)) || 0;
+      const bMs = Date.parse(safeString(b?.createdAt || b?.updatedAt)) || 0;
+      return bMs - aMs;
+    });
+  // Limite de sécurité : 30 000 commentaires sur 90 jours, sans dupliquer les médias.
+  return sorted.slice(0, 30000);
+}
+
+function saveSocialComments(items) {
+  writeJsonAtomic(SOCIAL_COMMENTS_PATH, pruneSocialRecords(items));
+}
+
+function saveSocialPosts(items) {
+  writeJsonAtomic(SOCIAL_POSTS_PATH, pruneSocialRecords(items, ['createdAt','updatedAt','lastCommentAt']).slice(0, 5000));
+}
+
+function socialKey(channel, id) {
+  const cleanChannel = safeString(channel).toLowerCase();
+  const cleanId = safeString(id);
+  return cleanChannel && cleanId ? `${cleanChannel}:${cleanId}` : '';
+}
+
+function mergeSocialRecords(current, incoming, keyField = 'key') {
+  const map = new Map();
+  for (const item of Array.isArray(current) ? current : []) {
+    const key = safeString(item?.[keyField]);
+    if (key) map.set(key, item);
+  }
+  for (const item of Array.isArray(incoming) ? incoming : []) {
+    const key = safeString(item?.[keyField]);
+    if (!key) continue;
+    const previous = map.get(key) || {};
+    map.set(key, {
+      ...previous,
+      ...item,
+      readBy: Array.isArray(item?.readBy)
+        ? item.readBy
+        : (Array.isArray(previous?.readBy) ? previous.readBy : []),
+      updatedAt: safeString(item?.updatedAt) || new Date().toISOString()
+    });
+  }
+  return [...map.values()];
+}
+
+function upsertSocialComments(records) {
+  const merged = mergeSocialRecords(loadSocialComments(), records, 'key');
+  saveSocialComments(merged);
+  return merged;
+}
+
+function upsertSocialPosts(records) {
+  const merged = mergeSocialRecords(loadSocialPosts(), records, 'key');
+  saveSocialPosts(merged);
+  return merged;
+}
+
+function socialCommentReadByUser(comment, user) {
+  const key = notificationUserKey(user);
+  return Array.isArray(comment?.readBy) && comment.readBy.includes(key);
+}
+
+function markSocialCommentRead(commentKey, user) {
+  const key = notificationUserKey(user);
+  let found = null;
+  const comments = loadSocialComments().map(comment => {
+    if (safeString(comment?.key) !== safeString(commentKey)) return comment;
+    const readBy = Array.isArray(comment?.readBy) ? [...comment.readBy] : [];
+    if (!readBy.includes(key)) readBy.push(key);
+    found = { ...comment, readBy };
+    return found;
+  });
+  if (found) saveSocialComments(comments);
+  return found;
+}
+
+function socialPostMediaFromFacebook(post) {
+  const attachment = Array.isArray(post?.attachments?.data) ? post.attachments.data[0] : null;
+  const media = attachment?.media || {};
+  return {
+    mediaType: safeString(attachment?.media_type || attachment?.type),
+    mediaUrl: safeString(media?.image?.src || post?.full_picture),
+    thumbnailUrl: safeString(media?.image?.src || post?.full_picture),
+    sourceUrl: safeString(attachment?.target?.url || attachment?.url)
+  };
+}
+
+function normalizeFacebookPost(post = {}) {
+  const id = safeString(post?.id);
+  if (!id) return null;
+  const media = socialPostMediaFromFacebook(post);
+  return {
+    key: socialKey('facebook', id),
+    channel: 'facebook',
+    postId: id,
+    mediaId: '',
+    caption: safeString(post?.message),
+    createdAt: safeString(post?.created_time),
+    updatedAt: new Date().toISOString(),
+    permalink: safeString(post?.permalink_url),
+    ...media,
+    source: 'meta_sync'
+  };
+}
+
+function normalizeFacebookComment(comment = {}, postId = '') {
+  const id = safeString(comment?.id || comment?.comment_id);
+  if (!id) return null;
+  const from = comment?.from && typeof comment.from === 'object' ? comment.from : {};
+  const parentId = safeString(comment?.parent?.id || comment?.parent_id);
+  const attachment = comment?.attachment && typeof comment.attachment === 'object' ? comment.attachment : {};
+  return {
+    key: socialKey('facebook', id),
+    channel: 'facebook',
+    commentId: id,
+    postId: safeString(postId || comment?.post_id),
+    mediaId: '',
+    parentId,
+    text: safeString(comment?.message),
+    authorId: safeString(from?.id || comment?.sender_id),
+    authorName: safeString(from?.name || comment?.sender_name || 'Client Facebook'),
+    authorUsername: '',
+    authorAvatar: safeString(from?.picture?.data?.url),
+    direction: safeString(from?.id || comment?.sender_id) === FACEBOOK_PAGE_ID ? 'outgoing' : 'incoming',
+    createdAt: safeString(comment?.created_time) || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    permalink: safeString(comment?.permalink_url),
+    isHidden: comment?.is_hidden === true,
+    canHide: comment?.can_hide !== false,
+    canRemove: comment?.can_remove !== false,
+    canReply: true,
+    canReplyPrivately: comment?.can_reply_privately !== false,
+    replyCount: Number(comment?.comment_count || 0),
+    attachmentUrl: safeString(attachment?.media?.image?.src || attachment?.url),
+    attachmentType: safeString(attachment?.type),
+    deleted: false,
+    source: 'meta_sync'
+  };
+}
+
+function normalizeInstagramPost(media = {}) {
+  const id = safeString(media?.id);
+  if (!id) return null;
+  return {
+    key: socialKey('instagram', id),
+    channel: 'instagram',
+    postId: id,
+    mediaId: id,
+    caption: safeString(media?.caption),
+    createdAt: safeString(media?.timestamp),
+    updatedAt: new Date().toISOString(),
+    permalink: safeString(media?.permalink),
+    mediaType: safeString(media?.media_type),
+    mediaUrl: safeString(media?.media_url),
+    thumbnailUrl: safeString(media?.thumbnail_url || media?.media_url),
+    sourceUrl: safeString(media?.permalink),
+    source: 'meta_sync'
+  };
+}
+
+function normalizeInstagramComment(comment = {}, mediaId = '', parentId = '') {
+  const id = safeString(comment?.id);
+  if (!id) return null;
+  const from = comment?.from && typeof comment.from === 'object' ? comment.from : {};
+  return {
+    key: socialKey('instagram', id),
+    channel: 'instagram',
+    commentId: id,
+    postId: safeString(mediaId || comment?.media?.id),
+    mediaId: safeString(mediaId || comment?.media?.id),
+    parentId: safeString(parentId || comment?.parent_id),
+    text: safeString(comment?.text),
+    authorId: safeString(from?.id),
+    authorName: safeString(comment?.username || from?.username || 'Client Instagram'),
+    authorUsername: safeString(comment?.username || from?.username),
+    authorAvatar: '',
+    direction: safeString(from?.id) === INSTAGRAM_ACCOUNT_ID ? 'outgoing' : 'incoming',
+    createdAt: safeString(comment?.timestamp) || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    permalink: '',
+    isHidden: comment?.hidden === true,
+    canHide: true,
+    canRemove: true,
+    canReply: true,
+    canReplyPrivately: true,
+    replyCount: Number(comment?.replies?.data?.length || 0),
+    likeCount: Number(comment?.like_count || 0),
+    attachmentUrl: '',
+    attachmentType: '',
+    deleted: false,
+    source: 'meta_sync'
+  };
 }
 
 function copyFileIfTargetMissing(source, target, label) {
@@ -3438,6 +3677,7 @@ function roleCanAccess(
     '/api/whatsapp/calls',
     '/api/notifications',
     '/api/quick-replies',
+    '/api/social-comments',
     '/api/tasks',
     '/api/my-workday'
   ];
@@ -3466,6 +3706,7 @@ function roleCanAccess(
       pathStarts(reqPath, '/api/notifications') ||
       pathStarts(reqPath, '/api/instagram-history') ||
       pathStarts(reqPath, '/api/facebook-history') ||
+      pathStarts(reqPath, '/api/social-comments') ||
       pathStarts(reqPath, '/api/quick-replies') ||
       pathStarts(reqPath, '/api/presence') ||
       pathStarts(reqPath, '/api/users') ||
@@ -3984,7 +4225,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.25.0</span>
+        <span class="login-version">V6.26.0</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -13657,6 +13898,648 @@ router.post(
   }
 );
 
+
+// ============================================================
+// V6.26 — CENTRE DE COMMENTAIRES FACEBOOK + INSTAGRAM
+// ============================================================
+
+async function graphJsonRequest(url, token, options = {}) {
+  if (!token) throw new Error('Token Meta manquant.');
+  const method = safeString(options?.method || 'GET').toUpperCase();
+  const headers = { Authorization: `Bearer ${token}` };
+  let body;
+  if (options?.json !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(options.json);
+  } else if (options?.form && typeof options.form === 'object') {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    body = new URLSearchParams(options.form).toString();
+  }
+  const response = await fetch(url, { method, headers, body });
+  let data = {};
+  try { data = await response.json(); } catch { data = {}; }
+  if (!response.ok) {
+    const message = safeString(data?.error?.message) || `Meta HTTP ${response.status}`;
+    const error = new Error(message);
+    error.metaCode = data?.error?.code;
+    error.metaSubcode = data?.error?.error_subcode;
+    throw error;
+  }
+  return data;
+}
+
+function facebookGraphRequestPath(pathname, options = {}) {
+  return graphJsonRequest(
+    `https://graph.facebook.com/${META_API_VERSION}/${String(pathname || '').replace(/^\//,'')}`,
+    FACEBOOK_PAGE_ACCESS_TOKEN,
+    options
+  );
+}
+
+function instagramGraphRequestPath(pathname, options = {}) {
+  return graphJsonRequest(
+    `https://graph.instagram.com/${META_API_VERSION}/${String(pathname || '').replace(/^\//,'')}`,
+    INSTAGRAM_ACCESS_TOKEN,
+    options
+  );
+}
+
+async function collectPagedMeta(firstUrl, token, { maxItems = 20000, cutoffAt = '' } = {}) {
+  const items = [];
+  const seen = new Set();
+  let nextUrl = firstUrl;
+  while (nextUrl && items.length < maxItems) {
+    if (seen.has(nextUrl)) break;
+    seen.add(nextUrl);
+    const data = await graphJsonRequest(nextUrl, token);
+    const page = Array.isArray(data?.data) ? data.data : [];
+    items.push(...page);
+    if (cutoffAt && page.length) {
+      const times = page.map(item => Date.parse(safeString(item?.created_time || item?.timestamp))).filter(Number.isFinite);
+      if (times.length && Math.max(...times) < Date.parse(cutoffAt)) break;
+    }
+    nextUrl = safeString(data?.paging?.next);
+  }
+  return items.slice(0, maxItems);
+}
+
+async function hydrateFacebookPost(postId) {
+  if (!postId || !FACEBOOK_PAGE_ACCESS_TOKEN) return null;
+  try {
+    const fields = 'id,message,created_time,permalink_url,full_picture';
+    const data = await facebookGraphRequestPath(`${encodeURIComponent(postId)}?fields=${encodeURIComponent(fields)}`);
+    const post = normalizeFacebookPost(data);
+    if (post) upsertSocialPosts([post]);
+    return post;
+  } catch (error) {
+    console.warn('⚠️ Publication Facebook non hydratée :', error.message);
+    return null;
+  }
+}
+
+async function hydrateFacebookComment(commentId, postId = '') {
+  if (!commentId || !FACEBOOK_PAGE_ACCESS_TOKEN) return null;
+  try {
+    const fields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
+    const data = await facebookGraphRequestPath(`${encodeURIComponent(commentId)}?fields=${encodeURIComponent(fields)}`);
+    const comment = normalizeFacebookComment(data, postId);
+    if (comment) upsertSocialComments([comment]);
+    return comment;
+  } catch (error) {
+    console.warn('⚠️ Commentaire Facebook non hydraté :', error.message);
+    return null;
+  }
+}
+
+async function hydrateInstagramPost(mediaId) {
+  if (!mediaId || !INSTAGRAM_ACCESS_TOKEN) return null;
+  try {
+    const fields = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp';
+    const data = await instagramGraphRequestPath(`${encodeURIComponent(mediaId)}?fields=${encodeURIComponent(fields)}`);
+    const post = normalizeInstagramPost(data);
+    if (post) upsertSocialPosts([post]);
+    return post;
+  } catch (error) {
+    console.warn('⚠️ Publication Instagram non hydratée :', error.message);
+    return null;
+  }
+}
+
+async function hydrateInstagramComment(commentId, mediaId = '') {
+  if (!commentId || !INSTAGRAM_ACCESS_TOKEN) return null;
+  try {
+    const fields = 'id,text,timestamp,username,from,hidden,like_count,parent_id,media';
+    const data = await instagramGraphRequestPath(`${encodeURIComponent(commentId)}?fields=${encodeURIComponent(fields)}`);
+    const resolvedMediaId = safeString(mediaId || data?.media?.id);
+    const comment = normalizeInstagramComment(data, resolvedMediaId);
+    if (comment) upsertSocialComments([comment]);
+    return comment;
+  } catch (error) {
+    console.warn('⚠️ Commentaire Instagram non hydraté :', error.message);
+    return null;
+  }
+}
+
+async function processFacebookCommentWebhookChange(entry, change) {
+  if (safeString(change?.field) !== 'feed') return false;
+  const value = change?.value && typeof change.value === 'object' ? change.value : {};
+  if (safeString(value?.item) !== 'comment') return false;
+  const commentId = safeString(value?.comment_id || value?.id);
+  const postId = safeString(value?.post_id);
+  if (!commentId) return false;
+  const verb = safeString(value?.verb).toLowerCase();
+  const current = loadSocialComments().find(item => safeString(item?.key) === socialKey('facebook', commentId)) || {};
+  const record = normalizeFacebookComment({
+    ...value,
+    id: commentId,
+    is_hidden: verb === 'hide' ? true : verb === 'unhide' ? false : current?.isHidden
+  }, postId) || {};
+  record.source = 'webhook';
+  record.direction = safeString(record.authorId) === FACEBOOK_PAGE_ID ? 'outgoing' : 'incoming';
+  record.webhookVerb = verb;
+  record.deleted = ['remove','delete'].includes(verb);
+  if (['hide','unhide'].includes(verb)) record.isHidden = verb === 'hide';
+  const shouldResetRead = ['add','edit','edited','update'].includes(verb) || !safeString(current?.key);
+  upsertSocialComments([{ ...current, ...record, readBy: shouldResetRead ? [] : (Array.isArray(current?.readBy) ? current.readBy : []) }]);
+  if (postId) {
+    const existingPost = loadSocialPosts().find(post => post.key === socialKey('facebook', postId));
+    if (!existingPost) upsertSocialPosts([{
+      key: socialKey('facebook', postId), channel:'facebook', postId, mediaId:'', caption:'', createdAt:'',
+      updatedAt:new Date().toISOString(), lastCommentAt:record.createdAt || new Date().toISOString(), source:'webhook'
+    }]);
+  }
+  // Hydratation hors chemin critique : ajoute le visuel, le lien, les droits de modération.
+  Promise.allSettled([
+    hydrateFacebookComment(commentId, postId),
+    postId ? hydrateFacebookPost(postId) : Promise.resolve(null)
+  ]).catch(()=>{});
+  return true;
+}
+
+async function processInstagramCommentWebhookChange(entry, change) {
+  const field = safeString(change?.field);
+  if (!['comments','live_comments'].includes(field)) return false;
+  const value = change?.value && typeof change.value === 'object' ? change.value : {};
+  const commentId = safeString(value?.id || value?.comment_id);
+  const mediaId = safeString(value?.media?.id || value?.media_id);
+  if (!commentId) return false;
+  const record = normalizeInstagramComment({
+    ...value,
+    id: commentId,
+    text: safeString(value?.text || value?.message),
+    timestamp: safeString(value?.timestamp)
+  }, mediaId) || {};
+  record.source = 'webhook';
+  record.direction = safeString(record.authorId) === INSTAGRAM_ACCOUNT_ID ? 'outgoing' : 'incoming';
+  record.liveComment = field === 'live_comments';
+  record.readBy = [];
+  upsertSocialComments([record]);
+  if (mediaId) {
+    const existingPost = loadSocialPosts().find(post => post.key === socialKey('instagram', mediaId));
+    if (!existingPost) upsertSocialPosts([{
+      key:socialKey('instagram',mediaId), channel:'instagram', postId:mediaId, mediaId,
+      caption:'', createdAt:'', updatedAt:new Date().toISOString(), lastCommentAt:record.createdAt, source:'webhook'
+    }]);
+  }
+  Promise.allSettled([
+    hydrateInstagramComment(commentId, mediaId),
+    mediaId ? hydrateInstagramPost(mediaId) : Promise.resolve(null)
+  ]).catch(()=>{});
+  return true;
+}
+
+async function processSocialCommentWebhookEntry(channel, entry) {
+  const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+  let handled = 0;
+  for (const change of changes) {
+    try {
+      const ok = channel === 'facebook'
+        ? await processFacebookCommentWebhookChange(entry, change)
+        : channel === 'instagram'
+          ? await processInstagramCommentWebhookChange(entry, change)
+          : false;
+      if (ok) handled += 1;
+    } catch (error) {
+      console.error(`❌ Webhook commentaire ${channel} :`, error.message);
+    }
+  }
+  return handled;
+}
+
+let socialCommentsSyncJob = {
+  running:false, startedAt:'', completedAt:'', facebookPosts:0, facebookComments:0,
+  instagramPosts:0, instagramComments:0, errors:[]
+};
+
+function loadSocialCommentsSyncState() {
+  try {
+    if (!fs.existsSync(SOCIAL_COMMENTS_SYNC_STATE_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(SOCIAL_COMMENTS_SYNC_STATE_PATH,'utf8') || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+}
+
+function saveSocialCommentsSyncState(state) {
+  writeJsonAtomic(SOCIAL_COMMENTS_SYNC_STATE_PATH, state && typeof state === 'object' ? state : {});
+}
+
+async function syncFacebookComments90Days() {
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) throw new Error('Facebook Page ID / Page Access Token manquant.');
+  const cutoffAt = historyImportCutoffIso();
+  const fields = 'id,message,created_time,permalink_url,full_picture';
+  const first = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/posts?fields=${encodeURIComponent(fields)}&limit=50`;
+  const rawPosts = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
+  const posts = rawPosts.map(normalizeFacebookPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
+  const comments = [];
+  for (const post of posts) {
+    const commentFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
+    const url = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(commentFields)}&limit=100`;
+    try {
+      const rawComments = await collectPagedMeta(url, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+      for (const raw of rawComments) {
+        const normalized = normalizeFacebookComment(raw, post.postId);
+        if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
+      }
+    } catch (error) {
+      socialCommentsSyncJob.errors.push(`Facebook ${post.postId}: ${error.message}`);
+    }
+  }
+  upsertSocialPosts(posts);
+  upsertSocialComments(comments);
+  return { posts:posts.length, comments:comments.length };
+}
+
+async function syncInstagramComments90Days() {
+  if (!INSTAGRAM_ACCOUNT_ID || !INSTAGRAM_ACCESS_TOKEN) throw new Error('Instagram Account ID / Access Token manquant.');
+  const cutoffAt = historyImportCutoffIso();
+  const mediaFields = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp';
+  const first = `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/media?fields=${encodeURIComponent(mediaFields)}&limit=50`;
+  const rawMedia = await collectPagedMeta(first, INSTAGRAM_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
+  const posts = rawMedia.map(normalizeInstagramPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
+  const comments = [];
+  for (const post of posts) {
+    const replyFields = 'id,text,timestamp,username,from,hidden,like_count,parent_id';
+    const commentFields = `${replyFields},replies.limit(100){${replyFields}}`;
+    const url = `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(post.mediaId)}/comments?fields=${encodeURIComponent(commentFields)}&limit=100`;
+    try {
+      const top = await collectPagedMeta(url, INSTAGRAM_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+      for (const raw of top) {
+        const normalized = normalizeInstagramComment(raw, post.mediaId);
+        if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
+
+        const firstReplies = Array.isArray(raw?.replies?.data) ? raw.replies.data : [];
+        for (const reply of firstReplies) {
+          const normalizedReply = normalizeInstagramComment(reply, post.mediaId, safeString(raw?.id));
+          if (normalizedReply && historyTimeIsRecent(normalizedReply.createdAt, cutoffAt)) comments.push(normalizedReply);
+        }
+
+        // Si un fil dépasse les 100 premières réponses, Meta fournit paging.next.
+        const nextReplies = safeString(raw?.replies?.paging?.next);
+        if (nextReplies) {
+          try {
+            const extraReplies = await collectPagedMeta(nextReplies, INSTAGRAM_ACCESS_TOKEN, { maxItems:3000, cutoffAt });
+            for (const reply of extraReplies) {
+              const normalizedReply = normalizeInstagramComment(reply, post.mediaId, safeString(raw?.id));
+              if (normalizedReply && historyTimeIsRecent(normalizedReply.createdAt, cutoffAt)) comments.push(normalizedReply);
+            }
+          } catch (error) {
+            socialCommentsSyncJob.errors.push(`Instagram réponses ${safeString(raw?.id)}: ${error.message}`);
+          }
+        }
+      }
+    } catch (error) {
+      socialCommentsSyncJob.errors.push(`Instagram ${post.mediaId}: ${error.message}`);
+    }
+  }
+  upsertSocialPosts(posts);
+  upsertSocialComments(comments);
+  return { posts:posts.length, comments:comments.length };
+}
+
+async function runSocialCommentsSync() {
+  if (socialCommentsSyncJob.running) return;
+  socialCommentsSyncJob = {
+    running:true, startedAt:new Date().toISOString(), completedAt:'',
+    facebookPosts:0, facebookComments:0, instagramPosts:0, instagramComments:0, errors:[]
+  };
+  try {
+    try {
+      const fb = await syncFacebookComments90Days();
+      socialCommentsSyncJob.facebookPosts = fb.posts;
+      socialCommentsSyncJob.facebookComments = fb.comments;
+    } catch (error) {
+      socialCommentsSyncJob.errors.push(`Facebook: ${error.message}`);
+    }
+    try {
+      const ig = await syncInstagramComments90Days();
+      socialCommentsSyncJob.instagramPosts = ig.posts;
+      socialCommentsSyncJob.instagramComments = ig.comments;
+    } catch (error) {
+      socialCommentsSyncJob.errors.push(`Instagram: ${error.message}`);
+    }
+  } finally {
+    socialCommentsSyncJob.running = false;
+    socialCommentsSyncJob.completedAt = new Date().toISOString();
+    socialCommentsSyncJob.errors = (Array.isArray(socialCommentsSyncJob.errors) ? socialCommentsSyncJob.errors : []).slice(-50);
+    saveSocialCommentsSyncState(socialCommentsSyncJob);
+  }
+}
+
+
+async function refreshFacebookSocialThread(postId) {
+  if (!postId || !FACEBOOK_PAGE_ACCESS_TOKEN) return;
+  await hydrateFacebookPost(postId);
+  const cutoffAt = historyImportCutoffIso();
+  const commentFields = 'id,message,created_time,from{id,name},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
+  const url = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?filter=stream&fields=${encodeURIComponent(commentFields)}&limit=100`;
+  const rawComments = await collectPagedMeta(url, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:10000, cutoffAt });
+  const comments = rawComments
+    .map(raw => normalizeFacebookComment(raw, postId))
+    .filter(Boolean)
+    .filter(item => historyTimeIsRecent(item.createdAt, cutoffAt));
+  upsertSocialComments(comments);
+  const posts = loadSocialPosts();
+  const index = posts.findIndex(post => post.key === socialKey('facebook', postId));
+  if (index >= 0) {
+    posts[index] = { ...posts[index], lastThreadSyncAt:new Date().toISOString() };
+    saveSocialPosts(posts);
+  }
+}
+
+async function refreshInstagramSocialThread(mediaId) {
+  if (!mediaId || !INSTAGRAM_ACCESS_TOKEN) return;
+  await hydrateInstagramPost(mediaId);
+  const cutoffAt = historyImportCutoffIso();
+  const replyFields = 'id,text,timestamp,username,from,hidden,like_count,parent_id';
+  const commentFields = `${replyFields},replies.limit(100){${replyFields}}`;
+  const url = `https://graph.instagram.com/${META_API_VERSION}/${encodeURIComponent(mediaId)}/comments?fields=${encodeURIComponent(commentFields)}&limit=100`;
+  const top = await collectPagedMeta(url, INSTAGRAM_ACCESS_TOKEN, { maxItems:10000, cutoffAt });
+  const comments = [];
+  for (const raw of top) {
+    const normalized = normalizeInstagramComment(raw, mediaId);
+    if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
+    for (const reply of Array.isArray(raw?.replies?.data) ? raw.replies.data : []) {
+      const normalizedReply = normalizeInstagramComment(reply, mediaId, safeString(raw?.id));
+      if (normalizedReply && historyTimeIsRecent(normalizedReply.createdAt, cutoffAt)) comments.push(normalizedReply);
+    }
+    const nextReplies = safeString(raw?.replies?.paging?.next);
+    if (nextReplies) {
+      try {
+        const extra = await collectPagedMeta(nextReplies, INSTAGRAM_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+        for (const reply of extra) {
+          const normalizedReply = normalizeInstagramComment(reply, mediaId, safeString(raw?.id));
+          if (normalizedReply && historyTimeIsRecent(normalizedReply.createdAt, cutoffAt)) comments.push(normalizedReply);
+        }
+      } catch (error) {
+        console.warn('⚠️ Réponses Instagram partielles :', error.message);
+      }
+    }
+  }
+  upsertSocialComments(comments);
+  const posts = loadSocialPosts();
+  const index = posts.findIndex(post => post.key === socialKey('instagram', mediaId));
+  if (index >= 0) {
+    posts[index] = { ...posts[index], lastThreadSyncAt:new Date().toISOString() };
+    saveSocialPosts(posts);
+  }
+}
+
+async function refreshSocialThreadIfNeeded(comment, force = false) {
+  const channel = safeString(comment?.channel);
+  const postId = safeString(comment?.postId || comment?.mediaId);
+  if (!channel || !postId) return '';
+  const post = loadSocialPosts().find(item => item.key === socialKey(channel, postId));
+  const lastMs = Date.parse(safeString(post?.lastThreadSyncAt));
+  if (!force && Number.isFinite(lastMs) && Date.now() - lastMs < 30_000) return '';
+  try {
+    if (channel === 'facebook') await refreshFacebookSocialThread(postId);
+    else if (channel === 'instagram') await refreshInstagramSocialThread(postId);
+    return '';
+  } catch (error) {
+    return safeString(error?.message) || 'Synchronisation du fil impossible.';
+  }
+}
+
+function socialCommentCounts(items, user) {
+  const active = items.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
+  return {
+    all: active.length,
+    facebook: active.filter(item => item.channel === 'facebook').length,
+    instagram: active.filter(item => item.channel === 'instagram').length,
+    unread: active.filter(item => !socialCommentReadByUser(item,user)).length,
+    hidden: active.filter(item => item.isHidden === true).length,
+    privateReply: active.filter(item => Boolean(item.privateReplySentAt)).length
+  };
+}
+
+router.get('/api/social-comments/status', requireAuth, (req,res) => {
+  const saved = loadSocialCommentsSyncState();
+  const current = socialCommentsSyncJob.startedAt ? socialCommentsSyncJob : { ...saved, running:false };
+  return res.json({
+    ...current,
+    counts:socialCommentCounts(loadSocialComments(), req.user),
+    facebookConfigured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    instagramConfigured:Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN),
+    historyDays:HISTORY_IMPORT_DAYS
+  });
+});
+
+router.post('/api/social-comments/sync', requireAdminOrCommercialManager, (req,res) => {
+  if (socialCommentsSyncJob.running) return res.status(202).json({ success:true, alreadyRunning:true, ...socialCommentsSyncJob });
+  runSocialCommentsSync().catch(error => console.error('❌ Sync commentaires :', error));
+  return res.status(202).json({ success:true, started:true });
+});
+
+router.get('/api/social-comments', requireAuth, (req,res) => {
+  try {
+    const posts = loadSocialPosts();
+    const postMap = new Map(posts.map(post => [safeString(post?.key), post]));
+    let comments = loadSocialComments().filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
+    const channel = safeString(req.query?.channel).toLowerCase();
+    const filter = safeString(req.query?.filter || 'all').toLowerCase();
+    const q = safeString(req.query?.q).toLowerCase();
+    if (['facebook','instagram'].includes(channel)) comments = comments.filter(item => item.channel === channel);
+    if (filter === 'unread') comments = comments.filter(item => !socialCommentReadByUser(item,req.user));
+    if (filter === 'hidden') comments = comments.filter(item => item.isHidden === true);
+    if (filter === 'private') comments = comments.filter(item => Boolean(item.privateReplySentAt));
+    if (q) {
+      comments = comments.filter(item => {
+        const post = postMap.get(socialKey(item.channel, item.postId)) || {};
+        return [item.text,item.authorName,item.authorUsername,item.commentId,post.caption,post.postId]
+          .map(value => safeString(value).toLowerCase()).join(' ').includes(q);
+      });
+    }
+    comments.sort((a,b) => (Date.parse(b.createdAt)||0) - (Date.parse(a.createdAt)||0));
+    const counts = socialCommentCounts(loadSocialComments(), req.user);
+    const limit = Math.max(20, Math.min(200, Number(req.query?.limit || 100) || 100));
+    const offset = Math.max(0, Number(req.query?.offset || 0) || 0);
+    const items = comments.slice(offset, offset + limit).map(comment => ({
+      ...comment,
+      read: socialCommentReadByUser(comment,req.user),
+      post: postMap.get(socialKey(comment.channel, comment.postId)) || null
+    }));
+    return res.json({ items, total:comments.length, counts, offset, limit, hasMore:offset+limit<comments.length });
+  } catch (error) {
+    console.error('❌ Liste commentaires :', error);
+    return res.status(500).json({ error:'Impossible de lire les commentaires.' });
+  }
+});
+
+router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
+  const key = safeString(req.params.key);
+  let comments = loadSocialComments();
+  let selected = comments.find(item => safeString(item?.key) === key);
+  if (!selected) return res.status(404).json({ error:'Commentaire introuvable.' });
+
+  // Quand le commercial ouvre un commentaire, on tente de recharger la
+  // publication et son fil complet depuis Meta. Une erreur Meta n'empêche pas
+  // l'ouverture : le cache local reste disponible.
+  const refreshError = await refreshSocialThreadIfNeeded(selected, String(req.query?.refresh || '') === '1');
+  comments = loadSocialComments();
+  selected = comments.find(item => safeString(item?.key) === key) || selected;
+  const postKey = socialKey(selected.channel, selected.postId);
+  const post = loadSocialPosts().find(item => safeString(item?.key) === postKey) || null;
+  const thread = comments
+    .filter(item => !item.deleted && item.channel === selected.channel && safeString(item.postId) === safeString(selected.postId))
+    .sort((a,b) => (Date.parse(a.createdAt)||0) - (Date.parse(b.createdAt)||0));
+  const read = markSocialCommentRead(key, req.user) || selected;
+  return res.json({
+    comment:{...read,read:true},
+    post,
+    thread:thread.map(item=>({...item,read:socialCommentReadByUser(item,req.user)})),
+    refreshError
+  });
+});
+
+router.post('/api/social-comments/:key/read', requireAuth, (req,res) => {
+  const updated = markSocialCommentRead(safeString(req.params.key), req.user);
+  if (!updated) return res.status(404).json({ error:'Commentaire introuvable.' });
+  return res.json({ success:true });
+});
+
+router.post('/api/social-comments/:key/reply', requireAuth, async (req,res) => {
+  try {
+    const key = safeString(req.params.key);
+    const text = safeString(req.body?.message).trim();
+    if (!text) return res.status(400).json({ error:'Réponse vide.' });
+    const comments = loadSocialComments();
+    const index = comments.findIndex(item => safeString(item?.key) === key);
+    if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
+    const target = comments[index];
+    let data;
+    if (target.channel === 'facebook') {
+      data = await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}/comments`, { method:'POST', form:{ message:text } });
+    } else if (target.channel === 'instagram') {
+      data = await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}/replies`, { method:'POST', form:{ message:text } });
+    } else return res.status(400).json({ error:'Canal non pris en charge.' });
+    const now = new Date().toISOString();
+    comments[index] = { ...target, lastReply:text, lastReplyAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email) };
+    saveSocialComments(comments);
+    // Ajoute immédiatement la réponse dans le fil local, même avant le webhook d'écho Meta.
+    const replyId = safeString(data?.id);
+    if (replyId) upsertSocialComments([{
+      key:socialKey(target.channel,replyId), channel:target.channel, commentId:replyId,
+      postId:target.postId, mediaId:target.mediaId, parentId:target.commentId, text,
+      authorId: target.channel === 'facebook' ? FACEBOOK_PAGE_ID : INSTAGRAM_ACCOUNT_ID,
+      authorName:'MONDECO', authorUsername:'mondeco', createdAt:now, updatedAt:now,
+      isHidden:false, canHide:true, canRemove:true, canReply:true, canReplyPrivately:false,
+      replyCount:0, deleted:false, source:'mondeco_reply', direction:'outgoing', readBy:[]
+    }]);
+    return res.json({ success:true, id:replyId || null });
+  } catch (error) {
+    console.error('❌ Réponse commentaire :', error);
+    return res.status(502).json({ error:`Meta : ${error.message}` });
+  }
+});
+
+router.post('/api/social-comments/:key/hide', requireAuth, async (req,res) => {
+  try {
+    const key = safeString(req.params.key);
+    const hidden = req.body?.hidden === true;
+    const comments = loadSocialComments();
+    const index = comments.findIndex(item => safeString(item?.key) === key);
+    if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
+    const target = comments[index];
+    if (target.canHide === false) return res.status(403).json({ error:'Meta indique que ce commentaire ne peut pas être masqué/démasqué par ce compte.' });
+    if (target.channel === 'facebook') {
+      await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'POST', form:{ is_hidden:hidden ? 'true':'false' } });
+    } else if (target.channel === 'instagram') {
+      await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'POST', form:{ hide:hidden ? 'true':'false' } });
+    } else return res.status(400).json({ error:'Canal non pris en charge.' });
+    comments[index] = { ...target, isHidden:hidden, updatedAt:new Date().toISOString() };
+    saveSocialComments(comments);
+    return res.json({ success:true, hidden });
+  } catch (error) {
+    return res.status(502).json({ error:`Meta : ${error.message}` });
+  }
+});
+
+router.delete('/api/social-comments/:key', requireAuth, async (req,res) => {
+  try {
+    const key = safeString(req.params.key);
+    const comments = loadSocialComments();
+    const index = comments.findIndex(item => safeString(item?.key) === key);
+    if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
+    const target = comments[index];
+    if (target.canRemove === false) return res.status(403).json({ error:'Meta indique que ce commentaire ne peut pas être supprimé par ce compte.' });
+    if (target.channel === 'facebook') {
+      await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
+    } else if (target.channel === 'instagram') {
+      await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
+    } else return res.status(400).json({ error:'Canal non pris en charge.' });
+    comments[index] = { ...target, deleted:true, deletedAt:new Date().toISOString(), deletedBy:safeString(req.user?.name || req.user?.email) };
+    saveSocialComments(comments);
+    return res.json({ success:true });
+  } catch (error) {
+    return res.status(502).json({ error:`Meta : ${error.message}` });
+  }
+});
+
+router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,res) => {
+  try {
+    const key = safeString(req.params.key);
+    const text = safeString(req.body?.message).trim();
+    if (!text) return res.status(400).json({ error:'Message privé vide.' });
+    const comments = loadSocialComments();
+    const index = comments.findIndex(item => safeString(item?.key) === key);
+    if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
+    const target = comments[index];
+    if (target.canReplyPrivately === false) return res.status(403).json({ error:'Meta n’autorise pas de réponse privée pour ce commentaire.' });
+    let data;
+    if (target.channel === 'facebook') {
+      if (!FACEBOOK_PAGE_ID) throw new Error('FACEBOOK_PAGE_ID manquant.');
+      data = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}/messages`, {
+        method:'POST', json:{ recipient:{ comment_id:target.commentId }, message:{ text } }
+      });
+    } else if (target.channel === 'instagram') {
+      if (!INSTAGRAM_ACCOUNT_ID) throw new Error('INSTAGRAM_ACCOUNT_ID manquant.');
+      data = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/messages`, {
+        method:'POST', json:{ recipient:{ comment_id:target.commentId }, message:{ text } }
+      });
+    } else return res.status(400).json({ error:'Canal non pris en charge.' });
+    const now = new Date().toISOString();
+    const recipientId = safeString(data?.recipient_id);
+    comments[index] = {
+      ...target, privateReplySentAt:now, privateReplyMessage:text,
+      privateReplyBy:safeString(req.user?.name || req.user?.email),
+      privateRecipientId:recipientId
+    };
+    saveSocialComments(comments);
+
+    // Relie la future conversation privée à la publication/commentaire source.
+    // Ainsi, si le client répond au message privé, le commercial retrouve le
+    // contexte produit/publication directement dans Messages.
+    if (recipientId) {
+      const contact = `${target.channel}:${recipientId}`;
+      const post = loadSocialPosts().find(item => item.key === socialKey(target.channel, target.postId)) || {};
+      updateConversationStateAdmin(contact, state => ({
+        ...state,
+        channel:target.channel,
+        externalContact:recipientId,
+        ...(target.channel === 'facebook' ? { facebookPsid:recipientId } : {}),
+        ...(target.channel === 'instagram' ? { instagramUsername:safeString(target.authorUsername) } : {}),
+        sourceContext:{
+          type:'comment_private_reply',
+          label:`Commentaire ${target.channel === 'instagram' ? 'Instagram' : 'Facebook'}`,
+          id:safeString(target.postId),
+          commentId:safeString(target.commentId),
+          caption:safeString(post?.caption),
+          url:safeString(post?.permalink || post?.sourceUrl),
+          mediaUrl:safeString(post?.thumbnailUrl || post?.mediaUrl),
+          customerComment:safeString(target.text)
+        },
+        lastSocialCommentKey:key,
+        lastSocialCommentAt:safeString(target.createdAt),
+        updatedAt:now
+      }));
+    }
+
+    return res.json({ success:true, recipientId, messageId:safeString(data?.message_id) });
+  } catch (error) {
+    return res.status(502).json({ error:`Meta : ${error.message}` });
+  }
+});
+
 function conversationEntryPreview(entry) {
   const attachments = Array.isArray(entry?.attachments) ? entry.attachments.filter(Boolean) : [];
   const source = safeString(entry?.source);
@@ -14709,5 +15592,6 @@ module.exports = {
   setWhatsAppCallHandler,
   createCommercialCorrectionCandidate,
   registerCommercialEscalation,
-  resolveCommercialSla
+  resolveCommercialSla,
+  processSocialCommentWebhookEntry
 };
