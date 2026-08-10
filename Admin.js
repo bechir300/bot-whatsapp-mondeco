@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.7
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.8
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -4227,7 +4227,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.7</span>
+        <span class="login-version">V6.20.8</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11651,7 +11651,7 @@ function loadPersistentConversationEvents() {
   return entries;
 }
 
-// V6.20.7 — Filet de sécurité WhatsApp : si un message client a bien créé
+// V6.20.8 — Filet de sécurité WhatsApp : si un message client a bien créé
 // une notification persistante mais qu'un ancien incident de stockage a empêché
 // son indexation normale dans l'inbox, on reconstruit une entrée minimale à partir
 // de notifications.json. Les vraies entrées du journal restent prioritaires et
@@ -13903,6 +13903,23 @@ function conversationEntryPreview(entry) {
   return 'Nouvelle conversation';
 }
 
+// V6.20.8 — compatibilité avec les états déjà persistés avant le correctif.
+// Si une conversation avait été marquée terminée puis qu'un nouveau message
+// client est arrivé après resolvedAt, elle est considérée comme rouverte même
+// si l'ancien booléen resolved=true est encore présent sur le disque.
+function effectiveConversationResolved(state = {}) {
+  if (state?.resolved !== true) return false;
+
+  const resolvedAtMs = Date.parse(safeString(state?.resolvedAt));
+  const lastCustomerAtMs = Date.parse(safeString(state?.lastCustomerAt));
+
+  if (Number.isFinite(resolvedAtMs) && Number.isFinite(lastCustomerAtMs)) {
+    return lastCustomerAtMs <= resolvedAtMs;
+  }
+
+  return true;
+}
+
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
     const log = loadWhatsAppLog();
@@ -13933,6 +13950,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         );
       }) || lastActivity;
       const state = states[contact] || {};
+      const effectivelyResolved = effectiveConversationResolved(state);
 
       return {
         contact,
@@ -14009,8 +14027,8 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         slaStatus: safeString(computeLiveSla(state)?.status),
         slaDueAt: safeString(computeLiveSla(state)?.dueAt),
         slaRemainingMs: computeLiveSla(state)?.remainingMs ?? null,
-        resolved: Boolean(state.resolved),
-        resolvedAt: safeString(state?.resolvedAt),
+        resolved: effectivelyResolved,
+        resolvedAt: effectivelyResolved ? safeString(state?.resolvedAt) : '',
         activeProductName: safeString(state?.activeProductName),
         manualTakeover: Boolean(state.manualTakeover),
         humanPaused: Boolean(state.humanPaused),
@@ -14127,6 +14145,7 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const states = loadConversationStatesAdmin();
 
     const state = states[contact] || {};
+    const effectivelyResolved = effectiveConversationResolved(state);
     if (req.user?.role === 'commercial' && safeString(state.assignedUserId) !== safeString(req.user.id)) {
       return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
     }
@@ -14184,6 +14203,8 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       contact,
       state: {
         ...state,
+        resolved: effectivelyResolved,
+        resolvedAt: effectivelyResolved ? safeString(state?.resolvedAt) : null,
         ...(adReferral ? { adReferral } : {}),
         sla: computeLiveSla(state)
       },
