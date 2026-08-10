@@ -5439,6 +5439,134 @@ body.inbox-page-active .main{
   .inbox-sync-statuses:empty{display:none}
 }
 
+
+
+/* ==========================================================
+   MONDECO V6.25.0 — MENU COMPACT AUTOMATIQUE
+   Le menu desktop ne disparaît plus : il reste en rail d'icônes.
+   ========================================================== */
+@media(min-width:901px){
+  body.desktop-sidebar-collapsed .app{
+    grid-template-columns:76px minmax(0,1fr) !important;
+  }
+  body.desktop-sidebar-collapsed .sidebar{
+    transform:none !important;
+    opacity:1 !important;
+    pointer-events:auto !important;
+    padding-left:9px !important;
+    padding-right:9px !important;
+  }
+  body.desktop-sidebar-collapsed .desktop-sidebar-toggle{
+    left:56px !important;
+    width:36px !important;
+    height:36px !important;
+    background:#ed1c24 !important;
+    border-color:#ed1c24 !important;
+  }
+  body.desktop-sidebar-collapsed .main{
+    padding-left:14px !important;
+    padding-right:14px !important;
+  }
+  body.desktop-sidebar-collapsed .brand{
+    min-height:60px !important;
+    display:grid !important;
+    place-items:center !important;
+    padding:8px 0 12px !important;
+    margin-bottom:5px !important;
+  }
+  body.desktop-sidebar-collapsed .brand-panel,
+  body.desktop-sidebar-collapsed .brand-meta{
+    display:none !important;
+  }
+  body.desktop-sidebar-collapsed .brand::after{
+    content:'M';
+    width:38px;
+    height:38px;
+    display:grid;
+    place-items:center;
+    border-radius:12px;
+    background:#fff;
+    color:#ed1c24;
+    font-family:Georgia,'Times New Roman',serif;
+    font-size:21px;
+    font-weight:800;
+    letter-spacing:-.04em;
+  }
+  body.desktop-sidebar-collapsed .nav{
+    width:100%;
+    align-items:stretch;
+  }
+  body.desktop-sidebar-collapsed .nav button{
+    min-width:0 !important;
+    width:100% !important;
+    min-height:46px !important;
+    justify-content:center !important;
+    gap:0 !important;
+    padding:10px 6px !important;
+    overflow:visible !important;
+  }
+  body.desktop-sidebar-collapsed .nav button > span:not(.nav-icon):not(.nav-count){
+    display:none !important;
+  }
+  body.desktop-sidebar-collapsed .nav button .nav-icon{
+    width:23px !important;
+    height:23px !important;
+  }
+  body.desktop-sidebar-collapsed .nav button .nav-icon svg{
+    width:21px !important;
+    height:21px !important;
+  }
+  body.desktop-sidebar-collapsed .nav-count{
+    position:absolute !important;
+    top:3px !important;
+    right:2px !important;
+    min-width:18px !important;
+    height:18px !important;
+    margin:0 !important;
+    padding:0 4px !important;
+    display:grid !important;
+    place-items:center !important;
+    border:2px solid #11100f !important;
+    border-radius:999px !important;
+    font-size:8px !important;
+  }
+  body.desktop-sidebar-collapsed .nav-count.hidden{display:none !important;}
+  body.desktop-sidebar-collapsed .sidebar-footer{
+    left:8px !important;
+    right:8px !important;
+    padding-top:8px !important;
+  }
+  body.desktop-sidebar-collapsed .sidebar-user{
+    justify-content:center !important;
+    padding:6px !important;
+  }
+  body.desktop-sidebar-collapsed .sidebar-user-info{
+    display:none !important;
+  }
+  body.desktop-sidebar-collapsed .sidebar-user-avatar{
+    width:36px !important;
+    height:36px !important;
+    flex-basis:36px !important;
+  }
+  body.desktop-sidebar-collapsed .logout-btn{
+    min-height:42px !important;
+    padding:0 !important;
+    font-size:0 !important;
+  }
+  body.desktop-sidebar-collapsed .logout-btn::before{
+    content:'↪';
+    font-size:20px;
+    line-height:1;
+  }
+}
+
+/* Facebook Messenger : le clavier commercial est maintenant actif et lisible. */
+#page-conversations .inbox-header-state.facebook-reply,
+#page-conversations .facebook-reply-enabled{
+  color:#165eb9 !important;
+  background:#eef5ff !important;
+  border-color:#bfd7f6 !important;
+}
 </style>
 </head>
 
@@ -5740,7 +5868,7 @@ body.inbox-page-active .main{
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2>Messages</h2>
-              <span class="inbox-version">V6.24.0</span>
+              <span class="inbox-version">V6.25.0</span>
             </div>
             <div class="inbox-mini-sub">Boîte de réception MONDECO</div>
           </div>
@@ -8937,7 +9065,7 @@ function renderConversationHeader(
   const stateText=limitedCommercial
     ? `💬 RÉPONSE AUTORISÉE • ${state.assignedTo ? `Suivi affecté à ${state.assignedTo}` : 'Conversation non affectée'}`
     : facebook
-      ? '✨ FACEBOOK EN SUPERVISION • Réponses gérées par Meta Business AI / Business Suite'
+      ? '🔵 FACEBOOK MESSENGER • RÉPONSE COMMERCIALE AUTORISÉE'
       : paused
         ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
         : '🤖 IA ACTIVE • Réponses automatiques';
@@ -8978,7 +9106,7 @@ function renderConversationHeader(
             : `<span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Affectée')}</span>`}
 
           ${facebook
-            ? `<span class="inbox-header-btn ai" style="cursor:default">✨ IA Meta</span>`
+            ? `<span class="inbox-header-btn ai" style="cursor:default">💬 Messenger actif</span>`
             : paused
               ? `<button class="inbox-header-btn ai" type="button" onclick="reactivateConversationAI('${escapeHtml(contact)}')">🤖 Réactiver IA</button>`
               : `<button class="inbox-header-btn takeover" type="button" onclick="takeOverConversation('${escapeHtml(contact)}')">👤 Prendre en main</button>`
@@ -9241,12 +9369,13 @@ function conversationSourceCardHtml(state = {}){
     const campaign=ad.campaignName||ad.campaignId||'';
     const adset=ad.adsetName||ad.adsetId||'';
     const creative=ad.creativeName||ad.creativeId||'';
+    const postId=ad.postId||'';
     const mediaHtml=mediaType==='image'&&media
       ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Visuel publicité" loading="lazy">`
       : mediaType==='video'&&media
         ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
         : '';
-    return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
+    return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${postId?`<div style="margin-top:4px"><b>Publication :</b> ${escapeHtml(postId)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`:''}</div>`;
   }
   if(!source||!source.type||source.type==='direct') return '';
   const icon=source.type==='story'?'⭕':source.type==='reel'?'🎬':source.type==='share'?'🔗':'🖼';
@@ -9263,6 +9392,8 @@ function conversationSourceCardHtml(state = {}){
 function conversationAdStickyHtml(state = {}){
   const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
   if(!ad) return '';
+  const sourceChannel=String(state?.channel||'').toLowerCase();
+  const sourcePlatform=sourceChannel==='facebook'?'FACEBOOK':sourceChannel==='instagram'?'INSTAGRAM':'META';
   const media=safeConversationMediaUrl(ad.storedMediaUrl||ad.mediaUrl||'');
   const product=String(ad.productHint||'').trim();
   const headline=String(ad.adTitle||ad.headline||'').trim();
@@ -9275,7 +9406,7 @@ function conversationAdStickyHtml(state = {}){
   const link=/^https?:\/\//i.test(String(ad.sourceUrl||''))
     ? `<a class="inbox-ad-origin-link" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir ↗</a>`
     : '';
-  return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation"><div>${mediaHtml||'<div class="inbox-ad-origin-thumb" style="display:grid;place-items:center;font-size:20px">📣</div>'}</div><div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ISSU D’UNE PUBLICITÉ META</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
+  return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation"><div>${mediaHtml||'<div class="inbox-ad-origin-thumb" style="display:grid;place-items:center;font-size:20px">📣</div>'}</div><div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ${sourcePlatform} ISSU D’UNE PUBLICITÉ</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
 }
 
 window.openMediaLightbox=function(url,alt=''){
@@ -9315,19 +9446,6 @@ function buildConversationComposer(
         </div>
         <div class="inbox-alert" style="margin:12px 0 4px">
           Vous ne pouvez pas répondre à cette conversation.
-        </div>
-      </div>
-    `;
-  }
-
-  if(composerChannel === 'facebook'){
-    return `
-      <div class="inbox-composer conversation-composer" id="commercialComposer">
-        <div class="inbox-composer-toolbar">
-          <div class="inbox-composer-title">🔵 Facebook Messenger • supervision</div>
-        </div>
-        <div class="inbox-alert" style="margin:12px 0 4px">
-          Les réponses Facebook restent gérées par Meta Business AI / Business Suite. MONDECO centralise ici l’historique, les médias, les notifications, l’affectation et les tâches, sans envoyer de réponse et sans lancer l’IA MONDECO.
         </div>
       </div>
     `;
@@ -11218,16 +11336,11 @@ window.sendConversationCommercialReply = async function(contact){
   const channel =
     conversationChannel(currentConversation);
 
-  if(channel === 'facebook'){
-    alert('Facebook est en mode supervision : répondez depuis Meta Business AI / Business Suite. MONDECO n’enverra aucun message Facebook.');
-    return;
-  }
-
   const externalContact =
     conversationExternalContact(currentConversation);
 
-  if(channel === 'instagram' && file){
-    alert('Pour Instagram, envoyez pour le moment une réponse texte.');
+  if(['instagram','facebook'].includes(channel) && file){
+    alert(`Pour ${channel === 'facebook' ? 'Facebook Messenger' : 'Instagram'}, envoyez pour le moment une réponse texte.`);
     return;
   }
 
@@ -14252,21 +14365,18 @@ for (const shortcut of document.querySelectorAll('[data-shortcut-page]')) {
 
 
 <script>
-/* MONDECO V6.24.0 — navigation glissante + inbox focus + fiche client */
+/* MONDECO V6.25.0 — menu compact automatique + inbox focus + fiche client */
 (function(){
-  const STORAGE_KEY = 'mondecoSidebarCollapsed';
   const desktopToggle = document.getElementById('desktopSidebarToggle');
+  const sidebar = document.querySelector('.sidebar');
 
-  function setDesktopSidebar(collapsed, persist=true){
+  function setDesktopSidebar(collapsed){
     if(window.innerWidth <= 900) return;
     document.body.classList.toggle('desktop-sidebar-collapsed', !!collapsed);
     if(desktopToggle){
       desktopToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-      desktopToggle.setAttribute('aria-label', collapsed ? 'Afficher le menu principal' : 'Masquer le menu principal');
-      desktopToggle.title = collapsed ? 'Afficher le menu' : 'Masquer le menu';
-    }
-    if(persist){
-      try{ localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0'); }catch(_e){}
+      desktopToggle.setAttribute('aria-label', collapsed ? 'Déplier le menu principal' : 'Réduire le menu principal');
+      desktopToggle.title = collapsed ? 'Afficher les noms du menu' : 'Réduire en icônes';
     }
   }
 
@@ -14275,23 +14385,48 @@ for (const shortcut of document.querySelectorAll('[data-shortcut-page]')) {
   };
 
   if(desktopToggle){
-    desktopToggle.addEventListener('click', window.toggleDesktopSidebar);
+    desktopToggle.addEventListener('click', function(event){
+      event.stopPropagation();
+      window.toggleDesktopSidebar();
+    });
   }
 
-  try{
-    setDesktopSidebar(localStorage.getItem(STORAGE_KEY) === '1', false);
-  }catch(_e){
-    setDesktopSidebar(false, false);
-  }
+  // Par défaut : rail d'icônes compact. Les noms s'ouvrent seulement à la demande.
+  if(window.innerWidth > 900) setDesktopSidebar(true);
+
+  // Dès que l'utilisateur clique ailleurs, le menu revient automatiquement aux icônes.
+  document.addEventListener('pointerdown', function(event){
+    if(window.innerWidth <= 900) return;
+    if(document.body.classList.contains('desktop-sidebar-collapsed')) return;
+    if(sidebar?.contains(event.target) || desktopToggle?.contains(event.target)) return;
+    setDesktopSidebar(true);
+  }, true);
+
+  // Après navigation, inutile de laisser le grand menu ouvert.
+  sidebar?.querySelectorAll('.nav button[data-page]').forEach(button=>{
+    button.addEventListener('click', function(){
+      if(window.innerWidth > 900) setTimeout(()=>setDesktopSidebar(true), 0);
+    });
+    const label=button.querySelector(':scope > span:not(.nav-icon):not(.nav-count)')?.textContent?.trim();
+    if(label && !button.title) button.title=label;
+  });
+
+  document.addEventListener('keydown', function(event){
+    if(event.key === 'Escape' && window.innerWidth > 900) setDesktopSidebar(true);
+  });
 
   window.addEventListener('resize', function(){
     if(window.innerWidth <= 900){
       document.body.classList.remove('desktop-sidebar-collapsed');
     }else{
-      try{ setDesktopSidebar(localStorage.getItem(STORAGE_KEY) === '1', false); }catch(_e){}
+      setDesktopSidebar(true);
     }
   });
 })();
+</script>
+
+<script>
+/* V6.25.0 — suite des contrôles Inbox */
 
 window.updateInboxFocusButton = function(){
   const page = document.getElementById('page-conversations');
