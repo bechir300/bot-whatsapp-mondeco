@@ -5567,6 +5567,32 @@ body.inbox-page-active .main{
   background:#eef5ff !important;
   border-color:#bfd7f6 !important;
 }
+
+
+/* ==========================================================
+   MONDECO V6.26 — Centre d'interactions / commentaires sociaux
+   ========================================================== */
+.inbox-mode-tabs{display:flex;align-items:center;gap:4px;margin-top:6px;padding:3px;border:1px solid #e5dfd9;border-radius:10px;background:#f7f5f2;width:max-content;max-width:100%}
+.inbox-mode-tab{min-height:28px;display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:0;border-radius:7px;background:transparent;color:#625b55;font-size:9px;font-weight:900;cursor:pointer;white-space:nowrap}
+.inbox-mode-tab.active{background:#11100f;color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.mode-count{min-width:18px;height:18px;display:inline-grid;place-items:center;padding:0 4px;border-radius:999px;background:#ed1c24;color:#fff;font-size:8px}
+#commentFilters.hidden,#conversationFilters.hidden{display:none !important}
+.social-comments-sync{border-color:#ead0df !important;background:#fff7fb !important;color:#8b2859 !important}
+
+.social-comment-item{position:relative;width:100%;display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:10px;padding:11px 12px;border:0;border-bottom:1px solid #eee9e4;background:#fff;text-align:left;cursor:pointer;color:#28231f}
+.social-comment-item:hover{background:#faf8f6}.social-comment-item.selected{background:#fff4f4;box-shadow:inset 3px 0 #ed1c24}.social-comment-item.unread .social-comment-author{font-weight:950}
+.social-comment-avatar{width:40px;height:40px;display:grid;place-items:center;border-radius:50%;font-size:16px;font-weight:900;background:#eef2f8;color:#285d9d}.social-comment-avatar.instagram{background:#fff0f7;color:#9c3366}
+.social-comment-main{min-width:0;display:flex;flex-direction:column;gap:4px}.social-comment-top{display:flex;align-items:center;gap:5px;min-width:0}.social-comment-author{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}.social-comment-preview{font-size:10px;line-height:1.35;color:#5d5650;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.social-comment-posthint{font-size:8.5px;color:#8a8179;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.social-comment-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;color:#8c847d;font-size:8px}.comment-badge{display:inline-flex;align-items:center;gap:3px;padding:3px 6px;border-radius:999px;background:#f1eeeb;color:#625b55;font-size:7.5px;font-weight:900}.comment-badge.hidden{display:inline-flex !important;background:#fff1d9;color:#945b00}.comment-badge.facebook{background:#edf4ff;color:#245b9d}.comment-badge.instagram{background:#fff0f7;color:#9a3567}
+
+.comment-detail-shell{max-width:980px;margin:0 auto;padding:16px 16px 110px}.social-post-card{overflow:hidden;border:1px solid #e2dcd6;border-radius:16px;background:#fff;box-shadow:0 4px 16px rgba(24,20,17,.05);margin-bottom:14px}.social-post-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 13px;border-bottom:1px solid #eee9e4}.social-post-channel{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:900}.social-post-link{font-size:9px;font-weight:850;color:#1769aa;text-decoration:none}.social-post-media{display:block;width:100%;max-height:430px;object-fit:contain;background:#f0eeeb}.social-post-caption{padding:12px 14px;font-size:11px;line-height:1.55;white-space:pre-wrap;color:#332e2a}.social-post-empty-media{min-height:92px;display:grid;place-items:center;background:#f5f3f0;color:#8c847d;font-size:10px}
+.comment-thread-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:15px 2px 8px}.comment-thread-title strong{font-size:12px}.comment-thread-title span{color:#8a8179;font-size:9px}.comment-thread{display:flex;flex-direction:column;gap:7px}.comment-card{position:relative;padding:10px 12px;border:1px solid #e5dfda;border-radius:13px;background:#fff;cursor:pointer}.comment-card.reply{margin-left:34px;border-left:3px solid #e0d9d2}.comment-card.selected{border-color:#ed1c24;box-shadow:0 0 0 2px rgba(237,28,36,.08)}.comment-card.hidden-comment{background:#fffaf1}.comment-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:5px}.comment-card-author{display:flex;align-items:center;gap:6px;min-width:0;font-size:10px;font-weight:900}.comment-card-time{color:#928a83;font-size:8px}.comment-card-text{font-size:11px;line-height:1.45;white-space:pre-wrap;color:#352f2b}.comment-card-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:7px}.comment-owned{background:#eaf8ef;color:#167043}
+
+.social-comment-composer{position:relative;z-index:34;padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));border-top:1px solid #e2dcd6;background:rgba(250,249,247,.97);backdrop-filter:blur(10px)}.social-comment-target{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 2px 6px;color:#6f675f;font-size:8.5px}.social-comment-compose-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:end}.social-comment-compose-row textarea{width:100%;min-height:44px;max-height:110px;padding:10px 12px;border:1px solid #d9d2cb;border-radius:13px;background:#fff;resize:vertical;font:inherit;font-size:12px;line-height:1.4;outline:none}.social-comment-compose-row textarea:focus{border-color:#aaa098;box-shadow:0 0 0 3px rgba(17,16,15,.05)}.social-comment-send{height:44px;padding:0 14px;border:0;border-radius:12px;background:#ed1c24;color:#fff;font-size:10px;font-weight:900;cursor:pointer}.social-comment-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:6px}.social-comment-action{min-height:29px;padding:5px 8px;border:1px solid #ddd6d0;border-radius:8px;background:#fff;color:#4c453f;font-size:8.5px;font-weight:850;cursor:pointer}.social-comment-action:hover{background:#f3f0ed}.social-comment-action.private{border-color:#cbdcf5;color:#245b9d;background:#f6f9ff}.social-comment-action.hide{border-color:#ead9b8;color:#875500;background:#fffaf1}.social-comment-action.danger{border-color:#efc3c5;color:#b2171e;background:#fff6f6}.social-comment-warning{margin:8px 0;padding:9px 10px;border:1px solid #ead9b8;border-radius:10px;background:#fffaf1;color:#7d5614;font-size:9px;line-height:1.4}
+.comment-empty{height:100%;display:grid;place-items:center;padding:30px;text-align:center;color:#77706a}.comment-empty>div{max-width:420px}.comment-empty-icon{font-size:36px;margin-bottom:8px}.comment-empty strong{display:block;margin-bottom:5px;color:#302b27;font-size:13px}.comment-empty span{font-size:10px;line-height:1.5}
+
+body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comments-mode #inboxComposerHost{display:block !important}.comments-mode #inboxCustomerPanel{display:block}.comments-mode #toggleInboxFocusBtn .inbox-toolbar-label{display:inline}
+@media(max-width:900px){.inbox-mode-tabs{margin-top:4px}.inbox-mode-tab{padding:4px 7px}.comment-detail-shell{padding:10px 8px 125px}.social-post-media{max-height:52dvh}.comment-card.reply{margin-left:18px}.social-comment-composer{padding-left:7px;padding-right:7px}.social-comment-actions{overflow-x:auto;flex-wrap:nowrap}.social-comment-action{flex:0 0 auto}.social-comment-compose-row{grid-template-columns:minmax(0,1fr) 44px}.social-comment-send{width:44px;padding:0;font-size:0}.social-comment-send::after{content:'➤';font-size:18px}}
 </style>
 </head>
 
@@ -5867,10 +5893,14 @@ body.inbox-page-active .main{
         <header class="inbox-commandbar">
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
-              <h2>Messages</h2>
-              <span class="inbox-version">V6.25.0</span>
+              <h2 id="inboxMainTitle">Interactions</h2>
+              <span class="inbox-version">V6.26.0</span>
             </div>
-            <div class="inbox-mini-sub">Boîte de réception MONDECO</div>
+            <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
+              <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages</button>
+              <button id="inboxModeCommentsBtn" class="inbox-mode-tab" type="button" onclick="setInboxInteractionMode('comments')">💭 Commentaires <span id="commentsUnreadBadge" class="mode-count hidden">0</span></button>
+            </div>
+            <div id="inboxMiniSub" class="inbox-mini-sub">WhatsApp • Instagram • Facebook</div>
           </div>
 
           <div class="inbox-command-search">
@@ -5888,6 +5918,7 @@ body.inbox-page-active .main{
             </button>
             <button class="inbox-toolbar-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser Instagram" style="display:none">IG ↻</button>
             <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Synchroniser Facebook" style="display:none">FB ↻</button>
+            <button class="inbox-toolbar-btn social-comments-sync hidden" id="syncSocialCommentsBtn" type="button" title="Synchroniser publications et commentaires Facebook / Instagram">💭 ↻</button>
             <button class="inbox-toolbar-btn notification" id="enableNotificationsBtn" type="button" title="Notifications">
               <span>🔔</span><span id="notificationHeaderCount" class="notification-count hidden">0</span>
             </button>
@@ -5907,9 +5938,19 @@ body.inbox-page-active .main{
             <button class="inbox-filter" data-filter="resolved">Terminées <span id="filterCountResolved">0</span></button>
           </div>
 
+          <div class="inbox-filters inbox-command-filters hidden" id="commentFilters" aria-label="Filtres commentaires">
+            <button class="inbox-filter active" data-comment-filter="all">Tous <span id="commentCountAll">0</span></button>
+            <button class="inbox-filter channel facebook" data-comment-filter="facebook"><span class="channel-dot"></span>Facebook <span id="commentCountFacebook">0</span></button>
+            <button class="inbox-filter channel instagram" data-comment-filter="instagram"><span class="channel-dot"></span>Instagram <span id="commentCountInstagram">0</span></button>
+            <button class="inbox-filter" data-comment-filter="unread">Non lus <span id="commentCountUnread">0</span></button>
+            <button class="inbox-filter" data-comment-filter="hidden">🙈 Masqués <span id="commentCountHidden">0</span></button>
+            <button class="inbox-filter" data-comment-filter="private">✉️ Privé envoyé <span id="commentCountPrivate">0</span></button>
+          </div>
+
           <div class="inbox-sync-statuses" aria-live="polite">
             <div id="instagramHistorySyncStatus" class="inbox-sync-status" style="display:none"></div>
             <div id="facebookHistorySyncStatus" class="inbox-sync-status" style="display:none"></div>
+            <div id="socialCommentsSyncStatus" class="inbox-sync-status" style="display:none"></div>
           </div>
         </header>
 
@@ -7411,12 +7452,14 @@ function showPage(name){
   if(name === 'woocommerce') loadWooCommerceStatus();
   if(name === 'instructions') loadInstructions();
   if(name === 'conversations'){
-    Promise.all([
-      loadConversations(),
-      loadQuickReplies()
-    ]);
+    // V6.26 : recharge le dernier type d'interaction utilisé sans écraser
+    // la liste Commentaires par la liste Messages.
+    setInboxInteractionMode(inboxInteractionMode);
+    if(inboxInteractionMode === 'messages') loadQuickReplies();
     refreshInstagramHistoryStatus({ autoStart: true });
     refreshFacebookHistoryStatus({ autoStart: true });
+    // Met à jour le badge Commentaires même quand l'utilisateur reste dans Messages.
+    refreshSocialCommentsStatus();
   }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
@@ -8097,6 +8140,20 @@ let conversationServerCounts = null;
 let notificationPanelItems = [];
 let notificationPanelFilter = 'all';
 
+// V6.26 — Centre d'interactions : messages + commentaires.
+let inboxInteractionMode = localStorage.getItem('mondecoInboxInteractionMode') === 'comments' ? 'comments' : 'messages';
+let socialComments = [];
+let socialCommentsTotal = 0;
+let socialCommentsHasMore = false;
+let socialCommentCounts = null;
+let socialCommentFilter = 'all';
+let selectedSocialCommentKey = '';
+let selectedSocialCommentData = null;
+let socialCommentsSyncTimer = null;
+let socialCommentSearchTimer = null;
+let socialCommentsLiveTimer = null;
+
+
 function conversationUiTimeMs(value){
   const raw=String(value ?? '').trim();
   if(!raw) return 0;
@@ -8116,6 +8173,157 @@ function canManageInstagramHistory(){
     String(currentUser?.role || '')
   );
 }
+
+
+function commentChannelLabel(channel){
+  return channel === 'instagram' ? 'Instagram' : channel === 'facebook' ? 'Facebook' : 'Meta';
+}
+
+function setCommentFilterCounts(counts={}){
+  socialCommentCounts = counts || {};
+  const map={commentCountAll:'all',commentCountFacebook:'facebook',commentCountInstagram:'instagram',commentCountUnread:'unread',commentCountHidden:'hidden',commentCountPrivate:'privateReply'};
+  for(const [id,key] of Object.entries(map)){
+    const el=document.getElementById(id);if(el) el.textContent=String(Number(counts?.[key]||0));
+  }
+  const badge=document.getElementById('commentsUnreadBadge');
+  if(badge){const n=Number(counts?.unread||0);badge.textContent=n>99?'99+':String(n);badge.classList.toggle('hidden',n<=0);}
+}
+
+function resetInteractionDetail(){
+  const header=document.getElementById('inboxConversationHeader');
+  const detail=document.getElementById('conversationDetail');
+  const composer=document.getElementById('inboxComposerHost');
+  const panel=document.getElementById('inboxCustomerPanel');
+  if(header) header.innerHTML='<div class="inbox-empty-header">Sélectionnez une interaction</div>';
+  if(detail){detail.className='inbox-thread inbox-thread-empty';detail.innerHTML='<div class="inbox-empty-state"><div class="inbox-empty-icon">💬</div><strong>Aucune interaction sélectionnée</strong><span>Choisissez un élément à gauche.</span></div>';}
+  if(composer){composer.classList.add('hidden');composer.innerHTML='';}
+  if(panel) panel.innerHTML='<div class="inbox-empty-state compact"><strong>Contexte</strong><span>Les informations apparaîtront ici.</span></div>';
+}
+
+window.setInboxInteractionMode = async function(mode){
+  inboxInteractionMode = mode === 'comments' ? 'comments' : 'messages';
+  localStorage.setItem('mondecoInboxInteractionMode',inboxInteractionMode);
+  document.body.classList.toggle('comments-mode',inboxInteractionMode==='comments');
+  document.getElementById('inboxModeMessagesBtn')?.classList.toggle('active',inboxInteractionMode==='messages');
+  document.getElementById('inboxModeCommentsBtn')?.classList.toggle('active',inboxInteractionMode==='comments');
+  document.getElementById('conversationFilters')?.classList.toggle('hidden',inboxInteractionMode!=='messages');
+  document.getElementById('commentFilters')?.classList.toggle('hidden',inboxInteractionMode!=='comments');
+  const search=document.getElementById('conversationSearch');
+  const label=document.getElementById('conversationCountLabel');
+  const mini=document.getElementById('inboxMiniSub');
+  const sync=document.getElementById('syncSocialCommentsBtn');
+  if(search) search.placeholder=inboxInteractionMode==='comments'?'Rechercher un commentaire, client ou publication…':'Rechercher un client, numéro, produit ou publicité…';
+  if(mini) mini.textContent=inboxInteractionMode==='comments'?'Publications + commentaires Facebook / Instagram':'WhatsApp • Instagram • Facebook';
+  if(sync) sync.classList.toggle('hidden',inboxInteractionMode!=='comments'||!['admin','responsable_commercial'].includes(currentUser?.role));
+  if(label) label.textContent=inboxInteractionMode==='comments'?'0 commentaire':'0 conversation';
+  resetInteractionDetail();
+  if(inboxInteractionMode==='comments'){
+    selectedConversationContact='';selectedConversationData=null;
+    await loadSocialComments();
+    await refreshSocialCommentsStatus();
+  }else{
+    selectedSocialCommentKey='';selectedSocialCommentData=null;
+    await loadConversations();
+  }
+};
+
+function socialCommentAvatar(comment){
+  const name=String(comment?.authorUsername||comment?.authorName||'?').replace(/^@/,'').trim();
+  const initials=name?name.slice(0,2).toUpperCase():'?';
+  return `<span class="social-comment-avatar ${escapeHtml(comment?.channel||'')}">${escapeHtml(initials)}</span>`;
+}
+
+function renderSocialCommentsList(){
+  const host=document.getElementById('conversationListContainer');
+  const label=document.getElementById('conversationCountLabel');
+  if(label) label.textContent=`${socialCommentsTotal} commentaire${socialCommentsTotal>1?'s':''}`;
+  setCommentFilterCounts(socialCommentCounts||{});
+  if(!host) return;
+  if(!socialComments.length){host.innerHTML='<div class="empty" style="margin:16px"><strong>Aucun commentaire</strong>Aucun commentaire ne correspond à ce filtre. Utilisez 💭 ↻ pour synchroniser si nécessaire.</div>';return;}
+  host.innerHTML=socialComments.map(comment=>{
+    const post=comment?.post||{};
+    const selected=selectedSocialCommentKey===comment.key;
+    const unread=comment.read!==true;
+    const author=comment.authorUsername?`@${comment.authorUsername}`:(comment.authorName||'Client');
+    const hint=String(post.caption||'').trim()||`${commentChannelLabel(comment.channel)} • publication ${post.postId||comment.postId||''}`;
+    return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
+      ${socialCommentAvatar(comment)}
+      <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
+      <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="inbox-unread">1</span>':''}</span>
+    </button>`;
+  }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
+}
+
+async function loadSocialComments({append=false}={}){
+  if(inboxInteractionMode!=='comments') return;
+  try{
+    const q=String(document.getElementById('conversationSearch')?.value||'').trim();
+    const offset=append?socialComments.length:0;
+    const params=new URLSearchParams({limit:'100',offset:String(offset)});
+    if(q) params.set('q',q);
+    if(['facebook','instagram'].includes(socialCommentFilter)) params.set('channel',socialCommentFilter);
+    else if(socialCommentFilter!=='all') params.set('filter',socialCommentFilter);
+    const data=await apiFetch(`${API}/social-comments?${params.toString()}`);
+    const items=Array.isArray(data?.items)?data.items:[];
+    socialComments=append?[...socialComments,...items.filter(x=>!socialComments.some(y=>y.key===x.key))]:items;
+    socialCommentsTotal=Number(data?.total||socialComments.length);socialCommentsHasMore=data?.hasMore===true;socialCommentCounts=data?.counts||{};
+    renderSocialCommentsList();
+  }catch(error){const host=document.getElementById('conversationListContainer');if(host)host.innerHTML=`<div class="empty"><strong>Commentaires indisponibles</strong>${escapeHtml(error.message)}</div>`;}
+}
+window.loadMoreSocialComments=()=>loadSocialComments({append:true});
+
+function commentPostHtml(post, channel){
+  const caption=String(post?.caption||'').trim();
+  const image=post?.thumbnailUrl||post?.mediaUrl||'';
+  const link=post?.permalink||post?.sourceUrl||'';
+  const isVideo=/video|reel/i.test(String(post?.mediaType||''));
+  return `<article class="social-post-card"><div class="social-post-head"><span class="social-post-channel"><span class="comment-badge ${escapeHtml(channel)}">${escapeHtml(commentChannelLabel(channel))}</span> Publication d’origine</span>${link?`<a class="social-post-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Voir sur ${escapeHtml(commentChannelLabel(channel))} ↗</a>`:''}</div>${image?`<img class="social-post-media" src="${escapeHtml(image)}" alt="Publication" loading="lazy" onerror="this.style.display='none'">`:`<div class="social-post-empty-media">${isVideo?'🎬':'📣'} Visuel non fourni par Meta</div>`}${caption?`<div class="social-post-caption">${escapeHtml(caption)}</div>`:'<div class="social-post-caption" style="color:#8b837c">Texte de publication non disponible dans le webhook. Lancez une synchronisation pour tenter de le récupérer.</div>'}</article>`;
+}
+
+function renderSocialCommentCard(item, selectedKey, isReply=false){
+  const author=item.authorUsername?`@${item.authorUsername}`:(item.authorName||'Client');
+  const mine=item.direction==='outgoing'||String(item.authorName||'').toUpperCase()==='MONDECO';
+  return `<article class="comment-card ${isReply?'reply':''} ${item.key===selectedKey?'selected':''} ${item.isHidden?'hidden-comment':''}" onclick="selectSocialCommentTarget('${escapeHtml(item.key)}')"><div class="comment-card-head"><span class="comment-card-author">${escapeHtml(author)}${mine?'<span class="comment-badge comment-owned">MONDECO</span>':''}${item.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}</span><span class="comment-card-time">${escapeHtml(formatShortTime(item.createdAt))}</span></div><div class="comment-card-text">${escapeHtml(item.text||'(sans texte)')}</div><div class="comment-card-meta">${item.privateReplySentAt?'<span class="comment-badge">✉️ privé envoyé</span>':''}${Number(item.likeCount||0)>0?`<span class="comment-badge">♥ ${Number(item.likeCount)}</span>`:''}${item.deleted?'<span class="comment-badge">supprimé</span>':''}</div></article>`;
+}
+
+function renderSocialCommentComposer(target){
+  const host=document.getElementById('inboxComposerHost');if(!host)return;
+  const canPrivate=target?.canReplyPrivately!==false&&target?.direction!=='outgoing';
+  host.classList.remove('hidden');
+  host.innerHTML=`<div class="social-comment-composer"><div class="social-comment-target"><span>Réponse à <strong>${escapeHtml(target?.authorUsername?`@${target.authorUsername}`:(target?.authorName||'ce commentaire'))}</strong></span><span>${target?.isHidden?'🙈 Masqué':'💬 Public'}</span></div><div class="social-comment-compose-row"><textarea id="socialCommentReplyText" rows="1" placeholder="Écrire une réponse publique…"></textarea><button id="socialCommentSendBtn" class="social-comment-send" type="button" onclick="replyToSocialComment()">Répondre</button></div><div class="social-comment-actions">${canPrivate?'<button class="social-comment-action private" type="button" onclick="privateReplyToSocialComment()">✉️ Répondre en privé</button>':''}<button class="social-comment-action hide" type="button" onclick="toggleSocialCommentHidden()">${target?.isHidden?'👁 Afficher':'🙈 Masquer'}</button><button class="social-comment-action danger" type="button" onclick="deleteSocialComment()">🗑 Supprimer</button></div></div>`;
+}
+
+function renderSocialCommentDetail(data){
+  const selected=data?.comment||{};const post=data?.post||{};const thread=Array.isArray(data?.thread)?data.thread:[];
+  const header=document.getElementById('inboxConversationHeader');const detail=document.getElementById('conversationDetail');
+  if(header) header.innerHTML=`<div class="inbox-header-main"><div class="inbox-header-avatar ${escapeHtml(selected.channel||'')}">${selected.channel==='instagram'?'IG':'FB'}</div><div class="inbox-header-copy"><strong>${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Client'))}</strong><span>${escapeHtml(commentChannelLabel(selected.channel))} • Commentaire sur publication</span></div></div><div class="inbox-header-actions"><button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleInboxCustomerPanel()">👤 Contexte</button>${post?.permalink?`<a class="inbox-header-btn" href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">↗ Publication</a>`:''}</div>`;
+  if(detail){detail.className='inbox-thread';detail.innerHTML=`<div class="comment-detail-shell">${commentPostHtml(post,selected.channel)}<div class="comment-thread-title"><strong>💭 Tous les commentaires de cette publication</strong><span>${thread.length} interaction${thread.length>1?'s':''}</span></div>${data?.refreshError?`<div class="social-comment-warning">⚠️ Mise à jour Meta partielle : ${escapeHtml(data.refreshError)}</div>`:''}${!post?.caption&&!post?.mediaUrl&&!post?.thumbnailUrl?'<div class="social-comment-warning">Meta a signalé le commentaire mais n’a pas encore fourni le contenu complet de la publication. Utilisez 💭 ↻ ou vérifiez les permissions de lecture des publications.</div>':''}<div class="comment-thread">${thread.length?(()=>{const ids=new Set(thread.map(item=>item.commentId));return thread.map(item=>renderSocialCommentCard(item,selectedSocialCommentKey,Boolean(item.parentId&&ids.has(item.parentId)))).join('')})():'<div class="empty">Aucun autre commentaire.</div>'}</div></div>`;}
+  renderSocialCommentComposer(selected);
+  const panel=document.getElementById('inboxCustomerPanel');if(panel)panel.innerHTML=`<div class="inbox-drawer-head"><div><strong>Contexte commentaire</strong><span>${escapeHtml(commentChannelLabel(selected.channel))}</span></div><button class="inbox-drawer-close" onclick="toggleInboxCustomerPanel(false)">×</button></div><div style="padding:14px"><div class="customer-card"><strong>Client</strong><div class="manager-item-meta">${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Non identifié par Meta'))}</div></div><div class="customer-card" style="margin-top:10px"><strong>Publication</strong><div class="manager-item-meta">${escapeHtml(String(post?.caption||'').slice(0,220)||post?.postId||selected.postId||'—')}</div></div><div class="customer-card" style="margin-top:10px"><strong>Modération</strong><div class="manager-item-meta">${selected.isHidden?'Commentaire actuellement masqué':'Commentaire visible'}${selected.privateReplySentAt?' • Réponse privée déjà envoyée':''}</div></div></div>`;
+}
+
+window.openSocialComment=async function(key){
+  if(!key)return;selectedSocialCommentKey=key;renderSocialCommentsList();
+  try{const data=await apiFetch(`${API}/social-comments/${encodeURIComponent(key)}?refresh=1`);selectedSocialCommentData=data;renderSocialCommentDetail(data);await loadSocialComments();}catch(error){alert(error.message);}
+};
+window.selectSocialCommentTarget=function(key){if(!selectedSocialCommentData)return;const item=(selectedSocialCommentData.thread||[]).find(x=>x.key===key);if(!item)return;selectedSocialCommentKey=key;selectedSocialCommentData.comment=item;renderSocialCommentDetail(selectedSocialCommentData);renderSocialCommentsList();};
+
+window.replyToSocialComment=async function(){
+  const target=selectedSocialCommentData?.comment;if(!target)return;const input=document.getElementById('socialCommentReplyText');const message=String(input?.value||'').trim();if(!message)return;
+  const btn=document.getElementById('socialCommentSendBtn');if(btn)btn.disabled=true;
+  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Réponse impossible : '+error.message);}finally{if(btn)btn.disabled=false;}
+};
+window.privateReplyToSocialComment=async function(){
+  const target=selectedSocialCommentData?.comment;if(!target)return;const input=document.getElementById('socialCommentReplyText');const message=String(input?.value||'').trim();if(!message){alert('Écrivez d’abord le message privé dans la zone de saisie.');return;}if(!confirm('Envoyer ce texte en message privé au client via '+commentChannelLabel(target.channel)+' ?'))return;
+  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/private-reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Réponse privée impossible : '+error.message);}
+};
+window.toggleSocialCommentHidden=async function(){const target=selectedSocialCommentData?.comment;if(!target)return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/hide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hidden:!target.isHidden})});await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Modération impossible : '+error.message);}};
+window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(!target||!confirm('Supprimer définitivement ce commentaire sur '+commentChannelLabel(target.channel)+' ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();}catch(error){alert('Suppression impossible : '+error.message);}};
+
+async function refreshSocialCommentsStatus(){
+  try{const status=await apiFetch(`${API}/social-comments/status`);setCommentFilterCounts(status?.counts||{});const el=document.getElementById('socialCommentsSyncStatus');const btn=document.getElementById('syncSocialCommentsBtn');if(btn)btn.disabled=status?.running===true;if(el){if(inboxInteractionMode==='comments'){el.style.display='block';el.textContent=status?.running?'💭 Synchronisation commentaires en cours…':status?.completedAt?`💭 FB ${Number(status.facebookComments||0)} • IG ${Number(status.instagramComments||0)}${Array.isArray(status.errors)&&status.errors.length?` • ${status.errors.length} erreur(s)`:''}`:'💭 Commentaires prêts';}else el.style.display='none';}if(status?.running){clearTimeout(socialCommentsSyncTimer);socialCommentsSyncTimer=setTimeout(refreshSocialCommentsStatus,2500);}else if(inboxInteractionMode==='comments'){await loadSocialComments();}}catch(error){const el=document.getElementById('socialCommentsSyncStatus');if(el&&inboxInteractionMode==='comments'){el.style.display='block';el.textContent='Commentaires : '+error.message;}}
+}
+window.startSocialCommentsSync=async function(){try{await apiFetch(`${API}/social-comments/sync`,{method:'POST'});await refreshSocialCommentsStatus();}catch(error){alert('Synchronisation commentaires impossible : '+error.message);}};
 
 function setConversationFilter(filter){
   conversationFilter = filter || 'all';
@@ -10264,6 +10472,15 @@ document
   .addEventListener(
     'click',
     async () => {
+      if(inboxInteractionMode === 'comments'){
+        await loadSocialComments();
+        await refreshSocialCommentsStatus();
+        if(selectedSocialCommentKey){
+          await window.openSocialComment(selectedSocialCommentKey);
+        }
+        return;
+      }
+
       await loadConversations();
 
       if(selectedConversationContact){
@@ -10281,8 +10498,13 @@ document
   .addEventListener(
     'input',
     () => {
-      clearTimeout(conversationSearchTimer);
-      conversationSearchTimer=setTimeout(()=>loadConversations(),260);
+      if(inboxInteractionMode === 'comments'){
+        clearTimeout(socialCommentSearchTimer);
+        socialCommentSearchTimer=setTimeout(()=>loadSocialComments(),260);
+      }else{
+        clearTimeout(conversationSearchTimer);
+        conversationSearchTimer=setTimeout(()=>loadConversations(),260);
+      }
     }
   );
 
@@ -14254,7 +14476,19 @@ window.updateMyTask=async function(id,status){try{await apiFetch(`${API}/tasks/$
 document.getElementById('refreshMyWorkBtn')?.addEventListener('click',loadMyWorkday);document.getElementById('myWorkDate')?.addEventListener('change',loadMyWorkday);
 
 // Le responsable et l'admin voient les compteurs SLA évoluer sans recharger la page.
-if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){renderConversationsList();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
+
+document.getElementById('syncSocialCommentsBtn')?.addEventListener('click',()=>startSocialCommentsSync());
+document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(button=>{
+  button.addEventListener('click',async()=>{
+    socialCommentFilter=button.dataset.commentFilter||'all';
+    document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(item=>item.classList.toggle('active',item===button));
+    selectedSocialCommentKey='';selectedSocialCommentData=null;resetInteractionDetail();await loadSocialComments();
+  });
+});
+
+if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
+
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{renderConversationsList();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 
 // ============================================================
 // LOGOUT / INIT
