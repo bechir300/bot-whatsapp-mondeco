@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.5
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.6
 // server.js
 //
 // Ajouts V5 :
@@ -29,7 +29,10 @@ const {
   setCustomizationHandler,
   setCommercialSendHandler,
   registerCommercialEscalation,
-  resolveCommercialSla
+  resolveCommercialSla,
+  cloudinaryConfigured,
+  storeCloudinaryBuffer,
+  cloudinaryMimeFromFilename
 } = require('./Admin');
 
 const app = express();
@@ -271,7 +274,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.5');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.6');
 console.log(
   '=============================================='
 );
@@ -311,6 +314,12 @@ console.log(
   CLOUDFLARE_API_TOKEN
     ? '✅ OK'
     : '⚠️ MANQUANT'
+);
+console.log(
+  'CLOUDINARY MEDIA :',
+  cloudinaryConfigured()
+    ? '✅ OK — médias conversations hors Volume Railway'
+    : '⚠️ NON CONFIGURÉ — fallback Volume Railway'
 );
 console.log('DATA_DIR :', DATA_DIR);
 console.log(
@@ -751,7 +760,7 @@ function normalizeConversationMediaType(value) {
   return 'file';
 }
 
-function saveConversationMediaBuffer({
+async function saveConversationMediaBuffer({
   buffer,
   mimetype,
   type = 'file',
@@ -812,11 +821,23 @@ function saveConversationMediaBuffer({
       filename
     );
 
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(
-      filePath,
-      buffer
-    );
+  let storage = 'railway';
+
+  if (cloudinaryConfigured()) {
+    try {
+      await storeCloudinaryBuffer({
+        buffer,
+        mimetype: safeString(mimetype) || cloudinaryMimeFromFilename(filename),
+        filename,
+        scope: 'conversation-media'
+      });
+      storage = 'cloudinary';
+    } catch (cloudinaryError) {
+      console.warn('⚠️ Cloudinary conversation : fallback Volume Railway :', cloudinaryError.message);
+      if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, buffer);
+    }
+  } else if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(filePath, buffer);
   }
 
   return {
@@ -837,6 +858,7 @@ function saveConversationMediaBuffer({
       buffer.length,
     url:
       `/admin/conversation-media/${encodeURIComponent(filename)}`,
+    storage,
     filename
   };
 }
@@ -993,7 +1015,7 @@ async function persistInstagramAttachments(
         );
 
       saved.push(
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -1126,7 +1148,7 @@ async function persistFacebookAttachments(
         );
 
       saved.push(
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -5042,6 +5064,20 @@ async function persistInstagramProfilePicture(
 
     const filename = `instagram-${scopedId}.${extension}`;
 
+    if (cloudinaryConfigured()) {
+      try {
+        await storeCloudinaryBuffer({
+          buffer,
+          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
+          filename,
+          scope: 'conversation-profile'
+        });
+        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+      } catch (cloudinaryError) {
+        console.warn('⚠️ Profil Instagram : Cloudinary indisponible, fallback local :', cloudinaryError.message);
+      }
+    }
+
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(
         CONVERSATION_PROFILE_DIR,
@@ -5052,11 +5088,7 @@ async function persistInstagramProfilePicture(
       }
     }
 
-    fs.writeFileSync(
-      path.join(CONVERSATION_PROFILE_DIR, filename),
-      buffer
-    );
-
+    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
     console.warn(
@@ -5143,6 +5175,20 @@ async function persistFacebookProfilePicture(profilePictureUrl, psid) {
 
     const extension = profilePictureExtension(response.headers.get('content-type'));
     const filename = `facebook-${scopedId}.${extension}`;
+
+    if (cloudinaryConfigured()) {
+      try {
+        await storeCloudinaryBuffer({
+          buffer,
+          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
+          filename,
+          scope: 'conversation-profile'
+        });
+        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+      } catch (cloudinaryError) {
+        console.warn('⚠️ Profil Facebook : Cloudinary indisponible, fallback local :', cloudinaryError.message);
+      }
+    }
 
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(CONVERSATION_PROFILE_DIR, `facebook-${scopedId}.${ext}`);
@@ -7447,7 +7493,7 @@ async function processSingleMessage(message) {
           );
 
         const savedMedia =
-          saveConversationMediaBuffer({
+          await saveConversationMediaBuffer({
             buffer:
               preparedWhatsAppImage.buffer,
             mimetype:
@@ -8066,7 +8112,7 @@ async function processWhatsAppImage(
         );
 
       const savedMedia =
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer:
             image.buffer,
           mimetype:
