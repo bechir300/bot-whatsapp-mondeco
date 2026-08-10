@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.3
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.4
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -14222,37 +14222,69 @@ async function syncFacebookComments90Days() {
   const cutoffAt = historyImportCutoffIso();
   const fields = 'id,message,created_time,permalink_url,full_picture';
   const rawPostMap = new Map();
+  const localErrors = [];
+
+  // V6.27.4 — confirme que Railway utilise réellement le token de la Page.
+  try {
+    const me = await facebookGraphRequestPath(`me?fields=${encodeURIComponent('id,name')}`);
+    const tokenPageId = safeString(me?.id);
+    if (!tokenPageId) throw new Error('Meta ne retourne aucun identifiant pour le token configuré.');
+    if (tokenPageId !== safeString(FACEBOOK_PAGE_ID)) {
+      throw new Error(`Le token appartient à ${safeString(me?.name || tokenPageId)} (${tokenPageId}), pas à la Page configurée ${FACEBOOK_PAGE_ID}.`);
+    }
+  } catch (error) {
+    throw new Error(`Page Access Token Facebook invalide dans Railway : ${error.message}`);
+  }
+
   for (const edge of ['posts','feed']) {
     const first = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/${edge}?fields=${encodeURIComponent(fields)}&limit=50`;
     try {
       const rows = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
       for (const row of rows) if (safeString(row?.id)) rawPostMap.set(safeString(row.id), row);
     } catch (error) {
-      socialCommentsSyncJob.errors.push(`Facebook ${edge}: ${error.message}`);
+      localErrors.push(`Facebook ${edge}: ${error.message}`);
     }
   }
+
   const rawPosts = [...rawPostMap.values()];
-  if (!rawPosts.length && socialCommentsSyncJob.errors.length) {
-    throw new Error(socialCommentsSyncJob.errors.slice(-2).join(' | '));
-  }
-  const posts = rawPosts.map(normalizeFacebookPost).filter(Boolean).filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
+  if (!rawPosts.length && localErrors.length) throw new Error(localErrors.slice(-2).join(' | '));
+
+  const posts = rawPosts
+    .map(normalizeFacebookPost)
+    .filter(Boolean)
+    .filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
+
   const comments = [];
+  const richFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
+  // Même jeu de champs minimal que le test Graph API validé manuellement.
+  const minimalFields = 'id,message,from,created_time,is_hidden';
+
   for (const post of posts) {
-    const commentFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
-    const url = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(commentFields)}&limit=100`;
+    let rawComments = [];
+    let richError = null;
+    const richUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(richFields)}&limit=100`;
     try {
-      const rawComments = await collectPagedMeta(url, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
-      for (const raw of rawComments) {
-        const normalized = normalizeFacebookComment(raw, post.postId);
-        if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
-      }
+      rawComments = await collectPagedMeta(richUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
     } catch (error) {
-      socialCommentsSyncJob.errors.push(`Facebook ${post.postId}: ${error.message}`);
+      richError = error;
+      const minimalUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(minimalFields)}&limit=100`;
+      try {
+        rawComments = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+      } catch (fallbackError) {
+        localErrors.push(`Facebook ${post.postId}: ${fallbackError.message}${richError ? ` (champs enrichis: ${richError.message})` : ''}`);
+        continue;
+      }
+    }
+    for (const raw of rawComments) {
+      const normalized = normalizeFacebookComment(raw, post.postId);
+      if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
     }
   }
+
   upsertSocialPosts(posts);
   upsertSocialComments(comments);
-  return { posts:posts.length, comments:comments.length };
+  if (localErrors.length) socialCommentsSyncJob.errors.push(...localErrors.slice(-20));
+  return { posts:posts.length, comments:comments.length, errors:localErrors.length };
 }
 
 async function syncInstagramComments90Days() {
@@ -14316,26 +14348,36 @@ async function syncInstagramComments90Days() {
   return { posts:posts.length, comments:comments.length };
 }
 
-async function runSocialCommentsSync() {
+async function runSocialCommentsSync(channel = 'all') {
   if (socialCommentsSyncJob.running) return;
+  const requestedChannel = ['facebook','instagram'].includes(safeString(channel)) ? safeString(channel) : 'all';
+  const previous = loadSocialCommentsSyncState();
   socialCommentsSyncJob = {
-    running:true, startedAt:new Date().toISOString(), completedAt:'',
-    facebookPosts:0, facebookComments:0, instagramPosts:0, instagramComments:0, errors:[]
+    running:true, startedAt:new Date().toISOString(), completedAt:'', requestedChannel,
+    facebookPosts: requestedChannel === 'instagram' ? Number(previous?.facebookPosts || 0) : 0,
+    facebookComments: requestedChannel === 'instagram' ? Number(previous?.facebookComments || 0) : 0,
+    instagramPosts: requestedChannel === 'facebook' ? Number(previous?.instagramPosts || 0) : 0,
+    instagramComments: requestedChannel === 'facebook' ? Number(previous?.instagramComments || 0) : 0,
+    errors:[]
   };
   try {
-    try {
-      const fb = await syncFacebookComments90Days();
-      socialCommentsSyncJob.facebookPosts = fb.posts;
-      socialCommentsSyncJob.facebookComments = fb.comments;
-    } catch (error) {
-      socialCommentsSyncJob.errors.push(`Facebook: ${error.message}`);
+    if (requestedChannel === 'all' || requestedChannel === 'facebook') {
+      try {
+        const fb = await syncFacebookComments90Days();
+        socialCommentsSyncJob.facebookPosts = fb.posts;
+        socialCommentsSyncJob.facebookComments = fb.comments;
+      } catch (error) {
+        socialCommentsSyncJob.errors.push(`Facebook: ${error.message}`);
+      }
     }
-    try {
-      const ig = await syncInstagramComments90Days();
-      socialCommentsSyncJob.instagramPosts = ig.posts;
-      socialCommentsSyncJob.instagramComments = ig.comments;
-    } catch (error) {
-      socialCommentsSyncJob.errors.push(`Instagram: ${error.message}`);
+    if (requestedChannel === 'all' || requestedChannel === 'instagram') {
+      try {
+        const ig = await syncInstagramComments90Days();
+        socialCommentsSyncJob.instagramPosts = ig.posts;
+        socialCommentsSyncJob.instagramComments = ig.comments;
+      } catch (error) {
+        socialCommentsSyncJob.errors.push(`Instagram: ${error.message}`);
+      }
     }
   } finally {
     socialCommentsSyncJob.running = false;
@@ -14344,6 +14386,7 @@ async function runSocialCommentsSync() {
     saveSocialCommentsSyncState(socialCommentsSyncJob);
   }
 }
+
 
 
 async function refreshFacebookSocialThread(postId) {
@@ -14457,6 +14500,8 @@ router.get('/api/social-comments/status', requireAuth, (req,res) => {
     historyDays:HISTORY_IMPORT_DAYS,
     hasData:Number(counts?.all || 0) > 0,
     needsInitialSync:!current?.running && Number(counts?.all || 0) === 0,
+    needsFacebookSync:!current?.running && Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN) && Number(counts?.facebook || 0) === 0,
+    needsInstagramSync:!current?.running && Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN) && Number(counts?.instagram || 0) === 0,
     lastErrors:Array.isArray(current?.errors) ? current.errors.slice(-10) : []
   });
 });
@@ -14473,7 +14518,9 @@ async function diagnoseFacebookCommentsAccess() {
   try {
     const page = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}?fields=${encodeURIComponent('id,name')}`);
     result.page = Boolean(page?.id);
+    result.pageId = safeString(page?.id);
     result.pageName = safeString(page?.name);
+    result.tokenMatchesPage = safeString(page?.id) === safeString(FACEBOOK_PAGE_ID);
   } catch (error) {
     result.error = `Accès Page Facebook refusé : ${error.message}`;
     return result;
@@ -14595,8 +14642,10 @@ router.get('/api/social-comments/diagnostic', requireAdminOrCommercialManager, a
 
 router.post('/api/social-comments/sync', requireAdminOrCommercialManager, (req,res) => {
   if (socialCommentsSyncJob.running) return res.status(202).json({ success:true, alreadyRunning:true, ...socialCommentsSyncJob });
-  runSocialCommentsSync().catch(error => console.error('❌ Sync commentaires :', error));
-  return res.status(202).json({ success:true, started:true });
+  const requested = safeString(req?.query?.channel || req?.body?.channel).toLowerCase();
+  const channel = ['facebook','instagram'].includes(requested) ? requested : 'all';
+  runSocialCommentsSync(channel).catch(error => console.error('❌ Sync commentaires :', error));
+  return res.status(202).json({ success:true, started:true, channel });
 });
 
 router.get('/api/social-comments', requireAuth, (req,res) => {
