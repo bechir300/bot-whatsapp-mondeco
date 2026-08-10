@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.6
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.22.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -3982,7 +3982,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.6</span>
+        <span class="login-version">V6.22.0</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -13643,6 +13643,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         hasAdReferral: Boolean(state.cameFromAd || state.adReferral),
         adHeadline: safeString(state?.adReferral?.headline),
         adBody: safeString(state?.adReferral?.body),
+        adCtwaClid: safeString(state?.adReferral?.ctwaClid),
         adProductHint:
           safeString(
             state?.adReferral?.productHint ||
@@ -13691,16 +13692,26 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     let visibleConversations = req.user?.role === 'commercial'
       ? conversations
           .filter(item => historyTimeIsRecent(item.lastTime, commercialHistoryCutoff))
-          .map(item => ({
-            ...item,
-            assignedToMe: safeString(item.assignedUserId) === safeString(req.user.id),
-            canWrite: safeString(item.assignedUserId) === safeString(req.user.id),
-            readOnly: safeString(item.assignedUserId) !== safeString(req.user.id)
-          }))
+          .map(item => {
+            const assignedToMe = safeString(item.assignedUserId) === safeString(req.user.id);
+            return {
+              ...item,
+              assignedToMe,
+              // V6.22.0 : tous les commerciaux peuvent répondre à tout moment,
+              // même si l'IA ou un autre commercial a déjà répondu.
+              canWrite: true,
+              canReply: true,
+              // Les actions de gestion restent liées à l'affectation.
+              canManage: assignedToMe,
+              readOnly: !assignedToMe
+            };
+          })
       : conversations.map(item => ({
           ...item,
           assignedToMe: false,
           canWrite: true,
+          canReply: true,
+          canManage: true,
           readOnly: false
         }));
 
@@ -13807,7 +13818,11 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const assignedToMe = isCommercial && conversationAssignedToUser(state, req.user);
     const access = {
       assignedToMe,
-      canWrite: !isCommercial || assignedToMe,
+      // Réponse ouverte à tous les commerciaux. L'affectation sert au suivi,
+      // au SLA et aux actions de gestion, mais ne bloque plus le clavier.
+      canWrite: true,
+      canReply: true,
+      canManage: !isCommercial || assignedToMe,
       readOnly: isCommercial && !assignedToMe,
       historyDays: HISTORY_IMPORT_DAYS
     };
