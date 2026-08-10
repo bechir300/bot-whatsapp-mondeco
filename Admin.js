@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.5
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe — V6.28.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -1781,6 +1781,113 @@ function normalizeInstagramComment(comment = {}, mediaId = '', parentId = '') {
     deleted: false,
     source: 'meta_sync'
   };
+}
+
+
+function socialConversationProfileIndex() {
+  const byId = new Map();
+  const byUsername = new Map();
+  for (const entry of loadWhatsAppLog()) {
+    const channel = safeString(entry?.channel).toLowerCase();
+    if (!['facebook','instagram'].includes(channel)) continue;
+    const picture = safeString(entry?.profile_picture || entry?.profilePicture);
+    if (!picture) continue;
+    const external = safeString(entry?.external_contact || entry?.externalContact);
+    const username = safeString(entry?.instagram_username || entry?.instagramUsername).replace(/^@/,'').toLowerCase();
+    if (external) byId.set(`${channel}:${external}`, picture);
+    if (username) byUsername.set(`${channel}:${username}`, picture);
+  }
+  const states = loadConversationStatesAdmin();
+  for (const [contact,state] of Object.entries(states)) {
+    const channel = safeString(state?.channel).toLowerCase();
+    if (!['facebook','instagram'].includes(channel)) continue;
+    const picture = safeString(state?.profilePicture);
+    if (!picture) continue;
+    const external = safeString(state?.externalContact || String(contact).replace(/^(instagram|facebook):/i,''));
+    const username = safeString(state?.instagramUsername).replace(/^@/,'').toLowerCase();
+    if (external) byId.set(`${channel}:${external}`, picture);
+    if (username) byUsername.set(`${channel}:${username}`, picture);
+  }
+  return { byId, byUsername };
+}
+
+async function resolveSocialCommentProfile(comment, profileIndex = null) {
+  if (!comment || comment.direction === 'outgoing') return comment;
+  const now = new Date().toISOString();
+  const checkedMs = Date.parse(safeString(comment?.authorAvatarCheckedAt));
+  const hasAvatar = Boolean(safeString(comment?.authorAvatar));
+  if (hasAvatar && Number.isFinite(checkedMs) && Date.now() - checkedMs < 7 * 24 * 60 * 60 * 1000) return comment;
+  if (!hasAvatar && Number.isFinite(checkedMs) && Date.now() - checkedMs < 24 * 60 * 60 * 1000) return comment;
+
+  const index = profileIndex || socialConversationProfileIndex();
+  const channel = safeString(comment?.channel).toLowerCase();
+  const authorId = safeString(comment?.authorId);
+  const username = safeString(comment?.authorUsername).replace(/^@/,'').toLowerCase();
+  let avatar = safeString(comment?.authorAvatar);
+  let name = safeString(comment?.authorName);
+  let resolvedUsername = safeString(comment?.authorUsername);
+
+  if (!avatar && authorId) avatar = safeString(index.byId.get(`${channel}:${authorId}`));
+  if (!avatar && username) avatar = safeString(index.byUsername.get(`${channel}:${username}`));
+
+  if (!avatar && authorId) {
+    try {
+      if (channel === 'instagram') {
+        const profile = await getInstagramHistoryProfile(authorId);
+        avatar = safeString(profile?.profilePicture);
+        name = safeString(profile?.name || name);
+        resolvedUsername = safeString(profile?.username || resolvedUsername);
+      } else if (channel === 'facebook') {
+        const profile = await getFacebookHistoryProfile(authorId);
+        avatar = safeString(profile?.profilePicture);
+        name = safeString(profile?.name || name);
+        if (!avatar) {
+          try {
+            const picture = await facebookGraphRequestPath(`${encodeURIComponent(authorId)}/picture?redirect=0&type=normal`);
+            const remote = safeString(picture?.data?.url);
+            if (remote) avatar = await persistFacebookHistoryProfilePicture(remote, authorId);
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  return {
+    ...comment,
+    authorAvatar: avatar,
+    authorName: name || safeString(comment?.authorName),
+    authorUsername: resolvedUsername || safeString(comment?.authorUsername),
+    authorAvatarCheckedAt: now
+  };
+}
+
+async function enrichSocialCommentProfiles(records, maxProfiles = 30) {
+  const list = Array.isArray(records) ? records : [];
+  if (!list.length) return [];
+  const index = socialConversationProfileIndex();
+  const unique = [];
+  const seen = new Set();
+  for (const item of list) {
+    const identity = `${safeString(item?.channel)}:${safeString(item?.authorId || item?.authorUsername || item?.commentId)}`;
+    if (!seen.has(identity)) { seen.add(identity); unique.push(item); }
+  }
+  const resolvedByIdentity = new Map();
+  const queue = unique.slice(0, Math.max(1, Math.min(60, Number(maxProfiles)||30)));
+  // Petits lots parallèles : rapide pour l'interface sans provoquer une rafale
+  // de dizaines de requêtes Meta qui pourrait toucher les limites API.
+  for (let start = 0; start < queue.length; start += 6) {
+    const batch = queue.slice(start, start + 6);
+    const results = await Promise.all(batch.map(item => resolveSocialCommentProfile(item, index)));
+    results.forEach((resolved, i) => {
+      const item = batch[i];
+      const identity = `${safeString(item?.channel)}:${safeString(item?.authorId || item?.authorUsername || item?.commentId)}`;
+      resolvedByIdentity.set(identity, resolved);
+    });
+  }
+  return list.map(item => {
+    const identity = `${safeString(item?.channel)}:${safeString(item?.authorId || item?.authorUsername || item?.commentId)}`;
+    const resolved = resolvedByIdentity.get(identity);
+    return resolved ? { ...item, authorAvatar:safeString(resolved.authorAvatar), authorName:safeString(resolved.authorName||item.authorName), authorUsername:safeString(resolved.authorUsername||item.authorUsername), authorAvatarCheckedAt:safeString(resolved.authorAvatarCheckedAt) } : item;
+  });
 }
 
 function copyFileIfTargetMissing(source, target, label) {
@@ -5367,12 +5474,16 @@ router.get(
       'Équipe & rapports'
     );
 
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date))
+      ? safeString(req.query.date)
+      : dateKeyInTimezone(new Date(), timezone);
     const users =
       loadUsers()
         .map(user => ({
           ...sanitizeUserForClient(user),
-          presence:
-            getPresenceForUser(user.id)
+          presence: getPresenceForUser(user.id),
+          attendance: attendanceMetricsForUser(date, user.id)
         }))
         .sort(
           (a, b) => {
@@ -5396,6 +5507,7 @@ router.get(
     return res.json({
       generatedAt:
         new Date().toISOString(),
+      date,
       onlineCount:
         users.filter(
           user =>
@@ -6054,7 +6166,9 @@ function scheduleIsActiveNow(schedule, now = new Date(), channel = '') {
 }
 
 function recordAttendance(user) {
-  if (!user?.id || user.role !== 'commercial') return;
+  // V6.28 — suivi de présence pour tous les membres actifs de l'application,
+  // pas uniquement les commerciaux. Le heartbeat reste volontairement léger.
+  if (!user?.id || user.active === false) return;
   const nowMs = Date.now();
   const previousWrite = Number(attendanceWriteThrottle.get(user.id) || 0);
   if (nowMs - previousWrite < 60 * 1000) return;
@@ -6062,18 +6176,131 @@ function recordAttendance(user) {
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const date = dateKeyInTimezone(new Date(), timezone);
   const key = `${date}:${user.id}`;
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
   const attendance = loadAttendance();
-  const current = attendance[key] || {};
+  const current = attendance[key] && typeof attendance[key] === 'object' ? attendance[key] : {};
+  const segments = Array.isArray(current.segments)
+    ? current.segments.filter(item => item && typeof item === 'object').slice(-128)
+    : [];
+  const last = segments.length ? segments[segments.length - 1] : null;
+  const lastMs = Date.parse(safeString(last?.lastAt));
+  // Un trou > 2 minutes crée une nouvelle session. Les heartbeats navigateur
+  // arrivent toutes les 20 s, mais on n'écrit sur disque qu'une fois/minute.
+  if (last && Number.isFinite(lastMs) && nowMs - lastMs <= 2 * 60 * 1000) {
+    last.lastAt = now;
+  } else {
+    segments.push({ startAt: now, lastAt: now });
+  }
   attendance[key] = {
+    ...current,
     date,
     userId: user.id,
-    name: safeString(user.name),
+    name: safeString(user.name || current.name),
+    role: safeString(user.role || current.role),
     firstSeenAt: current.firstSeenAt || now,
     lastSeenAt: now,
-    heartbeats: Number(current.heartbeats || 0) + 1
+    heartbeats: Number(current.heartbeats || 0) + 1,
+    segments: segments.slice(-128)
   };
   saveAttendance(attendance);
+}
+
+function tunisDateTimeMs(date, time) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeString(date)) || timeMinutes(time) === null) return NaN;
+  // La Tunisie utilise UTC+01:00 toute l'année. Ce format évite que le fuseau
+  // du conteneur Railway modifie les horaires commerciaux enregistrés.
+  return Date.parse(`${date}T${safeString(time)}:00+01:00`);
+}
+
+function scheduleIntervalsForDate(date, userId) {
+  const intervals = [];
+  for (const schedule of getSchedulesForDate(date).filter(item => safeString(item.userId) === safeString(userId) && item.active !== false)) {
+    const start = tunisDateTimeMs(date, schedule.startTime);
+    const end = tunisDateTimeMs(date, schedule.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const breakStart = tunisDateTimeMs(date, schedule.breakStart);
+    const breakEnd = tunisDateTimeMs(date, schedule.breakEnd);
+    if (Number.isFinite(breakStart) && Number.isFinite(breakEnd) && breakEnd > breakStart && breakStart > start && breakEnd < end) {
+      intervals.push([start, breakStart], [breakEnd, end]);
+    } else {
+      intervals.push([start, end]);
+    }
+  }
+  return intervals;
+}
+
+function overlapMs(aStart, aEnd, bStart, bEnd) {
+  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
+}
+
+function attendanceMetricsForUser(date, userId, nowMs = Date.now()) {
+  const attendance = loadAttendance();
+  const record = attendance[`${date}:${userId}`] || {};
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const today = dateKeyInTimezone(new Date(nowMs), timezone);
+  const dayStart = Date.parse(`${date}T00:00:00+01:00`);
+  const dayEnd = Date.parse(`${date}T23:59:59.999+01:00`);
+  const effectiveEnd = date === today ? Math.min(nowMs, dayEnd) : dayEnd;
+  const segments = [];
+  for (const item of Array.isArray(record.segments) ? record.segments : []) {
+    const start = Date.parse(safeString(item?.startAt));
+    const last = Date.parse(safeString(item?.lastAt));
+    if (!Number.isFinite(start) || !Number.isFinite(last)) continue;
+    // On ajoute une minute de grâce au dernier heartbeat, plafonnée à 75 s,
+    // afin de représenter le temps réellement actif entre deux écritures disque.
+    segments.push([Math.max(dayStart, start), Math.min(effectiveEnd, last + 75 * 1000)]);
+  }
+  let onlineMs = segments.reduce((sum, [start,end]) => sum + Math.max(0,end-start), 0);
+  // Compatibilité avec les jours enregistrés avant V6.28 (sans segments).
+  if (!segments.length && Number(record.heartbeats || 0) > 0) {
+    const first = Date.parse(safeString(record.firstSeenAt));
+    const last = Date.parse(safeString(record.lastSeenAt));
+    const estimated = Number(record.heartbeats || 0) * 60 * 1000;
+    if (Number.isFinite(first) && Number.isFinite(last)) {
+      onlineMs = Math.max(0, Math.min(estimated, Math.max(60 * 1000, last - first + 60 * 1000)));
+    } else {
+      onlineMs = estimated;
+    }
+  }
+
+  const planned = scheduleIntervalsForDate(date, userId);
+  let scheduledElapsedMs = 0;
+  let onlineScheduledMs = 0;
+  for (const [start,end] of planned) {
+    const clippedEnd = Math.min(end, effectiveEnd);
+    if (clippedEnd <= start) continue;
+    scheduledElapsedMs += clippedEnd - start;
+    for (const [onlineStart,onlineEnd] of segments) {
+      onlineScheduledMs += overlapMs(start, clippedEnd, onlineStart, onlineEnd);
+    }
+  }
+
+  let offlineMs = 0;
+  let basis = planned.length ? 'planning' : 'activité';
+  if (planned.length) {
+    // Si la journée est legacy et qu'on ne possède pas les segments, on utilise
+    // l'estimation globale mais sans jamais dépasser le temps planifié écoulé.
+    if (!segments.length) onlineScheduledMs = Math.min(scheduledElapsedMs, onlineMs);
+    offlineMs = Math.max(0, scheduledElapsedMs - onlineScheduledMs);
+  } else {
+    const first = Date.parse(safeString(record.firstSeenAt));
+    const trackedStart = Number.isFinite(first) ? Math.max(dayStart, first) : effectiveEnd;
+    const trackedWindow = Math.max(0, effectiveEnd - trackedStart);
+    offlineMs = Math.max(0, trackedWindow - Math.min(trackedWindow, onlineMs));
+  }
+
+  return {
+    date,
+    basis,
+    onlineMs: Math.round(onlineMs),
+    offlineMs: Math.round(offlineMs),
+    scheduledElapsedMs: Math.round(scheduledElapsedMs),
+    scheduledTotalMs: Math.round(planned.reduce((sum,[start,end]) => sum + Math.max(0,end-start),0)),
+    firstSeenAt: safeString(record.firstSeenAt),
+    lastSeenAt: safeString(record.lastSeenAt),
+    heartbeats: Number(record.heartbeats || 0),
+    sessions: segments.length || (record.heartbeats ? 1 : 0)
+  };
 }
 
 function getSchedulesForDate(date) {
@@ -6412,10 +6639,14 @@ router.delete('/api/schedules/:id', requireAdminOrCommercialManager, (req,res) =
 router.get('/api/tasks', requireAuth, (req,res) => { const date=safeString(req.query?.date); let items=loadTasks().filter(item=>!date||safeString(item.date)===date); if(req.user?.role==='commercial'){items=items.filter(item=>safeString(item.userId)===safeString(req.user.id));}else if(!['admin','responsable_commercial'].includes(safeString(req.user?.role))){return res.status(403).json({error:'Accès non autorisé.'});} return res.json(items.sort((a,b)=>safeString(a.startTime).localeCompare(safeString(b.startTime)))); });
 
 router.post('/api/tasks', requireAdminOrCommercialManager, (req,res) => {
-  const userId=safeString(req.body?.userId); const user=loadUsers().find(item=>item.id===userId&&item.role==='commercial'&&item.active!==false); const title=safeString(req.body?.title); const date=safeString(req.body?.date);
-  if(!user||!title||!/^\d{4}-\d{2}-\d{2}$/.test(date))return res.status(400).json({error:'Commercial, date et tâche sont obligatoires.'});
+  const userId=safeString(req.body?.userId); const title=safeString(req.body?.title); const date=safeString(req.body?.date);
+  const users=loadUsers().filter(item=>item.role==='commercial'&&item.active!==false);
+  const targets=userId==='__all__'?users:users.filter(item=>item.id===userId);
+  if(!targets.length||!title||!/^\d{4}-\d{2}-\d{2}$/.test(date))return res.status(400).json({error:'Commercial/équipe, date et tâche sont obligatoires.'});
   const requestedTaskChannel=safeString(req.body?.channel||'both').toLowerCase(); const taskChannel=['both','whatsapp','instagram','facebook'].includes(requestedTaskChannel)?requestedTaskChannel:'both';
-  const now=new Date().toISOString(); const item={id:crypto.randomUUID(),userId,userName:safeString(user.name),date,channel:taskChannel,startTime:safeString(req.body?.startTime),dueTime:safeString(req.body?.dueTime),title:title.slice(0,180),details:safeString(req.body?.details).slice(0,1500),priority:safeString(req.body?.priority||'normal'),status:'todo',conversationContact:safeString(req.body?.conversationContact||req.body?.contact).slice(0,180),conversationMessageId:safeString(req.body?.conversationMessageId||req.body?.messageId).slice(0,260),clientName:safeString(req.body?.clientName).slice(0,180),createdBy:safeString(req.user?.id),createdAt:now,updatedAt:now}; const items=loadTasks();items.push(item);saveTasks(items);return res.status(201).json(item);
+  const now=new Date().toISOString(); const batchId=userId==='__all__'?crypto.randomUUID():''; const items=loadTasks();
+  const created=targets.map(user=>({id:crypto.randomUUID(),batchId,userId:user.id,userName:safeString(user.name),date,channel:taskChannel,startTime:safeString(req.body?.startTime),dueTime:safeString(req.body?.dueTime),title:title.slice(0,180),details:safeString(req.body?.details).slice(0,1500),priority:safeString(req.body?.priority||'normal'),status:'todo',conversationContact:safeString(req.body?.conversationContact||req.body?.contact).slice(0,180),conversationMessageId:safeString(req.body?.conversationMessageId||req.body?.messageId).slice(0,260),clientName:safeString(req.body?.clientName).slice(0,180),createdBy:safeString(req.user?.id),createdAt:now,updatedAt:now}));
+  items.push(...created);saveTasks(items);return res.status(201).json(userId==='__all__'?{success:true,created:created.length,batchId,items:created}:created[0]);
 });
 
 router.put('/api/tasks/:id', requireAuth, (req,res) => {
@@ -6441,12 +6672,14 @@ router.get('/api/my-workday', requireAuth, (req,res) => {
   const date=safeString(req.query?.date)||dateKeyInTimezone(new Date(),timezone);
   const schedules=getSchedulesForDate(date).filter(item=>safeString(item.userId)===safeString(req.user.id));
   const tasks=loadTasks().filter(item=>safeString(item.date)===date&&safeString(item.userId)===safeString(req.user.id));
-  return res.json({date,schedules,tasks});
+  const attendance=attendanceMetricsForUser(date,req.user.id);
+  const presence=getPresenceForUser(req.user.id);
+  return res.json({date,schedules,tasks,attendance,presence});
 });
 
 router.get('/api/team/operations', requireAdminOrCommercialManager, (req,res) => {
   const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');const date=safeString(req.query?.date)||dateKeyInTimezone(new Date(),timezone);const states=loadConversationStatesAdmin();
-  const users=loadUsers().filter(user=>user.role==='commercial').map(user=>{const presence=getPresenceForUser(user.id);const shifts=getSchedulesForDate(date).filter(s=>s.userId===user.id);const tasks=loadTasks().filter(t=>t.date===date&&t.userId===user.id);const assigned=Object.values(states).filter(st=>safeString(st?.assignedUserId)===user.id&&st?.resolved!==true);const slas=assigned.map(st=>computeLiveSla(st)).filter(Boolean);return {...sanitizeUserForClient(user),presence,shifts,tasks,activeConversations:assigned.length,pendingSla:slas.filter(s=>['pending','late'].includes(s.status)).length,lateSla:slas.filter(s=>s.status==='late').length,nextSlaRemainingMs:slas.filter(s=>['pending','late'].includes(s.status)&&Number.isFinite(s.remainingMs)).sort((a,b)=>a.remainingMs-b.remainingMs)[0]?.remainingMs??null};});
+  const users=loadUsers().filter(user=>user.role==='commercial').map(user=>{const presence=getPresenceForUser(user.id);const attendance=attendanceMetricsForUser(date,user.id);const shifts=getSchedulesForDate(date).filter(s=>s.userId===user.id);const tasks=loadTasks().filter(t=>t.date===date&&t.userId===user.id);const assigned=Object.values(states).filter(st=>safeString(st?.assignedUserId)===user.id&&st?.resolved!==true);const slas=assigned.map(st=>computeLiveSla(st)).filter(Boolean);return {...sanitizeUserForClient(user),presence,attendance,shifts,tasks,activeConversations:assigned.length,pendingSla:slas.filter(s=>['pending','late'].includes(s.status)).length,lateSla:slas.filter(s=>s.status==='late').length,nextSlaRemainingMs:slas.filter(s=>['pending','late'].includes(s.status)&&Number.isFinite(s.remainingMs)).sort((a,b)=>a.remainingMs-b.remainingMs)[0]?.remainingMs??null};});
   const allSla=Object.values(states).map(st=>computeLiveSla(st)).filter(Boolean);const tasks=loadTasks().filter(t=>t.date===date);return res.json({date,generatedAt:new Date().toISOString(),pendingSla:allSla.filter(s=>s.status==='pending').length,lateSla:allSla.filter(s=>s.status==='late').length,tasksLate:tasks.filter(t=>t.status==='late').length,users});
 });
 
@@ -14554,13 +14787,31 @@ async function refreshFacebookSocialThread(postId) {
   if (!postId || !FACEBOOK_PAGE_ACCESS_TOKEN) return;
   await hydrateFacebookPost(postId);
   const cutoffAt = historyImportCutoffIso();
-  const commentFields = 'id,message,created_time,from{id,name},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
-  const url = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?filter=stream&fields=${encodeURIComponent(commentFields)}&limit=100`;
-  const rawComments = await collectPagedMeta(url, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:10000, cutoffAt });
-  const comments = rawComments
-    .map(raw => normalizeFacebookComment(raw, postId))
-    .filter(Boolean)
-    .filter(item => historyTimeIsRecent(item.createdAt, cutoffAt));
+  const minimalFields = 'id,message,from,created_time,is_hidden';
+  const richFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
+  const minimalUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?fields=${encodeURIComponent(minimalFields)}&limit=100`;
+  const top = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:10000, cutoffAt:'' });
+  const byId = new Map();
+  for (const raw of top) {
+    const id=safeString(raw?.id); if(id) byId.set(id,{...raw,__mondecoPostId:postId});
+  }
+  if (top.length) {
+    try {
+      const richUrl=`https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?fields=${encodeURIComponent(richFields)}&limit=100`;
+      const rich=await collectPagedMeta(richUrl,FACEBOOK_PAGE_ACCESS_TOKEN,{maxItems:10000,cutoffAt:''});
+      for(const raw of rich){const id=safeString(raw?.id);if(id)byId.set(id,{...(byId.get(id)||{}),...raw,__mondecoPostId:postId});}
+    } catch {}
+  }
+  for (const raw of top) {
+    const topId=safeString(raw?.id); if(!topId) continue;
+    try {
+      const repliesUrl=`https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(topId)}/comments?fields=${encodeURIComponent(minimalFields)}&limit=100`;
+      const replies=await collectPagedMeta(repliesUrl,FACEBOOK_PAGE_ACCESS_TOKEN,{maxItems:5000,cutoffAt:''});
+      for(const reply of replies){const id=safeString(reply?.id);if(id)byId.set(id,{...reply,parent:reply?.parent||{id:topId},__mondecoPostId:postId});}
+    } catch {}
+  }
+  let comments=[...byId.values()].map(raw=>normalizeFacebookComment(raw,postId)).filter(Boolean).filter(item=>historyTimeIsRecent(item.createdAt,cutoffAt));
+  comments=await enrichSocialCommentProfiles(comments,40);
   upsertSocialComments(comments);
   const posts = loadSocialPosts();
   const index = posts.findIndex(post => post.key === socialKey('facebook', postId));
@@ -14599,7 +14850,8 @@ async function refreshInstagramSocialThread(mediaId) {
       }
     }
   }
-  upsertSocialComments(comments);
+  const enrichedComments = await enrichSocialCommentProfiles(comments, 40);
+  upsertSocialComments(enrichedComments);
   const posts = loadSocialPosts();
   const index = posts.findIndex(post => post.key === socialKey('instagram', mediaId));
   if (index >= 0) {
@@ -14846,6 +15098,29 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
   }
 });
 
+router.post('/api/social-comments/avatars/refresh', requireAuth, async (req,res) => {
+  try {
+    const requestedKeys = Array.isArray(req.body?.keys) ? req.body.keys.map(safeString).filter(Boolean).slice(0,60) : [];
+    const channel = safeString(req.body?.channel).toLowerCase();
+    let comments = loadSocialComments();
+    let targets = comments.filter(item => !item.deleted && item.direction !== 'outgoing');
+    if (requestedKeys.length) {
+      const wanted = new Set(requestedKeys);
+      targets = targets.filter(item => wanted.has(safeString(item.key)));
+    }
+    if (['facebook','instagram'].includes(channel)) targets = targets.filter(item => item.channel === channel);
+    targets = targets.slice(0,60);
+    const enriched = await enrichSocialCommentProfiles(targets, 40);
+    const map = new Map(enriched.map(item => [safeString(item.key), item]));
+    comments = comments.map(item => map.has(safeString(item.key)) ? { ...item, ...map.get(safeString(item.key)) } : item);
+    saveSocialComments(comments);
+    return res.json({ success:true, updated:enriched.filter(item=>safeString(item.authorAvatar)).length, items:enriched.map(item=>({key:item.key,authorAvatar:safeString(item.authorAvatar),authorName:safeString(item.authorName),authorUsername:safeString(item.authorUsername)})) });
+  } catch (error) {
+    console.warn('⚠️ Photos profils commentaires :', error.message);
+    return res.status(500).json({ error:'Impossible de mettre à jour les photos de profil.' });
+  }
+});
+
 router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
   const key = safeString(req.params.key);
   let comments = loadSocialComments();
@@ -14860,9 +15135,17 @@ router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
   selected = comments.find(item => safeString(item?.key) === key) || selected;
   const postKey = socialKey(selected.channel, selected.postId);
   const post = loadSocialPosts().find(item => safeString(item?.key) === postKey) || null;
-  const thread = comments
+  let thread = comments
     .filter(item => !item.deleted && item.channel === selected.channel && safeString(item.postId) === safeString(selected.postId))
     .sort((a,b) => (Date.parse(a.createdAt)||0) - (Date.parse(b.createdAt)||0));
+  try {
+    const enriched = await enrichSocialCommentProfiles(thread, 30);
+    const map = new Map(enriched.map(item => [safeString(item.key), item]));
+    comments = comments.map(item => map.has(safeString(item.key)) ? { ...item, ...map.get(safeString(item.key)) } : item);
+    saveSocialComments(comments);
+    thread = enriched;
+    selected = comments.find(item => safeString(item?.key) === key) || selected;
+  } catch {}
   const read = markSocialCommentRead(key, req.user) || selected;
   return res.json({
     comment:{...read,read:true},
