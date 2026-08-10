@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.8
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.6
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -68,16 +68,7 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.20.6 — Cloudinary prend en charge les médias de conversations afin
-// d'éviter de saturer le Volume Railway Free. Aucun secret n'est exposé au navigateur.
-const CLOUDINARY_CLOUD_NAME = (process.env.CLOUDINARY_CLOUD_NAME || '').trim();
-const CLOUDINARY_API_KEY = (process.env.CLOUDINARY_API_KEY || '').trim();
-const CLOUDINARY_API_SECRET = (process.env.CLOUDINARY_API_SECRET || '').trim();
-const CLOUDINARY_MIGRATE_LEGACY =
-  String(process.env.CLOUDINARY_MIGRATE_LEGACY ?? 'true').trim().toLowerCase() !== 'false';
-
-
-// V6.20.5 — historique Meta limité à 90 jours par défaut.
+// V6.20.6 — historique Meta limité à 90 jours par défaut.
 // La valeur peut être ajustée plus tard via HISTORY_IMPORT_DAYS sans changer le code.
 const HISTORY_IMPORT_DAYS = Math.max(
   1,
@@ -119,7 +110,7 @@ const IS_RAILWAY = Boolean(
   process.env.RAILWAY_ENVIRONMENT_NAME
 );
 
-// V6.20.5 — mode stockage compact.
+// V6.20.6 — mode stockage compact.
 // Sur Railway Free, le Volume est limité et les snapshots binaires complets
 // peuvent dupliquer plusieurs fois les mêmes médias. Le mode compact conserve
 // les données actives mais réduit fortement les copies de sauvegarde redondantes.
@@ -265,245 +256,6 @@ router.use(express.json({ limit: '20mb' }));
 
 function safeString(value) {
   return String(value ?? '').trim();
-}
-
-// ============================================================
-// V6.20.6 — CLOUDINARY MEDIA (sans dépendance npm supplémentaire)
-// ============================================================
-
-function cloudinaryConfigured() {
-  return Boolean(
-    CLOUDINARY_CLOUD_NAME &&
-    CLOUDINARY_API_KEY &&
-    CLOUDINARY_API_SECRET
-  );
-}
-
-function cloudinaryMimeFromFilename(filename = '') {
-  const ext = path.extname(safeString(filename)).toLowerCase();
-  const map = {
-    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-    '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
-    '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
-    '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg',
-    '.wav': 'audio/wav', '.pdf': 'application/pdf', '.txt': 'text/plain',
-    '.doc': 'application/msword',
-    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.xls': 'application/vnd.ms-excel',
-    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  };
-  return map[ext] || 'application/octet-stream';
-}
-
-function cloudinaryResourceType(mimetype = '', filename = '') {
-  const mime = safeString(mimetype || cloudinaryMimeFromFilename(filename)).toLowerCase();
-  if (mime.startsWith('image/') && mime !== 'image/svg+xml') return 'image';
-  if (mime.startsWith('video/') || mime.startsWith('audio/')) return 'video';
-  return 'raw';
-}
-
-function cloudinaryOpaquePublicId(scope, filename, resourceType) {
-  const cleanScope = safeString(scope).replace(/[^a-zA-Z0-9_-]/g, '') || 'media';
-  const cleanFilename = path.basename(safeString(filename));
-  const digest = crypto
-    .createHmac('sha256', CLOUDINARY_API_SECRET)
-    .update(`${cleanScope}:${cleanFilename}`)
-    .digest('hex')
-    .slice(0, 48);
-  const extension = path.extname(cleanFilename).toLowerCase();
-  return resourceType === 'raw'
-    ? `mondeco/${cleanScope}/${digest}${extension}`
-    : `mondeco/${cleanScope}/${digest}`;
-}
-
-function cloudinaryDeliveryUrl(scope, filename, mimetype = '') {
-  if (!cloudinaryConfigured()) return '';
-  const resourceType = cloudinaryResourceType(mimetype, filename);
-  const publicId = cloudinaryOpaquePublicId(scope, filename, resourceType);
-  const encodedPublicId = publicId
-    .split('/')
-    .map(part => encodeURIComponent(part))
-    .join('/');
-  const extension = path.extname(path.basename(filename)).toLowerCase();
-  const suffix = resourceType === 'raw' ? '' : extension;
-  return `https://res.cloudinary.com/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/${resourceType}/upload/${encodedPublicId}${suffix}`;
-}
-
-async function storeCloudinaryBuffer({
-  buffer,
-  mimetype = '',
-  filename,
-  scope = 'conversation-media'
-}) {
-  if (!cloudinaryConfigured()) {
-    throw new Error('Cloudinary non configuré.');
-  }
-  if (!Buffer.isBuffer(buffer) || !buffer.length) {
-    throw new Error('Buffer Cloudinary vide.');
-  }
-
-  const safeFilename = path.basename(safeString(filename));
-  if (!safeFilename) throw new Error('Nom de fichier Cloudinary invalide.');
-
-  const mime = safeString(mimetype) || cloudinaryMimeFromFilename(safeFilename);
-  const resourceType = cloudinaryResourceType(mime, safeFilename);
-  const publicId = cloudinaryOpaquePublicId(scope, safeFilename, resourceType);
-  const endpoint =
-    `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/${resourceType}/upload`;
-
-  const form = new FormData();
-  form.append('file', new Blob([buffer], { type: mime || 'application/octet-stream' }), safeFilename);
-  form.append('public_id', publicId);
-  form.append('overwrite', 'true');
-
-  const auth = Buffer
-    .from(`${CLOUDINARY_API_KEY}:${CLOUDINARY_API_SECRET}`, 'utf8')
-    .toString('base64');
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${auth}`
-    },
-    body: form
-  });
-
-  const text = await response.text();
-  let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
-
-  if (!response.ok) {
-    throw new Error(
-      safeString(data?.error?.message) ||
-      `Cloudinary HTTP ${response.status}`
-    );
-  }
-
-  return {
-    publicId,
-    resourceType,
-    bytes: Number(data?.bytes || buffer.length),
-    format: safeString(data?.format),
-    secureUrl: safeString(data?.secure_url),
-    assetId: safeString(data?.asset_id)
-  };
-}
-
-async function proxyCloudinaryFile(res, { scope, filename, cacheControl }) {
-  const remoteUrl = cloudinaryDeliveryUrl(scope, filename);
-  if (!remoteUrl) return false;
-
-  try {
-    const response = await fetch(remoteUrl);
-    if (!response.ok) return false;
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const contentType = safeString(response.headers.get('content-type')) || cloudinaryMimeFromFilename(filename);
-
-    res.setHeader('Cache-Control', cacheControl || 'private, max-age=3600');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Type', contentType);
-    return res.send(buffer);
-  } catch (error) {
-    console.warn('⚠️ Lecture Cloudinary impossible :', error.message);
-    return false;
-  }
-}
-
-const cloudinaryMigrationState = {
-  running: false,
-  startedAt: '',
-  completedAt: '',
-  totalFiles: 0,
-  migratedFiles: 0,
-  failedFiles: 0,
-  freedBytes: 0,
-  lastError: ''
-};
-
-function legacyCloudinaryFiles(directory, scope) {
-  try {
-    if (!fs.existsSync(directory)) return [];
-    return fs.readdirSync(directory, { withFileTypes: true })
-      .filter(entry => entry.isFile())
-      .map(entry => {
-        const fullPath = path.join(directory, entry.name);
-        try {
-          const stat = fs.statSync(fullPath);
-          return { scope, filename: entry.name, fullPath, size: Number(stat.size || 0) };
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-async function migrateLegacyConversationStorageToCloudinary() {
-  if (!cloudinaryConfigured() || !CLOUDINARY_MIGRATE_LEGACY || cloudinaryMigrationState.running) {
-    return cloudinaryMigrationState;
-  }
-
-  const files = [
-    ...legacyCloudinaryFiles(CONVERSATION_MEDIA_DIR, 'conversation-media'),
-    ...legacyCloudinaryFiles(CONVERSATION_PROFILE_DIR, 'conversation-profile')
-  ].sort((a, b) => b.size - a.size);
-
-  cloudinaryMigrationState.running = true;
-  cloudinaryMigrationState.startedAt = new Date().toISOString();
-  cloudinaryMigrationState.completedAt = '';
-  cloudinaryMigrationState.totalFiles = files.length;
-  cloudinaryMigrationState.migratedFiles = 0;
-  cloudinaryMigrationState.failedFiles = 0;
-  cloudinaryMigrationState.freedBytes = 0;
-  cloudinaryMigrationState.lastError = '';
-
-  if (!files.length) {
-    cloudinaryMigrationState.running = false;
-    cloudinaryMigrationState.completedAt = new Date().toISOString();
-    console.log('☁️ Cloudinary : aucun ancien média local à migrer.');
-    return cloudinaryMigrationState;
-  }
-
-  console.log(`☁️ Cloudinary : migration de ${files.length} média(s) locaux, plus gros fichiers en premier.`);
-
-  for (const item of files) {
-    try {
-      const buffer = fs.readFileSync(item.fullPath);
-      await storeCloudinaryBuffer({
-        buffer,
-        mimetype: cloudinaryMimeFromFilename(item.filename),
-        filename: item.filename,
-        scope: item.scope
-      });
-      fs.unlinkSync(item.fullPath);
-      cloudinaryMigrationState.migratedFiles += 1;
-      cloudinaryMigrationState.freedBytes += item.size;
-
-      if (cloudinaryMigrationState.migratedFiles % 20 === 0) {
-        console.log('☁️ Migration Cloudinary', {
-          migrated: cloudinaryMigrationState.migratedFiles,
-          total: cloudinaryMigrationState.totalFiles,
-          freed: humanBytes(cloudinaryMigrationState.freedBytes)
-        });
-      }
-    } catch (error) {
-      cloudinaryMigrationState.failedFiles += 1;
-      cloudinaryMigrationState.lastError = safeString(error?.message);
-      console.warn(`⚠️ Cloudinary : ${item.filename} conservé localement :`, error.message);
-    }
-  }
-
-  cloudinaryMigrationState.running = false;
-  cloudinaryMigrationState.completedAt = new Date().toISOString();
-  console.log('✅ Migration Cloudinary terminée', {
-    migrated: cloudinaryMigrationState.migratedFiles,
-    failed: cloudinaryMigrationState.failedFiles,
-    freed: humanBytes(cloudinaryMigrationState.freedBytes)
-  });
-  return cloudinaryMigrationState;
 }
 
 function normalizePhone(value) {
@@ -2730,15 +2482,6 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-if (cloudinaryConfigured() && CLOUDINARY_MIGRATE_LEGACY) {
-  const cloudinaryMigrationTimer = setTimeout(() => {
-    migrateLegacyConversationStorageToCloudinary().catch(error => {
-      console.warn('⚠️ Migration Cloudinary au démarrage :', error.message);
-    });
-  }, 1500);
-  if (typeof cloudinaryMigrationTimer.unref === 'function') cloudinaryMigrationTimer.unref();
-}
-
 console.log(
   '💾 Stockage MONDECO :',
   {
@@ -3798,6 +3541,29 @@ function roleCanAccess(
   return false;
 }
 
+function conversationAssignedToUser(state, user) {
+  if (!state || !user) return false;
+  return Boolean(
+    safeString(state.assignedUserId) &&
+    safeString(state.assignedUserId) === safeString(user.id)
+  );
+}
+
+function commercialCanWriteConversation(user, state) {
+  if (safeString(user?.role) !== 'commercial') return true;
+  return conversationAssignedToUser(state, user);
+}
+
+function requireCommercialConversationWriteAccess(req, res, contact) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const state = loadConversationStatesAdmin()[safeString(contact)] || {};
+  if (conversationAssignedToUser(state, req.user)) return true;
+  res.status(403).json({
+    error: 'Lecture seule : cette conversation n’est pas affectée à votre compte.'
+  });
+  return false;
+}
+
 function requireAuth(
   req,
   res,
@@ -3829,17 +3595,6 @@ function requireAuth(
 
   req.user =
     user;
-
-  if (
-    user.role === 'commercial' &&
-    pathStarts(req.path, '/api/conversations') &&
-    safeString(req.params?.contact)
-  ) {
-    const contactState = loadConversationStatesAdmin()[safeString(req.params.contact)] || {};
-    if (safeString(contactState.assignedUserId) !== safeString(user.id)) {
-      return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
-    }
-  }
 
   if (
     !roleCanAccess(
@@ -4227,7 +3982,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.8</span>
+        <span class="login-version">V6.20.6</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -4661,62 +4416,68 @@ router.get(
 router.get(
   '/conversation-media/:filename',
   requireAuth,
-  async (req, res) => {
-    const filename = path.basename(req.params.filename || '');
+  (req, res) => {
+    const filename =
+      path.basename(req.params.filename || '');
+
     if (!filename) return res.sendStatus(404);
 
-    const filePath = path.join(CONVERSATION_MEDIA_DIR, filename);
-    const extension = path.extname(filename).toLowerCase();
+    const filePath =
+      path.join(
+        CONVERSATION_MEDIA_DIR,
+        filename
+      );
 
-    res.setHeader('Cache-Control', 'private, max-age=3600');
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
+    }
+
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=3600'
+    );
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; sandbox");
 
-    if (['.pdf','.doc','.docx','.bin','.xls','.xlsx','.txt'].includes(extension)) {
-      res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/["\r\n]/g, '')}"`);
+    const extension = path.extname(filename).toLowerCase();
+    if (['.pdf','.doc','.docx','.bin'].includes(extension)) {
+      res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[\"\r\n]/g, '')}"`);
     }
 
-    if (fs.existsSync(filePath)) {
-      return res.sendFile(filePath);
-    }
-
-    const proxied = await proxyCloudinaryFile(res, {
-      scope: 'conversation-media',
-      filename,
-      cacheControl: 'private, max-age=3600'
-    });
-
-    if (proxied !== false) return proxied;
-    return res.sendStatus(404);
+    return res.sendFile(filePath);
   }
 );
+
 
 router.get(
   '/conversation-profile/:filename',
   requireAuth,
-  async (req, res) => {
-    const filename = path.basename(req.params.filename || '');
+  (req, res) => {
+    const filename =
+      path.basename(req.params.filename || '');
+
     if (!filename) return res.sendStatus(404);
 
-    const filePath = path.join(CONVERSATION_PROFILE_DIR, filename);
+    const filePath =
+      path.join(
+        CONVERSATION_PROFILE_DIR,
+        filename
+      );
 
-    res.setHeader('Cache-Control', 'private, max-age=86400');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-
-    if (fs.existsSync(filePath)) {
-      return res.sendFile(filePath);
+    if (!fs.existsSync(filePath)) {
+      return res.sendStatus(404);
     }
 
-    const proxied = await proxyCloudinaryFile(res, {
-      scope: 'conversation-profile',
-      filename,
-      cacheControl: 'private, max-age=86400'
-    });
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=86400'
+    );
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
-    if (proxied !== false) return proxied;
-    return res.sendStatus(404);
+    return res.sendFile(filePath);
   }
 );
+
 
 
 // ============================================================
@@ -11651,62 +11412,11 @@ function loadPersistentConversationEvents() {
   return entries;
 }
 
-// V6.20.8 — Filet de sécurité WhatsApp : si un message client a bien créé
-// une notification persistante mais qu'un ancien incident de stockage a empêché
-// son indexation normale dans l'inbox, on reconstruit une entrée minimale à partir
-// de notifications.json. Les vraies entrées du journal restent prioritaires et
-// écrasent cette entrée de secours grâce à la déduplication par message_id.
-function notificationRecoveryConversationEntries() {
-  const store = loadNotificationsStore();
-  const items = Array.isArray(store?.items) ? store.items : [];
-
-  return items
-    .filter(item => {
-      const contact = safeString(item?.contact);
-      const channel = safeString(item?.channel).toLowerCase() ||
-        (contact.startsWith('instagram:') ? 'instagram' :
-          contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
-      return Boolean(contact) && channel === 'whatsapp';
-    })
-    .map(item => {
-      const contact = safeString(item?.contact);
-      const preview = safeString(item?.preview);
-      const type = safeString(item?.type || 'text').toLowerCase();
-      const messageId = safeString(item?.messageId || item?.id);
-      const attachmentPreview = safeString(item?.attachmentPreview);
-      const attachments = attachmentPreview
-        ? [{ type: type === 'image' ? 'image' : 'attachment', url: attachmentPreview }]
-        : [];
-
-      return {
-        message_id: messageId || undefined,
-        contact,
-        external_contact: safeString(item?.externalContact) || contact,
-        channel: 'whatsapp',
-        incoming: preview,
-        type: type || 'text',
-        attachments,
-        attachment_type: attachments.length ? safeString(attachments[0]?.type) : undefined,
-        attachment_url: attachments.length ? attachmentPreview : undefined,
-        direction: 'incoming',
-        sender_kind: 'client',
-        source: 'notification_recovery',
-        action: safeString(item?.action) || 'notification_recovery',
-        profile_name: safeString(item?.profileName),
-        profile_picture: safeString(item?.profilePicture),
-        reply_sent: false,
-        time: safeString(item?.createdAt) || new Date().toISOString(),
-        recovered_from_notification: true
-      };
-    });
-}
-
 let combinedConversationLogCache = {
   liveStamp: '',
   historyStamp: '',
   facebookHistoryStamp: '',
   persistentStamp: '',
-  notificationsStamp: '',
   entries: []
 };
 
@@ -11738,17 +11448,11 @@ function loadWhatsAppLog() {
   const persistentStamp =
     conversationEventsDirectoryStamp();
 
-  const notificationsStamp =
-    fileChangeStamp(
-      NOTIFICATIONS_PATH
-    );
-
   if (
     combinedConversationLogCache.liveStamp === liveStamp &&
     combinedConversationLogCache.historyStamp === historyStamp &&
     combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
-    combinedConversationLogCache.persistentStamp === persistentStamp &&
-    combinedConversationLogCache.notificationsStamp === notificationsStamp
+    combinedConversationLogCache.persistentStamp === persistentStamp
   ) {
     return combinedConversationLogCache.entries;
   }
@@ -11774,18 +11478,13 @@ function loadWhatsAppLog() {
       'conversation-log.json'
     );
 
-  const notificationRecovery =
-    notificationRecoveryConversationEntries();
-
   // L'historique est chargé en premier et les événements persistants puis le
   // cache temps réel l'écrasent en cas de doublon.
   // cas de doublon. Ainsi une conversation importée puis reçue par webhook
   // ne s'affiche jamais deux fois.
   const merged = new Map();
 
-  // Les notifications de secours passent en premier : tout événement réel
-  // (historique, journal append-only ou cache live) est donc prioritaire.
-  for (const entry of [...notificationRecovery, ...historical, ...facebookHistorical, ...persistent, ...live]) {
+  for (const entry of [...historical, ...facebookHistorical, ...persistent, ...live]) {
     const key = conversationLogDedupeKey(entry);
     merged.set(
       key,
@@ -11801,7 +11500,6 @@ function loadWhatsAppLog() {
     historyStamp,
     facebookHistoryStamp,
     persistentStamp,
-    notificationsStamp,
     entries
   };
 
@@ -12174,7 +11872,7 @@ async function getInstagramConversationRecentMessages(conversationId, cutoffAt =
   const detailsById = new Map();
 
   // Meta documente que le détail n'est disponible que pour les 20 messages
-  // les plus récents. En V6.20.5, seuls les IDs situés dans la fenêtre de
+  // les plus récents. En V6.20.6, seuls les IDs situés dans la fenêtre de
   // rétention de 90 jours sont conservés/importés.
   for (let index = 0; index < detailedRefs.length; index += 5) {
     const batch = detailedRefs.slice(index, index + 5);
@@ -12294,20 +11992,6 @@ async function persistInstagramHistoryProfilePicture(
 
     const filename = `instagram-${scopedId}.${extension}`;
 
-    if (cloudinaryConfigured()) {
-      try {
-        await storeCloudinaryBuffer({
-          buffer,
-          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
-          filename,
-          scope: 'conversation-profile'
-        });
-        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-      } catch (cloudinaryError) {
-        console.warn('⚠️ Profil Instagram historique : Cloudinary indisponible, fallback local :', cloudinaryError.message);
-      }
-    }
-
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(
         CONVERSATION_PROFILE_DIR,
@@ -12318,10 +12002,13 @@ async function persistInstagramHistoryProfilePicture(
       }
     }
 
-    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    fs.writeFileSync(
+      path.join(CONVERSATION_PROFILE_DIR, filename),
+      buffer
+    );
+
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-  } catch (error) {
-    console.warn('⚠️ Profil Instagram historique non sauvegardé :', error.message);
+  } catch {
     return '';
   }
 }
@@ -12966,7 +12653,7 @@ router.post(
 );
 
 // ============================================================
-// V6.20.5 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
+// V6.20.6 — SYNCHRONISATION HISTORIQUE FACEBOOK MESSENGER
 // ============================================================
 
 let facebookHistorySyncJob = {
@@ -13280,7 +12967,7 @@ async function getAllFacebookConversationMessages(conversationId, cutoffAt = '')
   const refs = await listAllFacebookConversationMessageRefs(conversationId, cutoffAt);
   const messages = [];
 
-  // V6.20.5 : aucune pagination de messages au-delà de la fenêtre de 90 jours.
+  // V6.20.6 : aucune pagination de messages au-delà de la fenêtre de 90 jours.
   // Les messages déjà détaillés sont utilisés directement ; les autres sont enrichis.
   for (let index = 0; index < refs.length; index += 8) {
     const batch = refs.slice(index, index + 8);
@@ -13377,16 +13064,7 @@ async function persistFacebookHistoryAttachments(message) {
       const extension=facebookHistoryMediaExtension(mimetype,type);
       const filename=`facebook-history-${messageId}-${index}.${extension}`;
       const filePath=path.join(CONVERSATION_MEDIA_DIR,filename);
-      if (cloudinaryConfigured()) {
-        try {
-          await storeCloudinaryBuffer({ buffer, mimetype, filename, scope: 'conversation-media' });
-        } catch (cloudinaryError) {
-          console.warn('⚠️ Média Facebook historique : Cloudinary indisponible, fallback local :', cloudinaryError.message);
-          if(!fs.existsSync(filePath)) fs.writeFileSync(filePath,buffer);
-        }
-      } else if(!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath,buffer);
-      }
+      if(!fs.existsSync(filePath)) fs.writeFileSync(filePath,buffer);
       stored.push({
         type,
         sourceType:safeString(item?.type)||type,
@@ -13446,20 +13124,6 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
     );
     const filename = `facebook-${scopedId}.${extension}`;
 
-    if (cloudinaryConfigured()) {
-      try {
-        await storeCloudinaryBuffer({
-          buffer,
-          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
-          filename,
-          scope: 'conversation-profile'
-        });
-        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-      } catch (cloudinaryError) {
-        console.warn('⚠️ Profil Facebook historique : Cloudinary indisponible, fallback local :', cloudinaryError.message);
-      }
-    }
-
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(
         CONVERSATION_PROFILE_DIR,
@@ -13472,8 +13136,7 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
 
     fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-  } catch (error) {
-    console.warn('⚠️ Profil Facebook historique non sauvegardé :', error.message);
+  } catch {
     return '';
   }
 }
@@ -13903,23 +13566,6 @@ function conversationEntryPreview(entry) {
   return 'Nouvelle conversation';
 }
 
-// V6.20.8 — compatibilité avec les états déjà persistés avant le correctif.
-// Si une conversation avait été marquée terminée puis qu'un nouveau message
-// client est arrivé après resolvedAt, elle est considérée comme rouverte même
-// si l'ancien booléen resolved=true est encore présent sur le disque.
-function effectiveConversationResolved(state = {}) {
-  if (state?.resolved !== true) return false;
-
-  const resolvedAtMs = Date.parse(safeString(state?.resolvedAt));
-  const lastCustomerAtMs = Date.parse(safeString(state?.lastCustomerAt));
-
-  if (Number.isFinite(resolvedAtMs) && Number.isFinite(lastCustomerAtMs)) {
-    return lastCustomerAtMs <= resolvedAtMs;
-  }
-
-  return true;
-}
-
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
     const log = loadWhatsAppLog();
@@ -13950,7 +13596,6 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         );
       }) || lastActivity;
       const state = states[contact] || {};
-      const effectivelyResolved = effectiveConversationResolved(state);
 
       return {
         contact,
@@ -14027,8 +13672,8 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         slaStatus: safeString(computeLiveSla(state)?.status),
         slaDueAt: safeString(computeLiveSla(state)?.dueAt),
         slaRemainingMs: computeLiveSla(state)?.remainingMs ?? null,
-        resolved: effectivelyResolved,
-        resolvedAt: effectivelyResolved ? safeString(state?.resolvedAt) : '',
+        resolved: Boolean(state.resolved),
+        resolvedAt: safeString(state?.resolvedAt),
         activeProductName: safeString(state?.activeProductName),
         manualTakeover: Boolean(state.manualTakeover),
         humanPaused: Boolean(state.humanPaused),
@@ -14042,9 +13687,22 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
     });
 
+    const commercialHistoryCutoff = historyImportCutoffIso();
     let visibleConversations = req.user?.role === 'commercial'
-      ? conversations.filter(item => safeString(item.assignedUserId) === safeString(req.user.id))
-      : conversations;
+      ? conversations
+          .filter(item => historyTimeIsRecent(item.lastTime, commercialHistoryCutoff))
+          .map(item => ({
+            ...item,
+            assignedToMe: safeString(item.assignedUserId) === safeString(req.user.id),
+            canWrite: safeString(item.assignedUserId) === safeString(req.user.id),
+            readOnly: safeString(item.assignedUserId) !== safeString(req.user.id)
+          }))
+      : conversations.map(item => ({
+          ...item,
+          assignedToMe: false,
+          canWrite: true,
+          readOnly: false
+        }));
 
     const countBase = visibleConversations;
     const counts = {
@@ -14145,10 +13803,14 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const states = loadConversationStatesAdmin();
 
     const state = states[contact] || {};
-    const effectivelyResolved = effectiveConversationResolved(state);
-    if (req.user?.role === 'commercial' && safeString(state.assignedUserId) !== safeString(req.user.id)) {
-      return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
-    }
+    const isCommercial = safeString(req.user?.role) === 'commercial';
+    const assignedToMe = isCommercial && conversationAssignedToUser(state, req.user);
+    const access = {
+      assignedToMe,
+      canWrite: !isCommercial || assignedToMe,
+      readOnly: isCommercial && !assignedToMe,
+      historyDays: HISTORY_IMPORT_DAYS
+    };
 
     let entries = normalizeInstagramThreadEntries(
       log.filter(entry => safeString(entry.contact) === contact)
@@ -14203,14 +13865,13 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       contact,
       state: {
         ...state,
-        resolved: effectivelyResolved,
-        resolvedAt: effectivelyResolved ? safeString(state?.resolvedAt) : null,
         ...(adReferral ? { adReferral } : {}),
         sla: computeLiveSla(state)
       },
       entries,
       hasMore,
-      nextBefore
+      nextBefore,
+      access
     });
   } catch (error) {
     console.error('❌ Détail conversation :', error);
@@ -14235,6 +13896,17 @@ router.post(
           error:
             'Contact invalide.'
         });
+    }
+
+    if (safeString(req.user?.role) === 'commercial') {
+      const currentState = loadConversationStatesAdmin()[contact] || {};
+      if (!conversationAssignedToUser(currentState, req.user)) {
+        return res.json({
+          success: true,
+          readOnly: true,
+          state: currentState
+        });
+      }
     }
 
     const state =
@@ -14267,6 +13939,8 @@ router.post(
         req.params.contact
       );
 
+    if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
+
     const priority =
       req.body?.priority === true;
 
@@ -14294,6 +13968,12 @@ router.post(
       safeString(
         req.params.contact
       );
+
+    if (safeString(req.user?.role) === 'commercial') {
+      return res.status(403).json({
+        error: 'L’affectation des conversations est réservée au responsable commercial ou à l’administrateur.'
+      });
+    }
 
     const requestedAssignedTo =
       safeString(
@@ -14354,6 +14034,8 @@ router.post(
       safeString(
         req.params.contact
       );
+
+    if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
 
     const existingState = loadConversationStatesAdmin()?.[contact] || {};
     const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
@@ -14434,6 +14116,8 @@ router.post(
         req.params.contact
       );
 
+    if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
+
     const existingState = loadConversationStatesAdmin()?.[contact] || {};
     const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
     if(existingChannel === 'facebook'){
@@ -14474,6 +14158,8 @@ router.post(
       safeString(
         req.params.contact
       );
+
+    if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
 
     const resolved =
       req.body?.resolved === true;
@@ -14771,18 +14457,6 @@ router.get(
       conversationProfileDirectory:
         fs.existsSync(CONVERSATION_PROFILE_DIR),
 
-      cloudinaryConfigured:
-        cloudinaryConfigured(),
-
-      cloudinaryMigration:
-        { ...cloudinaryMigrationState },
-
-      localConversationMediaBytes:
-        pathSizeBytes(CONVERSATION_MEDIA_DIR),
-
-      localConversationProfileBytes:
-        pathSizeBytes(CONVERSATION_PROFILE_DIR),
-
       conversationEventsDirectory:
         fs.existsSync(CONVERSATION_EVENTS_DIR),
 
@@ -14896,8 +14570,5 @@ module.exports = {
   setCommercialSendHandler,
   createCommercialCorrectionCandidate,
   registerCommercialEscalation,
-  resolveCommercialSla,
-  cloudinaryConfigured,
-  storeCloudinaryBuffer,
-  cloudinaryMimeFromFilename
+  resolveCommercialSla
 };
