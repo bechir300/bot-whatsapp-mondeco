@@ -5826,6 +5826,11 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
       <div class="card storage-card">
         <div class="notice success" id="storageNotice">Vérification du stockage...</div>
+        <div id="storageBreakdown" style="margin-top:10px;font-size:12px;color:#6f675f;line-height:1.55"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="cleanupStorageBtn" type="button">🧹 Nettoyer le stockage sûr</button>
+          <span style="font-size:11px;color:#8a817a;align-self:center">Conserve les données métier et les 90 derniers jours.</span>
+        </div>
       </div>
     </section>
 
@@ -5909,7 +5914,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.27.1</span>
+              <span class="inbox-version">V6.27.2</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -7586,15 +7591,21 @@ async function refreshHome(){
     const storageNotice = document.getElementById('storageNotice');
 
     if(storage.persistentConfigured && storage.writable){
-      storageNotice.className = 'notice success';
-      const freeMb = Number(storage.freeBytes || 0) > 0
-        ? ` • ${(Number(storage.freeBytes) / (1024 * 1024)).toFixed(0)} MB libres`
-        : '';
-      const storageMode = storage.storageMode === 'compact'
-        ? ' • mode compact'
-        : '';
+      const total = Number(storage.totalBytes || 0);
+      const used = Number(storage.usedBytes || 0);
+      const free = Number(storage.freeBytes || 0);
+      const usagePct = total > 0 ? Math.round((used / total) * 100) : Number(storage.usagePercent || 0);
+      storageNotice.className = `notice ${usagePct >= 85 ? 'warning' : 'success'}`;
+      const freeMb = free > 0 ? ` • ${(free / (1024 * 1024)).toFixed(0)} MB libres` : '';
+      const storageMode = storage.storageMode === 'compact' ? ' • mode compact' : '';
       storageNotice.textContent =
-        `Stockage persistant actif : ${storage.dataDir}${storageMode}${freeMb}`;
+        `Stockage persistant actif : ${storage.dataDir}${storageMode}${freeMb}${usagePct ? ` • ${usagePct}% utilisé` : ''}`;
+      const breakdown = document.getElementById('storageBreakdown');
+      if(breakdown){
+        const b = storage.breakdown || {};
+        const mb = value => `${(Number(value || 0)/(1024*1024)).toFixed(1)} MB`;
+        breakdown.textContent = `Médias conversations ${mb(b.conversationMediaBytes)} • Profils ${mb(b.conversationProfileBytes)} • Événements ${mb(b.conversationEventsBytes)} • Historique IG ${mb(b.instagramHistoryBytes)} • Historique FB ${mb(b.facebookHistoryBytes)} • Backups ${mb(b.backupsBytes)}`;
+      }
     }else{
       storageNotice.className = 'notice warning';
       storageNotice.textContent =
@@ -7604,6 +7615,24 @@ async function refreshHome(){
     console.error(error);
   }
 }
+
+
+
+document.getElementById('cleanupStorageBtn')?.addEventListener('click', async () => {
+  if(!confirm('Nettoyer uniquement les caches, sauvegardes redondantes et fichiers de conversations plus anciens que la rétention configurée ?')) return;
+  const button=document.getElementById('cleanupStorageBtn');
+  if(button) button.disabled=true;
+  try{
+    const result=await apiFetch(`${API}/storage-cleanup`,{method:'POST'});
+    const freed=Number(result?.freedBytes||0)/(1024*1024);
+    alert(`Nettoyage terminé : environ ${freed.toFixed(1)} MB libérés.`);
+    await refreshHome();
+  }catch(error){
+    alert('Nettoyage stockage impossible : '+error.message);
+  }finally{
+    if(button) button.disabled=false;
+  }
+});
 
 // ============================================================
 // MODALS
@@ -8437,6 +8466,323 @@ window.diagnoseSocialComments=async function(){
     alert('Diagnostic Meta impossible : '+error.message);
   }finally{if(btn)btn.disabled=false;}
 };
+
+function setConversationFilter(filter){
+  conversationFilter = filter || 'all';
+
+  document
+    .querySelectorAll(
+      '#conversationFilters .inbox-filter'
+    )
+    .forEach(button => {
+      button.classList.toggle(
+        'active',
+        button.dataset.filter === conversationFilter
+      );
+    });
+
+  loadConversations();
+}
+
+function openAllNewMessages(){
+  setConversationFilter('unread');
+  showPage('conversations');
+}
+
+function renderInstagramHistoryStatus(status = {}){
+  const button = document.getElementById('syncInstagramHistoryBtn');
+  const label = document.getElementById('instagramHistorySyncStatus');
+
+  if(!button || !label) return;
+
+  const allowed = canManageInstagramHistory();
+  button.style.display = allowed ? '' : 'none';
+  label.style.display = allowed ? '' : 'none';
+
+  if(!allowed) return;
+
+  if(!status.configured){
+    button.disabled = true;
+    label.textContent = 'Instagram : historique non disponible — vérifiez la configuration Railway.';
+    return;
+  }
+
+  if(status.running){
+    button.disabled = true;
+    const done = Number(status.processedConversations || 0);
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
+    const listed = Number(status.listedConversations || total || 0);
+    const phase = String(status.phase || '').trim();
+    if(phase === 'listing'){
+      label.textContent = `Instagram : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
+    }else{
+      label.textContent = `Instagram : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+    }
+    return;
+  }
+
+  button.disabled = false;
+
+  if(status.completedAt){
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
+    const errors = Number(status.errorCount || 0);
+    const warning = String(status.warning || '').trim();
+    const lastError = String(status.lastError || '').trim();
+    if(lastError && errors){
+      label.textContent = `Instagram : synchronisation terminée avec erreur • ${lastError}`;
+    }else if(total === 0){
+      label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
+    }else{
+      label.textContent = `Instagram : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    }
+  }else{
+    label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
+  }
+}
+
+async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
+  if(!canManageInstagramHistory()){
+    renderInstagramHistoryStatus({});
+    return;
+  }
+
+  try{
+    const status = await apiFetch(`${API}/instagram-history/status`);
+    renderInstagramHistoryStatus(status);
+
+    const running = Boolean(status.running);
+
+    if(
+      autoStart &&
+      !instagramHistoryAutoSyncChecked &&
+      status.configured &&
+      !running &&
+      (!status.completedAt || Number(status.chronologyVersion || 0) < 4)
+    ){
+      instagramHistoryAutoSyncChecked = true;
+      await startInstagramHistorySync({ silent: true });
+      return;
+    }
+
+    if(instagramHistoryWasRunning && !running){
+      await loadConversations();
+    }
+
+    instagramHistoryWasRunning = running;
+
+    if(instagramHistoryStatusTimer){
+      clearTimeout(instagramHistoryStatusTimer);
+      instagramHistoryStatusTimer = null;
+    }
+
+    if(running){
+      instagramHistoryStatusTimer = setTimeout(
+        () => refreshInstagramHistoryStatus(),
+        1800
+      );
+    }
+  }catch(error){
+    const label = document.getElementById('instagramHistorySyncStatus');
+    if(label && canManageInstagramHistory()){
+      label.style.display = '';
+      label.textContent = `Instagram : impossible de lire l’état de synchronisation — ${error.message}`;
+    }
+  }
+}
+
+async function startInstagramHistorySync({ silent = false } = {}){
+  if(!canManageInstagramHistory()) return;
+
+  const button = document.getElementById('syncInstagramHistoryBtn');
+  if(button) button.disabled = true;
+
+  try{
+    await apiFetch(
+      `${API}/instagram-history/sync`,
+      { method: 'POST' }
+    );
+
+    instagramHistoryWasRunning = true;
+    await refreshInstagramHistoryStatus();
+  }catch(error){
+    if(!silent){
+      alert(
+        'Synchronisation Instagram impossible : ' +
+        error.message
+      );
+    }
+    await refreshInstagramHistoryStatus();
+  }
+}
+
+
+function renderFacebookHistoryStatus(status = {}){
+  const button = document.getElementById('syncFacebookHistoryBtn');
+  const label = document.getElementById('facebookHistorySyncStatus');
+  if(!button || !label) return;
+
+  const allowed = canManageInstagramHistory();
+  button.style.display = allowed ? '' : 'none';
+  label.style.display = allowed ? '' : 'none';
+  if(!allowed) return;
+
+  if(!status.configured){
+    button.disabled = true;
+    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_PAGE_ACCESS_TOKEN dans Railway.';
+    return;
+  }
+
+  if(status.running){
+    button.disabled = true;
+    const done = Number(status.processedConversations || 0);
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const pageName = String(status.pageName || '').trim();
+    const listed = Number(status.listedConversations || total || 0);
+    const phase = String(status.phase || '').trim();
+    if(phase === 'listing'){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
+    }else{
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+    }
+    return;
+  }
+
+  button.disabled = false;
+  if(status.completedAt){
+    const total = Number(status.totalConversations || 0);
+    const imported = Number(status.importedMessages || 0);
+    const discovered = Number(status.messageIdsDiscovered || 0);
+    const unavailable = Number(status.contentUnavailableMessages || 0);
+    const errors = Number(status.errorCount || 0);
+    const warning = String(status.warning || '').trim();
+    const lastError = String(status.lastError || '').trim();
+    const pageName = String(status.pageName || '').trim();
+    if(lastError && errors){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation terminée avec erreur • ${lastError}`;
+    }else if(total === 0){
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
+    }else{
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+    }
+  }else{
+    label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
+  }
+}
+
+async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
+  if(!canManageInstagramHistory()){
+    renderFacebookHistoryStatus({});
+    return;
+  }
+
+  try{
+    const status = await apiFetch(`${API}/facebook-history/status`);
+    renderFacebookHistoryStatus(status);
+    const running = Boolean(status.running);
+
+    if(
+      autoStart &&
+      !facebookHistoryAutoSyncChecked &&
+      status.configured &&
+      !running &&
+      (
+        !status.completedAt ||
+        Number(status.syncVersion || 0) < 4 ||
+        Number(status.totalConversations || 0) === 0
+      )
+    ){
+      facebookHistoryAutoSyncChecked = true;
+      await startFacebookHistorySync({ silent: true });
+      return;
+    }
+
+    if(facebookHistoryWasRunning && !running){
+      await loadConversations();
+    }
+    facebookHistoryWasRunning = running;
+
+    if(facebookHistoryStatusTimer){
+      clearTimeout(facebookHistoryStatusTimer);
+      facebookHistoryStatusTimer = null;
+    }
+    if(running){
+      facebookHistoryStatusTimer = setTimeout(
+        () => refreshFacebookHistoryStatus(),
+        1800
+      );
+    }
+  }catch(error){
+    const label = document.getElementById('facebookHistorySyncStatus');
+    if(label && canManageInstagramHistory()){
+      label.style.display = '';
+      label.textContent = `Facebook : impossible de lire l’état de synchronisation — ${error.message}`;
+    }
+  }
+}
+
+async function startFacebookHistorySync({ silent = false } = {}){
+  if(!canManageInstagramHistory()) return;
+  const button = document.getElementById('syncFacebookHistoryBtn');
+  if(button) button.disabled = true;
+
+  try{
+    await apiFetch(`${API}/facebook-history/sync`, { method:'POST' });
+    facebookHistoryWasRunning = true;
+    await refreshFacebookHistoryStatus();
+  }catch(error){
+    if(!silent){
+      alert('Synchronisation Facebook impossible : ' + error.message);
+    }
+    await refreshFacebookHistoryStatus();
+  }
+}
+
+
+async function loadConversations({ append = false } = {}){
+  try{
+    const search = String(document.getElementById('conversationSearch')?.value || '').trim();
+    const offset = append ? conversations.length : 0;
+    const params = new URLSearchParams({
+      paged:'1',
+      limit:'80',
+      offset:String(offset),
+      filter:conversationFilter
+    });
+    if(search) params.set('q',search);
+    const data = await apiFetch(`${API}/conversations?${params.toString()}`);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    conversations = append
+      ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
+      : items;
+    conversationListTotal = Number(data?.total || conversations.length);
+    conversationListHasMore = data?.hasMore === true;
+    conversationServerCounts = data?.counts && typeof data.counts === 'object'
+      ? data.counts
+      : null;
+    renderConversationsList();
+    if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
+      updateConversationFilterCounts();
+    }
+  }catch(error){
+    const container=document.getElementById('conversationListContainer');
+    if(container){
+      container.innerHTML=`<div class="empty"><strong>Impossible de charger les conversations</strong>${escapeHtml(error.message)}</div>`;
+    }
+  }
+}
+
+window.loadMoreConversations = async function(){
+  if(conversationListHasMore) await loadConversations({append:true});
+};
+
 
 function actionLabel(action){
   const map = {
