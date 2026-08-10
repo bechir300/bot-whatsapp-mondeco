@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.4
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.5
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -14218,73 +14218,234 @@ function saveSocialCommentsSyncState(state) {
 }
 
 async function syncFacebookComments90Days() {
-  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) throw new Error('Facebook Page ID / Page Access Token manquant.');
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+    throw new Error('Facebook Page ID / Page Access Token manquant.');
+  }
+
   const cutoffAt = historyImportCutoffIso();
-  const fields = 'id,message,created_time,permalink_url,full_picture';
   const rawPostMap = new Map();
   const localErrors = [];
+  const stats = {
+    postsScanned: 0,
+    postsWithComments: 0,
+    rawComments: 0,
+    importedComments: 0,
+    commentRequests: 0,
+    exactApiMode: true
+  };
 
-  // V6.27.4 — confirme que Railway utilise réellement le token de la Page.
+  // V6.27.5 — le token Railway doit être le Page Access Token lui-même.
+  // C'est le même test que celui validé manuellement dans Graph API Explorer.
   try {
     const me = await facebookGraphRequestPath(`me?fields=${encodeURIComponent('id,name')}`);
     const tokenPageId = safeString(me?.id);
-    if (!tokenPageId) throw new Error('Meta ne retourne aucun identifiant pour le token configuré.');
+    if (!tokenPageId) {
+      throw new Error('Meta ne retourne aucun identifiant pour le token configuré.');
+    }
     if (tokenPageId !== safeString(FACEBOOK_PAGE_ID)) {
-      throw new Error(`Le token appartient à ${safeString(me?.name || tokenPageId)} (${tokenPageId}), pas à la Page configurée ${FACEBOOK_PAGE_ID}.`);
+      throw new Error(
+        `Le token appartient à ${safeString(me?.name || tokenPageId)} (${tokenPageId}), ` +
+        `pas à la Page configurée ${FACEBOOK_PAGE_ID}.`
+      );
     }
   } catch (error) {
     throw new Error(`Page Access Token Facebook invalide dans Railway : ${error.message}`);
   }
 
-  for (const edge of ['posts','feed']) {
-    const first = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/${edge}?fields=${encodeURIComponent(fields)}&limit=50`;
+  // V6.27.5 — /feed est interrogé en premier avec EXACTEMENT les champs
+  // validés dans Graph API Explorer. Les champs riches sont hydratés ensuite.
+  const minimalPostFields = 'id,message,created_time,permalink_url';
+  for (const edge of ['feed', 'posts']) {
+    const first =
+      `https://graph.facebook.com/${META_API_VERSION}/` +
+      `${encodeURIComponent(FACEBOOK_PAGE_ID)}/${edge}` +
+      `?fields=${encodeURIComponent(minimalPostFields)}&limit=50`;
     try {
-      const rows = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:1000, cutoffAt });
-      for (const row of rows) if (safeString(row?.id)) rawPostMap.set(safeString(row.id), row);
+      const rows = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, {
+        maxItems: 1500,
+        cutoffAt
+      });
+      for (const row of rows) {
+        const id = safeString(row?.id);
+        if (id) rawPostMap.set(id, row);
+      }
     } catch (error) {
       localErrors.push(`Facebook ${edge}: ${error.message}`);
     }
   }
 
   const rawPosts = [...rawPostMap.values()];
-  if (!rawPosts.length && localErrors.length) throw new Error(localErrors.slice(-2).join(' | '));
+  if (!rawPosts.length && localErrors.length) {
+    throw new Error(localErrors.slice(-2).join(' | '));
+  }
 
   const posts = rawPosts
     .map(normalizeFacebookPost)
     .filter(Boolean)
     .filter(post => !post.createdAt || historyTimeIsRecent(post.createdAt, cutoffAt));
 
-  const comments = [];
-  const richFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
-  // Même jeu de champs minimal que le test Graph API validé manuellement.
-  const minimalFields = 'id,message,from,created_time,is_hidden';
+  stats.postsScanned = posts.length;
+
+  const commentsById = new Map();
+  const minimalCommentFields = 'id,message,from,created_time,is_hidden';
+  const richCommentFields =
+    'id,message,created_time,from{id,name,picture},parent{id},permalink_url,' +
+    'is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
 
   for (const post of posts) {
-    let rawComments = [];
-    let richError = null;
-    const richUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(richFields)}&limit=100`;
+    const postId = safeString(post?.postId);
+    if (!postId) continue;
+
+    // 1) Requête de vérité : exactement celle qui a fonctionné manuellement.
+    // Aucun filter=stream / order=chronological ici : ces paramètres pouvaient
+    // produire data:[] sans erreur sur certaines publications / versions Graph.
+    const minimalUrl =
+      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments` +
+      `?fields=${encodeURIComponent(minimalCommentFields)}&limit=100`;
+
+    let minimalRows = [];
+    stats.commentRequests += 1;
     try {
-      rawComments = await collectPagedMeta(richUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
+      // Pas de cutoff dans la pagination des commentaires : l'ordre de Meta
+      // n'est pas garanti comme strictement antéchronologique. On filtre localement après.
+      minimalRows = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+        maxItems: 5000,
+        cutoffAt: ''
+      });
     } catch (error) {
-      richError = error;
-      const minimalUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(post.postId)}/comments?filter=stream&order=chronological&fields=${encodeURIComponent(minimalFields)}&limit=100`;
+      localErrors.push(`Facebook commentaires ${postId}: ${error.message}`);
+      continue;
+    }
+
+    if (minimalRows.length) stats.postsWithComments += 1;
+    stats.rawComments += minimalRows.length;
+
+    for (const raw of minimalRows) {
+      const id = safeString(raw?.id);
+      if (id) commentsById.set(id, { ...raw, __mondecoPostId: postId });
+    }
+
+    // 2) Enrichissement facultatif. Une erreur OU une réponse vide n'efface
+    // jamais les commentaires déjà récupérés par la requête minimale.
+    if (minimalRows.length) {
+      const richUrl =
+        `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments` +
+        `?fields=${encodeURIComponent(richCommentFields)}&limit=100`;
       try {
-        rawComments = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:5000, cutoffAt });
-      } catch (fallbackError) {
-        localErrors.push(`Facebook ${post.postId}: ${fallbackError.message}${richError ? ` (champs enrichis: ${richError.message})` : ''}`);
-        continue;
+        const richRows = await collectPagedMeta(richUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+          maxItems: 5000,
+          cutoffAt: ''
+        });
+        for (const raw of richRows) {
+          const id = safeString(raw?.id);
+          if (!id) continue;
+          commentsById.set(id, {
+            ...(commentsById.get(id) || {}),
+            ...raw,
+            __mondecoPostId: postId
+          });
+        }
+      } catch (error) {
+        // Non bloquant : les données minimales sont déjà exploitables.
+        localErrors.push(`Facebook enrichissement ${postId}: ${error.message}`);
       }
     }
-    for (const raw of rawComments) {
-      const normalized = normalizeFacebookComment(raw, post.postId);
-      if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) comments.push(normalized);
+
+    // 3) Réponses aux commentaires : on tente l'edge /comments de chaque
+    // commentaire de premier niveau afin de reconstruire le fil complet.
+    for (const top of minimalRows) {
+      const topId = safeString(top?.id);
+      if (!topId) continue;
+      const repliesUrl =
+        `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(topId)}/comments` +
+        `?fields=${encodeURIComponent(minimalCommentFields)}&limit=100`;
+      try {
+        const replies = await collectPagedMeta(repliesUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+          maxItems: 3000,
+          cutoffAt: ''
+        });
+        stats.rawComments += replies.length;
+        for (const reply of replies) {
+          const id = safeString(reply?.id);
+          if (!id) continue;
+          commentsById.set(id, {
+            ...reply,
+            parent: reply?.parent || { id: topId },
+            __mondecoPostId: postId
+          });
+        }
+      } catch (error) {
+        // Certaines versions/objets n'exposent pas cet edge pour toutes les réponses.
+        // On conserve le commentaire parent et on n'échoue pas l'import global.
+      }
     }
   }
 
+  const comments = [];
+  for (const raw of commentsById.values()) {
+    // L'ID Facebook d'un commentaire contient souvent l'ID du post en préfixe,
+    // mais on cherche d'abord le post parent déjà connu pour éviter toute supposition.
+    let postId = safeString(raw?.post_id);
+    if (!postId) {
+      const parentId = safeString(raw?.parent?.id);
+      if (parentId) {
+        const parentRecord = commentsById.get(parentId);
+        postId = safeString(parentRecord?.post_id);
+      }
+    }
+    if (!postId) {
+      // Retrouve le post en testant l'appartenance aux commentaires déjà collectés.
+      // Pour les commentaires de premier niveau, on a mémorisé ce lien ci-dessous.
+      postId = safeString(raw?.__mondecoPostId);
+    }
+    const normalized = normalizeFacebookComment(raw, postId);
+    if (normalized && historyTimeIsRecent(normalized.createdAt, cutoffAt)) {
+      comments.push(normalized);
+    }
+  }
+
+  // Le bloc ci-dessus reçoit les liens post/commentaire via __mondecoPostId.
+  // Compatibilité avec les entrées créées avant V6.27.5 : si un commentaire
+  // n'a pas de postId, on le rattache via un second passage par publication.
+  if (comments.some(item => !safeString(item?.postId))) {
+    const topToPost = new Map();
+    for (const post of posts) {
+      const postId = safeString(post?.postId);
+      if (!postId) continue;
+      // Aucune nouvelle requête : les IDs composites de Page Post permettent
+      // seulement un fallback d'affichage, jamais une suppression de donnée.
+      for (const [commentId, raw] of commentsById.entries()) {
+        if (safeString(raw?.__mondecoPostId) === postId) topToPost.set(commentId, postId);
+      }
+    }
+    for (const item of comments) {
+      if (!safeString(item?.postId)) {
+        item.postId = safeString(topToPost.get(item.commentId));
+      }
+    }
+  }
+
+  stats.importedComments = comments.length;
+
   upsertSocialPosts(posts);
   upsertSocialComments(comments);
-  if (localErrors.length) socialCommentsSyncJob.errors.push(...localErrors.slice(-20));
-  return { posts:posts.length, comments:comments.length, errors:localErrors.length };
+
+  if (localErrors.length) {
+    socialCommentsSyncJob.errors.push(...localErrors.slice(-20));
+  }
+
+  socialCommentsSyncJob.facebookPostsScanned = stats.postsScanned;
+  socialCommentsSyncJob.facebookPostsWithComments = stats.postsWithComments;
+  socialCommentsSyncJob.facebookRawComments = stats.rawComments;
+  socialCommentsSyncJob.facebookCommentRequests = stats.commentRequests;
+  socialCommentsSyncJob.facebookExactApiMode = true;
+
+  return {
+    posts: posts.length,
+    comments: comments.length,
+    errors: localErrors.length,
+    ...stats
+  };
 }
 
 async function syncInstagramComments90Days() {
