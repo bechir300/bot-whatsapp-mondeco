@@ -3435,6 +3435,7 @@ function roleCanAccess(
     '/api/conversations',
     '/api/commercial/send',
     '/api/commercial/send-media',
+    '/api/whatsapp/calls',
     '/api/notifications',
     '/api/quick-replies',
     '/api/tasks',
@@ -3461,6 +3462,7 @@ function roleCanAccess(
       pathStarts(reqPath, '/api/conversations') ||
       pathStarts(reqPath, '/api/commercial/send') ||
       pathStarts(reqPath, '/api/commercial/send-media') ||
+      pathStarts(reqPath, '/api/whatsapp/calls') ||
       pathStarts(reqPath, '/api/notifications') ||
       pathStarts(reqPath, '/api/instagram-history') ||
       pathStarts(reqPath, '/api/facebook-history') ||
@@ -4206,14 +4208,20 @@ const ALLOWED_COMMERCIAL_MEDIA_TYPES = new Set([
   'image/webp',
   'application/pdf',
   'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  // V6.23.0 — messages vocaux WhatsApp. OGG/Opus donne le rendu
+  // « note vocale » natif ; MP4/M4A, MP3 et AMR restent acceptés comme audio.
+  'audio/ogg',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/amr'
 ]);
 
 function commercialMediaFileFilter(req, file, callback) {
   if (!ALLOWED_COMMERCIAL_MEDIA_TYPES.has(file.mimetype)) {
     return callback(
       new Error(
-        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG ou WEBP.'
+        'Format non accepté. Utilisez PDF, DOC, DOCX, JPG, PNG, WEBP, OGG, M4A/MP4, MP3 ou AMR.'
       )
     );
   }
@@ -10144,6 +10152,7 @@ router.post(
 let chatHandler = null;
 let imageChatHandler = null;
 let commercialSendHandler = null;
+let whatsappCallHandler = null;
 
 function setChatHandler(fn) {
   if (typeof fn !== 'function') {
@@ -10174,6 +10183,127 @@ function setCommercialSendHandler(fn) {
 
   commercialSendHandler = fn;
 }
+
+function setWhatsAppCallHandler(fn) {
+  if (typeof fn !== 'function') {
+    throw new Error(
+      'setWhatsAppCallHandler attend une fonction.'
+    );
+  }
+
+  whatsappCallHandler = fn;
+}
+
+
+// ============================================================
+// APPELS WHATSAPP — signalisation WebRTC via Cloud Calling API
+// ============================================================
+
+router.post(
+  '/api/whatsapp/calls/start',
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (!whatsappCallHandler) {
+        return res.status(503).json({
+          error: 'WhatsApp Calling API n’est pas encore connecté.'
+        });
+      }
+
+      const contact = safeString(req.body?.contact || req.body?.phone);
+      const externalContact = safeString(req.body?.externalContact) || normalizePhone(contact);
+      const phone = normalizePhone(externalContact);
+      const sdp = safeString(req.body?.sdp);
+
+      if (!phone) {
+        return res.status(400).json({ error: 'Numéro WhatsApp client obligatoire.' });
+      }
+
+      if (!sdp || !sdp.startsWith('v=0')) {
+        return res.status(400).json({ error: 'Session audio WebRTC invalide.' });
+      }
+
+      const result = await whatsappCallHandler({
+        action: 'start',
+        phone,
+        contact,
+        externalContact,
+        sdp,
+        actor: {
+          id: safeString(req.user?.id),
+          name: safeString(req.user?.name),
+          email: safeString(req.user?.email),
+          role: safeString(req.user?.role)
+        }
+      });
+
+      return res.json({ success: true, ...(result || {}) });
+    } catch (error) {
+      console.error('❌ Démarrage appel WhatsApp :', error);
+      return res.status(500).json({
+        error: error?.message || 'Impossible de démarrer l’appel WhatsApp.'
+      });
+    }
+  }
+);
+
+router.get(
+  '/api/whatsapp/calls/:callId',
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (!whatsappCallHandler) {
+        return res.status(503).json({
+          error: 'WhatsApp Calling API n’est pas encore connecté.'
+        });
+      }
+
+      const result = await whatsappCallHandler({
+        action: 'status',
+        callId: safeString(req.params?.callId),
+        actor: {
+          id: safeString(req.user?.id),
+          role: safeString(req.user?.role)
+        }
+      });
+
+      return res.json({ success: true, ...(result || {}) });
+    } catch (error) {
+      return res.status(500).json({
+        error: error?.message || 'Impossible de lire l’état de l’appel WhatsApp.'
+      });
+    }
+  }
+);
+
+router.post(
+  '/api/whatsapp/calls/:callId/terminate',
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (!whatsappCallHandler) {
+        return res.status(503).json({
+          error: 'WhatsApp Calling API n’est pas encore connecté.'
+        });
+      }
+
+      const result = await whatsappCallHandler({
+        action: 'terminate',
+        callId: safeString(req.params?.callId),
+        actor: {
+          id: safeString(req.user?.id),
+          role: safeString(req.user?.role)
+        }
+      });
+
+      return res.json({ success: true, ...(result || {}) });
+    } catch (error) {
+      return res.status(500).json({
+        error: error?.message || 'Impossible de terminer l’appel WhatsApp.'
+      });
+    }
+  }
+);
 
 router.post(
   '/api/commercial/send',
@@ -10394,14 +10524,16 @@ router.post(
           .status(400)
           .json({
             error:
-              'Ajoutez un PDF, un document Word ou une photo.'
+              'Ajoutez une photo, un document ou un message vocal.'
           });
       }
 
       const mediaKind =
         req.file.mimetype.startsWith('image/')
           ? 'image'
-          : 'document';
+          : req.file.mimetype.startsWith('audio/')
+            ? 'audio'
+            : 'document';
 
       const result =
         await commercialSendHandler({
@@ -14583,6 +14715,7 @@ module.exports = {
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
+  setWhatsAppCallHandler,
   createCommercialCorrectionCandidate,
   registerCommercialEscalation,
   resolveCommercialSla
