@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.6
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale — V6.20.7
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -4227,7 +4227,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.20.6</span>
+        <span class="login-version">V6.20.7</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11651,11 +11651,62 @@ function loadPersistentConversationEvents() {
   return entries;
 }
 
+// V6.20.7 — Filet de sécurité WhatsApp : si un message client a bien créé
+// une notification persistante mais qu'un ancien incident de stockage a empêché
+// son indexation normale dans l'inbox, on reconstruit une entrée minimale à partir
+// de notifications.json. Les vraies entrées du journal restent prioritaires et
+// écrasent cette entrée de secours grâce à la déduplication par message_id.
+function notificationRecoveryConversationEntries() {
+  const store = loadNotificationsStore();
+  const items = Array.isArray(store?.items) ? store.items : [];
+
+  return items
+    .filter(item => {
+      const contact = safeString(item?.contact);
+      const channel = safeString(item?.channel).toLowerCase() ||
+        (contact.startsWith('instagram:') ? 'instagram' :
+          contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+      return Boolean(contact) && channel === 'whatsapp';
+    })
+    .map(item => {
+      const contact = safeString(item?.contact);
+      const preview = safeString(item?.preview);
+      const type = safeString(item?.type || 'text').toLowerCase();
+      const messageId = safeString(item?.messageId || item?.id);
+      const attachmentPreview = safeString(item?.attachmentPreview);
+      const attachments = attachmentPreview
+        ? [{ type: type === 'image' ? 'image' : 'attachment', url: attachmentPreview }]
+        : [];
+
+      return {
+        message_id: messageId || undefined,
+        contact,
+        external_contact: safeString(item?.externalContact) || contact,
+        channel: 'whatsapp',
+        incoming: preview,
+        type: type || 'text',
+        attachments,
+        attachment_type: attachments.length ? safeString(attachments[0]?.type) : undefined,
+        attachment_url: attachments.length ? attachmentPreview : undefined,
+        direction: 'incoming',
+        sender_kind: 'client',
+        source: 'notification_recovery',
+        action: safeString(item?.action) || 'notification_recovery',
+        profile_name: safeString(item?.profileName),
+        profile_picture: safeString(item?.profilePicture),
+        reply_sent: false,
+        time: safeString(item?.createdAt) || new Date().toISOString(),
+        recovered_from_notification: true
+      };
+    });
+}
+
 let combinedConversationLogCache = {
   liveStamp: '',
   historyStamp: '',
   facebookHistoryStamp: '',
   persistentStamp: '',
+  notificationsStamp: '',
   entries: []
 };
 
@@ -11687,11 +11738,17 @@ function loadWhatsAppLog() {
   const persistentStamp =
     conversationEventsDirectoryStamp();
 
+  const notificationsStamp =
+    fileChangeStamp(
+      NOTIFICATIONS_PATH
+    );
+
   if (
     combinedConversationLogCache.liveStamp === liveStamp &&
     combinedConversationLogCache.historyStamp === historyStamp &&
     combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
-    combinedConversationLogCache.persistentStamp === persistentStamp
+    combinedConversationLogCache.persistentStamp === persistentStamp &&
+    combinedConversationLogCache.notificationsStamp === notificationsStamp
   ) {
     return combinedConversationLogCache.entries;
   }
@@ -11717,13 +11774,18 @@ function loadWhatsAppLog() {
       'conversation-log.json'
     );
 
+  const notificationRecovery =
+    notificationRecoveryConversationEntries();
+
   // L'historique est chargé en premier et les événements persistants puis le
   // cache temps réel l'écrasent en cas de doublon.
   // cas de doublon. Ainsi une conversation importée puis reçue par webhook
   // ne s'affiche jamais deux fois.
   const merged = new Map();
 
-  for (const entry of [...historical, ...facebookHistorical, ...persistent, ...live]) {
+  // Les notifications de secours passent en premier : tout événement réel
+  // (historique, journal append-only ou cache live) est donc prioritaire.
+  for (const entry of [...notificationRecovery, ...historical, ...facebookHistorical, ...persistent, ...live]) {
     const key = conversationLogDedupeKey(entry);
     merged.set(
       key,
@@ -11739,6 +11801,7 @@ function loadWhatsAppLog() {
     historyStamp,
     facebookHistoryStamp,
     persistentStamp,
+    notificationsStamp,
     entries
   };
 
