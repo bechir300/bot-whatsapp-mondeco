@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20.8 — WhatsApp Inbox Fix + Cloudinary Free + historique omnicanal
+   MONDECO V6.20.6 — Storage Rescue + historique omnicanal
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20.8</span>
+                <span class="inbox-version">V6.20.6</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -7714,7 +7714,7 @@ function conversationListTags(item){
 function renderConversationsList(){
   updateConversationFilterCounts();
 
-  // V6.20.5 : la boîte de réception suit strictement la chronologie du
+  // V6.20.6 : la boîte de réception suit strictement la chronologie du
   // dernier message réel. Le SLA reste visuellement prioritaire (badge/rouge),
   // mais ne déplace plus artificiellement une ancienne conversation au-dessus
   // d'une conversation plus récente.
@@ -7823,6 +7823,26 @@ function renderConversationsList(){
         : '');
 }
 
+function selectedConversationAccess(contact, state = {}){
+  const item = conversations.find(entry => entry.contact === contact) || {};
+  const serverAccess = selectedConversationData?.contact === contact && selectedConversationData?.access
+    ? selectedConversationData.access
+    : null;
+  if(serverAccess){
+    return {
+      assignedToMe: serverAccess.assignedToMe === true,
+      canWrite: serverAccess.canWrite !== false,
+      readOnly: serverAccess.readOnly === true
+    };
+  }
+  if(currentUser?.role !== 'commercial'){
+    return {assignedToMe:false,canWrite:true,readOnly:false};
+  }
+  const assignedUserId = String(state?.assignedUserId || item?.assignedUserId || '').trim();
+  const assignedToMe = Boolean(assignedUserId && assignedUserId === String(currentUser?.id || '').trim());
+  return {assignedToMe,canWrite:assignedToMe,readOnly:!assignedToMe};
+}
+
 function renderConversationHeader(
   contact,
   state
@@ -7857,6 +7877,8 @@ function renderConversationHeader(
   const name=conversationDisplayName(item);
   const channel=conversationChannel(item);
   const facebook=channel==='facebook';
+  const access=selectedConversationAccess(contact,state);
+  const readOnlyCommercial=currentUser?.role==='commercial' && access.readOnly;
   const paused=!facebook && Boolean(
     state.manualTakeover ||
     state.humanPaused ||
@@ -7876,11 +7898,13 @@ function renderConversationHeader(
       ? `Facebook Messenger • ${escapeHtml(external)}`
       : `WhatsApp • +${escapeHtml(external)}`;
 
-  const stateText=facebook
-    ? '✨ FACEBOOK EN SUPERVISION • Réponses gérées par Meta Business AI / Business Suite'
-    : paused
-      ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
-      : '🤖 IA ACTIVE • Réponses automatiques';
+  const stateText=readOnlyCommercial
+    ? `👁 LECTURE SEULE • ${state.assignedTo ? `Affectée à ${state.assignedTo}` : 'Conversation non affectée'}`
+    : facebook
+      ? '✨ FACEBOOK EN SUPERVISION • Réponses gérées par Meta Business AI / Business Suite'
+      : paused
+        ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
+        : '🤖 IA ACTIVE • Réponses automatiques';
 
   header.innerHTML = `
     <div class="inbox-header-left">
@@ -7901,24 +7925,28 @@ function renderConversationHeader(
     </div>
 
     <div class="inbox-header-actions">
-      <button class="inbox-header-btn ${state.priority ? 'active' : ''}" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})" title="Priorité">
-        ${state.priority ? '★ Priorité' : '☆ Priorité'}
-      </button>
+      ${readOnlyCommercial
+        ? `<span class="inbox-header-btn" style="cursor:default">👁 Lecture seule</span>`
+        : `
+          <button class="inbox-header-btn ${state.priority ? 'active' : ''}" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})" title="Priorité">
+            ${state.priority ? '★ Priorité' : '☆ Priorité'}
+          </button>
 
-      <button class="inbox-header-btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">
-        👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}
-      </button>
+          ${['admin','responsable_commercial'].includes(currentUser?.role)
+            ? `<button class="inbox-header-btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}</button>`
+            : `<span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Affectée')}</span>`}
 
-      ${facebook
-        ? `<span class="inbox-header-btn ai" style="cursor:default">✨ IA Meta</span>`
-        : paused
-          ? `<button class="inbox-header-btn ai" type="button" onclick="reactivateConversationAI('${escapeHtml(contact)}')">🤖 Réactiver IA</button>`
-          : `<button class="inbox-header-btn takeover" type="button" onclick="takeOverConversation('${escapeHtml(contact)}')">👤 Prendre en main</button>`
-      }
+          ${facebook
+            ? `<span class="inbox-header-btn ai" style="cursor:default">✨ IA Meta</span>`
+            : paused
+              ? `<button class="inbox-header-btn ai" type="button" onclick="reactivateConversationAI('${escapeHtml(contact)}')">🤖 Réactiver IA</button>`
+              : `<button class="inbox-header-btn takeover" type="button" onclick="takeOverConversation('${escapeHtml(contact)}')">👤 Prendre en main</button>`
+          }
 
-      <button class="inbox-header-btn" type="button" onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})">
-        ${state.resolved ? '↩ Réouvrir' : '✓ Terminer'}
-      </button>
+          <button class="inbox-header-btn" type="button" onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})">
+            ${state.resolved ? '↩ Réouvrir' : '✓ Terminer'}
+          </button>
+        `}
     </div>
   `;
 }
@@ -8211,12 +8239,27 @@ function historyLimitNotice(entries = []){
 }
 
 function buildConversationComposer(
-  contact
+  contact,
+  access = null
 ){
   const composerItem =
     conversations.find(item => item.contact === contact) || { contact };
   const composerChannel =
     conversationChannel(composerItem);
+  const resolvedAccess = access || selectedConversationAccess(contact, selectedConversationData?.state || {});
+
+  if(currentUser?.role === 'commercial' && resolvedAccess.readOnly){
+    return `
+      <div class="inbox-composer conversation-composer" id="commercialComposer">
+        <div class="inbox-composer-toolbar">
+          <div class="inbox-composer-title">👁 Historique en lecture seule</div>
+        </div>
+        <div class="inbox-alert" style="margin:12px 0 4px">
+          Cette conversation n’est pas affectée à votre compte. Vous pouvez consulter les 90 derniers jours d’historique, mais vous ne pouvez pas répondre ni modifier son statut.
+        </div>
+      </div>
+    `;
+  }
 
   if(composerChannel === 'facebook'){
     return `
@@ -8371,6 +8414,8 @@ function renderCustomerPanel(
   const ad=state.adReferral || null;
   const channel=conversationChannel(item);
   const facebook=channel==='facebook';
+  const access=selectedConversationAccess(contact,state);
+  const readOnlyCommercial=currentUser?.role==='commercial' && access.readOnly;
   const channelName=channelDisplayName(channel);
   const sourceContext=state?.sourceContext || null;
   const source=ad
@@ -8447,20 +8492,24 @@ function renderCustomerPanel(
 
     <div class="inbox-panel-section">
       <div class="inbox-panel-title">Actions</div>
-      <div class="inbox-panel-actions">
-        <button class="btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 Affecter la conversation</button>
-        ${['admin','responsable_commercial'].includes(currentUser?.role)
-          ? `<button class="btn" type="button" onclick="createTaskFromConversation('${escapeHtml(contact)}')">📋 Créer une tâche</button>`
-          : ''}
-        ${channel === 'whatsapp'
-          ? `<a class="btn" href="https://wa.me/${escapeHtml(conversationExternalContact(item))}" target="_blank" rel="noopener">WhatsApp ↗</a>`
-          : facebook
-            ? `<span class="btn" style="cursor:default">Facebook • supervision</span>`
-            : `<span class="btn" style="cursor:default">Instagram DM</span>`}
-        <button class="btn" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})">
-          ${state.priority ? '★ Retirer priorité' : '☆ Mettre en priorité'}
-        </button>
-      </div>
+      ${readOnlyCommercial
+        ? `<div class="inbox-alert">👁 Lecture seule. Vous pouvez consulter l’historique de ce client, mais seules les conversations qui vous sont affectées peuvent être modifiées ou recevoir une réponse.</div>`
+        : `<div class="inbox-panel-actions">
+            ${['admin','responsable_commercial'].includes(currentUser?.role)
+              ? `<button class="btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 Affecter la conversation</button>`
+              : ''}
+            ${['admin','responsable_commercial'].includes(currentUser?.role)
+              ? `<button class="btn" type="button" onclick="createTaskFromConversation('${escapeHtml(contact)}')">📋 Créer une tâche</button>`
+              : ''}
+            ${channel === 'whatsapp'
+              ? `<a class="btn" href="https://wa.me/${escapeHtml(conversationExternalContact(item))}" target="_blank" rel="noopener">WhatsApp ↗</a>`
+              : facebook
+                ? `<span class="btn" style="cursor:default">Facebook • supervision</span>`
+                : `<span class="btn" style="cursor:default">Instagram DM</span>`}
+            <button class="btn" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})">
+              ${state.priority ? '★ Retirer priorité' : '☆ Mettre en priorité'}
+            </button>
+          </div>`}
     </div>
   `;
 }
@@ -8480,8 +8529,9 @@ window.openConversation = async function(contact, targetMessageId = ''){
       'has-selection'
     );
 
+  let readResult = null;
   try{
-    await apiFetch(
+    readResult = await apiFetch(
       `${API}/conversations/${encodeURIComponent(contact)}/read`,
       {
         method:'POST'
@@ -8500,7 +8550,7 @@ window.openConversation = async function(contact, targetMessageId = ''){
         item.contact === contact
     );
 
-  if(localItem){
+  if(localItem && readResult?.readOnly !== true){
     localItem.unreadCount = 0;
   }
 
@@ -8623,9 +8673,11 @@ window.openConversation = async function(contact, targetMessageId = ''){
       'hidden'
     );
 
+    const access = selectedConversationAccess(contact, state);
     composerHost.innerHTML =
       buildConversationComposer(
-        contact
+        contact,
+        access
       );
   }
 
@@ -8696,6 +8748,10 @@ window.toggleConversationPriority = async function(
   contact,
   priority
 ){
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
+    alert('Lecture seule : cette conversation ne vous est pas affectée.');
+    return;
+  }
   try{
     await apiFetch(
       `${API}/conversations/${encodeURIComponent(contact)}/priority`,
@@ -8718,6 +8774,10 @@ window.toggleConversationPriority = async function(
 };
 
 window.assignConversation = async function(contact){
+  if(currentUser?.role==='commercial'){
+    alert('L’affectation est réservée au responsable commercial ou à l’administrateur.');
+    return;
+  }
   const current = selectedConversationData?.state?.assignedTo || '';
   let assignedTo = current;
   let assignedUserId = '';
@@ -8820,6 +8880,10 @@ window.openLinkedTaskConversation = async function(contact,messageId=''){
 };
 
 window.takeOverConversation = async function(contact){
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
+    alert('Lecture seule : cette conversation ne vous est pas affectée.');
+    return;
+  }
   const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
   if(conversationChannel(item)==='facebook'){
     alert('Facebook est en supervision : les réponses restent gérées par Meta Business AI / Business Suite. Utilisez Affecter ou créer une tâche pour le suivi commercial.');
@@ -8859,6 +8923,10 @@ window.takeOverConversation = async function(contact){
 };
 
 window.reactivateConversationAI = async function(contact){
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
+    alert('Lecture seule : cette conversation ne vous est pas affectée.');
+    return;
+  }
   const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
   if(conversationChannel(item)==='facebook'){
     alert('L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.');
@@ -8890,6 +8958,10 @@ window.toggleResolvedConversation = async function(
   contact,
   resolved
 ){
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
+    alert('Lecture seule : cette conversation ne vous est pas affectée.');
+    return;
+  }
   try{
     await apiFetch(
       `${API}/conversations/${encodeURIComponent(contact)}/resolve`,
@@ -9357,6 +9429,10 @@ window.selectConversationAttachment = function(input, type){
 };
 
 window.sendConversationCommercialReply = async function(contact){
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
+    alert('Lecture seule : cette conversation ne vous est pas affectée.');
+    return;
+  }
   const textEl =
     document.getElementById('conversationQuickReply');
 
