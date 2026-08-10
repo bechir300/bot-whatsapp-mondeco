@@ -4376,7 +4376,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.20.4 — Storage Rescue + historique omnicanal
+   MONDECO V6.20.5 — Storage Rescue + historique omnicanal
    ========================================================== */
 .team-role-pill.responsable_commercial{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
 .operations-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
@@ -4701,7 +4701,7 @@ tbody tr:hover{
             <div>
               <div class="inbox-title-line">
                 <h2>Messages</h2>
-                <span class="inbox-version">V6.20.4</span>
+                <span class="inbox-version">V6.20.5</span>
               </div>
               <div class="inbox-mini-sub">Boîte de réception WhatsApp + Instagram + Facebook MONDECO</div>
             </div>
@@ -7007,9 +7007,9 @@ function renderInstagramHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Instagram : lecture de l’historique Meta… ${listed} discussion(s) détectée(s) • page ${Number(status.listPages || 0) || 1}`;
+      label.textContent = `Instagram : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
     }else{
-      label.textContent = `Instagram : synchronisation historique ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+      label.textContent = `Instagram : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
     }
     return;
   }
@@ -7029,7 +7029,7 @@ function renderInstagramHistoryStatus(status = {}){
     }else if(total === 0){
       label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
     }else{
-      label.textContent = `Instagram : historique synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      label.textContent = `Instagram : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
     }
   }else{
     label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
@@ -7053,7 +7053,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
       !instagramHistoryAutoSyncChecked &&
       status.configured &&
       !running &&
-      (!status.completedAt || Number(status.chronologyVersion || 0) < 3)
+      (!status.completedAt || Number(status.chronologyVersion || 0) < 4)
     ){
       instagramHistoryAutoSyncChecked = true;
       await startInstagramHistorySync({ silent: true });
@@ -7138,9 +7138,9 @@ function renderFacebookHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : lecture de l’historique Meta… ${listed} discussion(s) détectée(s) • page ${Number(status.listPages || 0) || 1}`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation historique ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
     }
     return;
   }
@@ -7160,7 +7160,7 @@ function renderFacebookHistoryStatus(status = {}){
     }else if(total === 0){
       label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
     }
   }else{
     label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
@@ -7185,7 +7185,7 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
       !running &&
       (
         !status.completedAt ||
-        Number(status.syncVersion || 0) < 3 ||
+        Number(status.syncVersion || 0) < 4 ||
         Number(status.totalConversations || 0) === 0
       )
     ){
@@ -7714,7 +7714,7 @@ function conversationListTags(item){
 function renderConversationsList(){
   updateConversationFilterCounts();
 
-  // V6.20.4 : la boîte de réception suit strictement la chronologie du
+  // V6.20.5 : la boîte de réception suit strictement la chronologie du
   // dernier message réel. Le SLA reste visuellement prioritaire (badge/rouge),
   // mais ne déplace plus artificiellement une ancienne conversation au-dessus
   // d'une conversation plus récente.
