@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.6
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.7
 // server.js
 //
 // Ajouts V5 :
@@ -274,7 +274,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.6');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.7');
 console.log(
   '=============================================='
 );
