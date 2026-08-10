@@ -5909,7 +5909,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.27.0</span>
+              <span class="inbox-version">V6.27.1</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -5934,7 +5934,8 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             </button>
             <button class="inbox-toolbar-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser Instagram" style="display:none">IG ↻</button>
             <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Synchroniser Facebook" style="display:none">FB ↻</button>
-            <button class="inbox-toolbar-btn social-comments-sync hidden" id="syncSocialCommentsBtn" type="button" title="Synchroniser publications et commentaires Facebook / Instagram">💭 ↻</button>
+            <button class="inbox-toolbar-btn social-comments-sync hidden" id="syncSocialCommentsBtn" type="button" title="Synchroniser publications et commentaires Facebook / Instagram"><span>💭</span><span class="inbox-toolbar-label">Synchroniser</span></button>
+            <button class="inbox-toolbar-btn social-comments-sync hidden" id="diagnoseSocialCommentsBtn" type="button" title="Vérifier l’accès Meta aux commentaires"><span>✓</span><span class="inbox-toolbar-label">Vérifier Meta</span></button>
             <button class="inbox-toolbar-btn notification" id="enableNotificationsBtn" type="button" title="Notifications">
               <span>🔔</span><span id="notificationHeaderCount" class="notification-count hidden">0</span>
             </button>
@@ -8170,6 +8171,7 @@ let socialCommentFilter = 'all';
 let selectedSocialCommentKey = '';
 let selectedSocialCommentData = null;
 let socialCommentsSyncTimer = null;
+let socialCommentsInitialSyncAttempted = false;
 let socialCommentSearchTimer = null;
 let socialCommentsLiveTimer = null;
 
@@ -8237,9 +8239,11 @@ window.setInboxInteractionMode = async function(mode){
   const label=document.getElementById('conversationCountLabel');
   const mini=document.getElementById('inboxMiniSub');
   const sync=document.getElementById('syncSocialCommentsBtn');
+  const diagnose=document.getElementById('diagnoseSocialCommentsBtn');
   if(search) search.placeholder=inboxInteractionMode==='comments'?'Rechercher un commentaire, client ou publication…':'Rechercher un client, numéro, produit ou publicité…';
   if(mini) mini.textContent=inboxInteractionMode==='comments'?'Publications + commentaires Facebook / Instagram':'WhatsApp • Instagram • Facebook';
   if(sync) sync.classList.toggle('hidden',inboxInteractionMode!=='comments'||!['admin','responsable_commercial'].includes(currentUser?.role));
+  if(diagnose) diagnose.classList.toggle('hidden',inboxInteractionMode!=='comments'||!['admin','responsable_commercial'].includes(currentUser?.role));
   if(label) label.textContent=inboxInteractionMode==='comments'?'0 commentaire':'0 conversation';
   resetInteractionDetail();
   if(inboxInteractionMode==='comments'){
@@ -8264,7 +8268,7 @@ function renderSocialCommentsList(){
   if(label) label.textContent=`${socialCommentsTotal} commentaire${socialCommentsTotal>1?'s':''}`;
   setCommentFilterCounts(socialCommentCounts||{});
   if(!host) return;
-  if(!socialComments.length){host.innerHTML='<div class="empty" style="margin:16px"><strong>Aucun commentaire</strong>Aucun commentaire ne correspond à ce filtre. Utilisez 💭 ↻ pour synchroniser si nécessaire.</div>';return;}
+  if(!socialComments.length){host.innerHTML='<div class="empty" style="margin:16px"><strong>Aucun commentaire</strong>Aucun commentaire chargé. La synchronisation va démarrer automatiquement. Si le compteur reste à 0, cliquez sur « Vérifier Meta » pour voir la permission manquante.</div>';return;}
   host.innerHTML=socialComments.map(comment=>{
     const post=comment?.post||{};
     const selected=selectedSocialCommentKey===comment.key;
@@ -8346,325 +8350,92 @@ window.privateReplyToSocialComment=async function(){
 window.toggleSocialCommentHidden=async function(){const target=selectedSocialCommentData?.comment;if(!target)return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/hide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hidden:!target.isHidden})});await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Modération impossible : '+error.message);}};
 window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(!target||!confirm('Supprimer définitivement ce commentaire sur '+commentChannelLabel(target.channel)+' ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();}catch(error){alert('Suppression impossible : '+error.message);}};
 
+async function maybeStartInitialSocialCommentsSync(status){
+  if(inboxInteractionMode!=='comments'||socialCommentsInitialSyncAttempted) return;
+  if(!['admin','responsable_commercial'].includes(currentUser?.role)) return;
+  const count=Number(status?.counts?.all||0);
+  if(status?.running||count>0) return;
+  socialCommentsInitialSyncAttempted=true;
+  const el=document.getElementById('socialCommentsSyncStatus');
+  try{
+    if(el){el.style.display='block';el.textContent='💭 Aucun commentaire local : import automatique des 90 derniers jours…';}
+    await apiFetch(`${API}/social-comments/sync`,{method:'POST'});
+    clearTimeout(socialCommentsSyncTimer);
+    socialCommentsSyncTimer=setTimeout(refreshSocialCommentsStatus,1200);
+  }catch(error){
+    if(el){el.style.display='block';el.textContent='⚠️ Import automatique impossible : '+error.message;}
+  }
+}
+
+function socialCommentsStatusText(status){
+  if(status?.running) return '💭 Synchronisation Facebook + Instagram en cours…';
+  const fb=Number(status?.facebookComments||0), ig=Number(status?.instagramComments||0);
+  const errors=Array.isArray(status?.lastErrors)?status.lastErrors:(Array.isArray(status?.errors)?status.errors:[]);
+  if(status?.completedAt){
+    let text=`💭 Dernier import : Facebook ${fb} • Instagram ${ig}`;
+    if(errors.length) text+=` • ⚠️ ${errors[errors.length-1]}`;
+    else if(fb+ig===0) text+=' • Aucun commentaire récupéré : cliquez « Vérifier Meta ».';
+    return text;
+  }
+  return '💭 Commentaires : vérification de la synchronisation…';
+}
+
 async function refreshSocialCommentsStatus(){
-  try{const status=await apiFetch(`${API}/social-comments/status`);setCommentFilterCounts(status?.counts||{});const el=document.getElementById('socialCommentsSyncStatus');const btn=document.getElementById('syncSocialCommentsBtn');if(btn)btn.disabled=status?.running===true;if(el){if(inboxInteractionMode==='comments'){el.style.display='block';el.textContent=status?.running?'💭 Synchronisation commentaires en cours…':status?.completedAt?`💭 FB ${Number(status.facebookComments||0)} • IG ${Number(status.instagramComments||0)}${Array.isArray(status.errors)&&status.errors.length?` • ${status.errors.length} erreur(s)`:''}`:'💭 Commentaires prêts';}else el.style.display='none';}if(status?.running){clearTimeout(socialCommentsSyncTimer);socialCommentsSyncTimer=setTimeout(refreshSocialCommentsStatus,2500);}else if(inboxInteractionMode==='comments'){await loadSocialComments();}}catch(error){const el=document.getElementById('socialCommentsSyncStatus');if(el&&inboxInteractionMode==='comments'){el.style.display='block';el.textContent='Commentaires : '+error.message;}}
-}
-window.startSocialCommentsSync=async function(){try{await apiFetch(`${API}/social-comments/sync`,{method:'POST'});await refreshSocialCommentsStatus();}catch(error){alert('Synchronisation commentaires impossible : '+error.message);}};
-
-function setConversationFilter(filter){
-  conversationFilter = filter || 'all';
-
-  document
-    .querySelectorAll(
-      '#conversationFilters .inbox-filter'
-    )
-    .forEach(button => {
-      button.classList.toggle(
-        'active',
-        button.dataset.filter === conversationFilter
-      );
-    });
-
-  loadConversations();
-}
-
-function openAllNewMessages(){
-  setConversationFilter('unread');
-  showPage('conversations');
-}
-
-function renderInstagramHistoryStatus(status = {}){
-  const button = document.getElementById('syncInstagramHistoryBtn');
-  const label = document.getElementById('instagramHistorySyncStatus');
-
-  if(!button || !label) return;
-
-  const allowed = canManageInstagramHistory();
-  button.style.display = allowed ? '' : 'none';
-  label.style.display = allowed ? '' : 'none';
-
-  if(!allowed) return;
-
-  if(!status.configured){
-    button.disabled = true;
-    label.textContent = 'Instagram : historique non disponible — vérifiez la configuration Railway.';
-    return;
-  }
-
-  if(status.running){
-    button.disabled = true;
-    const done = Number(status.processedConversations || 0);
-    const total = Number(status.totalConversations || 0);
-    const imported = Number(status.importedMessages || 0);
-    const discovered = Number(status.messageIdsDiscovered || 0);
-    const unavailable = Number(status.contentUnavailableMessages || 0);
-    const listed = Number(status.listedConversations || total || 0);
-    const phase = String(status.phase || '').trim();
-    if(phase === 'listing'){
-      label.textContent = `Instagram : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
-    }else{
-      label.textContent = `Instagram : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
-    }
-    return;
-  }
-
-  button.disabled = false;
-
-  if(status.completedAt){
-    const total = Number(status.totalConversations || 0);
-    const imported = Number(status.importedMessages || 0);
-    const discovered = Number(status.messageIdsDiscovered || 0);
-    const unavailable = Number(status.contentUnavailableMessages || 0);
-    const errors = Number(status.errorCount || 0);
-    const warning = String(status.warning || '').trim();
-    const lastError = String(status.lastError || '').trim();
-    if(lastError && errors){
-      label.textContent = `Instagram : synchronisation terminée avec erreur • ${lastError}`;
-    }else if(total === 0){
-      label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
-    }else{
-      label.textContent = `Instagram : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
-    }
-  }else{
-    label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
-  }
-}
-
-async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
-  if(!canManageInstagramHistory()){
-    renderInstagramHistoryStatus({});
-    return;
-  }
-
   try{
-    const status = await apiFetch(`${API}/instagram-history/status`);
-    renderInstagramHistoryStatus(status);
-
-    const running = Boolean(status.running);
-
-    if(
-      autoStart &&
-      !instagramHistoryAutoSyncChecked &&
-      status.configured &&
-      !running &&
-      (!status.completedAt || Number(status.chronologyVersion || 0) < 4)
-    ){
-      instagramHistoryAutoSyncChecked = true;
-      await startInstagramHistorySync({ silent: true });
-      return;
+    const status=await apiFetch(`${API}/social-comments/status`);
+    setCommentFilterCounts(status?.counts||{});
+    const el=document.getElementById('socialCommentsSyncStatus');
+    const btn=document.getElementById('syncSocialCommentsBtn');
+    const diag=document.getElementById('diagnoseSocialCommentsBtn');
+    if(btn)btn.disabled=status?.running===true;
+    if(diag)diag.disabled=status?.running===true;
+    if(el){
+      if(inboxInteractionMode==='comments'){
+        el.style.display='block';
+        el.textContent=socialCommentsStatusText(status);
+      }else el.style.display='none';
     }
-
-    if(instagramHistoryWasRunning && !running){
-      await loadConversations();
-    }
-
-    instagramHistoryWasRunning = running;
-
-    if(instagramHistoryStatusTimer){
-      clearTimeout(instagramHistoryStatusTimer);
-      instagramHistoryStatusTimer = null;
-    }
-
-    if(running){
-      instagramHistoryStatusTimer = setTimeout(
-        () => refreshInstagramHistoryStatus(),
-        1800
-      );
+    if(status?.running){
+      clearTimeout(socialCommentsSyncTimer);
+      socialCommentsSyncTimer=setTimeout(refreshSocialCommentsStatus,2500);
+    }else if(inboxInteractionMode==='comments'){
+      await loadSocialComments();
+      await maybeStartInitialSocialCommentsSync(status);
     }
   }catch(error){
-    const label = document.getElementById('instagramHistorySyncStatus');
-    if(label && canManageInstagramHistory()){
-      label.style.display = '';
-      label.textContent = `Instagram : impossible de lire l’état de synchronisation — ${error.message}`;
-    }
+    const el=document.getElementById('socialCommentsSyncStatus');
+    if(el&&inboxInteractionMode==='comments'){el.style.display='block';el.textContent='⚠️ Commentaires : '+error.message;}
   }
 }
-
-async function startInstagramHistorySync({ silent = false } = {}){
-  if(!canManageInstagramHistory()) return;
-
-  const button = document.getElementById('syncInstagramHistoryBtn');
-  if(button) button.disabled = true;
-
+window.startSocialCommentsSync=async function(){
   try{
-    await apiFetch(
-      `${API}/instagram-history/sync`,
-      { method: 'POST' }
-    );
-
-    instagramHistoryWasRunning = true;
-    await refreshInstagramHistoryStatus();
-  }catch(error){
-    if(!silent){
-      alert(
-        'Synchronisation Instagram impossible : ' +
-        error.message
-      );
-    }
-    await refreshInstagramHistoryStatus();
-  }
-}
-
-
-function renderFacebookHistoryStatus(status = {}){
-  const button = document.getElementById('syncFacebookHistoryBtn');
-  const label = document.getElementById('facebookHistorySyncStatus');
-  if(!button || !label) return;
-
-  const allowed = canManageInstagramHistory();
-  button.style.display = allowed ? '' : 'none';
-  label.style.display = allowed ? '' : 'none';
-  if(!allowed) return;
-
-  if(!status.configured){
-    button.disabled = true;
-    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_PAGE_ACCESS_TOKEN dans Railway.';
-    return;
-  }
-
-  if(status.running){
-    button.disabled = true;
-    const done = Number(status.processedConversations || 0);
-    const total = Number(status.totalConversations || 0);
-    const imported = Number(status.importedMessages || 0);
-    const discovered = Number(status.messageIdsDiscovered || 0);
-    const pageName = String(status.pageName || '').trim();
-    const listed = Number(status.listedConversations || total || 0);
-    const phase = String(status.phase || '').trim();
-    if(phase === 'listing'){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
-    }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
-    }
-    return;
-  }
-
-  button.disabled = false;
-  if(status.completedAt){
-    const total = Number(status.totalConversations || 0);
-    const imported = Number(status.importedMessages || 0);
-    const discovered = Number(status.messageIdsDiscovered || 0);
-    const unavailable = Number(status.contentUnavailableMessages || 0);
-    const errors = Number(status.errorCount || 0);
-    const warning = String(status.warning || '').trim();
-    const lastError = String(status.lastError || '').trim();
-    const pageName = String(status.pageName || '').trim();
-    if(lastError && errors){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation terminée avec erreur • ${lastError}`;
-    }else if(total === 0){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
-    }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
-    }
-  }else{
-    label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
-  }
-}
-
-async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
-  if(!canManageInstagramHistory()){
-    renderFacebookHistoryStatus({});
-    return;
-  }
-
+    socialCommentsInitialSyncAttempted=true;
+    const el=document.getElementById('socialCommentsSyncStatus');
+    if(el){el.style.display='block';el.textContent='💭 Synchronisation demandée…';}
+    await apiFetch(`${API}/social-comments/sync`,{method:'POST'});
+    await refreshSocialCommentsStatus();
+  }catch(error){alert('Synchronisation commentaires impossible : '+error.message);}
+};
+window.diagnoseSocialComments=async function(){
+  const btn=document.getElementById('diagnoseSocialCommentsBtn');
+  const el=document.getElementById('socialCommentsSyncStatus');
+  if(btn)btn.disabled=true;
+  if(el){el.style.display='block';el.textContent='✓ Vérification des permissions Meta en cours…';}
   try{
-    const status = await apiFetch(`${API}/facebook-history/status`);
-    renderFacebookHistoryStatus(status);
-    const running = Boolean(status.running);
-
-    if(
-      autoStart &&
-      !facebookHistoryAutoSyncChecked &&
-      status.configured &&
-      !running &&
-      (
-        !status.completedAt ||
-        Number(status.syncVersion || 0) < 4 ||
-        Number(status.totalConversations || 0) === 0
-      )
-    ){
-      facebookHistoryAutoSyncChecked = true;
-      await startFacebookHistorySync({ silent: true });
-      return;
+    const data=await apiFetch(`${API}/social-comments/diagnostic`);
+    const issues=Array.isArray(data?.issues)?data.issues:[];
+    const fb=data?.facebook||{}, ig=data?.instagram||{};
+    if(el){
+      el.textContent=issues.length
+        ? '⚠️ '+issues.join(' | ')
+        : `✅ Meta OK • Facebook ${fb.comments?'commentaires OK':'à vérifier'} • Instagram ${ig.comments?'commentaires OK':'à vérifier'}`;
     }
-
-    if(facebookHistoryWasRunning && !running){
-      await loadConversations();
-    }
-    facebookHistoryWasRunning = running;
-
-    if(facebookHistoryStatusTimer){
-      clearTimeout(facebookHistoryStatusTimer);
-      facebookHistoryStatusTimer = null;
-    }
-    if(running){
-      facebookHistoryStatusTimer = setTimeout(
-        () => refreshFacebookHistoryStatus(),
-        1800
-      );
-    }
+    if(issues.length) alert('Diagnostic commentaires Meta :\n\n'+issues.map((x,i)=>`${i+1}. ${x}`).join('\n'));
+    else alert('Diagnostic Meta OK. Relancez « Synchroniser » si les commentaires ne se chargent pas automatiquement.');
   }catch(error){
-    const label = document.getElementById('facebookHistorySyncStatus');
-    if(label && canManageInstagramHistory()){
-      label.style.display = '';
-      label.textContent = `Facebook : impossible de lire l’état de synchronisation — ${error.message}`;
-    }
-  }
-}
-
-async function startFacebookHistorySync({ silent = false } = {}){
-  if(!canManageInstagramHistory()) return;
-  const button = document.getElementById('syncFacebookHistoryBtn');
-  if(button) button.disabled = true;
-
-  try{
-    await apiFetch(`${API}/facebook-history/sync`, { method:'POST' });
-    facebookHistoryWasRunning = true;
-    await refreshFacebookHistoryStatus();
-  }catch(error){
-    if(!silent){
-      alert('Synchronisation Facebook impossible : ' + error.message);
-    }
-    await refreshFacebookHistoryStatus();
-  }
-}
-
-
-async function loadConversations({ append = false } = {}){
-  try{
-    const search = String(document.getElementById('conversationSearch')?.value || '').trim();
-    const offset = append ? conversations.length : 0;
-    const params = new URLSearchParams({
-      paged:'1',
-      limit:'80',
-      offset:String(offset),
-      filter:conversationFilter
-    });
-    if(search) params.set('q',search);
-    const data = await apiFetch(`${API}/conversations?${params.toString()}`);
-    const items = Array.isArray(data?.items) ? data.items : [];
-    conversations = append
-      ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
-      : items;
-    conversationListTotal = Number(data?.total || conversations.length);
-    conversationListHasMore = data?.hasMore === true;
-    conversationServerCounts = data?.counts && typeof data.counts === 'object'
-      ? data.counts
-      : null;
-    renderConversationsList();
-    if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
-      updateConversationFilterCounts();
-    }
-  }catch(error){
-    const container=document.getElementById('conversationListContainer');
-    if(container){
-      container.innerHTML=`<div class="empty"><strong>Impossible de charger les conversations</strong>${escapeHtml(error.message)}</div>`;
-    }
-  }
-}
-
-window.loadMoreConversations = async function(){
-  if(conversationListHasMore) await loadConversations({append:true});
+    if(el)el.textContent='⚠️ Diagnostic Meta : '+error.message;
+    alert('Diagnostic Meta impossible : '+error.message);
+  }finally{if(btn)btn.disabled=false;}
 };
 
 function actionLabel(action){
@@ -14524,6 +14295,7 @@ document.getElementById('refreshMyWorkBtn')?.addEventListener('click',loadMyWork
 // Le responsable et l'admin voient les compteurs SLA évoluer sans recharger la page.
 
 document.getElementById('syncSocialCommentsBtn')?.addEventListener('click',()=>startSocialCommentsSync());
+document.getElementById('diagnoseSocialCommentsBtn')?.addEventListener('click',()=>diagnoseSocialComments());
 document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(button=>{
   button.addEventListener('click',async()=>{
     socialCommentFilter=button.dataset.commentFilter||'all';
