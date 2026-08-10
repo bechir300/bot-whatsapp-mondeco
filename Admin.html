@@ -5914,7 +5914,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.27.2</span>
+              <span class="inbox-version">V6.27.3</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8192,6 +8192,8 @@ let interactionPendingCounts = {messages:0,comments:0,total:0,whatsapp:0,instagr
 
 // V6.26 — Centre d'interactions : messages + commentaires.
 let inboxInteractionMode = localStorage.getItem('mondecoInboxInteractionMode') === 'comments' ? 'comments' : 'messages';
+let conversationLoadGeneration = 0;
+let socialCommentsLoadGeneration = 0;
 let socialComments = [];
 let socialCommentsTotal = 0;
 let socialCommentsHasMore = false;
@@ -8258,6 +8260,9 @@ function resetInteractionDetail(){
 
 window.setInboxInteractionMode = async function(mode){
   inboxInteractionMode = mode === 'comments' ? 'comments' : 'messages';
+  // Invalide immédiatement toute requête de l'autre onglet encore en vol.
+  if(inboxInteractionMode==='comments') conversationLoadGeneration++;
+  else socialCommentsLoadGeneration++;
   localStorage.setItem('mondecoInboxInteractionMode',inboxInteractionMode);
   document.body.classList.toggle('comments-mode',inboxInteractionMode==='comments');
   document.getElementById('inboxModeMessagesBtn')?.classList.toggle('active',inboxInteractionMode==='messages');
@@ -8314,6 +8319,7 @@ function renderSocialCommentsList(){
 }
 
 async function loadSocialComments({append=false}={}){
+  const requestId=++socialCommentsLoadGeneration;
   if(inboxInteractionMode!=='comments') return;
   try{
     const q=String(document.getElementById('conversationSearch')?.value||'').trim();
@@ -8323,6 +8329,8 @@ async function loadSocialComments({append=false}={}){
     if(['facebook','instagram'].includes(socialCommentFilter)) params.set('channel',socialCommentFilter);
     else if(socialCommentFilter!=='all') params.set('filter',socialCommentFilter);
     const data=await apiFetch(`${API}/social-comments?${params.toString()}`);
+    // Une réponse ancienne ne doit jamais remplacer la vue Messages si l'utilisateur a changé d'onglet.
+    if(requestId!==socialCommentsLoadGeneration || inboxInteractionMode!=='comments') return;
     const items=Array.isArray(data?.items)?data.items:[];
     socialComments=append?[...socialComments,...items.filter(x=>!socialComments.some(y=>y.key===x.key))]:items;
     socialCommentsTotal=Number(data?.total||socialComments.length);socialCommentsHasMore=data?.hasMore===true;socialCommentCounts=data?.counts||{};
@@ -8747,6 +8755,10 @@ async function startFacebookHistorySync({ silent = false } = {}){
 
 
 async function loadConversations({ append = false } = {}){
+  const requestId=++conversationLoadGeneration;
+  const inboxPageActive=document.getElementById('page-conversations')?.classList?.contains('active');
+  // En mode Commentaires, les rafraîchissements de messages restent en arrière-plan et ne touchent jamais la liste visible.
+  if(inboxPageActive && inboxInteractionMode!=='messages') return;
   try{
     const search = String(document.getElementById('conversationSearch')?.value || '').trim();
     const offset = append ? conversations.length : 0;
@@ -8758,6 +8770,10 @@ async function loadConversations({ append = false } = {}){
     });
     if(search) params.set('q',search);
     const data = await apiFetch(`${API}/conversations?${params.toString()}`);
+    // Protection anti-bascule : si l'utilisateur est passé dans Commentaires pendant la requête,
+    // ou si une requête plus récente existe, cette réponse est ignorée visuellement.
+    if(requestId!==conversationLoadGeneration) return;
+    if(document.getElementById('page-conversations')?.classList?.contains('active') && inboxInteractionMode!=='messages') return;
     const items = Array.isArray(data?.items) ? data.items : [];
     conversations = append
       ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
@@ -12193,8 +12209,13 @@ async function pollCommercialNotifications(){
       showClientBrowserNotification(event);
     }
     if(events.length&&document.getElementById('page-conversations')?.classList?.contains('active')){
-      await loadConversations();
-      if(selectedConversationContact)await softRefreshSelectedConversation();
+      // Ne jamais changer l'onglet actif lors d'un rafraîchissement automatique.
+      if(inboxInteractionMode==='comments'){
+        await loadSocialComments();
+      }else{
+        await loadConversations();
+        if(selectedConversationContact)await softRefreshSelectedConversation();
+      }
     }
     conversationNotificationCursor=data.serverTime||new Date().toISOString();
     localStorage.setItem('mondecoNotificationCursor',conversationNotificationCursor);
