@@ -4456,7 +4456,7 @@ tbody tr:hover{
 }
 
 /* ==========================================================
-   MONDECO V6.22.0 — Réponse commerciale ouverte + contexte publicité Meta
+   MONDECO V6.23.0 — Réponse ouverte + pubs + vocal + WhatsApp Calling
    La zone de saisie et le bouton Envoyer restent toujours visibles.
    ========================================================== */
 .inbox-composer-host{
@@ -4804,6 +4804,80 @@ tbody tr:hover{
   .whatsapp-composer .quick-reply-save-btn{
     padding:0 8px;
   }
+}
+
+
+/* ==========================================================
+   V6.23.0 — vocal WhatsApp + appel WhatsApp WebRTC
+   ========================================================== */
+.wa-send-btn.is-mic{
+  background:#fff;
+  color:#3d3935;
+  border:1px solid #d9d3cc;
+  box-shadow:none;
+  font-size:20px;
+}
+.wa-send-btn.is-recording{
+  background:#d21f2b;
+  color:#fff;
+  animation:waRecordPulse 1.1s ease-in-out infinite;
+}
+@keyframes waRecordPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(210,31,43,.18)}
+  50%{box-shadow:0 0 0 7px rgba(210,31,43,0)}
+}
+.wa-voice-bar{
+  width:calc(100% - 51px);
+  min-height:42px;
+  margin:0 0 7px 51px;
+  padding:7px 9px;
+  display:flex;
+  align-items:center;
+  gap:9px;
+  border:1px solid #d8d1ca;
+  border-radius:15px;
+  background:#fff;
+  box-shadow:0 1px 3px rgba(24,20,17,.05);
+}
+.wa-voice-bar.hidden{display:none!important}
+.wa-voice-dot{
+  width:9px;height:9px;border-radius:50%;background:#e01f2d;flex:0 0 auto;
+}
+.wa-voice-time{font-variant-numeric:tabular-nums;font-size:11px;font-weight:900;color:#3f3a35;min-width:38px}
+.wa-voice-label{font-size:10px;font-weight:800;color:#766f68;white-space:nowrap}
+.wa-voice-bar audio{height:30px;min-width:0;flex:1}
+.wa-voice-trash{
+  width:30px;height:30px;min-width:30px;border:0;border-radius:50%;background:#f3efeb;cursor:pointer;font-size:15px
+}
+.wa-call-header-btn{color:#0b7a46!important;border-color:rgba(11,122,70,.24)!important;background:#f2fff8!important}
+.wa-call-overlay{
+  position:fixed;inset:0;z-index:9999;display:grid;place-items:center;padding:18px;
+  background:rgba(13,15,14,.62);backdrop-filter:blur(5px)
+}
+.wa-call-overlay.hidden{display:none!important}
+.wa-call-card{
+  width:min(390px,100%);padding:22px 18px 18px;border-radius:24px;background:#fff;
+  box-shadow:0 24px 70px rgba(0,0,0,.28);text-align:center
+}
+.wa-call-avatar{
+  width:74px;height:74px;margin:0 auto 12px;display:grid;place-items:center;border-radius:50%;
+  background:#e8f8ef;color:#087443;font-size:32px;font-weight:900
+}
+.wa-call-title{font-size:19px;font-weight:950;color:#211f1d}
+.wa-call-number{margin-top:4px;font-size:12px;color:#77706a}
+.wa-call-status{min-height:22px;margin:14px 0 4px;font-size:12px;font-weight:850;color:#4f4943}
+.wa-call-timer{height:20px;font-variant-numeric:tabular-nums;font-size:13px;font-weight:900;color:#087443}
+.wa-call-actions{display:flex;justify-content:center;gap:14px;margin-top:17px}
+.wa-call-round{
+  width:54px;height:54px;border:0;border-radius:50%;display:grid;place-items:center;cursor:pointer;font-size:22px
+}
+.wa-call-round.mute{background:#efedea;color:#2e2a26}
+.wa-call-round.hangup{background:#d91f2d;color:#fff;transform:rotate(135deg)}
+.wa-call-close{margin-top:14px;border:0;background:transparent;color:#706963;text-decoration:underline;cursor:pointer;font-size:11px}
+.wa-call-error{color:#b4232c}
+@media(max-width:760px){
+  .wa-voice-bar{width:calc(100% - 47px);margin-left:47px}
+  .inbox-header-actions .wa-call-header-btn{position:sticky;left:0}
 }
 
 </style>
@@ -8326,6 +8400,9 @@ function renderConversationHeader(
     </div>
 
     <div class="inbox-header-actions">
+      ${channel === 'whatsapp'
+        ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')" title="Appeler ce client sur WhatsApp">📞 Appel WhatsApp</button>`
+        : ''}
       ${limitedCommercial
         ? `<span class="inbox-header-btn" style="cursor:default">💬 Réponse ouverte</span><span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Non affectée')}</span>`
         : `
@@ -8798,6 +8875,10 @@ function buildConversationComposer(
         >×</button>
       </div>
 
+      ${composerChannel === 'whatsapp' ? `
+      <div id="conversationVoiceBar" class="wa-voice-bar hidden" aria-live="polite"></div>
+      ` : ''}
+
       <div class="wa-composer-row ${composerChannel === 'whatsapp' ? '' : 'no-attachments'}">
         ${composerChannel === 'whatsapp' ? `
         <button
@@ -8817,7 +8898,7 @@ function buildConversationComposer(
             rows="1"
             placeholder="Écrire un message"
             aria-label="Écrire un message au client"
-            oninput="autoResizeConversationComposer(this)"
+            oninput="autoResizeConversationComposer(this);syncConversationPrimaryAction()"
           ></textarea>
 
           <button
@@ -8832,13 +8913,13 @@ function buildConversationComposer(
         </div>
 
         <button
-          class="wa-send-btn"
+          class="wa-send-btn ${composerChannel === 'whatsapp' ? 'is-mic' : ''}"
           id="conversationSendBtn"
           type="button"
-          onclick="sendConversationCommercialReply('${escapeHtml(contact)}')"
-          aria-label="Envoyer le message"
-          title="Envoyer"
-        >➤</button>
+          onclick="conversationPrimaryAction('${escapeHtml(contact)}')"
+          aria-label="${composerChannel === 'whatsapp' ? 'Enregistrer un message vocal' : 'Envoyer le message'}"
+          title="${composerChannel === 'whatsapp' ? 'Message vocal' : 'Envoyer'}"
+        >${composerChannel === 'whatsapp' ? '🎤' : '➤'}</button>
       </div>
 
       <div class="wa-composer-desktop-hint">
@@ -9726,6 +9807,470 @@ window.deleteConversationQuickReply = async function(){
 };
 
 
+
+// ============================================================
+// V6.23.0 — Message vocal WhatsApp
+// ============================================================
+let conversationVoiceRecorder = null;
+let conversationVoiceStream = null;
+let conversationVoiceChunks = [];
+let conversationVoiceFile = null;
+let conversationVoiceObjectUrl = '';
+let conversationVoiceStartedAt = 0;
+let conversationVoiceTimer = null;
+let conversationVoiceCancelled = false;
+let conversationVoiceContact = '';
+
+function preferredConversationVoiceMimeType(){
+  if(typeof MediaRecorder === 'undefined') return '';
+  const candidates = [
+    'audio/ogg;codecs=opus',
+    'audio/mp4;codecs=mp4a.40.2',
+    'audio/mp4',
+    'audio/mpeg'
+  ];
+  return candidates.find(type => {
+    try{return MediaRecorder.isTypeSupported(type);}catch{return false;}
+  }) || '';
+}
+
+function conversationVoiceExtension(mime){
+  const type=String(mime||'').toLowerCase();
+  if(type.includes('ogg')) return 'ogg';
+  if(type.includes('mpeg')) return 'mp3';
+  return 'm4a';
+}
+
+function stopConversationVoiceTracks(){
+  try{
+    conversationVoiceStream?.getTracks?.().forEach(track=>track.stop());
+  }catch{}
+  conversationVoiceStream=null;
+}
+
+function clearConversationVoiceTimer(){
+  if(conversationVoiceTimer){clearInterval(conversationVoiceTimer);conversationVoiceTimer=null;}
+}
+
+function voiceDurationLabel(ms){
+  const total=Math.max(0,Math.floor(Number(ms||0)/1000));
+  const min=Math.floor(total/60);
+  const sec=total%60;
+  return `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+function renderConversationVoiceBar(mode=''){
+  const bar=document.getElementById('conversationVoiceBar');
+  if(!bar) return;
+  if(mode==='recording'){
+    bar.classList.remove('hidden');
+    bar.innerHTML=`
+      <span class="wa-voice-dot"></span>
+      <span id="conversationVoiceTime" class="wa-voice-time">00:00</span>
+      <span class="wa-voice-label">Enregistrement vocal…</span>
+      <span style="flex:1"></span>
+      <button type="button" class="wa-voice-trash" onclick="cancelConversationVoiceRecording()" title="Annuler">🗑</button>
+    `;
+    return;
+  }
+  if(mode==='ready' && conversationVoiceFile && conversationVoiceObjectUrl){
+    bar.classList.remove('hidden');
+    bar.innerHTML=`
+      <span class="wa-voice-dot" style="background:#0b7a46"></span>
+      <span class="wa-voice-label">Vocal prêt</span>
+      <audio controls preload="metadata" src="${escapeHtml(conversationVoiceObjectUrl)}"></audio>
+      <button type="button" class="wa-voice-trash" onclick="clearConversationVoice()" title="Supprimer le vocal">🗑</button>
+    `;
+    return;
+  }
+  bar.classList.add('hidden');
+  bar.innerHTML='';
+}
+
+window.clearConversationVoice=function(){
+  conversationVoiceCancelled=true;
+  try{
+    if(conversationVoiceRecorder && conversationVoiceRecorder.state!=='inactive'){
+      conversationVoiceRecorder.stop();
+    }
+  }catch{}
+  stopConversationVoiceTracks();
+  clearConversationVoiceTimer();
+  conversationVoiceRecorder=null;
+  conversationVoiceChunks=[];
+  conversationVoiceFile=null;
+  conversationVoiceStartedAt=0;
+  conversationVoiceContact='';
+  if(conversationVoiceObjectUrl){
+    try{URL.revokeObjectURL(conversationVoiceObjectUrl);}catch{}
+  }
+  conversationVoiceObjectUrl='';
+  renderConversationVoiceBar('');
+  syncConversationPrimaryAction();
+};
+
+window.cancelConversationVoiceRecording=function(){
+  clearConversationVoice();
+};
+
+window.startConversationVoiceRecording=async function(contact){
+  const currentConversation=conversations.find(item=>item.contact===contact)||{contact};
+  if(conversationChannel(currentConversation)!=='whatsapp'){
+    alert('Les messages vocaux sont disponibles ici uniquement pour WhatsApp.');
+    return;
+  }
+  if(!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined'){
+    alert('Ce navigateur ne permet pas l’enregistrement du micro. Ouvrez MONDECO en HTTPS avec Safari, Chrome ou Edge récent.');
+    return;
+  }
+
+  const mimeType=preferredConversationVoiceMimeType();
+  if(!mimeType){
+    alert('Ce navigateur ne propose pas encore un format vocal accepté par WhatsApp. Mettez Safari/Chrome/Edge à jour puis réessayez.');
+    return;
+  }
+
+  clearConversationVoice();
+  conversationVoiceCancelled=false;
+  conversationVoiceContact=contact;
+
+  try{
+    conversationVoiceStream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+      video:false
+    });
+
+    const options={mimeType,audioBitsPerSecond:64000};
+    try{conversationVoiceRecorder=new MediaRecorder(conversationVoiceStream,options);}
+    catch{conversationVoiceRecorder=new MediaRecorder(conversationVoiceStream,{mimeType});}
+
+    conversationVoiceChunks=[];
+    conversationVoiceRecorder.ondataavailable=event=>{
+      if(event.data && event.data.size>0) conversationVoiceChunks.push(event.data);
+    };
+    conversationVoiceRecorder.onerror=event=>{
+      console.error('Enregistrement vocal :',event?.error||event);
+    };
+    conversationVoiceRecorder.onstop=()=>{
+      stopConversationVoiceTracks();
+      clearConversationVoiceTimer();
+      const cancelled=conversationVoiceCancelled;
+      const chunks=[...conversationVoiceChunks];
+      const actualType=String(conversationVoiceRecorder?.mimeType||mimeType||'audio/mp4').split(';')[0];
+      conversationVoiceRecorder=null;
+      conversationVoiceChunks=[];
+      if(cancelled){
+        conversationVoiceCancelled=false;
+        renderConversationVoiceBar('');
+        syncConversationPrimaryAction();
+        return;
+      }
+      if(!chunks.length){
+        renderConversationVoiceBar('');
+        syncConversationPrimaryAction();
+        alert('Aucun son n’a été enregistré.');
+        return;
+      }
+      const blob=new Blob(chunks,{type:actualType});
+      const ext=conversationVoiceExtension(actualType);
+      conversationVoiceFile=new File([blob],`vocal-mondeco-${Date.now()}.${ext}`,{type:actualType,lastModified:Date.now()});
+      if(conversationVoiceObjectUrl){try{URL.revokeObjectURL(conversationVoiceObjectUrl);}catch{}}
+      conversationVoiceObjectUrl=URL.createObjectURL(blob);
+      renderConversationVoiceBar('ready');
+      syncConversationPrimaryAction();
+    };
+
+    conversationVoiceStartedAt=Date.now();
+    conversationVoiceRecorder.start(250);
+    renderConversationVoiceBar('recording');
+    clearConversationVoiceTimer();
+    conversationVoiceTimer=setInterval(()=>{
+      const label=document.getElementById('conversationVoiceTime');
+      if(label) label.textContent=voiceDurationLabel(Date.now()-conversationVoiceStartedAt);
+    },250);
+    syncConversationPrimaryAction();
+  }catch(error){
+    stopConversationVoiceTracks();
+    clearConversationVoiceTimer();
+    conversationVoiceRecorder=null;
+    renderConversationVoiceBar('');
+    syncConversationPrimaryAction();
+    const denied=String(error?.name||'').toLowerCase().includes('notallowed');
+    alert(denied
+      ? 'Autorisez le microphone pour app.mondeco.tn dans les réglages du navigateur, puis réessayez.'
+      : (error?.message||'Impossible d’utiliser le microphone.'));
+  }
+};
+
+window.stopConversationVoiceRecording=function(){
+  if(!conversationVoiceRecorder || conversationVoiceRecorder.state==='inactive') return;
+  try{conversationVoiceRecorder.stop();}catch{}
+};
+
+window.syncConversationPrimaryAction=function(){
+  const button=document.getElementById('conversationSendBtn');
+  const textarea=document.getElementById('conversationQuickReply');
+  if(!button) return;
+  const composer=document.getElementById('commercialComposer');
+  if(!composer?.classList.contains('whatsapp-composer')) return;
+
+  const hasText=Boolean(String(textarea?.value||'').trim());
+  const hasAttachment=Boolean(
+    document.getElementById('conversationCameraFile')?.files?.[0] ||
+    document.getElementById('conversationImageFile')?.files?.[0] ||
+    document.getElementById('conversationDocumentFile')?.files?.[0]
+  );
+  const recording=Boolean(conversationVoiceRecorder && conversationVoiceRecorder.state!=='inactive');
+  const hasVoice=Boolean(conversationVoiceFile);
+
+  button.classList.toggle('is-recording',recording);
+  button.classList.toggle('is-mic',!recording && !hasText && !hasAttachment && !hasVoice);
+
+  if(recording){
+    button.textContent='■';
+    button.title='Arrêter l’enregistrement';
+    button.setAttribute('aria-label','Arrêter l’enregistrement vocal');
+  }else if(hasText || hasAttachment || hasVoice){
+    button.textContent='➤';
+    button.title='Envoyer';
+    button.setAttribute('aria-label','Envoyer le message');
+  }else{
+    button.textContent='🎤';
+    button.title='Message vocal';
+    button.setAttribute('aria-label','Enregistrer un message vocal');
+  }
+};
+
+window.conversationPrimaryAction=function(contact){
+  const currentConversation=conversations.find(item=>item.contact===contact)||{contact};
+  const channel=conversationChannel(currentConversation);
+  if(channel!=='whatsapp'){
+    sendConversationCommercialReply(contact);
+    return;
+  }
+  if(conversationVoiceRecorder && conversationVoiceRecorder.state!=='inactive'){
+    stopConversationVoiceRecording();
+    return;
+  }
+  const text=String(document.getElementById('conversationQuickReply')?.value||'').trim();
+  const attachment=Boolean(
+    document.getElementById('conversationCameraFile')?.files?.[0] ||
+    document.getElementById('conversationImageFile')?.files?.[0] ||
+    document.getElementById('conversationDocumentFile')?.files?.[0]
+  );
+  if(conversationVoiceFile || text || attachment){
+    sendConversationCommercialReply(contact);
+    return;
+  }
+  startConversationVoiceRecording(contact);
+};
+
+// ============================================================
+// V6.23.0 — Appel WhatsApp direct via Calling API + WebRTC
+// ============================================================
+let activeWhatsAppCall=null;
+
+function ensureWhatsAppCallOverlay(){
+  let overlay=document.getElementById('whatsappCallOverlay');
+  if(overlay) return overlay;
+  overlay=document.createElement('div');
+  overlay.id='whatsappCallOverlay';
+  overlay.className='wa-call-overlay hidden';
+  overlay.innerHTML=`
+    <div class="wa-call-card" role="dialog" aria-modal="true" aria-label="Appel WhatsApp">
+      <div class="wa-call-avatar">☎</div>
+      <div id="waCallTitle" class="wa-call-title">Appel WhatsApp</div>
+      <div id="waCallNumber" class="wa-call-number"></div>
+      <div id="waCallStatus" class="wa-call-status">Préparation…</div>
+      <div id="waCallTimer" class="wa-call-timer"></div>
+      <audio id="waCallRemoteAudio" autoplay playsinline></audio>
+      <div class="wa-call-actions">
+        <button id="waCallMuteBtn" class="wa-call-round mute" type="button" onclick="toggleWhatsAppCallMute()" title="Couper le micro">🎤</button>
+        <button class="wa-call-round hangup" type="button" onclick="hangupWhatsAppCall()" title="Raccrocher">☎</button>
+      </div>
+      <button id="waCallCloseBtn" class="wa-call-close hidden" type="button" onclick="closeWhatsAppCallOverlay()">Fermer</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+function setWhatsAppCallUi(status,text='',error=false){
+  ensureWhatsAppCallOverlay();
+  const statusEl=document.getElementById('waCallStatus');
+  if(statusEl){
+    statusEl.textContent=text || status || '';
+    statusEl.classList.toggle('wa-call-error',Boolean(error));
+  }
+  if(activeWhatsAppCall) activeWhatsAppCall.status=status;
+}
+
+function waitForIceGatheringComplete(pc,timeout=5000){
+  if(pc.iceGatheringState==='complete') return Promise.resolve();
+  return new Promise(resolve=>{
+    let done=false;
+    const finish=()=>{if(done)return;done=true;pc.removeEventListener('icegatheringstatechange',check);clearTimeout(timer);resolve();};
+    const check=()=>{if(pc.iceGatheringState==='complete')finish();};
+    const timer=setTimeout(finish,timeout);
+    pc.addEventListener('icegatheringstatechange',check);
+  });
+}
+
+function cleanupWhatsAppCallLocal({hide=false}={}){
+  const call=activeWhatsAppCall;
+  if(call?.pollTimer) clearInterval(call.pollTimer);
+  if(call?.durationTimer) clearInterval(call.durationTimer);
+  try{call?.stream?.getTracks?.().forEach(track=>track.stop());}catch{}
+  try{call?.pc?.close?.();}catch{}
+  activeWhatsAppCall=null;
+  if(hide) document.getElementById('whatsappCallOverlay')?.classList.add('hidden');
+}
+
+window.closeWhatsAppCallOverlay=function(){
+  cleanupWhatsAppCallLocal({hide:true});
+};
+
+function startWhatsAppCallDurationTimer(){
+  if(!activeWhatsAppCall || activeWhatsAppCall.durationTimer) return;
+  activeWhatsAppCall.connectedAt=Date.now();
+  activeWhatsAppCall.durationTimer=setInterval(()=>{
+    const el=document.getElementById('waCallTimer');
+    if(el && activeWhatsAppCall?.connectedAt){
+      el.textContent=voiceDurationLabel(Date.now()-activeWhatsAppCall.connectedAt);
+    }
+  },500);
+}
+
+async function pollWhatsAppCall(){
+  const call=activeWhatsAppCall;
+  if(!call?.callId) return;
+  try{
+    const data=await apiFetch(`${API}/whatsapp/calls/${encodeURIComponent(call.callId)}`);
+    if(!activeWhatsAppCall || activeWhatsAppCall.callId!==call.callId) return;
+
+    const status=String(data?.status||'').toLowerCase();
+    if(data?.answerSdp && !call.answerApplied){
+      await call.pc.setRemoteDescription({type:'answer',sdp:data.answerSdp});
+      call.answerApplied=true;
+    }
+
+    if(status==='ringing' || status==='connecting'){
+      setWhatsAppCallUi(status,status==='ringing'?'Ça sonne chez le client…':'Connexion WhatsApp…');
+    }else if(status==='accepted'){
+      setWhatsAppCallUi(status,'Appel connecté');
+      startWhatsAppCallDurationTimer();
+    }else if(status==='rejected'){
+      setWhatsAppCallUi(status,'Le client a refusé l’appel.',true);
+      document.getElementById('waCallCloseBtn')?.classList.remove('hidden');
+      cleanupWhatsAppCallLocal({hide:false});
+    }else if(status==='terminated'){
+      setWhatsAppCallUi(status,'Appel terminé');
+      document.getElementById('waCallCloseBtn')?.classList.remove('hidden');
+      cleanupWhatsAppCallLocal({hide:false});
+    }
+  }catch(error){
+    console.warn('Suivi appel WhatsApp :',error);
+  }
+}
+
+window.startWhatsAppCall=async function(contact){
+  const item=conversations.find(entry=>entry.contact===contact)||{contact};
+  if(conversationChannel(item)!=='whatsapp') return;
+  if(activeWhatsAppCall){
+    alert('Un appel WhatsApp est déjà en cours sur ce poste.');
+    return;
+  }
+  if(!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection==='undefined'){
+    alert('Ce navigateur ne permet pas les appels WebRTC. Utilisez Safari, Chrome ou Edge récent en HTTPS.');
+    return;
+  }
+
+  const external=conversationExternalContact(item);
+  const overlay=ensureWhatsAppCallOverlay();
+  overlay.classList.remove('hidden');
+  document.getElementById('waCallCloseBtn')?.classList.add('hidden');
+  document.getElementById('waCallTitle').textContent=conversationDisplayName(item)||'Client WhatsApp';
+  document.getElementById('waCallNumber').textContent=`WhatsApp • +${external}`;
+  document.getElementById('waCallTimer').textContent='';
+  setWhatsAppCallUi('preparing','Autorisation du microphone…');
+
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false
+    });
+    const pc=new RTCPeerConnection({
+      iceServers:[{urls:'stun:stun.l.google.com:19302'}]
+    });
+    activeWhatsAppCall={contact,external,stream,pc,callId:'',status:'preparing',muted:false,answerApplied:false,pollTimer:null,durationTimer:null};
+    stream.getAudioTracks().forEach(track=>pc.addTrack(track,stream));
+
+    const remote=document.getElementById('waCallRemoteAudio');
+    pc.ontrack=event=>{
+      if(remote){remote.srcObject=event.streams?.[0]||new MediaStream([event.track]);remote.play?.().catch(()=>{});}
+    };
+    pc.onconnectionstatechange=()=>{
+      if(!activeWhatsAppCall || activeWhatsAppCall.pc!==pc) return;
+      if(pc.connectionState==='connected'){
+        setWhatsAppCallUi('accepted','Appel connecté');
+        startWhatsAppCallDurationTimer();
+      }
+      if(['failed','disconnected'].includes(pc.connectionState)){
+        setWhatsAppCallUi(pc.connectionState,'Connexion audio interrompue.',true);
+      }
+    };
+
+    setWhatsAppCallUi('preparing','Préparation de l’appel WhatsApp…');
+    const offer=await pc.createOffer({offerToReceiveAudio:true});
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    const data=await apiFetch(`${API}/whatsapp/calls/start`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contact,
+        externalContact:external,
+        phone:external,
+        sdp:pc.localDescription?.sdp||offer.sdp
+      })
+    });
+
+    if(!activeWhatsAppCall || activeWhatsAppCall.pc!==pc) return;
+    activeWhatsAppCall.callId=String(data?.callId||'');
+    if(!activeWhatsAppCall.callId) throw new Error('Meta n’a pas retourné l’identifiant de l’appel.');
+    setWhatsAppCallUi('connecting','Connexion WhatsApp…');
+    await pollWhatsAppCall();
+    activeWhatsAppCall.pollTimer=setInterval(pollWhatsAppCall,1100);
+  }catch(error){
+    const message=error?.message||'Impossible de démarrer l’appel WhatsApp.';
+    setWhatsAppCallUi('error',message,true);
+    document.getElementById('waCallCloseBtn')?.classList.remove('hidden');
+    cleanupWhatsAppCallLocal({hide:false});
+  }
+};
+
+window.toggleWhatsAppCallMute=function(){
+  if(!activeWhatsAppCall?.stream) return;
+  activeWhatsAppCall.muted=!activeWhatsAppCall.muted;
+  activeWhatsAppCall.stream.getAudioTracks().forEach(track=>{track.enabled=!activeWhatsAppCall.muted;});
+  const btn=document.getElementById('waCallMuteBtn');
+  if(btn){btn.textContent=activeWhatsAppCall.muted?'🔇':'🎤';btn.title=activeWhatsAppCall.muted?'Réactiver le micro':'Couper le micro';}
+};
+
+window.hangupWhatsAppCall=async function(){
+  const call=activeWhatsAppCall;
+  if(!call){
+    closeWhatsAppCallOverlay();
+    return;
+  }
+  setWhatsAppCallUi('terminating','Fin de l’appel…');
+  if(call.callId){
+    try{
+      await apiFetch(`${API}/whatsapp/calls/${encodeURIComponent(call.callId)}/terminate`,{method:'POST'});
+    }catch(error){console.warn('Terminaison WhatsApp :',error);}
+  }
+  cleanupWhatsAppCallLocal({hide:true});
+};
+
 function setConversationComposerMenuState(menuId, buttonId, open){
   const menu = document.getElementById(menuId);
   const button = document.getElementById(buttonId);
@@ -9811,6 +10356,7 @@ window.clearConversationAttachment = function(){
   document
     .getElementById('conversationAttachmentChip')
     ?.classList.add('hidden');
+  syncConversationPrimaryAction();
 };
 
 function bindSmartKeyboardShortcuts(){
@@ -9825,6 +10371,7 @@ function bindSmartKeyboardShortcuts(){
 
   textarea.dataset.smartBound = '1';
   autoResizeConversationComposer(textarea);
+  syncConversationPrimaryAction();
 
   textarea.addEventListener(
     'focus',
@@ -9833,7 +10380,10 @@ function bindSmartKeyboardShortcuts(){
 
   textarea.addEventListener(
     'input',
-    () => autoResizeConversationComposer(textarea)
+    () => {
+      autoResizeConversationComposer(textarea);
+      syncConversationPrimaryAction();
+    }
   );
 
   textarea.addEventListener(
@@ -9983,6 +10533,7 @@ function applyStoredComposerMode(){
   if(composer.classList.contains('whatsapp-composer')){
     composer.classList.remove('is-compact');
     localStorage.removeItem('mondecoComposerCompact');
+    requestAnimationFrame(()=>syncConversationPrimaryAction());
     return;
   }
 
@@ -10049,6 +10600,7 @@ window.selectConversationAttachment = function(input, type){
 
   closeConversationComposerMenus();
   document.getElementById('conversationQuickReply')?.focus();
+  syncConversationPrimaryAction();
 };
 
 window.sendConversationCommercialReply = async function(contact){
@@ -10063,6 +10615,7 @@ window.sendConversationCommercialReply = async function(contact){
     String(textEl?.value || '').trim();
 
   const file =
+    conversationVoiceFile ||
     document.getElementById('conversationCameraFile')?.files?.[0] ||
     document.getElementById('conversationImageFile')?.files?.[0] ||
     document.getElementById('conversationDocumentFile')?.files?.[0] ||
@@ -10191,6 +10744,9 @@ window.sendConversationCommercialReply = async function(contact){
       );
     }
 
+    if(conversationVoiceFile){
+      clearConversationVoice();
+    }
     await loadConversations();
     await window.openConversation(contact);
   }catch(error){
@@ -10202,6 +10758,7 @@ window.sendConversationCommercialReply = async function(contact){
     if(currentButton){
       currentButton.disabled = false;
       currentButton.textContent = oldText;
+      syncConversationPrimaryAction();
     }
   }
 };
