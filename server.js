@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.8
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.6
 // server.js
 //
 // Ajouts V5 :
@@ -29,10 +29,7 @@ const {
   setCustomizationHandler,
   setCommercialSendHandler,
   registerCommercialEscalation,
-  resolveCommercialSla,
-  cloudinaryConfigured,
-  storeCloudinaryBuffer,
-  cloudinaryMimeFromFilename
+  resolveCommercialSla
 } = require('./Admin');
 
 const app = express();
@@ -274,7 +271,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.8');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.6');
 console.log(
   '=============================================='
 );
@@ -314,12 +311,6 @@ console.log(
   CLOUDFLARE_API_TOKEN
     ? '✅ OK'
     : '⚠️ MANQUANT'
-);
-console.log(
-  'CLOUDINARY MEDIA :',
-  cloudinaryConfigured()
-    ? '✅ OK — médias conversations hors Volume Railway'
-    : '⚠️ NON CONFIGURÉ — fallback Volume Railway'
 );
 console.log('DATA_DIR :', DATA_DIR);
 console.log(
@@ -397,7 +388,7 @@ function conversationChannel(contact, state = null) {
 }
 
 function writeJsonAtomic(filePath, data) {
-  // V6.20.5 : un nom temporaire unique évite que deux écritures
+  // V6.20.6 : un nom temporaire unique évite que deux écritures
   // simultanées se partagent le même .tmp et provoquent ENOENT/HTTP 500.
   const tmp = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
 
@@ -760,7 +751,7 @@ function normalizeConversationMediaType(value) {
   return 'file';
 }
 
-async function saveConversationMediaBuffer({
+function saveConversationMediaBuffer({
   buffer,
   mimetype,
   type = 'file',
@@ -821,23 +812,11 @@ async function saveConversationMediaBuffer({
       filename
     );
 
-  let storage = 'railway';
-
-  if (cloudinaryConfigured()) {
-    try {
-      await storeCloudinaryBuffer({
-        buffer,
-        mimetype: safeString(mimetype) || cloudinaryMimeFromFilename(filename),
-        filename,
-        scope: 'conversation-media'
-      });
-      storage = 'cloudinary';
-    } catch (cloudinaryError) {
-      console.warn('⚠️ Cloudinary conversation : fallback Volume Railway :', cloudinaryError.message);
-      if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, buffer);
-    }
-  } else if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, buffer);
+  if (!fs.existsSync(filePath)) {
+    fs.writeFileSync(
+      filePath,
+      buffer
+    );
   }
 
   return {
@@ -858,7 +837,6 @@ async function saveConversationMediaBuffer({
       buffer.length,
     url:
       `/admin/conversation-media/${encodeURIComponent(filename)}`,
-    storage,
     filename
   };
 }
@@ -1015,7 +993,7 @@ async function persistInstagramAttachments(
         );
 
       saved.push(
-        await saveConversationMediaBuffer({
+        saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -1148,7 +1126,7 @@ async function persistFacebookAttachments(
         );
 
       saved.push(
-        await saveConversationMediaBuffer({
+        saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -1688,17 +1666,7 @@ function markCustomerMessage(
         false,
 
       followUpsSent:
-        0,
-
-      // V6.20.8 — une conversation terminée doit se rouvrir dès qu'un
-      // nouveau message CLIENT arrive. Sinon l'inbox la garde cachée dans
-      // le filtre « terminées » alors que la notification et le webhook
-      // existent bien. Le takeover/human pause est volontairement conservé.
-      resolved:
-        false,
-
-      resolvedAt:
-        null
+        0
     })
   );
 }
@@ -5074,20 +5042,6 @@ async function persistInstagramProfilePicture(
 
     const filename = `instagram-${scopedId}.${extension}`;
 
-    if (cloudinaryConfigured()) {
-      try {
-        await storeCloudinaryBuffer({
-          buffer,
-          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
-          filename,
-          scope: 'conversation-profile'
-        });
-        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-      } catch (cloudinaryError) {
-        console.warn('⚠️ Profil Instagram : Cloudinary indisponible, fallback local :', cloudinaryError.message);
-      }
-    }
-
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(
         CONVERSATION_PROFILE_DIR,
@@ -5098,7 +5052,11 @@ async function persistInstagramProfilePicture(
       }
     }
 
-    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    fs.writeFileSync(
+      path.join(CONVERSATION_PROFILE_DIR, filename),
+      buffer
+    );
+
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
     console.warn(
@@ -5185,20 +5143,6 @@ async function persistFacebookProfilePicture(profilePictureUrl, psid) {
 
     const extension = profilePictureExtension(response.headers.get('content-type'));
     const filename = `facebook-${scopedId}.${extension}`;
-
-    if (cloudinaryConfigured()) {
-      try {
-        await storeCloudinaryBuffer({
-          buffer,
-          mimetype: response.headers.get('content-type') || cloudinaryMimeFromFilename(filename),
-          filename,
-          scope: 'conversation-profile'
-        });
-        return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
-      } catch (cloudinaryError) {
-        console.warn('⚠️ Profil Facebook : Cloudinary indisponible, fallback local :', cloudinaryError.message);
-      }
-    }
 
     for (const ext of ['jpg', 'png', 'webp', 'gif']) {
       const candidate = path.join(CONVERSATION_PROFILE_DIR, `facebook-${scopedId}.${ext}`);
@@ -7503,7 +7447,7 @@ async function processSingleMessage(message) {
           );
 
         const savedMedia =
-          await saveConversationMediaBuffer({
+          saveConversationMediaBuffer({
             buffer:
               preparedWhatsAppImage.buffer,
             mimetype:
@@ -8122,7 +8066,7 @@ async function processWhatsAppImage(
         );
 
       const savedMedia =
-        await saveConversationMediaBuffer({
+        saveConversationMediaBuffer({
           buffer:
             image.buffer,
           mimetype:
