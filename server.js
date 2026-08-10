@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.20.6
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + IA + RESPONSABLE COMMERCIAL + SLA — V6.22.0
 // server.js
 //
 // Ajouts V5 :
@@ -271,7 +271,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.20.6');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.22.0');
 console.log(
   '=============================================='
 );
@@ -2135,6 +2135,8 @@ function messageHasAdReferral(message) {
     referral?.source_id ||
     referral?.source_url ||
     referral?.ad_id ||
+    referral?.ctwa_clid ||
+    safeString(referral?.source_type).toLowerCase() === 'ad' ||
     safeString(referral?.source).toUpperCase() === 'ADS'
   );
 }
@@ -2191,6 +2193,8 @@ function normalizeAdReferral(referral) {
   const normalized = {
     adId:
       safeString(referral?.ad_id),
+    ctwaClid:
+      safeString(referral?.ctwa_clid),
     sourceId:
       safeString(
         referral?.source_id ||
@@ -2252,6 +2256,82 @@ function normalizeAdReferral(referral) {
   }
 
   return normalized;
+}
+
+async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '') {
+  const normalized = normalizeAdReferral(referral);
+  const remoteUrl = safeString(normalized?.mediaUrl);
+
+  if (!remoteUrl) {
+    return null;
+  }
+
+  const existing = getConversationState(contact)?.adReferral || {};
+  if (safeString(existing?.storedMediaUrl)) {
+    return safeString(existing.storedMediaUrl);
+  }
+
+  try {
+    let response = null;
+
+    if (WHATSAPP_TOKEN) {
+      response = await fetch(remoteUrl, {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`
+        }
+      });
+    }
+
+    // Les URL de créatives Meta sont souvent déjà signées. Si l'en-tête
+    // Authorization n'est pas accepté, retenter sans token.
+    if (!response || !response.ok) {
+      response = await fetch(remoteUrl);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Téléchargement visuel publicité WhatsApp impossible (${response.status}).`);
+    }
+
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > MAX_CONVERSATION_MEDIA_BYTES) {
+      throw new Error('Visuel publicité WhatsApp trop volumineux.');
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const mediaType = safeString(normalized?.mediaType) || 'image';
+    const mimetype =
+      response.headers.get('content-type') ||
+      (mediaType === 'video' ? 'video/mp4' : 'image/jpeg');
+
+    const saved = saveConversationMediaBuffer({
+      buffer,
+      mimetype,
+      type: mediaType,
+      messageId: `${messageId || Date.now()}-ad`,
+      index: 0,
+      channel: 'whatsapp',
+      direction: 'source-ad'
+    });
+
+    updateConversationState(
+      contact,
+      current => ({
+        ...current,
+        cameFromAd: true,
+        adReferral: {
+          ...(current.adReferral || {}),
+          ...normalized,
+          storedMediaUrl: safeString(saved?.url) || safeString(current?.adReferral?.storedMediaUrl),
+          productHint: normalized?.productHint || safeString(current?.adReferral?.productHint)
+        }
+      })
+    );
+
+    return safeString(saved?.url);
+  } catch (error) {
+    console.warn('⚠️ Visuel publicité WhatsApp non sauvegardé :', error.message);
+    return null;
+  }
 }
 
 function rememberAdReferral(contact, referral) {
@@ -7494,6 +7574,15 @@ async function processSingleMessage(message) {
     rememberAdReferral(
       from,
       message?.referral || null
+    );
+
+    // V6.22.0 : conserver aussi le visuel de la publicité Click-to-WhatsApp
+    // dans /data afin que le commercial voie la publication d'origine même
+    // lorsque l'URL CDN Meta expire plus tard.
+    await persistWhatsAppAdReferralMedia(
+      from,
+      message?.referral || null,
+      messageId
     );
   }
 
