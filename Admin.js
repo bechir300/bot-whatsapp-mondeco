@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux — V6.26.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre — V6.27.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -14300,13 +14300,26 @@ async function refreshSocialThreadIfNeeded(comment, force = false) {
   }
 }
 
+function socialCommentNeedsReply(item) {
+  if (!item || item.deleted || safeString(item?.direction) === 'outgoing') return false;
+  const createdMs = Date.parse(safeString(item?.createdAt)) || 0;
+  const publicReplyMs = Date.parse(safeString(item?.lastReplyAt)) || 0;
+  const privateReplyMs = Date.parse(safeString(item?.privateReplySentAt)) || 0;
+  const latestReplyMs = Math.max(publicReplyMs, privateReplyMs);
+  return latestReplyMs <= createdMs;
+}
+
 function socialCommentCounts(items, user) {
   const active = items.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
+  const pending = active.filter(socialCommentNeedsReply);
   return {
     all: active.length,
     facebook: active.filter(item => item.channel === 'facebook').length,
     instagram: active.filter(item => item.channel === 'instagram').length,
     unread: active.filter(item => !socialCommentReadByUser(item,user)).length,
+    pendingReply: pending.length,
+    pendingFacebook: pending.filter(item => item.channel === 'facebook').length,
+    pendingInstagram: pending.filter(item => item.channel === 'instagram').length,
     hidden: active.filter(item => item.isHidden === true).length,
     privateReply: active.filter(item => Boolean(item.privateReplySentAt)).length
   };
@@ -14340,6 +14353,7 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
     const q = safeString(req.query?.q).toLowerCase();
     if (['facebook','instagram'].includes(channel)) comments = comments.filter(item => item.channel === channel);
     if (filter === 'unread') comments = comments.filter(item => !socialCommentReadByUser(item,req.user));
+    if (filter === 'pending') comments = comments.filter(socialCommentNeedsReply);
     if (filter === 'hidden') comments = comments.filter(item => item.isHidden === true);
     if (filter === 'private') comments = comments.filter(item => Boolean(item.privateReplySentAt));
     if (q) {
@@ -14356,6 +14370,7 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
     const items = comments.slice(offset, offset + limit).map(comment => ({
       ...comment,
       read: socialCommentReadByUser(comment,req.user),
+      pendingReply: socialCommentNeedsReply(comment),
       post: postMap.get(socialKey(comment.channel, comment.postId)) || null
     }));
     return res.json({ items, total:comments.length, counts, offset, limit, hasMore:offset+limit<comments.length });
@@ -14572,6 +14587,84 @@ function conversationEntryPreview(entry) {
   return 'Nouvelle conversation';
 }
 
+function conversationEntryNeedsDirection(entry) {
+  const direction = safeString(entry?.direction || entry?.attachment_direction).toLowerCase();
+  const senderKind = safeString(entry?.sender_kind).toLowerCase();
+  const source = safeString(entry?.source).toLowerCase();
+  const action = safeString(entry?.action).toLowerCase();
+  const incoming = Boolean(safeString(entry?.incoming));
+  const reply = Boolean(safeString(entry?.reply));
+  const inbound = direction === 'incoming' || senderKind === 'client' || incoming;
+  const outbound = direction === 'outgoing' || entry?.reply_sent === true ||
+    source.startsWith('commercial') || action === 'ai_reply' || action === 'commercial_reply' ||
+    (!inbound && reply);
+  return { inbound, outbound };
+}
+
+function conversationNeedsReplyFromEntries(entries = [], state = {}) {
+  if (state?.resolved === true) return false;
+  let lastInboundMs = 0;
+  let lastOutboundMs = 0;
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const ms = conversationTimeMs(entry?.time || entry?.createdAt || entry?.timestamp);
+    if (!Number.isFinite(ms) || ms <= 0) continue;
+    const flags = conversationEntryNeedsDirection(entry);
+    if (flags.inbound) lastInboundMs = Math.max(lastInboundMs, ms);
+    if (flags.outbound) lastOutboundMs = Math.max(lastOutboundMs, ms);
+  }
+  const stateInboundMs = conversationTimeMs(state?.lastCustomerAt);
+  const stateHumanMs = conversationTimeMs(state?.lastHumanAt);
+  const stateBotMs = conversationTimeMs(state?.lastBotAt);
+  if (Number.isFinite(stateInboundMs)) lastInboundMs = Math.max(lastInboundMs, stateInboundMs);
+  if (Number.isFinite(stateHumanMs)) lastOutboundMs = Math.max(lastOutboundMs, stateHumanMs);
+  if (Number.isFinite(stateBotMs)) lastOutboundMs = Math.max(lastOutboundMs, stateBotMs);
+  return lastInboundMs > 0 && lastInboundMs > lastOutboundMs;
+}
+
+function pendingInteractionCountsForUser(user) {
+  const log = loadWhatsAppLog();
+  const states = loadConversationStatesAdmin();
+  const byContact = {};
+  for (const entry of log) {
+    const contact = safeString(entry?.contact);
+    if (!contact) continue;
+    (byContact[contact] ||= []).push(entry);
+  }
+  const cutoffAt = historyImportCutoffIso();
+  const messageItems = Object.entries(byContact).map(([contact, entries]) => {
+    const state = states[contact] || {};
+    const sorted = contact.startsWith('instagram:')
+      ? normalizeInstagramThreadEntries(entries)
+      : [...entries].sort(conversationEntryComparator);
+    const last = sorted[sorted.length - 1] || {};
+    const channelRaw = safeString(last?.channel || state?.channel).toLowerCase();
+    const channel = channelRaw === 'instagram' || contact.startsWith('instagram:')
+      ? 'instagram'
+      : channelRaw === 'facebook' || contact.startsWith('facebook:')
+        ? 'facebook'
+        : 'whatsapp';
+    return {
+      contact,
+      channel,
+      pending: conversationNeedsReplyFromEntries(sorted, state),
+      resolved: state?.resolved === true,
+      lastTime: safeString(last?.time || state?.lastCustomerAt)
+    };
+  }).filter(item => historyTimeIsRecent(item.lastTime, cutoffAt));
+  const pendingMessages = messageItems.filter(item => !item.resolved && item.pending);
+  const commentCounts = socialCommentCounts(loadSocialComments(), user);
+  return {
+    messages: pendingMessages.length,
+    whatsapp: pendingMessages.filter(item => item.channel === 'whatsapp').length,
+    instagramMessages: pendingMessages.filter(item => item.channel === 'instagram').length,
+    facebookMessages: pendingMessages.filter(item => item.channel === 'facebook').length,
+    comments: Number(commentCounts.pendingReply || 0),
+    instagramComments: Number(commentCounts.pendingInstagram || 0),
+    facebookComments: Number(commentCounts.pendingFacebook || 0),
+    total: pendingMessages.length + Number(commentCounts.pendingReply || 0)
+  };
+}
+
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
     const log = loadWhatsAppLog();
@@ -14686,6 +14779,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         humanPaused: Boolean(state.humanPaused),
         pausedUntil: safeString(state?.pausedUntil),
         awaitingResponse: Boolean(state.awaitingResponse),
+        pendingReply: conversationNeedsReplyFromEntries(entries, state),
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
@@ -14728,6 +14822,10 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       instagram: countBase.filter(item => !item.resolved && item.channel === 'instagram').length,
       facebook: countBase.filter(item => !item.resolved && item.channel === 'facebook').length,
       unread: countBase.filter(item => !item.resolved && Number(item.unreadCount || 0) > 0).length,
+      pendingReply: countBase.filter(item => !item.resolved && item.pendingReply === true).length,
+      pendingWhatsApp: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'whatsapp').length,
+      pendingInstagram: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'instagram').length,
+      pendingFacebook: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'facebook').length,
       priority: countBase.filter(item => !item.resolved && item.priority).length,
       commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
       sla: countBase.filter(item => !item.resolved && ['pending','late'].includes(safeString(item?.slaStatus))).length,
@@ -14744,6 +14842,8 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
       } else if (requestedFilter === 'unread') {
         visibleConversations = visibleConversations.filter(item => Number(item.unreadCount || 0) > 0);
+      } else if (requestedFilter === 'pending') {
+        visibleConversations = visibleConversations.filter(item => item.pendingReply === true);
       } else if (requestedFilter === 'priority') {
         visibleConversations = visibleConversations.filter(item => item.priority === true);
       } else if (requestedFilter === 'commercial') {
@@ -15224,7 +15324,7 @@ router.get(
       const sinceMs = Date.parse(safeString(req.query?.since));
       const store = loadNotificationsStore();
 
-      let items = store.items
+      let messageItems = store.items
         .filter(item => notificationVisibleToUser(item, req.user, states))
         .map(item => ({
           ...item,
@@ -15234,20 +15334,46 @@ router.get(
           kind: item?.urgent ? 'commercial' : 'message'
         }));
 
+      const commentItems = loadSocialComments()
+        .filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing')
+        .map(item => ({
+          id: `social-comment:${safeString(item.key)}`,
+          notificationId: `social-comment:${safeString(item.key)}`,
+          commentKey: safeString(item.key),
+          postId: safeString(item.postId),
+          contact: '',
+          channel: safeString(item.channel),
+          profileName: safeString(item.authorName || item.authorUsername),
+          username: safeString(item.authorUsername),
+          profilePicture: safeString(item.authorPicture),
+          preview: safeString(item.text) || 'Nouveau commentaire',
+          createdAt: safeString(item.createdAt) || new Date().toISOString(),
+          read: socialCommentReadByUser(item, req.user),
+          pendingReply: socialCommentNeedsReply(item),
+          kind: 'comment',
+          urgent: false,
+          action: 'social_comment'
+        }));
+
+      let items = [...messageItems, ...commentItems];
       if (['instagram','whatsapp','facebook'].includes(filter)) {
         items = items.filter(item => item.channel === filter);
       } else if (filter === 'commercial') {
         items = items.filter(item => item.urgent === true);
+      } else if (filter === 'comments') {
+        items = items.filter(item => item.kind === 'comment');
+      } else if (filter === 'pending') {
+        items = items.filter(item => item.kind === 'comment' ? item.pendingReply === true : true);
       }
 
       items.sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
 
-      const unreadCount = store.items
-        .filter(item => notificationVisibleToUser(item, req.user, states))
-        .filter(item => !(Array.isArray(item?.readBy) && item.readBy.includes(userKey)))
-        .length;
+      const unreadMessageCount = messageItems.filter(item => item.read !== true).length;
+      const unreadCommentCount = commentItems.filter(item => item.read !== true).length;
+      const unreadCount = unreadMessageCount + unreadCommentCount;
+      const pendingCounts = pendingInteractionCountsForUser(req.user);
 
-      const events = items
+      const messageEvents = messageItems
         .filter(item => {
           if (!Number.isFinite(sinceMs)) return false;
           const ms = Date.parse(item?.createdAt || '');
@@ -15269,6 +15395,27 @@ router.get(
           profileName: safeString(item.profileName),
           profilePicture: safeString(item.profilePicture),
           attachmentPreview: safeString(item.attachmentPreview)
+        }));
+
+      const commentEvents = commentItems
+        .filter(item => {
+          if (!Number.isFinite(sinceMs)) return false;
+          const ms = Date.parse(item?.createdAt || '');
+          return Number.isFinite(ms) && ms > sinceMs;
+        })
+        .map(item => ({
+          id: item.id,
+          notificationId: item.id,
+          commentKey: item.commentKey,
+          time: item.createdAt,
+          preview: item.preview,
+          action: 'social_comment',
+          urgent: false,
+          kind: 'comment',
+          channel: item.channel,
+          username: item.username,
+          profileName: item.profileName,
+          profilePicture: item.profilePicture
         }));
 
       const liveSlaEvents = [];
@@ -15340,8 +15487,11 @@ router.get(
       return res.json({
         serverTime: new Date().toISOString(),
         unreadCount,
-        items: items.slice(0, 200),
-        events: [...events, ...liveSlaEvents, ...taskEvents, ...reportEvents]
+        unreadMessageCount,
+        unreadCommentCount,
+        pendingCounts,
+        items: items.slice(0, 250),
+        events: [...messageEvents, ...commentEvents, ...liveSlaEvents, ...taskEvents, ...reportEvents]
       });
     } catch (error) {
       console.error('❌ Notifications Admin :', error);
@@ -15356,6 +15506,12 @@ router.post(
   (req, res) => {
     const id = safeString(req.params.id);
     const key = notificationUserKey(req.user);
+    if (id.startsWith('social-comment:')) {
+      const commentKey = id.slice('social-comment:'.length);
+      const updated = markSocialCommentRead(commentKey, req.user);
+      if (!updated) return res.status(404).json({ error: 'Commentaire introuvable.' });
+      return res.json({ success: true, kind: 'comment' });
+    }
     const store = loadNotificationsStore();
     let found = false;
 
@@ -15389,6 +15545,15 @@ router.post(
     });
 
     saveNotificationsStore(store);
+
+    const comments = loadSocialComments().map(comment => {
+      if (comment?.deleted || safeString(comment?.direction) === 'outgoing') return comment;
+      const readBy = Array.isArray(comment?.readBy) ? [...comment.readBy] : [];
+      if (!readBy.includes(key)) readBy.push(key);
+      return { ...comment, readBy };
+    });
+    saveSocialComments(comments);
+
     return res.json({ success: true });
   }
 );
