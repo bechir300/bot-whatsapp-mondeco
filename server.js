@@ -86,9 +86,9 @@ const INSTAGRAM_ACCOUNT_ID =
     ''
   ).trim();
 
-// V6.20 — Facebook Messenger est un canal de supervision MONDECO.
-// Les réponses restent gérées côté Meta Business AI / Business Suite :
-// l'IA MONDECO n'envoie jamais de réponse automatique sur ce canal.
+// V6.25 — Facebook Messenger : les commerciaux peuvent répondre depuis MONDECO.
+// L'IA MONDECO reste désactivée sur Facebook afin d'éviter une double automatisation
+// avec les outils Meta éventuellement actifs sur la Page.
 const FACEBOOK_PAGE_ID =
   (
     process.env.FACEBOOK_PAGE_ID ||
@@ -2138,7 +2138,8 @@ function messageHasAdReferral(message) {
     referral?.ad_id ||
     referral?.ctwa_clid ||
     safeString(referral?.source_type).toLowerCase() === 'ad' ||
-    safeString(referral?.source).toUpperCase() === 'ADS'
+    safeString(referral?.source).toUpperCase() === 'ADS' ||
+    Boolean(referral?.ads_context_data)
   );
 }
 
@@ -2227,6 +2228,8 @@ function normalizeAdReferral(referral) {
       safeString(referral?.creative_id || adsContext?.creative_id),
     creativeName:
       safeString(referral?.creative_name || adsContext?.creative_name),
+    postId:
+      safeString(referral?.post_id || adsContext?.post_id),
     sourceType:
       safeString(referral?.source_type),
     mediaType:
@@ -2251,7 +2254,10 @@ function normalizeAdReferral(referral) {
     !normalized.sourceId &&
     !normalized.sourceUrl &&
     !normalized.headline &&
-    !normalized.body
+    !normalized.body &&
+    !normalized.adTitle &&
+    !normalized.postId &&
+    !normalized.mediaUrl
   ) {
     return null;
   }
@@ -4706,12 +4712,6 @@ setCommercialSendHandler(
         conversationChannel(contact, getConversationState(contact))
       );
 
-    if (resolvedChannel === 'facebook') {
-      throw new Error(
-        'Facebook est en mode supervision : les réponses restent gérées dans Meta Business AI / Business Suite.'
-      );
-    }
-
     if (
       file &&
       resolvedChannel === 'instagram'
@@ -4723,7 +4723,7 @@ setCommercialSendHandler(
 
     const resolvedExternal =
       safeString(externalContact) ||
-      (resolvedChannel === 'instagram'
+      (resolvedChannel === 'instagram' || resolvedChannel === 'facebook'
         ? conversationExternalId(contact)
         : normalizePhone(phone || contact));
 
@@ -4738,6 +4738,14 @@ setCommercialSendHandler(
 
     if (resolvedChannel === 'instagram') {
       result = await sendInstagramMessage(
+        resolvedExternal,
+        text
+      );
+    } else if (resolvedChannel === 'facebook') {
+      if (file) {
+        throw new Error('Les pièces jointes Facebook ne sont pas encore activées dans MONDECO. Envoyez une réponse texte.');
+      }
+      result = await sendFacebookMessage(
         resolvedExternal,
         text
       );
@@ -5151,6 +5159,74 @@ async function sendWhatsAppMedia(
 }
 
 // ============================================================
+// V6.25 — ENVOI FACEBOOK MESSENGER PAR UN COMMERCIAL
+// Meta Messenger Send API : destinataire = PSID, messaging_type = RESPONSE.
+// ============================================================
+
+async function sendFacebookMessage(to, text) {
+  if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
+    throw new Error('FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  }
+  if (!FACEBOOK_PAGE_ID) {
+    throw new Error('FACEBOOK_PAGE_ID manquant.');
+  }
+
+  const cleanRecipient = safeString(to);
+  const cleanText = safeString(text);
+
+  if (!cleanRecipient) {
+    throw new Error('Destinataire Facebook Messenger manquant.');
+  }
+  if (!cleanText) {
+    throw new Error('Message Facebook Messenger vide.');
+  }
+
+  console.log('📤 ENVOI FACEBOOK MESSENGER VERS :', cleanRecipient);
+
+  const url =
+    `https://graph.facebook.com/${META_API_VERSION}/` +
+    `${encodeURIComponent(FACEBOOK_PAGE_ID)}/messages`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      recipient: { id: cleanRecipient },
+      messaging_type: 'RESPONSE',
+      message: { text: cleanText }
+    })
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error('❌ Meta Facebook Messenger API :', JSON.stringify(data));
+    throw new Error(
+      data?.error?.message ||
+      `Erreur Facebook Messenger HTTP ${response.status}`
+    );
+  }
+
+  const messageId = safeString(data?.message_id);
+  if (messageId) {
+    // Évite de dupliquer dans l'historique l'echo webhook du message
+    // que MONDECO vient juste d'envoyer.
+    processedMessageIds.set(messageId, Date.now());
+  }
+
+  console.log('✅ Meta Facebook a accepté le message :', messageId || 'ID non retourné');
+  return data;
+}
+
+// ============================================================
 // ENVOI INSTAGRAM
 // ============================================================
 
@@ -5320,7 +5396,8 @@ function facebookSourceContext(event, message, referral, attachments = []) {
   const referralLooksLikeAd =
     safeString(referral?.source).toUpperCase() === 'ADS' ||
     safeString(referral?.source_type).toLowerCase() === 'ad' ||
-    Boolean(referral?.ad_id);
+    Boolean(referral?.ad_id) ||
+    Boolean(referral?.ads_context_data);
 
   if (ad && referralLooksLikeAd) {
     return {
@@ -6100,7 +6177,7 @@ app.post('/webhook', (req, res) => {
 // ============================================================
 
 // ============================================================
-// V6.20 — WEBHOOK FACEBOOK MESSENGER (SUPERVISION UNIQUEMENT)
+// V6.25 — WEBHOOK FACEBOOK MESSENGER + RÉPONSES COMMERCIALES
 // ============================================================
 
 function facebookEventIsoTime(event, entry = null) {
@@ -6164,7 +6241,7 @@ async function processFacebookBusinessOutboundEvent({
       externalContact: customerId,
       facebookPsid: customerId,
       facebookPageId: safeString(entryPageId || FACEBOOK_PAGE_ID),
-      facebookResponseMode: 'meta_business_ai',
+      facebookResponseMode: 'commercial_enabled',
       mondecoAiEnabled: false,
       aiModePreference: 'meta',
       aiModeChoicePending: false,
@@ -6230,7 +6307,8 @@ async function processFacebookIncomingEvent({
     normalizedAd && (
       safeString(referral?.source).toUpperCase() === 'ADS' ||
       safeString(referral?.source_type).toLowerCase() === 'ad' ||
-      Boolean(referral?.ad_id)
+      Boolean(referral?.ad_id) ||
+      Boolean(referral?.ads_context_data)
     )
   );
 
@@ -6308,7 +6386,7 @@ async function processFacebookIncomingEvent({
       externalContact: senderId,
       facebookPsid: senderId,
       facebookPageId: pageId,
-      facebookResponseMode: 'meta_business_ai',
+      facebookResponseMode: 'commercial_enabled',
       mondecoAiEnabled: false,
       aiModePreference: 'meta',
       aiModeChoicePending: false,
@@ -6463,7 +6541,7 @@ async function processFacebookMessageEdit({ event, entryPageId = '', stream = 'm
       externalContact: customerId,
       facebookPsid: customerId,
       facebookPageId: safeString(entryPageId || FACEBOOK_PAGE_ID),
-      facebookResponseMode: 'meta_business_ai',
+      facebookResponseMode: 'commercial_enabled',
       mondecoAiEnabled: false,
       aiModePreference: 'meta'
     })
