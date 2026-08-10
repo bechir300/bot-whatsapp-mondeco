@@ -5593,6 +5593,21 @@ body.inbox-page-active .main{
 
 body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comments-mode #inboxComposerHost{display:block !important}.comments-mode #inboxCustomerPanel{display:block}.comments-mode #toggleInboxFocusBtn .inbox-toolbar-label{display:inline}
 @media(max-width:900px){.inbox-mode-tabs{margin-top:4px}.inbox-mode-tab{padding:4px 7px}.comment-detail-shell{padding:10px 8px 125px}.social-post-media{max-height:52dvh}.comment-card.reply{margin-left:18px}.social-comment-composer{padding-left:7px;padding-right:7px}.social-comment-actions{overflow-x:auto;flex-wrap:nowrap}.social-comment-action{flex:0 0 auto}.social-comment-compose-row{grid-template-columns:minmax(0,1fr) 44px}.social-comment-send{width:44px;padding:0;font-size:0}.social-comment-send::after{content:'➤';font-size:18px}}
+
+/* ==========================================================
+   MONDECO V6.27 — compteurs « à répondre » + sonneries réseau
+   ========================================================== */
+.pending-work-summary{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:5px}
+.pending-work-pill{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:4px 8px;border:1px solid #e4ded8;border-radius:999px;background:#fff;font-size:9px;font-weight:850;color:#4b4540;cursor:pointer}
+.pending-work-pill strong{font-size:11px;color:#171513}
+.pending-work-pill.total{background:#171513;color:#fff;border-color:#171513}.pending-work-pill.total strong{color:#fff}
+.inbox-mode-tab .mode-count.pending{background:#ed1c24}
+.notification-kind-badge{display:inline-flex;align-items:center;margin-left:5px;padding:2px 5px;border-radius:999px;background:#f1eeea;color:#5d5750;font-size:8px;font-weight:850}
+.notification-item.pending-reply{box-shadow:inset 3px 0 0 #ed1c24}
+.notification-network-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px;background:#888}
+.notification-network-dot.whatsapp{background:#25d366}.notification-network-dot.instagram{background:#c13584}.notification-network-dot.facebook{background:#1877f2}
+@media(max-width:760px){.pending-work-summary{width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.pending-work-pill{flex:0 0 auto}}
+
 </style>
 </head>
 
@@ -5894,13 +5909,14 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.26.0</span>
+              <span class="inbox-version">V6.27.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
-              <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages</button>
-              <button id="inboxModeCommentsBtn" class="inbox-mode-tab" type="button" onclick="setInboxInteractionMode('comments')">💭 Commentaires <span id="commentsUnreadBadge" class="mode-count hidden">0</span></button>
+              <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
+              <button id="inboxModeCommentsBtn" class="inbox-mode-tab" type="button" onclick="setInboxInteractionMode('comments')">💭 Commentaires <span id="commentsPendingBadge" class="mode-count pending hidden" title="Commentaires à répondre">0</span></button>
             </div>
             <div id="inboxMiniSub" class="inbox-mini-sub">WhatsApp • Instagram • Facebook</div>
+            <div id="pendingWorkSummary" class="pending-work-summary" aria-label="Interactions à répondre"></div>
           </div>
 
           <div class="inbox-command-search">
@@ -5931,6 +5947,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             <button class="inbox-filter channel instagram" data-filter="instagram"><span class="channel-dot"></span>Instagram <span id="filterCountInstagram">0</span></button>
             <button class="inbox-filter channel facebook" data-filter="facebook"><span class="channel-dot"></span>Facebook <span id="filterCountFacebook">0</span></button>
             <button class="inbox-filter" data-filter="unread">Non lus <span id="filterCountUnread">0</span></button>
+            <button class="inbox-filter" data-filter="pending">À répondre <span id="filterCountPending">0</span></button>
             <button class="inbox-filter" data-filter="priority">Priorité <span id="filterCountPriority">0</span></button>
             <button class="inbox-filter" data-filter="commercial">Commercial <span id="filterCountCommercial">0</span></button>
             <button class="inbox-filter" data-filter="sla">SLA <span id="filterCountSla">0</span></button>
@@ -5943,6 +5960,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             <button class="inbox-filter channel facebook" data-comment-filter="facebook"><span class="channel-dot"></span>Facebook <span id="commentCountFacebook">0</span></button>
             <button class="inbox-filter channel instagram" data-comment-filter="instagram"><span class="channel-dot"></span>Instagram <span id="commentCountInstagram">0</span></button>
             <button class="inbox-filter" data-comment-filter="unread">Non lus <span id="commentCountUnread">0</span></button>
+            <button class="inbox-filter" data-comment-filter="pending">À répondre <span id="commentCountPending">0</span></button>
             <button class="inbox-filter" data-comment-filter="hidden">🙈 Masqués <span id="commentCountHidden">0</span></button>
             <button class="inbox-filter" data-comment-filter="private">✉️ Privé envoyé <span id="commentCountPrivate">0</span></button>
           </div>
@@ -5994,7 +6012,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
     <div id="notificationPanelBackdrop" class="notification-panel-backdrop hidden" onclick="closeNotificationPanel()">
       <aside class="notification-panel" onclick="event.stopPropagation()">
         <div class="notification-panel-head">
-          <div><strong>Notifications</strong><span>Nouveaux messages et alertes</span></div>
+          <div><strong>Notifications</strong><span id="notificationPanelSummary">Messages, commentaires et alertes</span></div>
           <button type="button" class="icon-btn" onclick="closeNotificationPanel()" aria-label="Fermer">×</button>
         </div>
         <div class="notification-panel-actions">
@@ -6003,6 +6021,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             <button class="notification-filter" data-notification-filter="instagram">Instagram</button>
             <button class="notification-filter" data-notification-filter="facebook">Facebook</button>
             <button class="notification-filter" data-notification-filter="whatsapp">WhatsApp</button>
+            <button class="notification-filter" data-notification-filter="comments">Commentaires</button>
             <button class="notification-filter" data-notification-filter="commercial">Commercial requis</button>
           </div>
           <div class="notification-panel-links">
@@ -8139,6 +8158,7 @@ let conversationSearchTimer = null;
 let conversationServerCounts = null;
 let notificationPanelItems = [];
 let notificationPanelFilter = 'all';
+let interactionPendingCounts = {messages:0,comments:0,total:0,whatsapp:0,instagramMessages:0,facebookMessages:0,instagramComments:0,facebookComments:0};
 
 // V6.26 — Centre d'interactions : messages + commentaires.
 let inboxInteractionMode = localStorage.getItem('mondecoInboxInteractionMode') === 'comments' ? 'comments' : 'messages';
@@ -8181,12 +8201,17 @@ function commentChannelLabel(channel){
 
 function setCommentFilterCounts(counts={}){
   socialCommentCounts = counts || {};
-  const map={commentCountAll:'all',commentCountFacebook:'facebook',commentCountInstagram:'instagram',commentCountUnread:'unread',commentCountHidden:'hidden',commentCountPrivate:'privateReply'};
+  const map={commentCountAll:'all',commentCountFacebook:'facebook',commentCountInstagram:'instagram',commentCountUnread:'unread',commentCountPending:'pendingReply',commentCountHidden:'hidden',commentCountPrivate:'privateReply'};
   for(const [id,key] of Object.entries(map)){
     const el=document.getElementById(id);if(el) el.textContent=String(Number(counts?.[key]||0));
   }
-  const badge=document.getElementById('commentsUnreadBadge');
-  if(badge){const n=Number(counts?.unread||0);badge.textContent=n>99?'99+':String(n);badge.classList.toggle('hidden',n<=0);}
+  if(Number.isFinite(Number(counts?.pendingReply))){
+    interactionPendingCounts.comments=Number(counts.pendingReply||0);
+    interactionPendingCounts.instagramComments=Number(counts.pendingInstagram||0);
+    interactionPendingCounts.facebookComments=Number(counts.pendingFacebook||0);
+    interactionPendingCounts.total=Number(interactionPendingCounts.messages||0)+interactionPendingCounts.comments;
+    updatePendingWorkUi();
+  }
 }
 
 function resetInteractionDetail(){
@@ -8244,11 +8269,12 @@ function renderSocialCommentsList(){
     const post=comment?.post||{};
     const selected=selectedSocialCommentKey===comment.key;
     const unread=comment.read!==true;
+    const pending=comment.pendingReply===true || (!comment.lastReplyAt && !comment.privateReplySentAt);
     const author=comment.authorUsername?`@${comment.authorUsername}`:(comment.authorName||'Client');
     const hint=String(post.caption||'').trim()||`${commentChannelLabel(comment.channel)} • publication ${post.postId||comment.postId||''}`;
-    return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
+    return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
       ${socialCommentAvatar(comment)}
-      <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
+      <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':''}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
       <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="inbox-unread">1</span>':''}</span>
     </button>`;
   }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
@@ -8889,6 +8915,13 @@ function conversationMatchesFilter(item){
 
   if(
     conversationFilter ===
+    'pending'
+  ){
+    return item.pendingReply === true;
+  }
+
+  if(
+    conversationFilter ===
     'priority'
   ){
     return item.priority === true;
@@ -8954,6 +8987,14 @@ function updateConversationFilterCounts(){
             0
           ) > 0
       ).length,
+    pendingReply:
+      open.filter(item => item.pendingReply === true).length,
+    pendingWhatsApp:
+      open.filter(item => item.pendingReply === true && conversationChannel(item) === 'whatsapp').length,
+    pendingInstagram:
+      open.filter(item => item.pendingReply === true && conversationChannel(item) === 'instagram').length,
+    pendingFacebook:
+      open.filter(item => item.pendingReply === true && conversationChannel(item) === 'facebook').length,
     priority:
       open.filter(
         item =>
@@ -8993,6 +9034,7 @@ function updateConversationFilterCounts(){
     filterCountInstagram:'instagram',
     filterCountFacebook:'facebook',
     filterCountUnread:'unread',
+    filterCountPending:'pendingReply',
     filterCountPriority:'priority',
     filterCountCommercial:'commercial',
     filterCountSla:'sla',
@@ -9016,6 +9058,14 @@ function updateConversationFilterCounts(){
     }
   }
 
+  if(Number.isFinite(Number(counts.pendingReply))){
+    interactionPendingCounts.messages=Number(counts.pendingReply||0);
+    interactionPendingCounts.whatsapp=Number(counts.pendingWhatsApp||0);
+    interactionPendingCounts.instagramMessages=Number(counts.pendingInstagram||0);
+    interactionPendingCounts.facebookMessages=Number(counts.pendingFacebook||0);
+    interactionPendingCounts.total=interactionPendingCounts.messages+Number(interactionPendingCounts.comments||0);
+  }
+  updatePendingWorkUi();
   updateNotificationBadges();
 }
 
@@ -11677,133 +11727,103 @@ window.sendConversationCommercialReply = async function(contact){
   }
 };
 
-function updateNotificationBadges(){
-  const count =
-    Math.max(
-      0,
-      Number(
-        conversationNotificationUnread || 0
-      )
-    );
+function pendingCountLabel(value){
+  const n=Math.max(0,Number(value||0));
+  return n>999?'999+':String(n);
+}
 
-  for(const id of [
-    'conversationNavBadge',
-    'notificationHeaderCount'
-  ]){
-    const el =
-      document.getElementById(id);
-
-    if(!el) continue;
-
-    el.textContent =
-      String(count);
-
-    el.classList.toggle(
-      'hidden',
-      count <= 0
-    );
+function updatePendingWorkUi(){
+  const counts=interactionPendingCounts||{};
+  const messages=Math.max(0,Number(counts.messages||0));
+  const comments=Math.max(0,Number(counts.comments||0));
+  const total=Math.max(0,Number(counts.total||messages+comments));
+  const msgBadge=document.getElementById('messagesPendingBadge');
+  if(msgBadge){msgBadge.textContent=pendingCountLabel(messages);msgBadge.classList.toggle('hidden',messages<=0);}
+  const commentBadge=document.getElementById('commentsPendingBadge');
+  if(commentBadge){commentBadge.textContent=pendingCountLabel(comments);commentBadge.classList.toggle('hidden',comments<=0);}
+  const summary=document.getElementById('pendingWorkSummary');
+  if(summary){
+    summary.innerHTML=`<button class="pending-work-pill total" type="button" onclick="openPendingInteractions()">À répondre <strong>${pendingCountLabel(total)}</strong></button>`+
+      `<button class="pending-work-pill" type="button" onclick="openPendingMessages()">💬 Messages <strong>${pendingCountLabel(messages)}</strong></button>`+
+      `<button class="pending-work-pill" type="button" onclick="openPendingComments()">💭 Commentaires <strong>${pendingCountLabel(comments)}</strong></button>`;
   }
 }
 
-function playNotificationTone(kind = 'message'){
+window.openPendingMessages=async function(){
+  await setInboxInteractionMode('messages');
+  conversationFilter='pending';
+  document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.filter==='pending'));
+  await loadConversations();
+};
+window.openPendingComments=async function(){
+  await setInboxInteractionMode('comments');
+  socialCommentFilter='pending';
+  document.querySelectorAll('#commentFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.commentFilter==='pending'));
+  await loadSocialComments();
+};
+window.openPendingInteractions=function(){
+  const messages=Number(interactionPendingCounts?.messages||0);
+  if(messages>0) return openPendingMessages();
+  return openPendingComments();
+};
+
+function updateNotificationBadges(){
+  const total=Math.max(0,Number(interactionPendingCounts?.total||0));
+  for(const id of ['conversationNavBadge','notificationHeaderCount']){
+    const el=document.getElementById(id);
+    if(!el) continue;
+    el.textContent=pendingCountLabel(total);
+    el.title=`${total} interaction${total>1?'s':''} à répondre`;
+    el.classList.toggle('hidden',total<=0);
+  }
+  updatePendingWorkUi();
+}
+
+function playNotificationTone(kind = 'message', channel = ''){
   try{
     if(!notificationAudioContext){
-      notificationAudioContext =
-        new (
-          window.AudioContext ||
-          window.webkitAudioContext
-        )();
+      notificationAudioContext=new (window.AudioContext||window.webkitAudioContext)();
     }
-
-    const ctx =
-      notificationAudioContext;
-
-    const play = () => {
-      const now =
-        ctx.currentTime;
-
-      const melody =
-        kind === 'report'
-          ? [
-              {f:392.00,t:0.00,d:0.16,v:0.13},
-              {f:523.25,t:0.20,d:0.16,v:0.14},
-              {f:659.25,t:0.40,d:0.16,v:0.14},
-              {f:783.99,t:0.62,d:0.32,v:0.16}
-            ]
-          : kind === 'sla' || kind === 'commercial'
-            ? [
-                {f:659.25,t:0.00,d:0.13,v:0.16},
-                {f:783.99,t:0.16,d:0.13,v:0.16},
-                {f:987.77,t:0.32,d:0.18,v:0.18},
-                {f:783.99,t:0.55,d:0.16,v:0.14}
-              ]
-            : [
-                {f:523.25,t:0.00,d:0.12,v:0.13},
-                {f:659.25,t:0.15,d:0.12,v:0.13},
-                {f:783.99,t:0.30,d:0.20,v:0.15}
-              ];
-
+    const ctx=notificationAudioContext;
+    const network=String(channel||'').toLowerCase();
+    const play=()=>{
+      const now=ctx.currentTime;
+      let melody;
+      if(kind==='report'){
+        melody=[{f:392,t:0,d:.14,v:.12},{f:523.25,t:.17,d:.14,v:.13},{f:659.25,t:.34,d:.14,v:.14},{f:783.99,t:.54,d:.28,v:.15}];
+      }else if(kind==='sla'||kind==='commercial'){
+        melody=[{f:659.25,t:0,d:.12,v:.16},{f:783.99,t:.14,d:.12,v:.16},{f:987.77,t:.28,d:.17,v:.17},{f:783.99,t:.49,d:.15,v:.14}];
+      }else if(network==='whatsapp'){
+        // WhatsApp : trois notes rapides, nettes et montantes.
+        melody=[{f:659.25,t:0,d:.10,v:.13},{f:783.99,t:.12,d:.10,v:.14},{f:987.77,t:.25,d:.18,v:.15}];
+      }else if(network==='instagram'){
+        // Instagram : signature plus aiguë en cloche.
+        melody=[{f:739.99,t:0,d:.11,v:.12},{f:987.77,t:.14,d:.13,v:.14},{f:1174.66,t:.31,d:.22,v:.14},{f:987.77,t:.56,d:.11,v:.10}];
+      }else if(network==='facebook'){
+        // Facebook : double appel grave/aigu immédiatement reconnaissable.
+        melody=[{f:523.25,t:0,d:.15,v:.14},{f:659.25,t:.18,d:.15,v:.15},{f:523.25,t:.39,d:.19,v:.12}];
+      }else{
+        melody=[{f:523.25,t:0,d:.12,v:.13},{f:659.25,t:.15,d:.12,v:.13},{f:783.99,t:.30,d:.20,v:.15}];
+      }
+      // Un commentaire garde la sonnerie du réseau mais ajoute un petit rappel final.
+      if(kind==='comment' && ['whatsapp','instagram','facebook'].includes(network)){
+        const last=Math.max(...melody.map(n=>n.t+n.d));
+        melody.push({f:network==='instagram'?1318.51:network==='facebook'?783.99:1174.66,t:last+.10,d:.09,v:.10});
+      }
       for(const note of melody){
-        const oscillator =
-          ctx.createOscillator();
-
-        const gain =
-          ctx.createGain();
-
-        oscillator.type =
-          'sine';
-
-        oscillator.frequency.setValueAtTime(
-          note.f,
-          now + note.t
-        );
-
-        gain.gain.setValueAtTime(
-          0.0001,
-          now + note.t
-        );
-
-        gain.gain.exponentialRampToValueAtTime(
-          note.v,
-          now + note.t + 0.015
-        );
-
-        gain.gain.exponentialRampToValueAtTime(
-          0.0001,
-          now + note.t + note.d
-        );
-
-        oscillator.connect(
-          gain
-        );
-
-        gain.connect(
-          ctx.destination
-        );
-
-        oscillator.start(
-          now + note.t
-        );
-
-        oscillator.stop(
-          now + note.t + note.d + 0.03
-        );
+        const oscillator=ctx.createOscillator();
+        const gain=ctx.createGain();
+        oscillator.type='sine';
+        oscillator.frequency.setValueAtTime(note.f,now+note.t);
+        gain.gain.setValueAtTime(.0001,now+note.t);
+        gain.gain.exponentialRampToValueAtTime(note.v,now+note.t+.015);
+        gain.gain.exponentialRampToValueAtTime(.0001,now+note.t+note.d);
+        oscillator.connect(gain);gain.connect(ctx.destination);
+        oscillator.start(now+note.t);oscillator.stop(now+note.t+note.d+.03);
       }
     };
-
-    if(ctx.state === 'suspended'){
-      ctx.resume()
-        .then(play)
-        .catch(() => {});
-    }else{
-      play();
-    }
-  }catch(error){
-    console.debug(
-      'Son notification indisponible',
-      error
-    );
-  }
+    if(ctx.state==='suspended')ctx.resume().then(play).catch(()=>{});else play();
+  }catch(error){console.debug('Son notification indisponible',error);}
 }
 
 function showClientBrowserNotification(event){
@@ -11818,11 +11838,13 @@ function showClientBrowserNotification(event){
     ? 'MONDECO • Rapport quotidien'
     : kind==='task'
       ? 'MONDECO • Tâche'
-      : kind==='sla'
-        ? `MONDECO • ${network} • SLA`
-        : urgent
-          ? `MONDECO • ${network} • Commercial requis`
-          : `MONDECO • ${network}`;
+      : kind==='comment'
+        ? `MONDECO • ${network} • Nouveau commentaire`
+        : kind==='sla'
+          ? `MONDECO • ${network} • SLA`
+          : urgent
+            ? `MONDECO • ${network} • Commercial requis`
+            : `MONDECO • ${network}`;
   const body=(kind==='report'||kind==='task')
     ? (event.preview||'')
     : `${identity}\n${event.preview||'Nouveau message client'}`;
@@ -11833,13 +11855,14 @@ function showClientBrowserNotification(event){
         window.focus();
         if(kind==='report'&&currentUser?.role==='admin'){showPage('team');return;}
         if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
+        if(kind==='comment'&&event.commentKey){openNotificationSocialComment(event.notificationId||event.id,event.commentKey);return;}
         if(event.contact){openNotificationConversation(event.notificationId||event.id,event.contact,event.messageId||'');}
         else{openAllNewMessages();}
       };
     }catch(error){console.debug('Notification navigateur indisponible',error);}
   }
   const soundEnabled=localStorage.getItem('mondecoNotificationSound')==='1'||('Notification' in window&&Notification.permission==='granted');
-  if(soundEnabled)playNotificationTone(kind);
+  if(soundEnabled)playNotificationTone(kind,channel);
 }
 
 
@@ -12034,6 +12057,7 @@ async function pollCommercialNotifications(){
     const data=await apiFetch(url);
     const events=Array.isArray(data.events)?data.events:[];
     conversationNotificationUnread=Number(data.unreadCount||0);
+    if(data?.pendingCounts&&typeof data.pendingCounts==='object') interactionPendingCounts={...interactionPendingCounts,...data.pendingCounts};
     updateNotificationBadges();
     for(const event of events){
       const eventId=String(event?.id||'');
@@ -12074,6 +12098,10 @@ async function loadNotificationPanel(){
   const data=await apiFetch(`${API}/notifications?filter=${encodeURIComponent(notificationPanelFilter)}`);
   notificationPanelItems=Array.isArray(data.items)?data.items:[];
   conversationNotificationUnread=Number(data.unreadCount||0);
+  if(data?.pendingCounts&&typeof data.pendingCounts==='object') interactionPendingCounts={...interactionPendingCounts,...data.pendingCounts};
+  const summary=document.getElementById('notificationPanelSummary');
+  if(summary){summary.textContent=`${Number(data.unreadCount||0)} non lue(s) • ${Number(interactionPendingCounts.total||0)} à répondre`;
+  }
   updateNotificationBadges();
   renderNotificationPanel();
 }
@@ -12082,8 +12110,13 @@ function renderNotificationPanel(){
   const list=document.getElementById('notificationPanelList');if(!list)return;
   if(!notificationPanelItems.length){list.innerHTML='<div class="empty" style="margin:18px"><strong>Aucune notification</strong>Rien de nouveau pour ce filtre.</div>';return;}
   list.innerHTML=notificationPanelItems.map(item=>{
-    const displayName=conversationDisplayName(item);
-    return `<button class="notification-item ${item.read?'':'unread'}" type="button" onclick="openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}</span><span class="notification-item-meta">${escapeHtml(channelDisplayName(item.channel))} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||'Nouveau message')}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
+    const isComment=item.kind==='comment';
+    const displayName=isComment?(item.username?`@${String(item.username).replace(/^@/,'')}`:(item.profileName||'Client')):conversationDisplayName(item);
+    const action=isComment
+      ? `openNotificationSocialComment('${escapeHtml(item.id)}','${escapeHtml(item.commentKey||'')}')`
+      : `openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')`;
+    const kindBadge=isComment?'<span class="notification-kind-badge">💭 commentaire</span>':'<span class="notification-kind-badge">💬 message</span>';
+    return `<button class="notification-item ${item.read?'':'unread'} ${item.pendingReply?'pending-reply':''}" type="button" onclick="${action}">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}${kindBadge}</span><span class="notification-item-meta"><span class="notification-network-dot ${escapeHtml(item.channel||'')}"></span>${escapeHtml(channelDisplayName(item.channel))} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}${item.pendingReply?' • À répondre':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||(isComment?'Nouveau commentaire':'Nouveau message'))}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
   }).join('');
 }
 
@@ -12103,6 +12136,19 @@ window.openNotificationConversation=async function(notificationId,contact,messag
     showPage('conversations');
     await loadConversations();
     await window.openConversation(contact,messageId||'');
+    await pollCommercialNotifications();
+  }catch(error){alert(error.message);}
+};
+window.openNotificationSocialComment=async function(notificationId,commentKey){
+  try{
+    if(notificationId)await apiFetch(`${API}/notifications/${encodeURIComponent(notificationId)}/read`,{method:'POST'}).catch(()=>{});
+    closeNotificationPanel();
+    showPage('conversations');
+    await setInboxInteractionMode('comments');
+    socialCommentFilter='all';
+    document.querySelectorAll('#commentFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.commentFilter==='all'));
+    await loadSocialComments();
+    await window.openSocialComment(commentKey);
     await pollCommercialNotifications();
   }catch(error){alert(error.message);}
 };
