@@ -5619,7 +5619,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.30.5 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.31.0 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5822,7 +5822,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.30.5 — Commandes /produit omnicanales
+   V6.31.0 — Commandes /produit omnicanales
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6083,7 +6083,8 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
         <div id="storageBreakdown" style="margin-top:10px;font-size:12px;color:#6f675f;line-height:1.55"></div>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" id="cleanupStorageBtn" type="button">🧹 Nettoyer le stockage sûr</button>
-          <span style="font-size:11px;color:#8a817a;align-self:center">Conserve les données métier et les 15 derniers jours.</span>
+          <button class="btn primary" id="migrateCloudBtn" type="button">☁️ Migrer médias vers Cloudinary</button>
+          <span style="font-size:11px;color:#8a817a;align-self:center">Railway garde les données métier + 15 jours; Cloudinary garde les médias.</span>
         </div>
       </div>
     </section>
@@ -6168,7 +6169,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.30.5</span>
+              <span class="inbox-version">V6.31.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -7892,7 +7893,11 @@ async function refreshHome(){
         const migrationText=migration.pending
           ? ' • ⚠ Rétention 15j en attente : marquez les discussions importantes ★ puis lancez le nettoyage'
           : ' • Rétention 15j active';
-        breakdown.textContent = `Médias conversations ${mb(b.conversationMediaBytes)} • Profils ${mb(b.conversationProfileBytes)} • Événements ${mb(b.conversationEventsBytes)} • Historique IG ${mb(b.instagramHistoryBytes)} • Historique FB ${mb(b.facebookHistoryBytes)} • Backups ${mb(b.backupsBytes)}${migrationText}`;
+        const cloud=storage.cloudStorage||{};
+        const cloudText=cloud.configured
+          ? ` • ☁️ Cloudinary ${Number(cloud.manifestAssets||0)} assets / ${mb(cloud.migratedBytes)} • Local restant ${mb(Number(cloud.localMediaBytes||0)+Number(cloud.localProfileBytes||0))}`
+          : ' • ⚠ Cloudinary non configuré';
+        breakdown.textContent = `Médias Railway ${mb(b.conversationMediaBytes)} • Profils Railway ${mb(b.conversationProfileBytes)} • Uploads produits ${mb(b.uploadsBytes)} • Personnalisations ${mb(b.customizationsBytes)} • Événements ${mb(b.conversationEventsBytes)} • Historique IG ${mb(b.instagramHistoryBytes)} • Historique FB ${mb(b.facebookHistoryBytes)} • Backups ${mb(b.backupsBytes)}${cloudText}${migrationText}`;
       }
     }else{
       storageNotice.className = 'notice warning';
@@ -7921,6 +7926,28 @@ document.getElementById('cleanupStorageBtn')?.addEventListener('click', async ()
     await refreshHome();
   }catch(error){
     alert('Nettoyage stockage impossible : '+error.message);
+  }finally{
+    if(button) button.disabled=false;
+  }
+});
+
+
+
+document.getElementById('migrateCloudBtn')?.addEventListener('click', async () => {
+  const button=document.getElementById('migrateCloudBtn');
+  if(button) button.disabled=true;
+  try{
+    const result=await apiFetch(`${API}/storage-cloud-migrate`,{
+      method:'POST',
+      body:JSON.stringify({maxFiles:250})
+    });
+    const freed=Number(result?.freedBytes||0)/(1024*1024);
+    alert(result?.configured===false
+      ? 'Cloudinary n’est pas configuré. Vérifiez CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY et CLOUDINARY_API_SECRET dans Railway.'
+      : `Migration Cloudinary : ${Number(result?.migrated||0)} fichier(s), environ ${freed.toFixed(1)} MB libérés sur Railway.`);
+    await refreshHome();
+  }catch(error){
+    alert('Migration Cloudinary impossible : '+error.message);
   }finally{
     if(button) button.disabled=false;
   }
@@ -9729,7 +9756,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.30.5 : les conversations réellement à répondre restent en haut.
+        // V6.31.0 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
