@@ -5613,7 +5613,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.30.0 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.30.1 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5816,7 +5816,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.30.0 — Commandes /produit omnicanales
+   V6.30.1 — Commandes /produit omnicanales
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6162,7 +6162,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.30.0</span>
+              <span class="inbox-version">V6.30.1</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8988,7 +8988,7 @@ function renderFacebookHistoryStatus(status = {}){
 
   if(!status.configured){
     button.disabled = true;
-    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_PAGE_ACCESS_TOKEN dans Railway.';
+    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_MESSENGER_TOKEN dans Railway.';
     return;
   }
 
@@ -9627,7 +9627,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.30.0 : les conversations réellement à répondre restent en haut.
+        // V6.30.1 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
