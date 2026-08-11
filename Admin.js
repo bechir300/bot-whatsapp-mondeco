@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.1
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.2
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,7 +66,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.30.1 — deux tokens Facebook indépendants :
+// V6.30.2 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,7 +92,7 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.30.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.30.2 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
@@ -714,7 +714,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.30.1 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.30.2 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -2598,7 +2598,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.30.1 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.30.2 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -14544,9 +14544,21 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
+// V6.30.2 — récupération sûre après une panne de webhook/token.
+// Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
+// du dernier succès avec 15 minutes de chevauchement. Cela récupère les
+// messages manqués sans rescanner 15 jours à chaque minute.
 const FACEBOOK_REALTIME_LOOKBACK_MINUTES = Math.max(
+  60,
+  Math.min(7 * 24 * 60, Number(process.env.FACEBOOK_REALTIME_LOOKBACK_MINUTES || 2880) || 2880)
+);
+const FACEBOOK_REALTIME_OVERLAP_MINUTES = Math.max(
   5,
-  Math.min(1440, Number(process.env.FACEBOOK_REALTIME_LOOKBACK_MINUTES || 180) || 180)
+  Math.min(120, Number(process.env.FACEBOOK_REALTIME_OVERLAP_MINUTES || 15) || 15)
+);
+const FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES = Math.max(
+  3,
+  Math.min(40, Number(process.env.FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES || 20) || 20)
 );
 const FACEBOOK_REALTIME_POLL_MS = Math.max(
   30000,
@@ -14647,69 +14659,78 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     return result;
   }
 
+  const endpoint =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`;
+
   const readFields = async () => {
-    const data = await facebookGraphGet(
-      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`
-    );
-    const fields = Array.isArray(data?.data)
+    const data = await facebookGraphGet(endpoint);
+    return Array.isArray(data?.data)
       ? [...new Set(
           data.data.flatMap(item =>
             Array.isArray(item?.subscribed_fields) ? item.subscribed_fields : []
           ).map(safeString).filter(Boolean)
         )]
       : [];
-    return fields;
+  };
+
+  const subscribeFields = async fields => {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({ subscribed_fields: fields.join(',') }).toString()
+    });
+    let body = {};
+    try { body = await response.json(); } catch { body = {}; }
+    if (!response.ok || body?.success === false) {
+      throw new Error(
+        safeString(body?.error?.message) || `Facebook HTTP ${response.status}`
+      );
+    }
+    return body;
   };
 
   try {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // Réparation Page-level non destructive. Elle ne remplace pas la
-    // configuration Webhooks de l'application Meta, mais réabonne la Page
-    // aux champs Messenger essentiels quand Meta l'autorise.
+    // V6.30.2 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // Avant, on tentait en une seule requête messages + feed + plusieurs champs
+    // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
+    // toute la souscription Messenger.
     if (tryRepair && !result.messagesSubscribed) {
       result.repairAttempted = true;
-      const desired = [...new Set([
-        ...result.fields,
-        'messages',
-        'message_echoes',
-        'message_edits',
-        'message_deliveries',
-        'message_reads',
-        'message_reactions',
-        'messaging_postbacks',
-        'messaging_referrals',
-        'feed'
-      ])];
       try {
-        const response = await fetch(
-          `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
-              'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: new URLSearchParams({
-              subscribed_fields: desired.join(',')
-            }).toString()
-          }
-        );
-        let body = {};
-        try { body = await response.json(); } catch { body = {}; }
-        if (!response.ok || body?.success === false) {
-          throw new Error(
-            safeString(body?.error?.message) ||
-            `Facebook HTTP ${response.status}`
-          );
-        }
-        result.repairSuccess = true;
+        await subscribeFields(['messages']);
         result.fields = await readFields();
         result.messagesSubscribed = result.fields.includes('messages');
+        result.repairSuccess = result.messagesSubscribed;
+
+        // Une fois `messages` garanti, les champs secondaires sont ajoutés un par
+        // un. Leur échec ne doit jamais retirer/casser la réception des messages.
+        const optionalFields = [
+          'message_echoes',
+          'message_edits',
+          'message_deliveries',
+          'message_reads',
+          'message_reactions',
+          'messaging_postbacks',
+          'messaging_referrals'
+        ];
+        for (const field of optionalFields) {
+          if (result.fields.includes(field)) continue;
+          try {
+            await subscribeFields([field]);
+          } catch (optionalError) {
+            console.debug(`Facebook webhook optionnel ${field}:`, optionalError.message);
+          }
+        }
+        result.fields = await readFields();
       } catch (error) {
         result.repairSuccess = false;
-        result.error = `Réabonnement webhook : ${error.message}`;
+        result.error = `Réabonnement webhook messages : ${error.message}`;
       }
     }
   } catch (error) {
@@ -14724,20 +14745,32 @@ async function listRecentFacebookConversations(cutoffAt) {
   const seen = new Set();
   let nextUrl =
     `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
-    `?fields=${encodeURIComponent('id,link,updated_time')}&limit=25`;
+    `?platform=messenger&fields=${encodeURIComponent('id,link,updated_time')}&limit=50`;
   let pageCount = 0;
+  let latestUpdatedTime = '';
 
-  while (nextUrl && pageCount < 3) {
+  while (nextUrl && pageCount < FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES) {
     const data = await facebookGraphGet(nextUrl);
     const rows = Array.isArray(data?.data) ? data.data : [];
     let recentOnPage = 0;
+    let datedOnPage = 0;
+    let olderOnPage = 0;
 
     for (const row of rows) {
       const id = safeString(row?.id);
       const updated = safeString(row?.updated_time);
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      if (!historyTimeIsRecent(updated, cutoffAt)) continue;
+      if (Number.isFinite(Date.parse(updated))) {
+        datedOnPage += 1;
+        if (!latestUpdatedTime || Date.parse(updated) > Date.parse(latestUpdatedTime)) {
+          latestUpdatedTime = updated;
+        }
+      }
+      if (!historyTimeIsRecent(updated, cutoffAt)) {
+        olderOnPage += 1;
+        continue;
+      }
       recentOnPage += 1;
       recent.push({
         id,
@@ -14747,13 +14780,21 @@ async function listRecentFacebookConversations(cutoffAt) {
     }
 
     pageCount += 1;
-    // Les conversations sont retournées par activité récente. Dès qu'une page
-    // entière ne contient plus rien dans la fenêtre, inutile d'aller plus loin.
-    if (rows.length && recentOnPage === 0) break;
+    // Arrêt seulement lorsqu'une page datée entière est plus ancienne que le
+    // cutoff. Cela évite l'ancien plafond de 75 conversations qui pouvait
+    // manquer des messages dans une Inbox MONDECO très active.
+    if (
+      rows.length > 0 &&
+      datedOnPage > 0 &&
+      recentOnPage === 0 &&
+      olderOnPage === datedOnPage
+    ) {
+      break;
+    }
     nextUrl = safeString(data?.paging?.next);
   }
 
-  return recent;
+  return { conversations: recent, pageCount, latestUpdatedTime };
 }
 
 async function runFacebookRealtimeRecovery({ force = false } = {}) {
@@ -14780,9 +14821,12 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   }
 
   const startedAt = new Date().toISOString();
-  const cutoffAt = new Date(
-    Date.now() - FACEBOOK_REALTIME_LOOKBACK_MINUTES * 60 * 1000
-  ).toISOString();
+  const previousSuccessfulMs = Date.parse(safeString(persisted?.lastSuccessfulAt));
+  const fallbackCutoffMs = Date.now() - FACEBOOK_REALTIME_LOOKBACK_MINUTES * 60 * 1000;
+  const incrementalCutoffMs = Number.isFinite(previousSuccessfulMs)
+    ? previousSuccessfulMs - FACEBOOK_REALTIME_OVERLAP_MINUTES * 60 * 1000
+    : fallbackCutoffMs;
+  const cutoffAt = new Date(Math.max(fallbackCutoffMs, incrementalCutoffMs)).toISOString();
 
   facebookRealtimeSyncJob = {
     ...facebookRealtimeSyncJob,
@@ -14815,14 +14859,26 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       }
     }
 
-    const conversations = await listRecentFacebookConversations(cutoffAt);
+    const recentResult = await listRecentFacebookConversations(cutoffAt);
+    const conversations = recentResult.conversations;
     facebookRealtimeSyncJob.conversationsScanned = conversations.length;
+    facebookRealtimeSyncJob.conversationPagesScanned = recentResult.pageCount;
+    facebookRealtimeSyncJob.latestGraphConversationAt = recentResult.latestUpdatedTime;
+    facebookRealtimeSyncJob.recoveryCutoffAt = cutoffAt;
 
     if (!conversations.length) {
       facebookRealtimeSyncJob.running = false;
       facebookRealtimeSyncJob.lastCompletedAt = new Date().toISOString();
+      facebookRealtimeSyncJob.lastSuccessfulAt = facebookRealtimeSyncJob.lastCompletedAt;
       saveFacebookRealtimeSyncState();
-      return { configured: true, importedMessages: 0, conversationsScanned: 0 };
+      return {
+        configured: true,
+        importedMessages: 0,
+        conversationsScanned: 0,
+        conversationPagesScanned: recentResult.pageCount,
+        latestGraphConversationAt: recentResult.latestUpdatedTime,
+        webhookMessagesSubscribed: facebookRealtimeSyncJob.webhookMessagesSubscribed
+      };
     }
 
     const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
@@ -14998,6 +15054,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
 
     facebookRealtimeSyncJob.running = false;
     facebookRealtimeSyncJob.lastCompletedAt = new Date().toISOString();
+    facebookRealtimeSyncJob.lastSuccessfulAt = facebookRealtimeSyncJob.lastCompletedAt;
     saveFacebookRealtimeSyncState();
 
     if (facebookRealtimeSyncJob.importedMessages > 0) {
@@ -15012,6 +15069,9 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       importedMessages: facebookRealtimeSyncJob.importedMessages,
       importedInbound: facebookRealtimeSyncJob.importedInbound,
       conversationsScanned: facebookRealtimeSyncJob.conversationsScanned,
+      conversationPagesScanned: Number(facebookRealtimeSyncJob.conversationPagesScanned || 0),
+      latestGraphConversationAt: safeString(facebookRealtimeSyncJob.latestGraphConversationAt),
+      recoveryCutoffAt: safeString(facebookRealtimeSyncJob.recoveryCutoffAt),
       webhookMessagesSubscribed: facebookRealtimeSyncJob.webhookMessagesSubscribed
     };
   } catch (error) {
@@ -15034,6 +15094,8 @@ router.get('/api/facebook-realtime/status', requireAuth, (req, res) => {
     configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN),
     pollSeconds: Math.round(FACEBOOK_REALTIME_POLL_MS / 1000),
     lookbackMinutes: FACEBOOK_REALTIME_LOOKBACK_MINUTES,
+    overlapMinutes: FACEBOOK_REALTIME_OVERLAP_MINUTES,
+    maxConversationPages: FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES,
     ...saved,
     ...(facebookRealtimeSyncJob.running ? facebookRealtimeSyncJob : {})
   });
@@ -15127,7 +15189,7 @@ router.post(
 // ============================================================
 
 
-// V6.30.1 — diagnostic sans exposer les secrets.
+// V6.30.2 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16453,7 +16515,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.30.1 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.30.2 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
