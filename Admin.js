@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.3
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.5
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,7 +66,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.30.3 — deux tokens Facebook indépendants :
+// V6.30.5 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,11 +92,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.30.3 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.30.5 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.30.3 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.30.5 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -197,6 +197,36 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024 *
     1024
 );
+
+// V6.30.5 — garde-fou permanent contre ENOSPC.
+// Le stockage doit garder une marge avant toute écriture JSON atomique.
+const STORAGE_CRITICAL_FREE_BYTES = Math.max(
+  16 * 1024 * 1024,
+  (Number(process.env.MONDECO_STORAGE_CRITICAL_FREE_MB || 40) || 40) * 1024 * 1024
+);
+
+const STORAGE_GUARD_INTERVAL_MS = Math.max(
+  60 * 1000,
+  (Number(process.env.MONDECO_STORAGE_GUARD_MINUTES || 5) || 5) * 60 * 1000
+);
+
+const EMERGENCY_MEDIA_RETENTION_DAYS = Math.max(
+  2,
+  Math.min(15, Number(process.env.MONDECO_EMERGENCY_MEDIA_DAYS || 7) || 7)
+);
+
+const MAX_NOTIFICATION_ITEMS = Math.max(
+  250,
+  Math.min(5000, Number(process.env.MONDECO_MAX_NOTIFICATIONS || 2000) || 2000)
+);
+
+const MAX_MESSAGE_ID_LINES = Math.max(
+  5000,
+  Math.min(100000, Number(process.env.MONDECO_MAX_MESSAGE_IDS || 50000) || 50000)
+);
+
+let storageEmergencyCleanupRunning = false;
+let storagePeriodicGuardRunning = false;
 
 const PERSISTENCE_STRICT =
   String(
@@ -540,6 +570,132 @@ function cleanupStaleStorageTempFiles() {
   return freed;
 }
 
+
+function cleanupLooseBackupFilesForEmergency() {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(DATA_DIR)) return 0;
+    for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.bak')) continue;
+      const fullPath = path.join(DATA_DIR, entry.name);
+      try {
+        const stat = fs.statSync(fullPath);
+        fs.unlinkSync(fullPath);
+        freed += Number(stat.size || 0);
+      } catch {}
+    }
+  } catch {}
+  return freed;
+}
+
+function pruneNotificationsForStorageRescue() {
+  try {
+    if (!fs.existsSync(NOTIFICATIONS_PATH)) return 0;
+    const beforeSize = Number(fs.statSync(NOTIFICATIONS_PATH).size || 0);
+    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+    const kept = items
+      .filter(item => {
+        const ms = Date.parse(safeString(item?.createdAt));
+        return !Number.isFinite(ms) || ms >= cutoff;
+      })
+      .sort((a, b) => (Date.parse(safeString(b?.createdAt)) || 0) - (Date.parse(safeString(a?.createdAt)) || 0))
+      .slice(0, MAX_NOTIFICATION_ITEMS);
+
+    if (kept.length === items.length && items.length <= MAX_NOTIFICATION_ITEMS) return 0;
+    writeJsonAtomic(NOTIFICATIONS_PATH, { items: kept });
+    const afterSize = fs.existsSync(NOTIFICATIONS_PATH) ? Number(fs.statSync(NOTIFICATIONS_PATH).size || 0) : 0;
+    return Math.max(0, beforeSize - afterSize);
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : notifications non compactées :', error.message);
+    return 0;
+  }
+}
+
+function pruneMessageIdIndexForStorageRescue() {
+  try {
+    if (!fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
+    const beforeSize = Number(fs.statSync(MESSAGE_ID_INDEX_PATH).size || 0);
+    if (beforeSize < 4 * 1024 * 1024) return 0;
+    const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
+    if (lines.length <= MAX_MESSAGE_ID_LINES) return 0;
+    const kept = lines.slice(-MAX_MESSAGE_ID_LINES);
+    fs.writeFileSync(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`, 'utf8');
+    const afterSize = Number(fs.statSync(MESSAGE_ID_INDEX_PATH).size || 0);
+    return Math.max(0, beforeSize - afterSize);
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : index message_id non compacté :', error.message);
+    return 0;
+  }
+}
+
+// Libère uniquement des caches et sauvegardes régénérables, sans toucher aux
+// produits, instructions, utilisateurs, tâches, favoris ni conversation-state.
+function emergencyFreeDisposableStorage() {
+  if (storageEmergencyCleanupRunning) return 0;
+  storageEmergencyCleanupRunning = true;
+  let freed = 0;
+  try {
+    freed += cleanupStaleStorageTempFiles();
+    freed += cleanupLooseBackupFilesForEmergency();
+    freed += pruneJsonBackupTreeForStorageRescue(0);
+    freed += compactExistingSnapshotBinaryCopies();
+    freed += pruneFullSnapshotsForStorageRescue(0);
+
+    if (fs.existsSync(RECYCLE_DIR)) {
+      for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
+        freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
+      }
+    }
+
+    // Les avatars sont un cache cosmétique : en urgence on les régénère ensuite.
+    if (fs.existsSync(CONVERSATION_PROFILE_DIR)) {
+      freed += removePathForStorageRescue(CONVERSATION_PROFILE_DIR, 'conversation-profile (cache)');
+      try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
+    }
+
+    // Les médias des conversations favorites restent protégés. Les autres médias
+    // plus anciens que quelques jours sont supprimés seulement en mode urgence.
+    const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteConversationContacts());
+    const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    freed += pruneFilesOlderThan(
+      CONVERSATION_MEDIA_DIR,
+      mediaCutoff,
+      'conversation-media urgence',
+      { recursive: true, preserveBasenames: favoriteMedia }
+    );
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue urgence :', error.message);
+  } finally {
+    storageEmergencyCleanupRunning = false;
+  }
+  return freed;
+}
+
+function ensureStorageHeadroom() {
+  const space = storageSpaceInfo();
+  const probe = storageWriteProbe();
+  const critical =
+    !probe.writable ||
+    !space ||
+    space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
+    (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
+
+  if (!critical) return { cleaned: false, freedBytes: 0, space, writable: probe.writable };
+  const freedBytes = emergencyFreeDisposableStorage();
+  const after = storageSpaceInfo();
+  const afterProbe = storageWriteProbe();
+  return {
+    cleaned: true,
+    freedBytes,
+    space: after,
+    writable: afterProbe.writable,
+    errorCode: afterProbe.errorCode || ''
+  };
+}
+
 function pruneFilesOlderThan(directory, cutoffMs, label, { recursive = false, preserveBasenames = new Set() } = {}) {
   let freed = 0;
   try {
@@ -732,7 +888,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.30.3 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.30.5 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -777,6 +933,8 @@ function storageBreakdown() {
     facebookHistoryBytes: sizeOfFile(FACEBOOK_HISTORY_PATH),
     socialCommentsBytes: sizeOfFile(SOCIAL_COMMENTS_PATH),
     socialPostsBytes: sizeOfFile(SOCIAL_POSTS_PATH),
+    notificationsBytes: sizeOfFile(NOTIFICATIONS_PATH),
+    messageIdIndexBytes: sizeOfFile(MESSAGE_ID_INDEX_PATH),
     favoriteConversationCount: favoriteConversationContacts().size
   };
 }
@@ -825,13 +983,25 @@ function markRetention15MigrationApplied() {
 function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false } = {}) {
   const before = storageSpaceInfo();
   let freed = 0;
-  freed += cleanupStaleStorageTempFiles();
-  freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
-  freed += compactExistingSnapshotBinaryCopies();
-  freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+
+  // En urgence, commencer par ce qui ne nécessite aucune nouvelle écriture.
+  // Cela crée immédiatement de la marge pour pouvoir ensuite compacter les JSON.
+  if (forceEmergency) {
+    freed += emergencyFreeDisposableStorage();
+  } else {
+    freed += cleanupStaleStorageTempFiles();
+    freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
+    freed += compactExistingSnapshotBinaryCopies();
+    freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+  }
+
   if (!skipConversationRetention) {
     freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
   }
+
+  freed += pruneNotificationsForStorageRescue();
+  freed += pruneMessageIdIndexForStorageRescue();
+
   if (fs.existsSync(RECYCLE_DIR) && (forceEmergency || (before && before.freeRatio < 0.15))) {
     for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
       freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
@@ -853,17 +1023,25 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
+  // V6.30.5 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
+  // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
+  const emergencyRetentionOverride = lowSpace && !retentionReady;
   const result = runSafeStorageMaintenance({
     forceEmergency: lowSpace,
-    skipConversationRetention: !retentionReady
+    skipConversationRetention: !retentionReady && !emergencyRetentionOverride
   });
-  if (retentionReady) markRetention15MigrationApplied();
+  if (retentionReady || emergencyRetentionOverride) markRetention15MigrationApplied();
   const afterProbe = storageWriteProbe();
 
-  if (!retentionReady) {
+  if (!retentionReady && !emergencyRetentionOverride) {
     console.warn(
       '⭐ Migration rétention 15 jours : délai de sécurité actif pendant 12 h. ' +
       'Marquez maintenant les discussions importantes en Favori, puis utilisez « Nettoyer le stockage sûr » pour appliquer la rétention immédiatement.'
+    );
+  } else if (emergencyRetentionOverride) {
+    console.warn(
+      '🛟 Stockage critique : délai de grâce 15 jours annulé automatiquement pour éviter ENOSPC. Les conversations ⭐ Favori restent protégées.'
     );
   }
 
@@ -1699,6 +1877,11 @@ function createExternalDataExport() {
 }
 
 function ensureDailySnapshot() {
+  const space = storageSpaceInfo();
+  if (space && (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES || (Number.isFinite(space.freeRatio) && space.freeRatio < 0.25))) {
+    console.warn('🧹 Snapshot quotidien ignoré : marge de stockage insuffisante.');
+    return;
+  }
   try {
     const today =
       new Date()
@@ -1728,22 +1911,25 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.20.4 : fichier temporaire unique + stratégie compacte pour les gros JSON.
-  // L'écriture atomique garde le fichier actif intact jusqu'au rename final.
-  // Sur un Volume Free, les gros historiques ne reçoivent pas en plus une
-  // copie .bak complète à chaque sauvegarde : cela évite 2 à 3 copies du même
-  // gros fichier pendant une seule écriture.
+  // V6.30.5 : écriture atomique avec garde-fou ENOSPC.
+  // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
+  // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   const backupPath = `${filePath}.bak`;
   const serialized = JSON.stringify(data, null, 2);
   const serializedBytes = Buffer.byteLength(serialized, 'utf8');
+  const spaceBefore = storageSpaceInfo();
+  const lowHeadroom = Boolean(
+    spaceBefore &&
+    spaceBefore.freeBytes < Math.max(STORAGE_CRITICAL_FREE_BYTES, Math.ceil(serializedBytes * 1.35))
+  );
   const keepFullBackup =
-    !COMPACT_STORAGE_MODE ||
-    serializedBytes <= VERSIONED_BACKUP_MAX_BYTES;
+    !lowHeadroom &&
+    (!COMPACT_STORAGE_MODE || serializedBytes <= VERSIONED_BACKUP_MAX_BYTES);
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  if (fileExistsWithContent(filePath)) {
+  if (fileExistsWithContent(filePath) && !lowHeadroom) {
     backupJsonVersion(filePath);
 
     if (keepFullBackup) {
@@ -1753,25 +1939,55 @@ function writeJsonAtomic(filePath, data) {
         console.warn('⚠️ Backup JSON impossible :', error.message);
       }
     } else {
-      // Une ancienne copie .bak volumineuse peut empêcher l'écriture atomique.
-      // Le fichier actif reste encore présent tant que le nouveau .tmp n'est
-      // pas complètement écrit et renommé.
       deleteFileIfExists(backupPath);
     }
+  } else if (lowHeadroom) {
+    // Ne pas créer une nouvelle copie quand le Volume est déjà proche de la limite.
+    deleteFileIfExists(backupPath);
   }
 
-  try {
-    fs.writeFileSync(
-      tempPath,
-      serialized,
-      'utf8'
-    );
-
-    fs.renameSync(tempPath, filePath);
-  } finally {
+  const cleanupTemp = () => {
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     } catch {}
+  };
+
+  const atomicAttempt = () => {
+    fs.writeFileSync(tempPath, serialized, 'utf8');
+    fs.renameSync(tempPath, filePath);
+  };
+
+  try {
+    atomicAttempt();
+    return;
+  } catch (error) {
+    cleanupTemp();
+    if (safeString(error?.code) !== 'ENOSPC') throw error;
+
+    console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
+    emergencyFreeDisposableStorage();
+
+    try {
+      atomicAttempt();
+      return;
+    } catch (retryError) {
+      cleanupTemp();
+      if (safeString(retryError?.code) !== 'ENOSPC') throw retryError;
+
+      // Dernier recours : lorsqu'on compacte un gros JSON vers une version plus
+      // petite, l'écriture directe libère les blocs de l'ancien fichier au fur
+      // et à mesure. Ce mode n'est utilisé qu'en situation ENOSPC.
+      let currentSize = 0;
+      try { currentSize = fs.existsSync(filePath) ? Number(fs.statSync(filePath).size || 0) : 0; } catch {}
+      if (currentSize > serializedBytes) {
+        console.warn(`🛟 Compactage direct d'urgence : ${path.basename(filePath)} ${humanBytes(currentSize)} → ${humanBytes(serializedBytes)}.`);
+        fs.writeFileSync(filePath, serialized, 'utf8');
+        return;
+      }
+      throw retryError;
+    }
+  } finally {
+    cleanupTemp();
   }
 }
 
@@ -2616,7 +2832,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.30.3 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.30.5 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -3272,6 +3488,41 @@ initializeQuickReplies();
 initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
+
+// V6.30.5 — surveillance préventive. Le Volume est contrôlé périodiquement
+// afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
+const storageGuardTimer = setInterval(() => {
+  if (storagePeriodicGuardRunning) return;
+  storagePeriodicGuardRunning = true;
+  try {
+    const space = storageSpaceInfo();
+    if (!space) return;
+    const critical =
+      space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
+      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
+    const low =
+      critical ||
+      space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
+      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.20);
+    if (!low) return;
+
+    const result = runSafeStorageMaintenance({
+      forceEmergency: critical,
+      skipConversationRetention: false
+    });
+    if (critical) markRetention15MigrationApplied();
+    console.log('🧹 Storage Guard périodique', {
+      critical,
+      freed: humanBytes(result.freedBytes),
+      freeAfter: result.after ? humanBytes(result.after.freeBytes) : 'inconnu'
+    });
+  } catch (error) {
+    console.warn('⚠️ Storage Guard périodique :', error.message);
+  } finally {
+    storagePeriodicGuardRunning = false;
+  }
+}, STORAGE_GUARD_INTERVAL_MS);
+if (typeof storageGuardTimer.unref === 'function') storageGuardTimer.unref();
 
 console.log(
   '💾 Stockage MONDECO :',
@@ -14569,7 +14820,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.30.3 — récupération sûre après une panne de webhook/token.
+// V6.30.5 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -14721,7 +14972,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.30.3 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.30.5 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -14829,7 +15080,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.30.3 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.30.5 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15238,7 +15489,7 @@ router.post(
 // ============================================================
 
 
-// V6.30.3 — diagnostic sans exposer les secrets.
+// V6.30.5 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16564,7 +16815,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.30.3 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.30.5 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -16578,7 +16829,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.30.3 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.30.5 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -17446,6 +17697,13 @@ router.get(
       retentionDays:
         HISTORY_IMPORT_DAYS,
 
+      storageGuard: {
+        intervalMinutes: Math.round(STORAGE_GUARD_INTERVAL_MS / 60000),
+        targetFreeBytes: STORAGE_RESCUE_TARGET_FREE_BYTES,
+        criticalFreeBytes: STORAGE_CRITICAL_FREE_BYTES,
+        emergencyMediaRetentionDays: EMERGENCY_MEDIA_RETENTION_DAYS
+      },
+
       retentionMigration: (() => {
         const state = ensureRetention15MigrationState();
         const startedMs = Date.parse(safeString(state?.startedAt));
@@ -17651,5 +17909,6 @@ module.exports = {
   createCommercialCorrectionCandidate,
   registerCommercialEscalation,
   resolveCommercialSla,
-  processSocialCommentWebhookEntry
+  processSocialCommentWebhookEntry,
+  ensureStorageHeadroom
 };
