@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.32.4
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.32.5
 // server.js
 //
 // Ajouts V5 :
@@ -98,7 +98,7 @@ const FACEBOOK_PAGE_ID =
     ''
   ).trim();
 
-// V6.32.4 — Facebook : sépare Messenger et Pages/Commentaires.
+// V6.32.5 — Facebook : sépare Messenger et Pages/Commentaires.
 // L'ancienne variable FACEBOOK_PAGE_ACCESS_TOKEN reste uniquement comme fallback
 // pour préserver la compatibilité avec les anciens déploiements Railway.
 const FACEBOOK_LEGACY_PAGE_TOKEN =
@@ -289,7 +289,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.32.4');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.32.5');
 console.log(
   '=============================================='
 );
@@ -4844,12 +4844,16 @@ setCommercialSendHandler(
         lastHumanAt: commercialReplyAt,
         lastAnsweredAt: commercialReplyAt,
         lastAnsweredCustomerAt: answeredCustomerAt,
-        // V6.32.4 — une réponse commerciale acquitte tous les messages
+        // V6.32.5 — une réponse commerciale acquitte tous les messages
         // client connus de cette discussion.
         unreadCount: 0,
         lastUnreadMessageId: '',
         lastReadAt: commercialReplyAt,
-        lastHumanSource: 'commercial_admin'
+        lastHumanSource: 'commercial_admin',
+        commercialAttention: false,
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
+        awaitingResponse: false
       })
     );
 
@@ -7076,6 +7080,16 @@ async function processInstagramBusinessOutboundEvent({
         customerId,
       lastHumanAt:
         eventTime,
+      lastAnsweredAt:
+        eventTime,
+      lastAnsweredCustomerAt:
+        safeString(current?.lastCustomerAt),
+      unreadCount:
+        0,
+      lastUnreadMessageId:
+        '',
+      lastReadAt:
+        eventTime,
       lastHumanSource:
         'instagram_app',
       aiModePreference:
@@ -7087,7 +7101,11 @@ async function processInstagramBusinessOutboundEvent({
       commercialAttention:
         false,
       commercialAttentionReason:
-        ''
+        '',
+      imageNeedsCommercial:
+        false,
+      awaitingResponse:
+        false
     })
   );
 
@@ -7885,11 +7903,7 @@ function handleHumanMessageEcho(value) {
   const settings =
     getBotSettings();
 
-  if (
-    !settings.pauseWhenHumanReplies
-  ) {
-    return;
-  }
+  const shouldPauseAi = settings.pauseWhenHumanReplies !== false;
 
   const messages =
     Array.isArray(value?.messages)
@@ -7908,12 +7922,42 @@ function handleHumanMessageEcho(value) {
 
     if (!candidate) continue;
 
-    markHumanTakeover(
-      candidate,
-      settings
-    );
+    if (shouldPauseAi) {
+      markHumanTakeover(
+        candidate,
+        settings
+      );
+    }
+
+    const eventTime = (() => {
+      const raw = Number(message?.timestamp || message?.time || 0);
+      if (Number.isFinite(raw) && raw > 0) {
+        const ms = raw > 1e12 ? raw : raw * 1000;
+        return new Date(ms).toISOString();
+      }
+      return new Date().toISOString();
+    })();
 
     const state = getConversationState(candidate) || {};
+    const answeredCustomerAt = safeString(state?.lastCustomerAt);
+    updateConversationState(
+      candidate,
+      current => ({
+        ...current,
+        lastHumanAt: eventTime,
+        lastAnsweredAt: eventTime,
+        lastAnsweredCustomerAt: answeredCustomerAt || safeString(current?.lastCustomerAt),
+        lastHumanSource: 'commercial_whatsapp_app',
+        unreadCount: 0,
+        lastUnreadMessageId: '',
+        lastReadAt: eventTime,
+        commercialAttention: false,
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
+        awaitingResponse: false
+      })
+    );
+
     const actor = {
       id: safeString(state.assignedUserId),
       name: safeString(state.assignedTo) || 'Commercial WhatsApp Business',
@@ -7937,7 +7981,7 @@ function handleHumanMessageEcho(value) {
       commercial_user_id: actor.id,
       commercial_user_name: actor.name,
       commercial_user_role: 'commercial',
-      time: new Date().toISOString()
+      time: eventTime
     });
   }
 }
