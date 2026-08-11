@@ -5613,7 +5613,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.30.2 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.30.3 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5816,7 +5816,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.30.2 — Commandes /produit omnicanales
+   V6.30.3 — Commandes /produit omnicanales
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6162,7 +6162,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.30.2</span>
+              <span class="inbox-version">V6.30.3</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -6186,7 +6186,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
               <span class="inbox-toolbar-icon">⛶</span><span class="inbox-toolbar-label">Plein écran</span>
             </button>
             <button class="inbox-toolbar-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser Instagram" style="display:none">IG ↻</button>
-            <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Synchroniser Facebook" style="display:none">FB ↻</button>
+            <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Historique Facebook 15 jours (manuel — peut être long). Le temps réel fonctionne séparément." style="display:none">FB ↻</button>
             <button class="inbox-toolbar-btn social-comments-sync hidden" id="syncSocialCommentsBtn" type="button" title="Synchroniser publications et commentaires Facebook / Instagram"><span>💭</span><span class="inbox-toolbar-label">Synchroniser</span></button>
             <button class="inbox-toolbar-btn social-comments-sync hidden" id="diagnoseSocialCommentsBtn" type="button" title="Vérifier l’accès Meta aux commentaires"><span>✓</span><span class="inbox-toolbar-label">Vérifier Meta</span></button>
             <button class="inbox-toolbar-btn notification" id="enableNotificationsBtn" type="button" title="Notifications">
@@ -6204,6 +6204,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             <button class="inbox-filter" data-filter="pending">À répondre <span id="filterCountPending">0</span></button>
             <button class="inbox-filter" data-filter="priority">Priorité <span id="filterCountPriority">0</span></button>
             <button class="inbox-filter" data-filter="favorites">⭐ Favoris <span id="filterCountFavorites">0</span></button>
+            <button class="inbox-filter" data-filter="history15" title="Toutes les conversations conservées pendant 15 jours">🗂 Historique 15j <span id="filterCountHistory15">0</span></button>
             <button class="inbox-filter" data-filter="commercial">Commercial <span id="filterCountCommercial">0</span></button>
             <button class="inbox-filter" data-filter="sla">SLA <span id="filterCountSla">0</span></button>
             <button class="inbox-filter" data-filter="ads">Publicités <span id="filterCountAds">0</span></button>
@@ -6222,6 +6223,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
           <div class="inbox-sync-statuses" aria-live="polite">
             <div id="instagramHistorySyncStatus" class="inbox-sync-status" style="display:none"></div>
+            <div id="facebookRealtimeStatus" class="inbox-sync-status" style="display:none"></div>
             <div id="facebookHistorySyncStatus" class="inbox-sync-status" style="display:none"></div>
             <div id="socialCommentsSyncStatus" class="inbox-sync-status" style="display:none"></div>
           </div>
@@ -7754,7 +7756,7 @@ function showPage(name){
     setInboxInteractionMode(inboxInteractionMode);
     if(inboxInteractionMode === 'messages') loadQuickReplies();
     refreshInstagramHistoryStatus({ autoStart: true });
-    refreshFacebookHistoryStatus({ autoStart: true });
+    refreshFacebookHistoryStatus({ autoStart: false });
     // Met à jour le badge Commentaires même quand l'utilisateur reste dans Messages.
     refreshSocialCommentsStatus();
   }
@@ -9027,7 +9029,7 @@ function renderFacebookHistoryStatus(status = {}){
       label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 15 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
     }
   }else{
-    label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
+    label.textContent = 'Facebook : historique 15 jours disponible manuellement (FB ↻). Le temps réel reste prioritaire.';
   }
 }
 
@@ -9084,6 +9086,14 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
 
 async function startFacebookHistorySync({ silent = false } = {}){
   if(!canManageInstagramHistory()) return;
+  if(!silent){
+    const ok = confirm(
+      'Synchroniser tout l’historique Facebook des 15 derniers jours ?\n\n' +
+      'Cette opération peut être longue avec plusieurs milliers de conversations. ' +
+      'Elle n’est pas nécessaire pour recevoir les nouveaux messages : le temps réel fonctionne séparément.'
+    );
+    if(!ok) return;
+  }
   const button = document.getElementById('syncFacebookHistoryBtn');
   if(button) button.disabled = true;
 
@@ -9522,6 +9532,7 @@ function updateConversationFilterCounts(){
     filterCountPending:'pendingReply',
     filterCountPriority:'priority',
     filterCountFavorites:'favorites',
+    filterCountHistory15:'history15',
     filterCountCommercial:'commercial',
     filterCountSla:'sla',
     filterCountAds:'ads',
@@ -9627,7 +9638,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.30.2 : les conversations réellement à répondre restent en haut.
+        // V6.30.3 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12862,6 +12873,16 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
       { method:'POST' }
     );
     const imported = Number(result?.importedMessages || 0);
+    const fbStatus = document.getElementById('facebookRealtimeStatus');
+    if(fbStatus){
+      fbStatus.style.display = '';
+      const subscribed = result?.webhookMessagesSubscribed;
+      const scanned = Number(result?.conversationsScanned || 0);
+      const latest = String(result?.latestGraphConversationAt || '').trim();
+      fbStatus.textContent = imported > 0
+        ? `FB temps réel : +${imported} message(s) • ${scanned} discussion(s) vérifiée(s)`
+        : `FB temps réel ${subscribed === true ? '✓ webhook' : subscribed === false ? '⚠ webhook' : ''} • ${scanned} discussion(s) vérifiée(s)${latest ? ` • Meta ${formatShortDateTime(latest)}` : ''}`;
+    }
     if(imported > 0){
       if(
         document.getElementById('page-conversations')?.classList?.contains('active') &&
@@ -12882,6 +12903,11 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
       await pollCommercialNotifications();
     }
   }catch(error){
+    const fbStatus = document.getElementById('facebookRealtimeStatus');
+    if(fbStatus){
+      fbStatus.style.display = '';
+      fbStatus.textContent = `FB temps réel : erreur • ${String(error?.message || 'inconnue')}`;
+    }
     if(!/session|auth|connect/i.test(String(error?.message || ''))){
       console.debug('Rattrapage Facebook temps réel :', error.message);
     }
