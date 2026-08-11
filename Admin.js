@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.1
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,8 +66,24 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-const FACEBOOK_PAGE_ACCESS_TOKEN = (
+// V6.30.1 — deux tokens Facebook indépendants :
+// - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
+// - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
+// L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
+const FACEBOOK_LEGACY_PAGE_TOKEN = (
   process.env.FACEBOOK_PAGE_ACCESS_TOKEN ||
+  ''
+).trim();
+
+const FACEBOOK_MESSENGER_TOKEN = (
+  process.env.FACEBOOK_MESSENGER_TOKEN ||
+  FACEBOOK_LEGACY_PAGE_TOKEN ||
+  ''
+).trim();
+
+const FACEBOOK_COMMENTS_TOKEN = (
+  process.env.FACEBOOK_COMMENTS_TOKEN ||
+  FACEBOOK_LEGACY_PAGE_TOKEN ||
   ''
 ).trim();
 
@@ -76,7 +92,7 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.30.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.30.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
@@ -698,7 +714,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.30.0 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.30.1 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -2582,7 +2598,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.30.0 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.30.1 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -13713,13 +13729,13 @@ function saveFacebookHistorySyncState(state) {
 }
 
 async function facebookGraphGet(url) {
-  if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
-    throw new Error('FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  if (!FACEBOOK_MESSENGER_TOKEN) {
+    throw new Error('FACEBOOK_MESSENGER_TOKEN manquant.');
   }
 
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`
+      Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`
     }
   });
 
@@ -13730,7 +13746,7 @@ async function facebookGraphGet(url) {
     const metaCode = Number(data?.error?.code || 0);
     if (metaCode === 190) {
       const error = new Error(
-        'Connexion Facebook expirée : remplacez FACEBOOK_PAGE_ACCESS_TOKEN dans Railway par un Page Access Token longue durée.'
+        'Connexion Facebook Messenger expirée : remplacez FACEBOOK_MESSENGER_TOKEN dans Railway par le token Messenger valide.'
       );
       error.code = 'FACEBOOK_TOKEN_EXPIRED';
       error.statusCode = 503;
@@ -14083,7 +14099,7 @@ async function persistFacebookHistoryAttachments(message) {
     const remoteUrl=facebookHistoryAttachmentUrl(item);
     if(!remoteUrl) continue;
     try{
-      let response=await fetch(remoteUrl,{headers:{Authorization:`Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`}});
+      let response=await fetch(remoteUrl,{headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}});
       if(!response.ok) response=await fetch(remoteUrl);
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer=Buffer.from(await response.arrayBuffer());
@@ -14202,8 +14218,8 @@ async function getFacebookHistoryProfile(customerId) {
 }
 
 async function validateFacebookHistoryConfiguration() {
-  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
-    throw new Error('FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_MESSENGER_TOKEN) {
+    throw new Error('FACEBOOK_PAGE_ID ou FACEBOOK_MESSENGER_TOKEN manquant.');
   }
 
   const tokenOwner = await facebookGraphGet(
@@ -14213,7 +14229,7 @@ async function validateFacebookHistoryConfiguration() {
   const tokenOwnerId = safeString(tokenOwner?.id);
   if (tokenOwnerId && tokenOwnerId !== safeString(FACEBOOK_PAGE_ID)) {
     throw new Error(
-      `FACEBOOK_PAGE_ACCESS_TOKEN appartient à l’ID ${tokenOwnerId}, mais FACEBOOK_PAGE_ID vaut ${FACEBOOK_PAGE_ID}. Générez un vrai Page Access Token pour cette Page.`
+      `FACEBOOK_MESSENGER_TOKEN appartient à l’ID ${tokenOwnerId}, mais FACEBOOK_PAGE_ID vaut ${FACEBOOK_PAGE_ID}. Utilisez le Page Access Token Messenger correspondant à cette Page.`
     );
   }
 
@@ -14626,8 +14642,8 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     error: ''
   };
 
-  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
-    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.';
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_MESSENGER_TOKEN) {
+    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_MESSENGER_TOKEN manquant.';
     return result;
   }
 
@@ -14672,7 +14688,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
           {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`,
+              Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
               'Content-Type': 'application/x-www-form-urlencoded'
             },
             body: new URLSearchParams({
@@ -14741,7 +14757,7 @@ async function listRecentFacebookConversations(cutoffAt) {
 }
 
 async function runFacebookRealtimeRecovery({ force = false } = {}) {
-  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_MESSENGER_TOKEN) {
     return { configured: false, skipped: true };
   }
   if (facebookRealtimeSyncJob.running || facebookHistorySyncJob.running) {
@@ -15015,7 +15031,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
 router.get('/api/facebook-realtime/status', requireAuth, (req, res) => {
   const saved = loadFacebookRealtimeSyncState();
   return res.json({
-    configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN),
     pollSeconds: Math.round(FACEBOOK_REALTIME_POLL_MS / 1000),
     lookbackMinutes: FACEBOOK_REALTIME_LOOKBACK_MINUTES,
     ...saved,
@@ -15030,7 +15046,7 @@ router.post('/api/facebook-realtime/sync', requireAuth, async (req, res) => {
 
 // Le serveur Railway effectue aussi le rattrapage même si aucun navigateur
 // n'est ouvert. Le timer est "unref" pour ne pas empêcher l'arrêt propre Node.
-if (FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN) {
+if (FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
   const initialFacebookRealtimeTimer = setTimeout(() => {
     runFacebookRealtimeRecovery({ force: true }).catch(() => {});
   }, 12000);
@@ -15065,7 +15081,7 @@ router.get('/api/facebook-history/status', requireAuth, (req, res) => {
         : persisted;
 
     return res.json({
-      configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+      configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN),
       ...effectivePersisted,
       ...(facebookHistorySyncJob.running ? facebookHistorySyncJob : {})
     });
@@ -15081,7 +15097,7 @@ router.post(
   '/api/facebook-history/sync',
   requireAdminOrCommercialManager,
   (req, res) => {
-    if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+    if (!FACEBOOK_PAGE_ID || !FACEBOOK_MESSENGER_TOKEN) {
       return res.status(400).json({
         error: 'Facebook Messenger n’est pas complètement configuré dans Railway.'
       });
@@ -15110,6 +15126,19 @@ router.post(
 // V6.26 — CENTRE DE COMMENTAIRES FACEBOOK + INSTAGRAM
 // ============================================================
 
+
+// V6.30.1 — diagnostic sans exposer les secrets.
+router.get('/api/facebook-token-status', requireAuth, (req, res) => {
+  res.json({
+    ok: true,
+    pageId: safeString(FACEBOOK_PAGE_ID),
+    messengerConfigured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN),
+    commentsConfigured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN),
+    legacyFallbackConfigured: Boolean(FACEBOOK_LEGACY_PAGE_TOKEN),
+    separatedTokens: Boolean(FACEBOOK_MESSENGER_TOKEN && FACEBOOK_COMMENTS_TOKEN && FACEBOOK_MESSENGER_TOKEN !== FACEBOOK_COMMENTS_TOKEN)
+  });
+});
+
 async function graphJsonRequest(url, token, options = {}) {
   if (!token) throw new Error('Token Meta manquant.');
   const method = safeString(options?.method || 'GET').toUpperCase();
@@ -15135,10 +15164,11 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
+// Publications/commentaires Facebook utilisent exclusivement FACEBOOK_COMMENTS_TOKEN.
 function facebookGraphRequestPath(pathname, options = {}) {
   return graphJsonRequest(
     `https://graph.facebook.com/${META_API_VERSION}/${String(pathname || '').replace(/^\//,'')}`,
-    FACEBOOK_PAGE_ACCESS_TOKEN,
+    FACEBOOK_COMMENTS_TOKEN,
     options
   );
 }
@@ -15180,7 +15210,7 @@ async function collectPagedMeta(firstUrl, token, { maxItems = 20000, cutoffAt = 
 }
 
 async function hydrateFacebookPost(postId) {
-  if (!postId || !FACEBOOK_PAGE_ACCESS_TOKEN) return null;
+  if (!postId || !FACEBOOK_COMMENTS_TOKEN) return null;
   try {
     const fields = 'id,message,created_time,permalink_url,full_picture';
     const data = await facebookGraphRequestPath(`${encodeURIComponent(postId)}?fields=${encodeURIComponent(fields)}`);
@@ -15194,7 +15224,7 @@ async function hydrateFacebookPost(postId) {
 }
 
 async function hydrateFacebookComment(commentId, postId = '') {
-  if (!commentId || !FACEBOOK_PAGE_ACCESS_TOKEN) return null;
+  if (!commentId || !FACEBOOK_COMMENTS_TOKEN) return null;
   try {
     const fields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
     const data = await facebookGraphRequestPath(`${encodeURIComponent(commentId)}?fields=${encodeURIComponent(fields)}`);
@@ -15340,7 +15370,7 @@ function saveSocialCommentsSyncState(state) {
 }
 
 async function syncFacebookComments90Days() {
-  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_COMMENTS_TOKEN) {
     throw new Error('Facebook Page ID / Page Access Token manquant.');
   }
 
@@ -15383,7 +15413,7 @@ async function syncFacebookComments90Days() {
       `${encodeURIComponent(FACEBOOK_PAGE_ID)}/${edge}` +
       `?fields=${encodeURIComponent(minimalPostFields)}&limit=50`;
     try {
-      const rows = await collectPagedMeta(first, FACEBOOK_PAGE_ACCESS_TOKEN, {
+      const rows = await collectPagedMeta(first, FACEBOOK_COMMENTS_TOKEN, {
         maxItems: 1500,
         cutoffAt
       });
@@ -15430,7 +15460,7 @@ async function syncFacebookComments90Days() {
     try {
       // Pas de cutoff dans la pagination des commentaires : l'ordre de Meta
       // n'est pas garanti comme strictement antéchronologique. On filtre localement après.
-      minimalRows = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+      minimalRows = await collectPagedMeta(minimalUrl, FACEBOOK_COMMENTS_TOKEN, {
         maxItems: 5000,
         cutoffAt: ''
       });
@@ -15454,7 +15484,7 @@ async function syncFacebookComments90Days() {
         `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments` +
         `?fields=${encodeURIComponent(richCommentFields)}&limit=100`;
       try {
-        const richRows = await collectPagedMeta(richUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+        const richRows = await collectPagedMeta(richUrl, FACEBOOK_COMMENTS_TOKEN, {
           maxItems: 5000,
           cutoffAt: ''
         });
@@ -15482,7 +15512,7 @@ async function syncFacebookComments90Days() {
         `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(topId)}/comments` +
         `?fields=${encodeURIComponent(minimalCommentFields)}&limit=100`;
       try {
-        const replies = await collectPagedMeta(repliesUrl, FACEBOOK_PAGE_ACCESS_TOKEN, {
+        const replies = await collectPagedMeta(repliesUrl, FACEBOOK_COMMENTS_TOKEN, {
           maxItems: 3000,
           cutoffAt: ''
         });
@@ -15673,13 +15703,13 @@ async function runSocialCommentsSync(channel = 'all') {
 
 
 async function refreshFacebookSocialThread(postId) {
-  if (!postId || !FACEBOOK_PAGE_ACCESS_TOKEN) return;
+  if (!postId || !FACEBOOK_COMMENTS_TOKEN) return;
   await hydrateFacebookPost(postId);
   const cutoffAt = historyImportCutoffIso();
   const minimalFields = 'id,message,from,created_time,is_hidden';
   const richFields = 'id,message,created_time,from{id,name,picture},parent{id},permalink_url,is_hidden,can_hide,can_remove,can_reply_privately,comment_count,attachment';
   const minimalUrl = `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?fields=${encodeURIComponent(minimalFields)}&limit=100`;
-  const top = await collectPagedMeta(minimalUrl, FACEBOOK_PAGE_ACCESS_TOKEN, { maxItems:10000, cutoffAt:'' });
+  const top = await collectPagedMeta(minimalUrl, FACEBOOK_COMMENTS_TOKEN, { maxItems:10000, cutoffAt:'' });
   const byId = new Map();
   for (const raw of top) {
     const id=safeString(raw?.id); if(id) byId.set(id,{...raw,__mondecoPostId:postId});
@@ -15687,7 +15717,7 @@ async function refreshFacebookSocialThread(postId) {
   if (top.length) {
     try {
       const richUrl=`https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(postId)}/comments?fields=${encodeURIComponent(richFields)}&limit=100`;
-      const rich=await collectPagedMeta(richUrl,FACEBOOK_PAGE_ACCESS_TOKEN,{maxItems:10000,cutoffAt:''});
+      const rich=await collectPagedMeta(richUrl,FACEBOOK_COMMENTS_TOKEN,{maxItems:10000,cutoffAt:''});
       for(const raw of rich){const id=safeString(raw?.id);if(id)byId.set(id,{...(byId.get(id)||{}),...raw,__mondecoPostId:postId});}
     } catch {}
   }
@@ -15695,7 +15725,7 @@ async function refreshFacebookSocialThread(postId) {
     const topId=safeString(raw?.id); if(!topId) continue;
     try {
       const repliesUrl=`https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(topId)}/comments?fields=${encodeURIComponent(minimalFields)}&limit=100`;
-      const replies=await collectPagedMeta(repliesUrl,FACEBOOK_PAGE_ACCESS_TOKEN,{maxItems:5000,cutoffAt:''});
+      const replies=await collectPagedMeta(repliesUrl,FACEBOOK_COMMENTS_TOKEN,{maxItems:5000,cutoffAt:''});
       for(const reply of replies){const id=safeString(reply?.id);if(id)byId.set(id,{...reply,parent:reply?.parent||{id:topId},__mondecoPostId:postId});}
     } catch {}
   }
@@ -15797,12 +15827,12 @@ router.get('/api/social-comments/status', requireAuth, (req,res) => {
   return res.json({
     ...current,
     counts,
-    facebookConfigured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    facebookConfigured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN),
     instagramConfigured:Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN),
     historyDays:HISTORY_IMPORT_DAYS,
     hasData:Number(counts?.all || 0) > 0,
     needsInitialSync:!current?.running && Number(counts?.all || 0) === 0,
-    needsFacebookSync:!current?.running && Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN) && Number(counts?.facebook || 0) === 0,
+    needsFacebookSync:!current?.running && Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) && Number(counts?.facebook || 0) === 0,
     needsInstagramSync:!current?.running && Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN) && Number(counts?.instagram || 0) === 0,
     lastErrors:Array.isArray(current?.errors) ? current.errors.slice(-10) : []
   });
@@ -15810,11 +15840,11 @@ router.get('/api/social-comments/status', requireAuth, (req,res) => {
 
 async function diagnoseFacebookCommentsAccess() {
   const result = {
-    channel:'facebook', configured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    channel:'facebook', configured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN),
     page:false, posts:false, comments:false, feed:false, samplePostId:'', error:''
   };
   if (!result.configured) {
-    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.';
+    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_COMMENTS_TOKEN manquant.';
     return result;
   }
   try {
@@ -16423,7 +16453,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.30.0 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.30.1 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
