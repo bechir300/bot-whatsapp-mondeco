@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.6
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.33.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -27,7 +27,7 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
-// V6.32.6 — sessions persistantes : survivent aux redéploiements Railway.
+// V6.33.0 — sessions persistantes : survivent aux redéploiements Railway.
 const SESSIONS_PATH = path.join(DATA_DIR, 'admin-sessions.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
@@ -68,7 +68,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.32.6 — deux tokens Facebook indépendants :
+// V6.33.0 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -94,11 +94,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.32.6 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.33.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.32.6 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.33.0 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -143,7 +143,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.32.6 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.33.0 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -230,7 +230,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.32.6 — garde-fou permanent contre ENOSPC.
+// V6.33.0 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -462,7 +462,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.32.6 — CLOUDINARY / CLOUD STORAGE
+// V6.33.0 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -970,7 +970,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.32.6 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.33.0 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1211,7 +1211,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.32.6 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.33.0 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1346,7 +1346,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.32.6 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.33.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2234,7 +2234,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.32.6 : écriture atomique avec garde-fou ENOSPC.
+  // V6.33.0 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3155,7 +3155,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.32.6 — Le catalogue produit reste séparé des réponses rapides.
+// V6.33.0 — Le catalogue produit reste séparé des réponses rapides.
 // Les helpers ci-dessous sont conservés uniquement pour compatibilité interne,
 // mais /api/quick-replies ne les expose plus aux commerciaux.
 // ============================================================
@@ -3807,7 +3807,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.32.6 — migration progressive des octets locaux vers Cloudinary.
+// V6.33.0 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3835,7 +3835,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.32.6 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.33.0 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -4056,7 +4056,7 @@ function getBusinessContext() {
 // AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
-// V6.32.6 — Sessions commerciales persistantes.
+// V6.33.0 — Sessions commerciales persistantes.
 // Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
 // Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
 const SESSION_DURATION_DAYS = Math.max(
@@ -5452,7 +5452,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.32.6</span>
+        <span class="login-version">V6.33.0</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -7622,6 +7622,194 @@ function ensureDailyReportGenerated(force = false, requestedDate = '') {
   saveDailyReports(compact);
   return report;
 }
+
+
+// ============================================================
+// V6.33.0 — Équipe simple / planning quotidien / compte rendu
+// ============================================================
+function teamDateAdd(date, delta) {
+  const ms = Date.parse(`${safeString(date)}T12:00:00+01:00`);
+  if (!Number.isFinite(ms)) return safeString(date);
+  return dateKeyInTimezone(new Date(ms + Number(delta || 0) * 86400000), 'Africa/Tunis');
+}
+
+function attendanceSegmentsForDay(date, userId) {
+  const record = loadAttendance()[`${date}:${userId}`] || {};
+  const dayStart = Date.parse(`${date}T00:00:00+01:00`);
+  const dayEnd = Date.parse(`${date}T23:59:59.999+01:00`);
+  const segments = [];
+  for (const item of Array.isArray(record.segments) ? record.segments : []) {
+    const start = Date.parse(safeString(item?.startAt));
+    const last = Date.parse(safeString(item?.lastAt));
+    if (!Number.isFinite(start) || !Number.isFinite(last)) continue;
+    segments.push([Math.max(dayStart, start), Math.min(dayEnd, last + 75 * 1000)]);
+  }
+  if (!segments.length && record.firstSeenAt && record.lastSeenAt) {
+    const start = Date.parse(record.firstSeenAt), end = Date.parse(record.lastSeenAt);
+    if (Number.isFinite(start) && Number.isFinite(end)) segments.push([Math.max(dayStart,start),Math.min(dayEnd,end + 60*1000)]);
+  }
+  return segments.filter(([a,b]) => b > a);
+}
+
+function nightActivityMsForUser(date, userId) {
+  const dayStart = Date.parse(`${date}T00:00:00+01:00`);
+  const morningEnd = Date.parse(`${date}T08:00:00+01:00`);
+  const eveningStart = Date.parse(`${date}T20:00:00+01:00`);
+  const dayEnd = Date.parse(`${date}T23:59:59.999+01:00`);
+  let total = 0;
+  for (const [start,end] of attendanceSegmentsForDay(date,userId)) {
+    total += overlapMs(start,end,dayStart,morningEnd);
+    total += overlapMs(start,end,eveningStart,dayEnd);
+  }
+  return Math.round(total);
+}
+
+function replyChannel(entry) {
+  const direct = safeString(entry?.channel || entry?.platform).toLowerCase();
+  if (['whatsapp','instagram','facebook'].includes(direct)) return direct;
+  const contact = safeString(entry?.contact).toLowerCase();
+  if (contact.startsWith('instagram:')) return 'instagram';
+  if (contact.startsWith('facebook:')) return 'facebook';
+  return 'whatsapp';
+}
+
+function userCommercialRepliesForDay(date, userId) {
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  return loadWhatsAppLog().filter(entry =>
+    safeString(entry?.action) === 'commercial_reply' &&
+    safeString(entry?.commercial_user_id) === safeString(userId) &&
+    dateKeyInTimezone(entry?.time, timezone) === date
+  );
+}
+
+function replyWasDuringPresence(entry, date, userId) {
+  const ms = Date.parse(safeString(entry?.time));
+  if (!Number.isFinite(ms)) return false;
+  return attendanceSegmentsForDay(date,userId).some(([start,end]) => ms >= start - 60000 && ms <= end + 60000);
+}
+
+function isNightTimeInTunis(value) {
+  const hour = tunisClockParts(value).hour;
+  return hour < 8 || hour >= 20;
+}
+
+function simpleScheduleForUserDate(date, userId) {
+  const shifts = getSchedulesForDate(date).filter(s => safeString(s.userId) === safeString(userId) && s.active !== false);
+  if (!shifts.length) return { planned:false, channels:[], startTime:'09:00', endTime:'18:00' };
+  const channels = [...new Set(shifts.flatMap(s => normalizeChannels(s.channels)))];
+  const starts = shifts.map(s => safeString(s.startTime)).filter(Boolean).sort();
+  const ends = shifts.map(s => safeString(s.endTime)).filter(Boolean).sort();
+  return { planned:true, channels, startTime:starts[0] || '09:00', endTime:ends[ends.length-1] || '18:00', shiftIds:shifts.map(s=>s.id) };
+}
+
+function plannedChannelSetForUser(user, date = '') {
+  if (safeString(user?.role) !== 'commercial') return null;
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const targetDate = safeString(date) || dateKeyInTimezone(new Date(), timezone);
+  const schedule = simpleScheduleForUserDate(targetDate, user.id);
+  return schedule.planned ? new Set(schedule.channels || []) : null;
+}
+
+function pendingAssignedForUser(userId) {
+  const states = loadConversationStatesAdmin();
+  let pending = 0, late = 0;
+  for (const state of Object.values(states)) {
+    if (safeString(state?.assignedUserId) !== safeString(userId) || state?.resolved === true) continue;
+    const sla = computeLiveSla(state);
+    const needs = state?.commercialAttention === true || state?.awaitingResponse === true || Number(state?.unreadCount || 0) > 0 || ['pending','late'].includes(safeString(sla?.status));
+    if (!needs) continue;
+    pending += 1;
+    if (safeString(sla?.status) === 'late') late += 1;
+  }
+  return { pending, late };
+}
+
+function simpleTeamDayForUser(user, date) {
+  const attendance = attendanceMetricsForUser(date, user.id);
+  const replies = userCommercialRepliesForDay(date, user.id);
+  const replyByChannel = { whatsapp:0, instagram:0, facebook:0 };
+  let repliesWhileOnline = 0, nightReplies = 0;
+  for (const entry of replies) {
+    const channel = replyChannel(entry); replyByChannel[channel] = Number(replyByChannel[channel] || 0) + 1;
+    if (replyWasDuringPresence(entry,date,user.id)) repliesWhileOnline += 1;
+    if (isNightTimeInTunis(entry.time)) nightReplies += 1;
+  }
+  const contacts = new Set(replies.map(entry => safeString(entry.contact)).filter(Boolean));
+  const pending = pendingAssignedForUser(user.id);
+  const schedule = simpleScheduleForUserDate(date,user.id);
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const slaEvents = loadSlaEvents();
+  const started = slaEvents.filter(e => e.event === 'started' && safeString(e.assignedUserId) === safeString(user.id) && dateKeyInTimezone(e.startedAt || e.time, timezone) === date);
+  const resolvedIds = new Set(slaEvents.filter(e => e.event === 'resolved' && (safeString(e.answeredByUserId) === safeString(user.id) || safeString(e.assignedUserId) === safeString(user.id))).map(e => safeString(e.slaId || e.id)).filter(Boolean));
+  const nowMs = Date.now();
+  const slaMissed = started.filter(e => { const id=safeString(e.id || e.slaId); const due=Date.parse(e.dueAt || ''); return !resolvedIds.has(id) && Number.isFinite(due) && due < nowMs; }).length;
+  return {
+    attendance, schedule,
+    activeDay: Number(attendance.onlineMs || 0) > 0 || replies.length > 0,
+    replies: replies.length,
+    repliesWhileOnline,
+    repliesOutsidePresence: Math.max(0,replies.length-repliesWhileOnline),
+    replyByChannel,
+    conversations: contacts.size,
+    pendingAssigned: pending.pending,
+    lateAssigned: pending.late,
+    nightMs: nightActivityMsForUser(date,user.id),
+    nightReplies,
+    slaMissed
+  };
+}
+
+router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,res) => {
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date)) ? safeString(req.query.date) : dateKeyInTimezone(new Date(),timezone);
+  const users = loadUsers().filter(user => user.role === 'commercial').map(user => {
+    const day = simpleTeamDayForUser(user,date);
+    return { ...sanitizeUserForClient(user), presence:getPresenceForUser(user.id), ...day };
+  }).sort((a,b) => (a.presence?.status==='online'?0:a.presence?.status==='idle'?1:2)-(b.presence?.status==='online'?0:b.presence?.status==='idle'?1:2) || safeString(a.name||a.email).localeCompare(safeString(b.name||b.email),'fr'));
+  return res.json({ date, generatedAt:new Date().toISOString(), users });
+});
+
+router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager, (req,res) => {
+  const userId = safeString(req.params.userId);
+  const user = loadUsers().find(item => item.id === userId && item.role === 'commercial');
+  const date = safeString(req.body?.date);
+  const channels = [...new Set((Array.isArray(req.body?.channels) ? req.body.channels : []).map(item => safeString(item).toLowerCase()).filter(c => ['whatsapp','instagram','facebook'].includes(c)))];
+  const requestedActive = req.body?.active !== false && channels.length > 0;
+  const startTime = safeString(req.body?.startTime || '09:00');
+  const endTime = safeString(req.body?.endTime || '18:00');
+  if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({error:'Commercial ou date invalide.'});
+  if (requestedActive && (timeMinutes(startTime) === null || timeMinutes(endTime) === null || timeMinutes(endTime) <= timeMinutes(startTime))) return res.status(400).json({error:'Horaire invalide. Pour un service après minuit, utilisez la date suivante pour la partie après 00:00.'});
+  const items = loadSchedules();
+  const existing = items.filter(item => safeString(item.userId) === userId && safeString(item.date) === date);
+  const kept = items.filter(item => !(safeString(item.userId) === userId && safeString(item.date) === date));
+  if (requestedActive) {
+    const first = existing[0] || {};
+    kept.push({
+      ...first,
+      id:safeString(first.id)||crypto.randomUUID(), userId, userName:safeString(user.name), date, startTime, endTime,
+      breakStart:safeString(first.breakStart), breakEnd:safeString(first.breakEnd), channels,
+      mission:safeString(first.mission || 'Planning quotidien'), priority:safeString(first.priority || 'normal'),
+      slaMinutes:Math.max(1,Math.min(120,Number(first.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),
+      active:true, createdBy:safeString(first.createdBy || req.user?.id), createdAt:safeString(first.createdAt)||new Date().toISOString(), updatedAt:new Date().toISOString()
+    });
+  }
+  saveSchedules(kept);
+  return res.json({success:true, schedule:simpleScheduleForUserDate(date,userId)});
+});
+
+router.get('/api/team/commercial-report/:userId', requireAdminOrCommercialManager, (req,res) => {
+  const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');
+  const date=/^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date))?safeString(req.query.date):dateKeyInTimezone(new Date(),timezone);
+  const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&item.role==='commercial');
+  if(!user)return res.status(404).json({error:'Commercial introuvable.'});
+  const day=simpleTeamDayForUser(user,date);
+  const history=[];
+  for(let i=0;i<7;i++){
+    const d=teamDateAdd(date,-i);const x=simpleTeamDayForUser(user,d);
+    history.push({date:d,activeDay:x.activeDay,onlineMs:x.attendance.onlineMs,replies:x.replies,nightMs:x.nightMs,channels:x.schedule.channels||[],planned:x.schedule.planned});
+  }
+  return res.json({date,user:sanitizeUserForClient(user),presence:getPresenceForUser(user.id),day,history});
+});
 
 router.get('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
   const date = safeString(req.query?.date);
@@ -11037,7 +11225,7 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
-    // V6.32.6 : uniquement les réponses réellement enregistrées dans
+    // V6.33.0 : uniquement les réponses réellement enregistrées dans
     // /data/quick-replies.json. Le catalogue WooCommerce/Produits n'est plus
     // transformé automatiquement en commandes /nom-produit.
     return res.json(
@@ -12037,7 +12225,7 @@ router.post(
           }
         });
 
-      // V6.32.6 — une réponse envoyée avec succès remet aussi le petit badge
+      // V6.33.0 — une réponse envoyée avec succès remet aussi le petit badge
       // non-lu de la ligne client à zéro, de façon persistante.
       updateConversationStateAdmin(contact, current => ({
         ...current,
@@ -12207,7 +12395,7 @@ router.post(
           }
         });
 
-      // V6.32.6 — même acquittement pour les médias WhatsApp.
+      // V6.33.0 — même acquittement pour les médias WhatsApp.
       updateConversationStateAdmin(contact, current => ({
         ...current,
         unreadCount: 0,
@@ -15306,7 +15494,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.32.6 — récupération sûre après une panne de webhook/token.
+// V6.33.0 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15458,7 +15646,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.32.6 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.33.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15566,7 +15754,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.32.6 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.33.0 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15828,7 +16016,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         const freshest = freshestStates[contact] || {};
         const merged = { ...freshest, ...state };
 
-        // V6.32.6 — le rattrapage Facebook peut finir après qu'un commercial
+        // V6.33.0 — le rattrapage Facebook peut finir après qu'un commercial
         // a lu/répondu. Préserver les horodatages les plus récents empêche
         // l'ancien unreadCount de revenir à 1.
         merged.lastCustomerAt = maxIso(freshest.lastCustomerAt, state.lastCustomerAt);
@@ -16008,7 +16196,7 @@ router.post(
 // ============================================================
 
 
-// V6.32.6 — diagnostic sans exposer les secrets.
+// V6.33.0 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16046,7 +16234,7 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// V6.32.6 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// V6.33.0 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
 // au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
 // User Access Token, MONDECO tente de dériver le Page Access Token de
 // FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
@@ -16804,7 +16992,7 @@ function socialOutgoingReplyIndex(items = []) {
   return byParent;
 }
 
-// V6.32.6 — les commentaires sont comptés par FIL de discussion, pas par
+// V6.33.0 — les commentaires sont comptés par FIL de discussion, pas par
 // chaque ligne historique. Si MONDECO répond après le dernier commentaire
 // client du fil, tout le fil est traité. Cela correspond au travail réel du
 // commercial et empêche 4 réponses/client dans un même fil de compter 4 fois.
@@ -16924,7 +17112,10 @@ function socialCommentCounts(items, user) {
 router.get('/api/social-comments/status', requireAuth, (req,res) => {
   const saved = loadSocialCommentsSyncState();
   const current = socialCommentsSyncJob.startedAt ? socialCommentsSyncJob : { ...saved, running:false };
-  const counts = socialCommentCounts(loadSocialComments(), req.user);
+  let scopedComments = loadSocialComments();
+  const channelScope = plannedChannelSetForUser(req.user);
+  if (channelScope) scopedComments = scopedComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
+  const counts = socialCommentCounts(scopedComments, req.user);
   return res.json({
     ...current,
     counts,
@@ -17085,7 +17276,9 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
   try {
     const posts = loadSocialPosts();
     const postMap = new Map(posts.map(post => [safeString(post?.key), post]));
-    const allComments = loadSocialComments();
+    let allComments = loadSocialComments();
+    const channelScope = plannedChannelSetForUser(req.user);
+    if (channelScope) allComments = allComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
     const threadIndex = socialCommentThreadIndex(allComments);
     let comments = allComments.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
     const channel = safeString(req.query?.channel).toLowerCase();
@@ -17375,7 +17568,7 @@ function conversationEntryNeedsDirection(entry) {
   return { inbound, outbound };
 }
 
-// V6.32.6 — une seule source de vérité pour tous les compteurs Messages.
+// V6.33.0 — une seule source de vérité pour tous les compteurs Messages.
 // On privilégie l'ordre réel des événements du journal. Un ancien lastCustomerAt
 // importé ne doit plus remettre une discussion en rouge si le dernier échange
 // visible est déjà une réponse MONDECO / Meta / IA.
@@ -17482,7 +17675,7 @@ function conversationEntryIsBusinessReply(entry) {
 
 let lastAnsweredConversationReconcileAt = 0;
 
-// V6.32.6 — auto-réparation des anciennes discussions déjà traitées.
+// V6.33.0 — auto-réparation des anciennes discussions déjà traitées.
 // Une réponse commerciale peut avoir été synchronisée depuis WhatsApp Business,
 // Instagram ou Meta après que l'état local unread/SLA a été écrit. L'historique
 // réel est la source de vérité : si une réponse business est postérieure au
@@ -17492,7 +17685,7 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
     ? statesInput
     : loadConversationStatesAdmin();
   const nowMs = Date.now();
-  // V6.32.6 : le recalcul est léger et doit corriger rapidement l'écran après
+  // V6.33.0 : le recalcul est léger et doit corriger rapidement l'écran après
   // une synchro Meta. 1,5 s évite les réécritures excessives tout en restant instantané.
   if (nowMs - lastAnsweredConversationReconcileAt < 1500) return states;
   lastAnsweredConversationReconcileAt = nowMs;
@@ -17627,8 +17820,14 @@ function pendingMessageStatusByContact() {
 
 function pendingInteractionCountsForUser(user) {
   const messageStatus = pendingMessageStatusByContact();
-  const pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
-  const commentCounts = socialCommentCounts(loadSocialComments(), user);
+  const channelScope = plannedChannelSetForUser(user);
+  let pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
+  let scopedComments = loadSocialComments();
+  if (channelScope) {
+    pendingMessages = pendingMessages.filter(item => channelScope.has(safeString(item.channel).toLowerCase()));
+    scopedComments = scopedComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
+  }
+  const commentCounts = socialCommentCounts(scopedComments, user);
   return {
     messages: pendingMessages.length,
     whatsapp: pendingMessages.filter(item => item.channel === 'whatsapp').length,
@@ -17651,7 +17850,7 @@ router.get('/api/interactions/pending-counts', requireAuth, (req,res) => {
   }
 });
 
-// V6.32.6 — réparation explicite des anciens états importés. Appelé une fois
+// V6.33.0 — réparation explicite des anciens états importés. Appelé une fois
 // après ouverture de l'interface afin que les badges historiques 1/2/3/4
 // disparaissent immédiatement si la discussion a déjà une réponse postérieure.
 router.post('/api/interactions/reconcile', requireAuth, (req,res) => {
@@ -17787,7 +17986,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.32.6 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.33.0 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -17801,7 +18000,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.32.6 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.33.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -17818,6 +18017,14 @@ router.get('/api/conversations', requireAuth, (req, res) => {
           readOnly: isCommercial && !assignedToMe
         };
       });
+
+    // V6.33.0 : si un commercial possède un planning aujourd'hui, sa boîte de
+    // travail est limitée aux réseaux cochés dans Équipe & planning. Sans planning
+    // explicite, on conserve l'accès actuel pour éviter un verrouillage accidentel.
+    const commercialChannelScope = plannedChannelSetForUser(req.user);
+    if (commercialChannelScope) {
+      retainedConversations = retainedConversations.filter(item => commercialChannelScope.has(safeString(item.channel).toLowerCase()));
+    }
 
     // Boîte active : toujours conserver le travail à faire, les non lus,
     // priorités et favoris. Une conversation déjà traitée reste visible
@@ -18052,7 +18259,7 @@ router.post(
         });
     }
 
-    // V6.32.6 — Tous les commerciaux peuvent répondre à toute conversation.
+    // V6.33.0 — Tous les commerciaux peuvent répondre à toute conversation.
     // Le statut « lu » doit donc suivre la même règle : ouvrir une conversation
     // la marque comme lue même si elle est affectée à un autre commercial.
     // Les droits de gestion (affectation, résolution, etc.) restent séparés.
