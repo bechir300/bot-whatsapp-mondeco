@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.29.0
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.0
 // server.js
 //
 // Ajouts V5 :
@@ -5166,6 +5166,35 @@ async function sendWhatsAppMedia(
 // Meta Messenger Send API : destinataire = PSID, messaging_type = RESPONSE.
 // ============================================================
 
+
+function facebookMessengerApiError(data, status = 500) {
+  const metaError = data?.error && typeof data.error === 'object' ? data.error : {};
+  const metaCode = Number(metaError?.code || 0);
+  const subcode = Number(metaError?.error_subcode || 0);
+  const rawMessage = safeString(metaError?.message);
+
+  if (metaCode === 190) {
+    const error = new Error(
+      'Connexion Facebook expirée. Aucun message n’a été envoyé. ' +
+      'Un administrateur doit renouveler FACEBOOK_PAGE_ACCESS_TOKEN dans Railway avec un Page Access Token longue durée.'
+    );
+    error.code = 'FACEBOOK_TOKEN_EXPIRED';
+    error.channel = 'facebook';
+    error.statusCode = 503;
+    error.metaCode = metaCode;
+    error.metaSubcode = subcode;
+    return error;
+  }
+
+  const error = new Error(rawMessage || `Erreur Facebook Messenger HTTP ${status}`);
+  error.code = 'FACEBOOK_SEND_ERROR';
+  error.channel = 'facebook';
+  error.statusCode = status >= 400 && status < 600 ? status : 500;
+  error.metaCode = metaCode;
+  error.metaSubcode = subcode;
+  return error;
+}
+
 async function sendFacebookMessage(to, text) {
   if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
     throw new Error('FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
@@ -5212,10 +5241,7 @@ async function sendFacebookMessage(to, text) {
 
   if (!response.ok) {
     console.error('❌ Meta Facebook Messenger API :', JSON.stringify(data));
-    throw new Error(
-      data?.error?.message ||
-      `Erreur Facebook Messenger HTTP ${response.status}`
-    );
+    throw facebookMessengerApiError(data, response.status);
   }
 
   const messageId = safeString(data?.message_id);
