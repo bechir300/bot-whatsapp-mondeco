@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.33.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.33.1
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -27,7 +27,7 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
-// V6.33.0 — sessions persistantes : survivent aux redéploiements Railway.
+// V6.33.1 — sessions persistantes : survivent aux redéploiements Railway.
 const SESSIONS_PATH = path.join(DATA_DIR, 'admin-sessions.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
@@ -68,7 +68,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.33.0 — deux tokens Facebook indépendants :
+// V6.33.1 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -94,11 +94,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.33.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.33.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.33.0 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.33.1 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -143,7 +143,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.33.0 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.33.1 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -230,7 +230,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.33.0 — garde-fou permanent contre ENOSPC.
+// V6.33.1 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -462,7 +462,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.33.0 — CLOUDINARY / CLOUD STORAGE
+// V6.33.1 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -970,7 +970,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.33.0 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.33.1 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1211,7 +1211,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.33.0 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.33.1 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1346,7 +1346,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.33.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.33.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2234,7 +2234,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.33.0 : écriture atomique avec garde-fou ENOSPC.
+  // V6.33.1 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3155,7 +3155,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.33.0 — Le catalogue produit reste séparé des réponses rapides.
+// V6.33.1 — Le catalogue produit reste séparé des réponses rapides.
 // Les helpers ci-dessous sont conservés uniquement pour compatibilité interne,
 // mais /api/quick-replies ne les expose plus aux commerciaux.
 // ============================================================
@@ -3807,7 +3807,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.33.0 — migration progressive des octets locaux vers Cloudinary.
+// V6.33.1 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3835,7 +3835,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.33.0 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.33.1 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -4056,7 +4056,7 @@ function getBusinessContext() {
 // AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
-// V6.33.0 — Sessions commerciales persistantes.
+// V6.33.1 — Sessions commerciales persistantes.
 // Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
 // Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
 const SESSION_DURATION_DAYS = Math.max(
@@ -5022,7 +5022,18 @@ function commercialCanWriteConversation(user, state) {
 
 function requireCommercialConversationWriteAccess(req, res, contact) {
   if (safeString(req.user?.role) !== 'commercial') return true;
-  const state = loadConversationStatesAdmin()[safeString(contact)] || {};
+  const normalizedContact = safeString(contact);
+  const state = loadConversationStatesAdmin()[normalizedContact] || {};
+  const channel = safeString(state?.channel).toLowerCase() ||
+    (normalizedContact.startsWith('instagram:') ? 'instagram' :
+      normalizedContact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+  const scope = plannedChannelSetForUser(req.user);
+  if (!channelScopeAllowsMessage(scope, channel)) {
+    res.status(403).json({
+      error: 'Accès refusé : ce canal de messages ne fait pas partie de votre planning du jour.'
+    });
+    return false;
+  }
   if (conversationAssignedToUser(state, req.user)) return true;
   res.status(403).json({
     error: 'Lecture seule : cette conversation n’est pas affectée à votre compte.'
@@ -5452,7 +5463,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.33.0</span>
+        <span class="login-version">V6.33.1</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -7165,13 +7176,76 @@ function tunisMinutesNow(value = new Date()) {
   return parts.hour * 60 + parts.minute;
 }
 
+const TEAM_ACCESS_CHANNELS = new Set([
+  'whatsapp_messages',
+  'instagram_messages',
+  'instagram_comments',
+  'facebook_messages',
+  'facebook_comments'
+]);
+
 function normalizeChannels(value) {
   const raw = Array.isArray(value) ? value : [value];
-  const allowed = new Set(['whatsapp', 'instagram', 'facebook']);
-  const channels = [...new Set(raw.map(item => safeString(item).toLowerCase()).filter(item => allowed.has(item)))];
-  // Compatibilité : un ancien planning sans canal explicite conserve son
-  // comportement WhatsApp + Instagram au lieu d'être étendu silencieusement.
-  return channels.length ? channels : ['whatsapp', 'instagram'];
+  const expanded = [];
+  for (const item of raw) {
+    const channel = safeString(item).toLowerCase().trim();
+    if (!channel) continue;
+    if (TEAM_ACCESS_CHANNELS.has(channel)) {
+      expanded.push(channel);
+      continue;
+    }
+    // Compatibilité avec les plannings V6.33.1 et antérieurs.
+    if (channel === 'whatsapp') expanded.push('whatsapp_messages');
+    if (channel === 'instagram') expanded.push('instagram_messages', 'instagram_comments');
+    if (channel === 'facebook') expanded.push('facebook_messages', 'facebook_comments');
+  }
+  const channels = [...new Set(expanded)];
+  // Ancien planning réellement dépourvu de champ channels : conserver son
+  // ancien périmètre WhatsApp + Instagram (messages + commentaires IG).
+  return channels.length
+    ? channels
+    : ['whatsapp_messages', 'instagram_messages', 'instagram_comments'];
+}
+
+function messageAccessKey(channel) {
+  const value = safeString(channel).toLowerCase();
+  if (value === 'instagram') return 'instagram_messages';
+  if (value === 'facebook') return 'facebook_messages';
+  return 'whatsapp_messages';
+}
+
+function commentAccessKey(channel) {
+  const value = safeString(channel).toLowerCase();
+  if (value === 'facebook') return 'facebook_comments';
+  return 'instagram_comments';
+}
+
+function channelScopeAllowsMessage(scope, channel) {
+  return !scope || scope.has(messageAccessKey(channel));
+}
+
+function channelScopeAllowsComment(scope, channel) {
+  return !scope || scope.has(commentAccessKey(channel));
+}
+
+function commercialChannelScope(user, date = '') {
+  return plannedChannelSetForUser(user, date);
+}
+
+function requireCommercialMessageChannelAccess(req, res, channel) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const scope = commercialChannelScope(req.user);
+  if (channelScopeAllowsMessage(scope, channel)) return true;
+  res.status(403).json({ error:'Accès refusé : ce canal de messages ne fait pas partie de votre planning du jour.' });
+  return false;
+}
+
+function requireCommercialCommentChannelAccess(req, res, channel) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const scope = commercialChannelScope(req.user);
+  if (channelScopeAllowsComment(scope, channel)) return true;
+  res.status(403).json({ error:'Accès refusé : ce canal de commentaires ne fait pas partie de votre planning du jour.' });
+  return false;
 }
 
 function scheduleIsActiveNow(schedule, now = new Date(), channel = '') {
@@ -7186,7 +7260,9 @@ function scheduleIsActiveNow(schedule, now = new Date(), channel = '') {
   const breakEnd = timeMinutes(schedule?.breakEnd);
   if (breakStart !== null && breakEnd !== null && current >= breakStart && current < breakEnd) return false;
   const requestedChannel = safeString(channel).toLowerCase();
-  return !requestedChannel || normalizeChannels(schedule?.channels).includes(requestedChannel);
+  if (!requestedChannel) return true;
+  const scope = new Set(normalizeChannels(schedule?.channels));
+  return channelScopeAllowsMessage(scope, requestedChannel);
 }
 
 function recordAttendance(user) {
@@ -7625,7 +7701,7 @@ function ensureDailyReportGenerated(force = false, requestedDate = '') {
 
 
 // ============================================================
-// V6.33.0 — Équipe simple / planning quotidien / compte rendu
+// V6.33.1 — Équipe simple / planning quotidien / compte rendu
 // ============================================================
 function teamDateAdd(date, delta) {
   const ms = Date.parse(`${safeString(date)}T12:00:00+01:00`);
@@ -7710,11 +7786,15 @@ function plannedChannelSetForUser(user, date = '') {
   return schedule.planned ? new Set(schedule.channels || []) : null;
 }
 
-function pendingAssignedForUser(userId) {
+function pendingAssignedForUser(user, date = '') {
   const states = loadConversationStatesAdmin();
+  const scope = plannedChannelSetForUser(user, date);
   let pending = 0, late = 0;
-  for (const state of Object.values(states)) {
-    if (safeString(state?.assignedUserId) !== safeString(userId) || state?.resolved === true) continue;
+  for (const [contact, state] of Object.entries(states)) {
+    if (safeString(state?.assignedUserId) !== safeString(user?.id) || state?.resolved === true) continue;
+    const channel = safeString(state?.channel).toLowerCase() ||
+      (safeString(contact).startsWith('instagram:') ? 'instagram' : safeString(contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
+    if (!channelScopeAllowsMessage(scope, channel)) continue;
     const sla = computeLiveSla(state);
     const needs = state?.commercialAttention === true || state?.awaitingResponse === true || Number(state?.unreadCount || 0) > 0 || ['pending','late'].includes(safeString(sla?.status));
     if (!needs) continue;
@@ -7735,7 +7815,7 @@ function simpleTeamDayForUser(user, date) {
     if (isNightTimeInTunis(entry.time)) nightReplies += 1;
   }
   const contacts = new Set(replies.map(entry => safeString(entry.contact)).filter(Boolean));
-  const pending = pendingAssignedForUser(user.id);
+  const pending = pendingAssignedForUser(user,date);
   const schedule = simpleScheduleForUserDate(date,user.id);
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const slaEvents = loadSlaEvents();
@@ -7773,7 +7853,8 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
   const userId = safeString(req.params.userId);
   const user = loadUsers().find(item => item.id === userId && item.role === 'commercial');
   const date = safeString(req.body?.date);
-  const channels = [...new Set((Array.isArray(req.body?.channels) ? req.body.channels : []).map(item => safeString(item).toLowerCase()).filter(c => ['whatsapp','instagram','facebook'].includes(c)))];
+  const rawChannels = Array.isArray(req.body?.channels) ? req.body.channels : [];
+  const channels = rawChannels.length ? normalizeChannels(rawChannels) : [];
   const requestedActive = req.body?.active !== false && channels.length > 0;
   const startTime = safeString(req.body?.startTime || '09:00');
   const endTime = safeString(req.body?.endTime || '18:00');
@@ -11225,7 +11306,7 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
-    // V6.33.0 : uniquement les réponses réellement enregistrées dans
+    // V6.33.1 : uniquement les réponses réellement enregistrées dans
     // /data/quick-replies.json. Le catalogue WooCommerce/Produits n'est plus
     // transformé automatiquement en commandes /nom-produit.
     return res.json(
@@ -12032,6 +12113,7 @@ router.post(
       }
 
       const contact = safeString(req.body?.contact || req.body?.phone);
+      if (!requireCommercialMessageChannelAccess(req, res, 'whatsapp')) return;
       const externalContact = safeString(req.body?.externalContact) || normalizePhone(contact);
       const phone = normalizePhone(externalContact);
       const sdp = safeString(req.body?.sdp);
@@ -12158,6 +12240,8 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
+      if (!requireCommercialMessageChannelAccess(req, res, channel)) return;
+
       const externalContact =
         safeString(
           req.body?.externalContact
@@ -12225,7 +12309,7 @@ router.post(
           }
         });
 
-      // V6.33.0 — une réponse envoyée avec succès remet aussi le petit badge
+      // V6.33.1 — une réponse envoyée avec succès remet aussi le petit badge
       // non-lu de la ligne client à zéro, de façon persistante.
       updateConversationStateAdmin(contact, current => ({
         ...current,
@@ -12297,6 +12381,8 @@ router.post(
           : requestedChannel === 'instagram' || contact.startsWith('instagram:')
             ? 'instagram'
             : 'whatsapp';
+
+      if (!requireCommercialMessageChannelAccess(req, res, channel)) return;
 
       const externalContact =
         safeString(
@@ -12395,7 +12481,7 @@ router.post(
           }
         });
 
-      // V6.33.0 — même acquittement pour les médias WhatsApp.
+      // V6.33.1 — même acquittement pour les médias WhatsApp.
       updateConversationStateAdmin(contact, current => ({
         ...current,
         unreadCount: 0,
@@ -15494,7 +15580,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.33.0 — récupération sûre après une panne de webhook/token.
+// V6.33.1 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15646,7 +15732,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.33.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.33.1 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15754,7 +15840,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.33.0 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.33.1 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -16016,7 +16102,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         const freshest = freshestStates[contact] || {};
         const merged = { ...freshest, ...state };
 
-        // V6.33.0 — le rattrapage Facebook peut finir après qu'un commercial
+        // V6.33.1 — le rattrapage Facebook peut finir après qu'un commercial
         // a lu/répondu. Préserver les horodatages les plus récents empêche
         // l'ancien unreadCount de revenir à 1.
         merged.lastCustomerAt = maxIso(freshest.lastCustomerAt, state.lastCustomerAt);
@@ -16196,7 +16282,7 @@ router.post(
 // ============================================================
 
 
-// V6.33.0 — diagnostic sans exposer les secrets.
+// V6.33.1 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16234,7 +16320,7 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// V6.33.0 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// V6.33.1 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
 // au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
 // User Access Token, MONDECO tente de dériver le Page Access Token de
 // FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
@@ -16992,7 +17078,7 @@ function socialOutgoingReplyIndex(items = []) {
   return byParent;
 }
 
-// V6.33.0 — les commentaires sont comptés par FIL de discussion, pas par
+// V6.33.1 — les commentaires sont comptés par FIL de discussion, pas par
 // chaque ligne historique. Si MONDECO répond après le dernier commentaire
 // client du fil, tout le fil est traité. Cela correspond au travail réel du
 // commercial et empêche 4 réponses/client dans un même fil de compter 4 fois.
@@ -17114,18 +17200,24 @@ router.get('/api/social-comments/status', requireAuth, (req,res) => {
   const current = socialCommentsSyncJob.startedAt ? socialCommentsSyncJob : { ...saved, running:false };
   let scopedComments = loadSocialComments();
   const channelScope = plannedChannelSetForUser(req.user);
-  if (channelScope) scopedComments = scopedComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
+  if (channelScope) scopedComments = scopedComments.filter(item => channelScopeAllowsComment(channelScope, item?.channel));
   const counts = socialCommentCounts(scopedComments, req.user);
+  const canFacebookComments = channelScopeAllowsComment(channelScope, 'facebook');
+  const canInstagramComments = channelScopeAllowsComment(channelScope, 'instagram');
   return res.json({
     ...current,
     counts,
+    access:{
+      instagramComments:canInstagramComments,
+      facebookComments:canFacebookComments
+    },
     facebookConfigured:Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN),
     instagramConfigured:Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN),
     historyDays:HISTORY_IMPORT_DAYS,
     hasData:Number(counts?.all || 0) > 0,
-    needsInitialSync:!current?.running && Number(counts?.all || 0) === 0,
-    needsFacebookSync:!current?.running && Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) && Number(counts?.facebook || 0) === 0,
-    needsInstagramSync:!current?.running && Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN) && Number(counts?.instagram || 0) === 0,
+    needsInitialSync:!current?.running && Number(counts?.all || 0) === 0 && (canFacebookComments || canInstagramComments),
+    needsFacebookSync:canFacebookComments && !current?.running && Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) && Number(counts?.facebook || 0) === 0,
+    needsInstagramSync:canInstagramComments && !current?.running && Boolean(INSTAGRAM_ACCOUNT_ID && INSTAGRAM_ACCESS_TOKEN) && Number(counts?.instagram || 0) === 0,
     lastErrors:Array.isArray(current?.errors) ? current.errors.slice(-10) : []
   });
 });
@@ -17278,7 +17370,7 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
     const postMap = new Map(posts.map(post => [safeString(post?.key), post]));
     let allComments = loadSocialComments();
     const channelScope = plannedChannelSetForUser(req.user);
-    if (channelScope) allComments = allComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
+    if (channelScope) allComments = allComments.filter(item => channelScopeAllowsComment(channelScope, item?.channel));
     const threadIndex = socialCommentThreadIndex(allComments);
     let comments = allComments.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
     const channel = safeString(req.query?.channel).toLowerCase();
@@ -17324,6 +17416,8 @@ router.post('/api/social-comments/avatars/refresh', requireAuth, async (req,res)
       targets = targets.filter(item => wanted.has(safeString(item.key)));
     }
     if (['facebook','instagram'].includes(channel)) targets = targets.filter(item => item.channel === channel);
+    const avatarScope = plannedChannelSetForUser(req.user);
+    if (avatarScope) targets = targets.filter(item => channelScopeAllowsComment(avatarScope, item.channel));
     targets = targets.slice(0,60);
     const enriched = await enrichSocialCommentProfiles(targets, 40);
     const map = new Map(enriched.map(item => [safeString(item.key), item]));
@@ -17341,6 +17435,7 @@ router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
   let comments = loadSocialComments();
   let selected = comments.find(item => safeString(item?.key) === key);
   if (!selected) return res.status(404).json({ error:'Commentaire introuvable.' });
+  if (!requireCommercialCommentChannelAccess(req, res, selected.channel)) return;
 
   // Quand le commercial ouvre un commentaire, on tente de recharger la
   // publication et son fil complet depuis Meta. Une erreur Meta n'empêche pas
@@ -17371,8 +17466,11 @@ router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
 });
 
 router.post('/api/social-comments/:key/read', requireAuth, (req,res) => {
-  const updated = markSocialCommentRead(safeString(req.params.key), req.user);
-  if (!updated) return res.status(404).json({ error:'Commentaire introuvable.' });
+  const key = safeString(req.params.key);
+  const target = loadSocialComments().find(item => safeString(item?.key) === key);
+  if (!target) return res.status(404).json({ error:'Commentaire introuvable.' });
+  if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
+  const updated = markSocialCommentRead(key, req.user);
   return res.json({ success:true });
 });
 
@@ -17385,6 +17483,7 @@ router.post('/api/social-comments/:key/reply', requireAuth, async (req,res) => {
     const index = comments.findIndex(item => safeString(item?.key) === key);
     if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
     const target = comments[index];
+    if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
     let data;
     if (target.channel === 'facebook') {
       data = await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}/comments`, { method:'POST', form:{ message:text } });
@@ -17419,6 +17518,7 @@ router.post('/api/social-comments/:key/hide', requireAuth, async (req,res) => {
     const index = comments.findIndex(item => safeString(item?.key) === key);
     if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
     const target = comments[index];
+    if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
     if (target.canHide === false) return res.status(403).json({ error:'Meta indique que ce commentaire ne peut pas être masqué/démasqué par ce compte.' });
     if (target.channel === 'facebook') {
       await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'POST', form:{ is_hidden:hidden ? 'true':'false' } });
@@ -17440,6 +17540,7 @@ router.delete('/api/social-comments/:key', requireAuth, async (req,res) => {
     const index = comments.findIndex(item => safeString(item?.key) === key);
     if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
     const target = comments[index];
+    if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
     if (target.canRemove === false) return res.status(403).json({ error:'Meta indique que ce commentaire ne peut pas être supprimé par ce compte.' });
     if (target.channel === 'facebook') {
       await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
@@ -17463,6 +17564,7 @@ router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,r
     const index = comments.findIndex(item => safeString(item?.key) === key);
     if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
     const target = comments[index];
+    if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
     if (target.canReplyPrivately === false) return res.status(403).json({ error:'Meta n’autorise pas de réponse privée pour ce commentaire.' });
     let data;
     if (target.channel === 'facebook') {
@@ -17568,7 +17670,7 @@ function conversationEntryNeedsDirection(entry) {
   return { inbound, outbound };
 }
 
-// V6.33.0 — une seule source de vérité pour tous les compteurs Messages.
+// V6.33.1 — une seule source de vérité pour tous les compteurs Messages.
 // On privilégie l'ordre réel des événements du journal. Un ancien lastCustomerAt
 // importé ne doit plus remettre une discussion en rouge si le dernier échange
 // visible est déjà une réponse MONDECO / Meta / IA.
@@ -17675,7 +17777,7 @@ function conversationEntryIsBusinessReply(entry) {
 
 let lastAnsweredConversationReconcileAt = 0;
 
-// V6.33.0 — auto-réparation des anciennes discussions déjà traitées.
+// V6.33.1 — auto-réparation des anciennes discussions déjà traitées.
 // Une réponse commerciale peut avoir été synchronisée depuis WhatsApp Business,
 // Instagram ou Meta après que l'état local unread/SLA a été écrit. L'historique
 // réel est la source de vérité : si une réponse business est postérieure au
@@ -17685,7 +17787,7 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
     ? statesInput
     : loadConversationStatesAdmin();
   const nowMs = Date.now();
-  // V6.33.0 : le recalcul est léger et doit corriger rapidement l'écran après
+  // V6.33.1 : le recalcul est léger et doit corriger rapidement l'écran après
   // une synchro Meta. 1,5 s évite les réécritures excessives tout en restant instantané.
   if (nowMs - lastAnsweredConversationReconcileAt < 1500) return states;
   lastAnsweredConversationReconcileAt = nowMs;
@@ -17824,8 +17926,8 @@ function pendingInteractionCountsForUser(user) {
   let pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
   let scopedComments = loadSocialComments();
   if (channelScope) {
-    pendingMessages = pendingMessages.filter(item => channelScope.has(safeString(item.channel).toLowerCase()));
-    scopedComments = scopedComments.filter(item => channelScope.has(safeString(item?.channel).toLowerCase()));
+    pendingMessages = pendingMessages.filter(item => channelScopeAllowsMessage(channelScope, item.channel));
+    scopedComments = scopedComments.filter(item => channelScopeAllowsComment(channelScope, item?.channel));
   }
   const commentCounts = socialCommentCounts(scopedComments, user);
   return {
@@ -17850,7 +17952,7 @@ router.get('/api/interactions/pending-counts', requireAuth, (req,res) => {
   }
 });
 
-// V6.33.0 — réparation explicite des anciens états importés. Appelé une fois
+// V6.33.1 — réparation explicite des anciens états importés. Appelé une fois
 // après ouverture de l'interface afin que les badges historiques 1/2/3/4
 // disparaissent immédiatement si la discussion a déjà une réponse postérieure.
 router.post('/api/interactions/reconcile', requireAuth, (req,res) => {
@@ -17986,7 +18088,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.33.0 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.33.1 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -18000,7 +18102,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.33.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.33.1 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -18018,12 +18120,12 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         };
       });
 
-    // V6.33.0 : si un commercial possède un planning aujourd'hui, sa boîte de
+    // V6.33.1 : si un commercial possède un planning aujourd'hui, sa boîte de
     // travail est limitée aux réseaux cochés dans Équipe & planning. Sans planning
     // explicite, on conserve l'accès actuel pour éviter un verrouillage accidentel.
     const commercialChannelScope = plannedChannelSetForUser(req.user);
     if (commercialChannelScope) {
-      retainedConversations = retainedConversations.filter(item => commercialChannelScope.has(safeString(item.channel).toLowerCase()));
+      retainedConversations = retainedConversations.filter(item => channelScopeAllowsMessage(commercialChannelScope, item.channel));
     }
 
     // Boîte active : toujours conserver le travail à faire, les non lus,
@@ -18141,6 +18243,11 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         limit,
         hasMore: offset + limit < visibleConversations.length,
         counts,
+        access:{
+          whatsappMessages:channelScopeAllowsMessage(commercialChannelScope, 'whatsapp'),
+          instagramMessages:channelScopeAllowsMessage(commercialChannelScope, 'instagram'),
+          facebookMessages:channelScopeAllowsMessage(commercialChannelScope, 'facebook')
+        },
         activeInboxHours: ACTIVE_INBOX_HOURS,
         retentionDays: HISTORY_IMPORT_DAYS
       });
@@ -18160,6 +18267,9 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const states = loadConversationStatesAdmin();
 
     const state = states[contact] || {};
+    const accessChannel = safeString(state?.channel).toLowerCase() ||
+      (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+    if (!requireCommercialMessageChannelAccess(req, res, accessChannel)) return;
     const isCommercial = safeString(req.user?.role) === 'commercial';
     const assignedToMe = isCommercial && conversationAssignedToUser(state, req.user);
     const access = {
@@ -18259,10 +18369,12 @@ router.post(
         });
     }
 
-    // V6.33.0 — Tous les commerciaux peuvent répondre à toute conversation.
-    // Le statut « lu » doit donc suivre la même règle : ouvrir une conversation
-    // la marque comme lue même si elle est affectée à un autre commercial.
-    // Les droits de gestion (affectation, résolution, etc.) restent séparés.
+    const existingState = loadConversationStatesAdmin()[contact] || {};
+    const readChannel = safeString(existingState?.channel).toLowerCase() ||
+      (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+    if (!requireCommercialMessageChannelAccess(req, res, readChannel)) return;
+
+    // Le statut « lu » suit le périmètre exact du planning du jour.
     const state =
       updateConversationStateAdmin(
         contact,
@@ -18292,6 +18404,11 @@ router.post(
     if (!contact) {
       return res.status(400).json({ error: 'Contact invalide.' });
     }
+
+    const existingState = loadConversationStatesAdmin()[contact] || {};
+    const favoriteChannel = safeString(existingState?.channel).toLowerCase() ||
+      (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+    if (!requireCommercialMessageChannelAccess(req, res, favoriteChannel)) return;
 
     const favorite = req.body?.favorite === true;
     const state = updateConversationStateAdmin(
@@ -18586,6 +18703,7 @@ router.get(
       const store = loadNotificationsStore();
 
       const pendingMessageMap = pendingMessageStatusByContact();
+      const notificationChannelScope = plannedChannelSetForUser(req.user);
       let messageItems = store.items
         .filter(item => notificationVisibleToUser(item, req.user, states))
         .map(item => ({
@@ -18596,10 +18714,13 @@ router.get(
           pendingReply: pendingMessageMap.get(safeString(item?.contact))?.pending === true,
           kind: item?.urgent ? 'commercial' : 'message'
         }));
+      if (notificationChannelScope) {
+        messageItems = messageItems.filter(item => channelScopeAllowsMessage(notificationChannelScope, item.channel));
+      }
 
       const notificationSocialComments = loadSocialComments();
       const notificationSocialReplyIndex = socialCommentThreadIndex(notificationSocialComments);
-      const commentItems = notificationSocialComments
+      let commentItems = notificationSocialComments
         .filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing')
         .map(item => ({
           id: `social-comment:${safeString(item.key)}`,
@@ -18619,6 +18740,9 @@ router.get(
           urgent: false,
           action: 'social_comment'
         }));
+      if (notificationChannelScope) {
+        commentItems = commentItems.filter(item => channelScopeAllowsComment(notificationChannelScope, item.channel));
+      }
 
       let items = [...messageItems, ...commentItems];
       if (['instagram','whatsapp','facebook'].includes(filter)) {
@@ -18686,6 +18810,7 @@ router.get(
       const liveSlaEvents = [];
       for (const [contact, state] of Object.entries(states)) {
         if (req.user?.role === 'commercial' && safeString(state?.assignedUserId) !== safeString(req.user.id)) continue;
+        if (notificationChannelScope && !channelScopeAllowsMessage(notificationChannelScope, state?.channel || (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp'))) continue;
         const sla = computeLiveSla(state);
         if (!sla || !['pending','late'].includes(sla.status)) continue;
         const remaining = Number(sla.remainingMs);
@@ -18773,11 +18898,21 @@ router.post(
     const key = notificationUserKey(req.user);
     if (id.startsWith('social-comment:')) {
       const commentKey = id.slice('social-comment:'.length);
-      const updated = markSocialCommentRead(commentKey, req.user);
-      if (!updated) return res.status(404).json({ error: 'Commentaire introuvable.' });
+      const target = loadSocialComments().find(item => safeString(item?.key) === commentKey);
+      if (!target) return res.status(404).json({ error: 'Commentaire introuvable.' });
+      if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
+      markSocialCommentRead(commentKey, req.user);
       return res.json({ success: true, kind: 'comment' });
     }
     const store = loadNotificationsStore();
+    const targetNotification = store.items.find(item => safeString(item?.id) === id);
+    if (targetNotification) {
+      const targetState = loadConversationStatesAdmin()[safeString(targetNotification?.contact)] || {};
+      const targetChannel = safeString(targetNotification?.channel || targetState?.channel).toLowerCase() ||
+        (safeString(targetNotification?.contact).startsWith('instagram:') ? 'instagram' :
+          safeString(targetNotification?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
+      if (!requireCommercialMessageChannelAccess(req, res, targetChannel)) return;
+    }
     let found = false;
 
     store.items = store.items.map(item => {
@@ -18802,8 +18937,12 @@ router.post(
     const states = loadConversationStatesAdmin();
     const store = loadNotificationsStore();
 
+    const readAllScope = plannedChannelSetForUser(req.user);
     store.items = store.items.map(item => {
       if (!notificationVisibleToUser(item, req.user, states)) return item;
+      const channel = safeString(item?.channel || states[item?.contact]?.channel).toLowerCase() ||
+        (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : safeString(item?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
+      if (readAllScope && !channelScopeAllowsMessage(readAllScope, channel)) return item;
       const readBy = Array.isArray(item?.readBy) ? [...item.readBy] : [];
       if (!readBy.includes(key)) readBy.push(key);
       return { ...item, readBy };
@@ -18813,6 +18952,7 @@ router.post(
 
     const comments = loadSocialComments().map(comment => {
       if (comment?.deleted || safeString(comment?.direction) === 'outgoing') return comment;
+      if (readAllScope && !channelScopeAllowsComment(readAllScope, comment?.channel)) return comment;
       const readBy = Array.isArray(comment?.readBy) ? [...comment.readBy] : [];
       if (!readBy.includes(key)) readBy.push(key);
       return { ...comment, readBy };
