@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe — V6.29.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -38,6 +38,7 @@ const INSTAGRAM_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'instagram-history
 // V6.20 — historique Messenger importé via Conversations API.
 const FACEBOOK_HISTORY_PATH = path.join(DATA_DIR, 'facebook-history.json');
 const FACEBOOK_HISTORY_SYNC_STATE_PATH = path.join(DATA_DIR, 'facebook-history-sync.json');
+const FACEBOOK_REALTIME_SYNC_STATE_PATH = path.join(DATA_DIR, 'facebook-realtime-sync.json');
 // V6.26 — Centre d'interactions : publications + commentaires Facebook/Instagram.
 // Les médias restent distants (URL Meta) afin de ne pas remplir le Volume Railway.
 const SOCIAL_COMMENTS_PATH = path.join(DATA_DIR, 'social-comments.json');
@@ -47,6 +48,8 @@ const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.js
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
 const MESSAGE_ID_INDEX_PATH = path.join(DATA_DIR, 'conversation-message-ids.jsonl');
+const RETENTION_15_MIGRATION_PATH = path.join(DATA_DIR, '.v630-retention-15.json');
+const RETENTION_15_GRACE_MS = 12 * 60 * 60 * 1000;
 
 const INSTAGRAM_ACCESS_TOKEN = (
   process.env.INSTAGRAM_ACCESS_TOKEN ||
@@ -73,12 +76,9 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.20.6 — historique Meta limité à 90 jours par défaut.
-// La valeur peut être ajustée plus tard via HISTORY_IMPORT_DAYS sans changer le code.
-const HISTORY_IMPORT_DAYS = Math.max(
-  1,
-  Math.min(3650, Number(process.env.HISTORY_IMPORT_DAYS || 90) || 90)
-);
+// V6.30.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
+const HISTORY_IMPORT_DAYS = 15;
 
 function historyImportCutoffIso(reference = new Date()) {
   const base = reference instanceof Date ? reference : new Date(reference);
@@ -506,18 +506,19 @@ function cleanupStaleStorageTempFiles() {
   return freed;
 }
 
-function pruneFilesOlderThan(directory, cutoffMs, label, { recursive = false } = {}) {
+function pruneFilesOlderThan(directory, cutoffMs, label, { recursive = false, preserveBasenames = new Set() } = {}) {
   let freed = 0;
   try {
     if (!fs.existsSync(directory)) return 0;
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (recursive) freed += pruneFilesOlderThan(fullPath, cutoffMs, `${label}/${entry.name}`, { recursive });
+        if (recursive) freed += pruneFilesOlderThan(fullPath, cutoffMs, `${label}/${entry.name}`, { recursive, preserveBasenames });
         continue;
       }
       if (!entry.isFile()) continue;
       try {
+        if (preserveBasenames?.has?.(entry.name)) continue;
         const stat = fs.statSync(fullPath);
         if (stat.mtimeMs >= cutoffMs) continue;
         fs.unlinkSync(fullPath);
@@ -532,7 +533,123 @@ function pruneFilesOlderThan(directory, cutoffMs, label, { recursive = false } =
   return freed;
 }
 
-function pruneConversationEventsByRetention() {
+
+function favoriteConversationContacts() {
+  const states = loadConversationStatesAdmin();
+  return new Set(
+    Object.entries(states || {})
+      .filter(([, state]) => state && state.favorite === true)
+      .map(([contact]) => safeString(contact))
+      .filter(Boolean)
+  );
+}
+
+function conversationRecordTimeMs(entry) {
+  const candidates = [
+    entry?.time,
+    entry?.timestamp,
+    entry?.created_time,
+    entry?.createdAt,
+    entry?.updated_time,
+    entry?.updatedAt,
+    entry?.event_time
+  ];
+  for (const value of candidates) {
+    const ms = Date.parse(safeString(value));
+    if (Number.isFinite(ms)) return ms;
+  }
+  return NaN;
+}
+
+function pruneConversationJsonArrayFile(filePath, label, favoriteContacts, cutoffMs) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(filePath)) return 0;
+    const beforeStat = fs.statSync(filePath);
+    const items = readJsonArray(filePath, label);
+    if (!items.length) return 0;
+
+    const kept = items.filter(entry => {
+      const contact = safeString(entry?.contact);
+      if (contact && favoriteContacts.has(contact)) return true;
+      const ms = conversationRecordTimeMs(entry);
+      // Les anciens formats sans date sont conservés : on ne supprime jamais
+      // une donnée dont l'âge ne peut pas être prouvé.
+      if (!Number.isFinite(ms)) return true;
+      return ms >= cutoffMs;
+    });
+
+    if (kept.length !== items.length) {
+      writeJsonAtomic(filePath, kept);
+      const afterSize = fs.existsSync(filePath) ? Number(fs.statSync(filePath).size || 0) : 0;
+      freed = Math.max(0, Number(beforeStat.size || 0) - afterSize);
+      console.log(`🧹 Rétention 15j : ${label} ${items.length} → ${kept.length} entrée(s), favoris préservés.`);
+    }
+  } catch (error) {
+    console.warn(`⚠️ Rétention ${label} impossible :`, error.message);
+  }
+  return freed;
+}
+
+function conversationMediaBasenamesFromEntry(entry, output) {
+  const add = value => {
+    const raw = safeString(value);
+    if (!raw) return;
+    const fileName = safeString(raw.split('/').pop()).split('?')[0];
+    if (fileName) {
+      try { output.add(decodeURIComponent(fileName)); }
+      catch { output.add(fileName); }
+    }
+  };
+
+  add(entry?.attachment_url);
+  add(entry?.attachment_filename);
+  for (const attachment of Array.isArray(entry?.attachments) ? entry.attachments : []) {
+    add(attachment?.filename);
+    add(attachment?.url);
+  }
+}
+
+function collectFavoriteConversationMediaBasenames(favoriteContacts) {
+  const output = new Set();
+  const inspect = entry => {
+    if (!entry || !favoriteContacts.has(safeString(entry?.contact))) return;
+    conversationMediaBasenamesFromEntry(entry, output);
+  };
+
+  for (const filePath of [CONVERSATIONS_LOG_PATH, INSTAGRAM_HISTORY_PATH, FACEBOOK_HISTORY_PATH]) {
+    try {
+      for (const entry of readJsonArray(filePath, path.basename(filePath))) inspect(entry);
+    } catch {}
+  }
+
+  try {
+    if (fs.existsSync(CONVERSATION_EVENTS_DIR)) {
+      for (const entry of fs.readdirSync(CONVERSATION_EVENTS_DIR, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+        const filePath = path.join(CONVERSATION_EVENTS_DIR, entry.name);
+        const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/).filter(Boolean);
+        for (const line of lines) {
+          try { inspect(JSON.parse(line)); } catch {}
+        }
+      }
+    }
+  } catch {}
+
+  return output;
+}
+
+function pruneConversationHistoryByRetention() {
+  const cutoffMs = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+  const favorites = favoriteConversationContacts();
+  let freed = 0;
+  freed += pruneConversationJsonArrayFile(CONVERSATIONS_LOG_PATH, 'conversation-log.json', favorites, cutoffMs);
+  freed += pruneConversationJsonArrayFile(INSTAGRAM_HISTORY_PATH, 'instagram-history.json', favorites, cutoffMs);
+  freed += pruneConversationJsonArrayFile(FACEBOOK_HISTORY_PATH, 'facebook-history.json', favorites, cutoffMs);
+  return { freed, favorites, cutoffMs };
+}
+
+function pruneConversationEventsByRetention(favoriteContacts = favoriteConversationContacts()) {
   let freed = 0;
   try {
     if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
@@ -543,13 +660,32 @@ function pruneConversationEventsByRetention() {
       if (!match) continue;
       const dayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
       if (!Number.isFinite(dayMs) || dayMs >= cutoff) continue;
+
       const fullPath = path.join(CONVERSATION_EVENTS_DIR, entry.name);
       try {
         const stat = fs.statSync(fullPath);
-        fs.unlinkSync(fullPath);
-        freed += Number(stat.size || 0);
+        const lines = fs.readFileSync(fullPath, 'utf8').split(/\r?\n/).filter(Boolean);
+        const keptLines = [];
+
+        for (const line of lines) {
+          try {
+            const event = JSON.parse(line);
+            if (favoriteContacts.has(safeString(event?.contact))) keptLines.push(line);
+          } catch {
+            // Une ligne illisible n'est pas conservée dans un journal déjà hors rétention.
+          }
+        }
+
+        if (keptLines.length) {
+          fs.writeFileSync(fullPath, `${keptLines.join('\n')}\n`);
+          const nextSize = Number(fs.statSync(fullPath).size || 0);
+          freed += Math.max(0, Number(stat.size || 0) - nextSize);
+        } else {
+          fs.unlinkSync(fullPath);
+          freed += Number(stat.size || 0);
+        }
       } catch (error) {
-        console.warn('⚠️ Storage Rescue : ancien journal conversation non supprimé :', error.message);
+        console.warn('⚠️ Storage Rescue : ancien journal conversation non nettoyé :', error.message);
       }
     }
   } catch (error) {
@@ -561,9 +697,26 @@ function pruneConversationEventsByRetention() {
 function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
-  // Les médias plus anciens que l'historique visible ne sont plus nécessaires.
-  freed += pruneFilesOlderThan(CONVERSATION_MEDIA_DIR, retentionCutoff, 'conversation-media', { recursive: true });
-  freed += pruneConversationEventsByRetention();
+
+  // V6.30.0 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
+  const historyPrune = pruneConversationHistoryByRetention();
+  freed += historyPrune.freed;
+  const favoriteContacts = historyPrune.favorites || favoriteConversationContacts();
+
+  // Les journaux append-only sont eux aussi réduits, mais les lignes favorites
+  // sont réécrites dans le fichier au lieu d'être supprimées.
+  freed += pruneConversationEventsByRetention(favoriteContacts);
+
+  // Les médias anciens sont supprimés, sauf s'ils sont encore référencés par
+  // une conversation favorite.
+  const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteContacts);
+  freed += pruneFilesOlderThan(
+    CONVERSATION_MEDIA_DIR,
+    retentionCutoff,
+    'conversation-media',
+    { recursive: true, preserveBasenames: favoriteMedia }
+  );
 
   // Les photos de profil sont un cache cosmétique. En manque d'espace, on peut
   // retirer les anciennes sans supprimer les conversations ni les données métier.
@@ -589,18 +742,62 @@ function storageBreakdown() {
     instagramHistoryBytes: sizeOfFile(INSTAGRAM_HISTORY_PATH),
     facebookHistoryBytes: sizeOfFile(FACEBOOK_HISTORY_PATH),
     socialCommentsBytes: sizeOfFile(SOCIAL_COMMENTS_PATH),
-    socialPostsBytes: sizeOfFile(SOCIAL_POSTS_PATH)
+    socialPostsBytes: sizeOfFile(SOCIAL_POSTS_PATH),
+    favoriteConversationCount: favoriteConversationContacts().size
   };
 }
 
-function runSafeStorageMaintenance({ forceEmergency = false } = {}) {
+
+function loadRetention15MigrationState() {
+  try {
+    if (!fs.existsSync(RETENTION_15_MIGRATION_PATH)) return null;
+    const parsed = JSON.parse(fs.readFileSync(RETENTION_15_MIGRATION_PATH, 'utf8') || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureRetention15MigrationState() {
+  let state = loadRetention15MigrationState();
+  if (state) return state;
+  state = {
+    startedAt: new Date().toISOString(),
+    appliedAt: '',
+    retentionDays: HISTORY_IMPORT_DAYS
+  };
+  try { writeJsonAtomic(RETENTION_15_MIGRATION_PATH, state); } catch {}
+  return state;
+}
+
+function retention15MigrationReady() {
+  const state = ensureRetention15MigrationState();
+  if (safeString(state?.appliedAt)) return true;
+  const startedMs = Date.parse(safeString(state?.startedAt));
+  return Number.isFinite(startedMs) && Date.now() - startedMs >= RETENTION_15_GRACE_MS;
+}
+
+function markRetention15MigrationApplied() {
+  const state = ensureRetention15MigrationState();
+  const next = {
+    ...state,
+    retentionDays: HISTORY_IMPORT_DAYS,
+    appliedAt: safeString(state?.appliedAt) || new Date().toISOString()
+  };
+  try { writeJsonAtomic(RETENTION_15_MIGRATION_PATH, next); } catch {}
+  return next;
+}
+
+function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false } = {}) {
   const before = storageSpaceInfo();
   let freed = 0;
   freed += cleanupStaleStorageTempFiles();
   freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
   freed += compactExistingSnapshotBinaryCopies();
   freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
-  freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
+  if (!skipConversationRetention) {
+    freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
+  }
   if (fs.existsSync(RECYCLE_DIR) && (forceEmergency || (before && before.freeRatio < 0.15))) {
     for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
       freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
@@ -621,12 +818,25 @@ function runStartupStorageRescue() {
     (Number.isFinite(before.freeRatio) && before.freeRatio < 0.20) ||
     !beforeProbe.writable;
 
-  const result = runSafeStorageMaintenance({ forceEmergency: lowSpace });
+  const retentionReady = retention15MigrationReady();
+  const result = runSafeStorageMaintenance({
+    forceEmergency: lowSpace,
+    skipConversationRetention: !retentionReady
+  });
+  if (retentionReady) markRetention15MigrationApplied();
   const afterProbe = storageWriteProbe();
+
+  if (!retentionReady) {
+    console.warn(
+      '⭐ Migration rétention 15 jours : délai de sécurité actif pendant 12 h. ' +
+      'Marquez maintenant les discussions importantes en Favori, puis utilisez « Nettoyer le stockage sûr » pour appliquer la rétention immédiatement.'
+    );
+  }
 
   console.log('🛟 MONDECO Storage Rescue', {
     mode: 'compact',
     retentionDays: HISTORY_IMPORT_DAYS,
+    retentionApplied: retentionReady,
     estimatedFreed: humanBytes(result.freedBytes),
     freeBefore: result.before ? humanBytes(result.before.freeBytes) : 'inconnu',
     freeAfter: result.after ? humanBytes(result.after.freeBytes) : 'inconnu',
@@ -1594,7 +1804,7 @@ function pruneSocialRecords(items, timeFields = ['createdAt','updatedAt']) {
       const bMs = Date.parse(safeString(b?.createdAt || b?.updatedAt)) || 0;
       return bMs - aMs;
     });
-  // Limite de sécurité : 30 000 commentaires sur 90 jours, sans dupliquer les médias.
+  // Limite de sécurité : 30 000 commentaires dans la fenêtre de rétention, sans dupliquer les médias.
   return sorted.slice(0, 30000);
 }
 
@@ -2368,6 +2578,122 @@ function saveQuickReplies(items) {
       ? items.slice(-500)
       : []
   );
+}
+
+
+// ============================================================
+// V6.30.0 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
+// Ces réponses sont générées à la volée : elles n'occupent pas d'espace
+// supplémentaire dans /data et suivent automatiquement les mises à jour produit.
+// ============================================================
+
+function productAvailabilityLabel(value) {
+  const raw = safeString(value).toLowerCase();
+  if (!raw || raw === 'unknown') return '';
+  const labels = {
+    in_stock: 'Disponible',
+    instock: 'Disponible',
+    available: 'Disponible',
+    disponible: 'Disponible',
+    out_of_stock: 'Indisponible',
+    outofstock: 'Indisponible',
+    unavailable: 'Indisponible',
+    indisponible: 'Indisponible',
+    preorder: 'Sur commande',
+    backorder: 'Sur commande'
+  };
+  return labels[raw] || safeString(value);
+}
+
+function productQuickReplyContent(product) {
+  const name = safeString(product?.name);
+  if (!name) return '';
+
+  const lines = [`Bonjour 👋 Voici les informations pour ${name} :`];
+
+  const promo = safeString(product?.promoPrice);
+  const price = safeString(product?.price);
+  if (promo) {
+    lines.push(`Prix : ${promo}${price && price !== promo ? ` (au lieu de ${price})` : ''}`);
+  } else if (price) {
+    lines.push(`Prix : ${price}`);
+  }
+
+  const availability = productAvailabilityLabel(product?.availability);
+  if (availability) lines.push(`Disponibilité : ${availability}`);
+
+  const dimensions = safeString(product?.dimensions);
+  if (dimensions) lines.push(`Dimensions : ${dimensions}`);
+
+  const composition = safeString(product?.composition);
+  if (composition) lines.push(`Composition : ${composition}`);
+
+  const colors = safeString(product?.colors);
+  if (colors) lines.push(`Couleurs : ${colors}`);
+
+  const showrooms = safeString(product?.showrooms);
+  if (showrooms) lines.push(`Showrooms : ${showrooms}`);
+
+  const description = safeString(product?.description);
+  if (description) lines.push(description.slice(0, 700));
+
+  const productUrl = safeString(product?.productUrl);
+  if (productUrl) lines.push(productUrl);
+
+  return lines.join('\n');
+}
+
+
+function productQuickReplyAliases(name) {
+  const full = normalizeQuickReplyShortcut(name);
+  const genericWords = new Set([
+    'salon','canape','canape-angle','chambre','adulte','enfant','junior',
+    'table','manger','salle','pack','lit','meuble','tv','bureau','chaise',
+    'armoire','commode','chevet','coin','angle','u','set','collection'
+  ]);
+
+  const words = full.split('-').filter(Boolean);
+  const modelWords = words.filter(word => !genericWords.has(word));
+  const aliases = [
+    modelWords.join('-'),
+    modelWords.at(-1) || '',
+    full
+  ].filter(Boolean);
+
+  return [...new Set(aliases)];
+}
+
+function generatedProductQuickReplies(existingShortcuts = new Set()) {
+  const seen = new Set(existingShortcuts);
+  const output = [];
+
+  for (const product of loadProducts()) {
+    if (!product || product.active === false) continue;
+    const name = safeString(product?.name);
+    const aliases = productQuickReplyAliases(name);
+    const shortcut = aliases.find(alias => !seen.has(alias)) || '';
+    const content = productQuickReplyContent(product);
+    if (!name || !shortcut || !content) continue;
+
+    const acceptedAliases = aliases.filter(alias => !seen.has(alias));
+    if (!acceptedAliases.length) continue;
+    for (const alias of acceptedAliases) seen.add(alias);
+
+    output.push({
+      id: `product:${safeString(product?.id) || shortcut}`,
+      title: `📦 ${name}`,
+      shortcut,
+      aliases: acceptedAliases,
+      content,
+      active: true,
+      generated: true,
+      source: 'product',
+      productId: safeString(product?.id)
+    });
+  }
+
+  return output;
 }
 
 function loadCommercialCorrections() {
@@ -10013,8 +10339,17 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
+    const saved = loadQuickReplies();
+    const savedShortcuts = new Set(
+      saved
+        .filter(item => item?.active !== false)
+        .map(item => normalizeQuickReplyShortcut(item?.shortcut))
+        .filter(Boolean)
+    );
+    const generated = generatedProductQuickReplies(savedShortcuts);
+
     return res.json(
-      loadQuickReplies()
+      [...saved, ...generated]
         .sort(
           (a, b) =>
             safeString(a.title)
@@ -10978,12 +11313,15 @@ router.post(
         error
       );
 
+      const statusCode = Number(error?.statusCode || 500);
       return res
-        .status(500)
+        .status(Number.isFinite(statusCode) ? statusCode : 500)
         .json({
           error:
             error.message ||
-            'Impossible d’envoyer le message commercial.'
+            'Impossible d’envoyer le message commercial.',
+          errorCode: safeString(error?.code),
+          channel: safeString(error?.channel)
         });
     }
   }
@@ -12555,7 +12893,7 @@ async function getInstagramConversationRecentMessages(conversationId, cutoffAt =
 
   // Meta documente que le détail n'est disponible que pour les 20 messages
   // les plus récents. En V6.20.6, seuls les IDs situés dans la fenêtre de
-  // rétention de 90 jours sont conservés/importés.
+  // fenêtre de rétention configurée sont conservés/importés.
   for (let index = 0; index < detailedRefs.length; index += 5) {
     const batch = detailedRefs.slice(index, index + 5);
     const responses = await Promise.all(
@@ -13389,6 +13727,15 @@ async function facebookGraphGet(url) {
   try { data = await response.json(); } catch { data = {}; }
 
   if (!response.ok) {
+    const metaCode = Number(data?.error?.code || 0);
+    if (metaCode === 190) {
+      const error = new Error(
+        'Connexion Facebook expirée : remplacez FACEBOOK_PAGE_ACCESS_TOKEN dans Railway par un Page Access Token longue durée.'
+      );
+      error.code = 'FACEBOOK_TOKEN_EXPIRED';
+      error.statusCode = 503;
+      throw error;
+    }
     throw new Error(
       safeString(data?.error?.message) ||
       `Facebook HTTP ${response.status}`
@@ -13649,7 +13996,7 @@ async function getAllFacebookConversationMessages(conversationId, cutoffAt = '')
   const refs = await listAllFacebookConversationMessageRefs(conversationId, cutoffAt);
   const messages = [];
 
-  // V6.20.6 : aucune pagination de messages au-delà de la fenêtre de 90 jours.
+  // V6.20.6 : aucune pagination de messages au-delà de la fenêtre de rétention de 15 jours.
   // Les messages déjà détaillés sont utilisés directement ; les autres sont enrichis.
   for (let index = 0; index < refs.length; index += 8) {
     const batch = refs.slice(index, index + 8);
@@ -14154,6 +14501,548 @@ async function runFacebookHistorySync() {
     facebookHistorySyncJob.lastError = error.message;
     saveFacebookHistorySyncState(facebookHistorySyncJob);
     console.error('❌ Synchronisation historique Facebook :', error);
+  }
+}
+
+
+// ============================================================
+// V6.29.1 — FACEBOOK MESSENGER TEMPS RÉEL + FILET DE SÉCURITÉ
+// ============================================================
+// Le webhook reste la voie principale. Cette synchronisation incrémentale
+// récupère uniquement les conversations récentes si Meta ne livre pas un
+// webhook ou si l'abonnement de Page a été momentanément interrompu.
+
+let facebookRealtimeSyncJob = {
+  running: false,
+  lastRunAt: '',
+  lastCompletedAt: '',
+  importedMessages: 0,
+  importedInbound: 0,
+  importedOutbound: 0,
+  conversationsScanned: 0,
+  webhookFields: [],
+  webhookMessagesSubscribed: null,
+  webhookCheckAt: '',
+  webhookRepairAttemptedAt: '',
+  webhookRepairSuccess: null,
+  lastError: ''
+};
+
+const FACEBOOK_REALTIME_LOOKBACK_MINUTES = Math.max(
+  5,
+  Math.min(1440, Number(process.env.FACEBOOK_REALTIME_LOOKBACK_MINUTES || 180) || 180)
+);
+const FACEBOOK_REALTIME_POLL_MS = Math.max(
+  30000,
+  Math.min(10 * 60 * 1000, Number(process.env.FACEBOOK_REALTIME_POLL_MS || 60000) || 60000)
+);
+const FACEBOOK_REALTIME_MIN_GAP_MS = 25000;
+
+function loadFacebookRealtimeSyncState() {
+  try {
+    if (!fs.existsSync(FACEBOOK_REALTIME_SYNC_STATE_PATH)) return {};
+    const parsed = JSON.parse(
+      fs.readFileSync(FACEBOOK_REALTIME_SYNC_STATE_PATH, 'utf8') || '{}'
+    );
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveFacebookRealtimeSyncState(extra = {}) {
+  const merged = {
+    ...loadFacebookRealtimeSyncState(),
+    ...facebookRealtimeSyncJob,
+    ...(extra && typeof extra === 'object' ? extra : {})
+  };
+  writeJsonAtomic(FACEBOOK_REALTIME_SYNC_STATE_PATH, merged);
+}
+
+function facebookRecoveredPreview(entry) {
+  const text = safeString(entry?.incoming || entry?.reply);
+  if (text) return text.slice(0, 220);
+  const attachments = Array.isArray(entry?.attachments) ? entry.attachments : [];
+  const type = safeString(attachments?.[0]?.type || entry?.type).toLowerCase();
+  if (type === 'image') return '📷 Photo envoyée';
+  if (type === 'audio') return '🎤 Message vocal';
+  if (type === 'video') return '🎬 Vidéo';
+  if (type === 'file' || type === 'document') return '📎 Fichier';
+  return 'Nouveau message Facebook';
+}
+
+function registerRecoveredFacebookNotification(entry, state = {}) {
+  if (safeString(entry?.direction) !== 'incoming') return;
+  const id = safeString(entry?.message_id || entry?.meta_message_id);
+  const contact = safeString(entry?.contact);
+  if (!id || !contact) return;
+
+  try {
+    const store = loadNotificationsStore();
+    if (store.items.some(item => safeString(item?.id) === id)) return;
+    const attachments = Array.isArray(entry?.attachments) ? entry.attachments : [];
+    store.items.push({
+      id,
+      messageId: id,
+      contact,
+      channel: 'facebook',
+      externalContact: safeString(entry?.external_contact || state?.externalContact),
+      username: '',
+      profileName: safeString(state?.profileName),
+      profilePicture: safeString(state?.profilePicture),
+      preview: facebookRecoveredPreview(entry),
+      type: safeString(entry?.type || 'text'),
+      urgent: false,
+      action: 'facebook_inbound_recovered',
+      assignedTo: safeString(state?.assignedTo),
+      createdAt: safeString(entry?.time) || new Date().toISOString(),
+      readBy: [],
+      attachmentPreview:
+        safeString(attachments?.[0]?.type) === 'image'
+          ? safeString(attachments?.[0]?.url)
+          : ''
+    });
+    // Garde-fou stockage : conserver au maximum les 5000 notifications les plus récentes.
+    if (store.items.length > 5000) {
+      store.items = store.items
+        .sort((a, b) => new Date(a?.createdAt || 0) - new Date(b?.createdAt || 0))
+        .slice(-5000);
+    }
+    saveNotificationsStore(store);
+  } catch (error) {
+    console.warn('⚠️ Notification Facebook récupérée non enregistrée :', error.message);
+  }
+}
+
+async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
+  const result = {
+    fields: [],
+    messagesSubscribed: null,
+    checkedAt: new Date().toISOString(),
+    repairAttempted: false,
+    repairSuccess: null,
+    error: ''
+  };
+
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+    result.error = 'FACEBOOK_PAGE_ID ou FACEBOOK_PAGE_ACCESS_TOKEN manquant.';
+    return result;
+  }
+
+  const readFields = async () => {
+    const data = await facebookGraphGet(
+      `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`
+    );
+    const fields = Array.isArray(data?.data)
+      ? [...new Set(
+          data.data.flatMap(item =>
+            Array.isArray(item?.subscribed_fields) ? item.subscribed_fields : []
+          ).map(safeString).filter(Boolean)
+        )]
+      : [];
+    return fields;
+  };
+
+  try {
+    result.fields = await readFields();
+    result.messagesSubscribed = result.fields.includes('messages');
+
+    // Réparation Page-level non destructive. Elle ne remplace pas la
+    // configuration Webhooks de l'application Meta, mais réabonne la Page
+    // aux champs Messenger essentiels quand Meta l'autorise.
+    if (tryRepair && !result.messagesSubscribed) {
+      result.repairAttempted = true;
+      const desired = [...new Set([
+        ...result.fields,
+        'messages',
+        'message_echoes',
+        'message_edits',
+        'message_deliveries',
+        'message_reads',
+        'message_reactions',
+        'messaging_postbacks',
+        'messaging_referrals',
+        'feed'
+      ])];
+      try {
+        const response = await fetch(
+          `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/subscribed_apps`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: new URLSearchParams({
+              subscribed_fields: desired.join(',')
+            }).toString()
+          }
+        );
+        let body = {};
+        try { body = await response.json(); } catch { body = {}; }
+        if (!response.ok || body?.success === false) {
+          throw new Error(
+            safeString(body?.error?.message) ||
+            `Facebook HTTP ${response.status}`
+          );
+        }
+        result.repairSuccess = true;
+        result.fields = await readFields();
+        result.messagesSubscribed = result.fields.includes('messages');
+      } catch (error) {
+        result.repairSuccess = false;
+        result.error = `Réabonnement webhook : ${error.message}`;
+      }
+    }
+  } catch (error) {
+    result.error = `Lecture abonnement webhook : ${error.message}`;
+  }
+
+  return result;
+}
+
+async function listRecentFacebookConversations(cutoffAt) {
+  const recent = [];
+  const seen = new Set();
+  let nextUrl =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
+    `?fields=${encodeURIComponent('id,link,updated_time')}&limit=25`;
+  let pageCount = 0;
+
+  while (nextUrl && pageCount < 3) {
+    const data = await facebookGraphGet(nextUrl);
+    const rows = Array.isArray(data?.data) ? data.data : [];
+    let recentOnPage = 0;
+
+    for (const row of rows) {
+      const id = safeString(row?.id);
+      const updated = safeString(row?.updated_time);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      if (!historyTimeIsRecent(updated, cutoffAt)) continue;
+      recentOnPage += 1;
+      recent.push({
+        id,
+        link: safeString(row?.link),
+        updatedTime: updated
+      });
+    }
+
+    pageCount += 1;
+    // Les conversations sont retournées par activité récente. Dès qu'une page
+    // entière ne contient plus rien dans la fenêtre, inutile d'aller plus loin.
+    if (rows.length && recentOnPage === 0) break;
+    nextUrl = safeString(data?.paging?.next);
+  }
+
+  return recent;
+}
+
+async function runFacebookRealtimeRecovery({ force = false } = {}) {
+  if (!FACEBOOK_PAGE_ID || !FACEBOOK_PAGE_ACCESS_TOKEN) {
+    return { configured: false, skipped: true };
+  }
+  if (facebookRealtimeSyncJob.running || facebookHistorySyncJob.running) {
+    return { configured: true, skipped: true, reason: 'sync_running' };
+  }
+
+  const persisted = loadFacebookRealtimeSyncState();
+  const lastMs = Date.parse(
+    safeString(
+      facebookRealtimeSyncJob.lastCompletedAt ||
+      persisted?.lastCompletedAt
+    )
+  );
+  if (
+    !force &&
+    Number.isFinite(lastMs) &&
+    Date.now() - lastMs < FACEBOOK_REALTIME_MIN_GAP_MS
+  ) {
+    return { configured: true, skipped: true, reason: 'cooldown' };
+  }
+
+  const startedAt = new Date().toISOString();
+  const cutoffAt = new Date(
+    Date.now() - FACEBOOK_REALTIME_LOOKBACK_MINUTES * 60 * 1000
+  ).toISOString();
+
+  facebookRealtimeSyncJob = {
+    ...facebookRealtimeSyncJob,
+    running: true,
+    lastRunAt: startedAt,
+    importedMessages: 0,
+    importedInbound: 0,
+    importedOutbound: 0,
+    conversationsScanned: 0,
+    lastError: ''
+  };
+  saveFacebookRealtimeSyncState();
+
+  try {
+    // Contrôle du webhook au maximum une fois par heure.
+    const previousCheckMs = Date.parse(
+      safeString(persisted?.webhookCheckAt || facebookRealtimeSyncJob.webhookCheckAt)
+    );
+    if (!Number.isFinite(previousCheckMs) || Date.now() - previousCheckMs > 60 * 60 * 1000) {
+      const webhook = await facebookRealtimeWebhookStatus({ tryRepair: true });
+      facebookRealtimeSyncJob.webhookFields = webhook.fields;
+      facebookRealtimeSyncJob.webhookMessagesSubscribed = webhook.messagesSubscribed;
+      facebookRealtimeSyncJob.webhookCheckAt = webhook.checkedAt;
+      if (webhook.repairAttempted) {
+        facebookRealtimeSyncJob.webhookRepairAttemptedAt = webhook.checkedAt;
+        facebookRealtimeSyncJob.webhookRepairSuccess = webhook.repairSuccess;
+      }
+      if (webhook.error) {
+        console.warn('⚠️ Facebook webhook temps réel :', webhook.error);
+      }
+    }
+
+    const conversations = await listRecentFacebookConversations(cutoffAt);
+    facebookRealtimeSyncJob.conversationsScanned = conversations.length;
+
+    if (!conversations.length) {
+      facebookRealtimeSyncJob.running = false;
+      facebookRealtimeSyncJob.lastCompletedAt = new Date().toISOString();
+      saveFacebookRealtimeSyncState();
+      return { configured: true, importedMessages: 0, conversationsScanned: 0 };
+    }
+
+    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
+    const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
+    const persistentEvents = loadPersistentConversationEvents();
+    const knownMessageIds = new Set(
+      [...live, ...existingHistory, ...persistentEvents]
+        .flatMap(entry => conversationEntryMessageIds(entry))
+        .filter(Boolean)
+    );
+
+    const historyByKey = new Map();
+    for (const entry of existingHistory) {
+      historyByKey.set(conversationLogDedupeKey(entry), entry);
+    }
+
+    const states = loadConversationStatesAdmin();
+    let changed = false;
+
+    for (const conversation of conversations) {
+      let messages = [];
+      try {
+        messages = await getAllFacebookConversationMessages(conversation.id, cutoffAt);
+      } catch (error) {
+        console.warn(
+          `⚠️ Récupération Facebook récente ${safeString(conversation.id)} :`,
+          error.message
+        );
+        continue;
+      }
+
+      const customerId = facebookConversationCustomerId(messages);
+      if (!customerId) continue;
+      const contact = `facebook:${customerId}`;
+      let state = states[contact] && typeof states[contact] === 'object'
+        ? { ...states[contact] }
+        : {};
+
+      let profile = {};
+      if (!safeString(state?.profileName)) {
+        try { profile = await getFacebookHistoryProfile(customerId); } catch {}
+      }
+
+      let newInbound = 0;
+      let conversationChanged = false;
+      const notifyEntries = [];
+      let latestInbound = safeString(state?.lastCustomerAt);
+      let latestBusiness = safeString(state?.lastBusinessAt);
+      let earliest = safeString(state?.firstSeenAt);
+
+      const ordered = [...messages].sort(
+        (a, b) => conversationTimeMs(a?.created_time) - conversationTimeMs(b?.created_time)
+      );
+
+      for (const message of ordered) {
+        const messageId = safeString(message?.id);
+        if (!messageId || knownMessageIds.has(messageId)) continue;
+
+        const fromId = safeString(message?.from?.id);
+        if (!fromId) continue;
+        const outgoing = fromId === FACEBOOK_PAGE_ID;
+        const textValue = safeString(message?.message);
+        const time =
+          safeString(message?.created_time) ||
+          safeString(conversation?.updatedTime) ||
+          startedAt;
+        const storedAttachments = message?.meta_content_available === false
+          ? []
+          : await persistFacebookHistoryAttachments(message);
+
+        const entry = {
+          message_id: messageId,
+          meta_message_id: messageId,
+          contact,
+          external_contact: customerId,
+          channel: 'facebook',
+          action: outgoing
+            ? 'facebook_outbound_recovered'
+            : 'facebook_inbound_recovered',
+          source: 'facebook_recent_recovery',
+          direction: outgoing ? 'outgoing' : 'incoming',
+          sender_kind: outgoing ? 'meta' : 'client',
+          history_import: false,
+          recovered_sync: true,
+          facebook_conversation_id: safeString(conversation?.id),
+          facebook_conversation_link: safeString(conversation?.link),
+          meta_content_available: message?.meta_content_available !== false,
+          meta_detail_limit_reason: safeString(message?.meta_detail_limit_reason),
+          reply_to: message?.reply_to || undefined,
+          attachments: storedAttachments,
+          attachment_direction: outgoing ? 'outgoing' : 'incoming',
+          raw_attachments: message?.attachments || undefined,
+          meta_created_time: time,
+          time
+        };
+
+        if (outgoing) {
+          entry.reply = textValue;
+          entry.reply_sent = true;
+          entry.facebook_response_owner = 'meta_or_business_suite';
+          latestBusiness = latestBusiness ? maxIso(latestBusiness, time) : time;
+          facebookRealtimeSyncJob.importedOutbound += 1;
+        } else {
+          entry.incoming = textValue;
+          entry.reply_sent = false;
+          entry.type = textValue ? 'text' : (storedAttachments?.[0]?.type || 'message');
+          latestInbound = latestInbound ? maxIso(latestInbound, time) : time;
+          newInbound += 1;
+          facebookRealtimeSyncJob.importedInbound += 1;
+        }
+
+        earliest = earliest ? minIso(earliest, time) : time;
+        historyByKey.set(conversationLogDedupeKey(entry), entry);
+        knownMessageIds.add(messageId);
+        facebookRealtimeSyncJob.importedMessages += 1;
+        changed = true;
+        conversationChanged = true;
+
+        if (!outgoing) {
+          notifyEntries.push(entry);
+        }
+      }
+
+      if (!conversationChanged) continue;
+
+      state = {
+        ...state,
+        channel: 'facebook',
+        externalContact: customerId,
+        facebookPsid: customerId,
+        facebookPageId: FACEBOOK_PAGE_ID,
+        profileName: safeString(profile?.name || state?.profileName),
+        profilePicture: safeString(profile?.profilePicture || state?.profilePicture),
+        profileUpdatedAt:
+          profile && Object.keys(profile).length
+            ? startedAt
+            : safeString(state?.profileUpdatedAt),
+        firstSeenAt: earliest || safeString(state?.firstSeenAt) || startedAt,
+        lastCustomerAt: latestInbound || safeString(state?.lastCustomerAt),
+        lastBusinessAt: latestBusiness || safeString(state?.lastBusinessAt),
+        unreadCount: Number(state?.unreadCount || 0) + newInbound,
+        facebookResponseMode: 'commercial_enabled',
+        mondecoAiEnabled: false,
+        aiModePreference: 'meta',
+        aiModeChoicePending: false,
+        facebookHistoryImported: true,
+        facebookHistoryConversationId: safeString(conversation?.id),
+        facebookConversationLink: safeString(conversation?.link),
+        facebookHistoryUpdatedTime: safeString(conversation?.updatedTime),
+        facebookRealtimeRecoveredAt: startedAt
+      };
+      states[contact] = state;
+
+      for (const entry of notifyEntries) {
+        registerRecoveredFacebookNotification(entry, state);
+      }
+    }
+
+    if (changed) {
+      const historyList = [...historyByKey.values()]
+        .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
+      writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
+      saveConversationStatesAdmin(states);
+      // Forcer la reconstruction du cache combiné au prochain appel Inbox.
+      combinedConversationLogCache = {
+        liveStamp: '',
+        historyStamp: '',
+        facebookHistoryStamp: '',
+        persistentStamp: '',
+        entries: []
+      };
+    }
+
+    facebookRealtimeSyncJob.running = false;
+    facebookRealtimeSyncJob.lastCompletedAt = new Date().toISOString();
+    saveFacebookRealtimeSyncState();
+
+    if (facebookRealtimeSyncJob.importedMessages > 0) {
+      console.log(
+        `🔵 Facebook récupération temps réel : ${facebookRealtimeSyncJob.importedMessages} nouveau(x) message(s), ` +
+        `${facebookRealtimeSyncJob.importedInbound} entrant(s).`
+      );
+    }
+
+    return {
+      configured: true,
+      importedMessages: facebookRealtimeSyncJob.importedMessages,
+      importedInbound: facebookRealtimeSyncJob.importedInbound,
+      conversationsScanned: facebookRealtimeSyncJob.conversationsScanned,
+      webhookMessagesSubscribed: facebookRealtimeSyncJob.webhookMessagesSubscribed
+    };
+  } catch (error) {
+    facebookRealtimeSyncJob.running = false;
+    facebookRealtimeSyncJob.lastCompletedAt = new Date().toISOString();
+    facebookRealtimeSyncJob.lastError = error.message;
+    saveFacebookRealtimeSyncState();
+    console.error('❌ Facebook récupération temps réel :', error);
+    return {
+      configured: true,
+      error: error.message,
+      importedMessages: 0
+    };
+  }
+}
+
+router.get('/api/facebook-realtime/status', requireAuth, (req, res) => {
+  const saved = loadFacebookRealtimeSyncState();
+  return res.json({
+    configured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN),
+    pollSeconds: Math.round(FACEBOOK_REALTIME_POLL_MS / 1000),
+    lookbackMinutes: FACEBOOK_REALTIME_LOOKBACK_MINUTES,
+    ...saved,
+    ...(facebookRealtimeSyncJob.running ? facebookRealtimeSyncJob : {})
+  });
+});
+
+router.post('/api/facebook-realtime/sync', requireAuth, async (req, res) => {
+  const result = await runFacebookRealtimeRecovery({ force: req.query?.force === '1' });
+  return res.status(result?.error ? 502 : 200).json(result);
+});
+
+// Le serveur Railway effectue aussi le rattrapage même si aucun navigateur
+// n'est ouvert. Le timer est "unref" pour ne pas empêcher l'arrêt propre Node.
+if (FACEBOOK_PAGE_ID && FACEBOOK_PAGE_ACCESS_TOKEN) {
+  const initialFacebookRealtimeTimer = setTimeout(() => {
+    runFacebookRealtimeRecovery({ force: true }).catch(() => {});
+  }, 12000);
+  if (typeof initialFacebookRealtimeTimer.unref === 'function') {
+    initialFacebookRealtimeTimer.unref();
+  }
+
+  const facebookRealtimeTimer = setInterval(() => {
+    runFacebookRealtimeRecovery().catch(() => {});
+  }, FACEBOOK_REALTIME_POLL_MS);
+  if (typeof facebookRealtimeTimer.unref === 'function') {
+    facebookRealtimeTimer.unref();
   }
 }
 
@@ -15515,6 +16404,8 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         profileName: safeString(state?.profileName),
         unreadCount: Number(state.unreadCount || 0),
         priority: Boolean(state.priority),
+        favorite: Boolean(state.favorite),
+        favoriteAt: safeString(state?.favoriteAt),
         assignedTo: safeString(state?.assignedTo),
         assignedUserId: safeString(state?.assignedUserId),
         sla: computeLiveSla(state),
@@ -15532,6 +16423,12 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
+      // V6.30.0 : travail à faire d'abord. Une conversation descend dès qu'une
+      // vraie réponse commerciale/IA a été enregistrée.
+      const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
+      if (pendingDelta) return pendingDelta;
+      const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
+      if (unreadDelta) return unreadDelta;
       const aMs = conversationTimeMs(a.lastTime);
       const bMs = conversationTimeMs(b.lastTime);
       return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
@@ -15540,7 +16437,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const commercialHistoryCutoff = historyImportCutoffIso();
     let visibleConversations = req.user?.role === 'commercial'
       ? conversations
-          .filter(item => historyTimeIsRecent(item.lastTime, commercialHistoryCutoff))
+          .filter(item => item.favorite === true || historyTimeIsRecent(item.lastTime, commercialHistoryCutoff))
           .map(item => {
             const assignedToMe = safeString(item.assignedUserId) === safeString(req.user.id);
             return {
@@ -15576,6 +16473,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       pendingInstagram: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'instagram').length,
       pendingFacebook: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'facebook').length,
       priority: countBase.filter(item => !item.resolved && item.priority).length,
+      favorites: countBase.filter(item => item.favorite === true).length,
       commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
       sla: countBase.filter(item => !item.resolved && ['pending','late'].includes(safeString(item?.slaStatus))).length,
       ads: countBase.filter(item => !item.resolved && item.hasAdReferral).length,
@@ -15585,6 +16483,9 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const requestedFilter = safeString(req.query?.filter).toLowerCase();
     if (requestedFilter === 'resolved') {
       visibleConversations = visibleConversations.filter(item => item.resolved === true);
+    } else if (requestedFilter === 'favorites') {
+      // Les favoris restent retrouvables même après résolution ou après 15 jours.
+      visibleConversations = visibleConversations.filter(item => item.favorite === true);
     } else {
       visibleConversations = visibleConversations.filter(item => !item.resolved);
       if (['whatsapp','instagram','facebook'].includes(requestedFilter)) {
@@ -15796,6 +16697,34 @@ router.post(
     return res.json({
       success: true,
       state
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/:contact/favorite',
+  requireAuth,
+  (req, res) => {
+    const contact = safeString(req.params.contact);
+    if (!contact) {
+      return res.status(400).json({ error: 'Contact invalide.' });
+    }
+
+    const favorite = req.body?.favorite === true;
+    const state = updateConversationStateAdmin(
+      contact,
+      current => ({
+        ...current,
+        favorite,
+        favoriteAt: favorite ? new Date().toISOString() : ''
+      })
+    );
+
+    return res.json({
+      success: true,
+      state,
+      retentionDays: HISTORY_IMPORT_DAYS,
+      preservedBeyondRetention: favorite
     });
   }
 );
@@ -16357,6 +17286,22 @@ router.get(
       retentionDays:
         HISTORY_IMPORT_DAYS,
 
+      retentionMigration: (() => {
+        const state = ensureRetention15MigrationState();
+        const startedMs = Date.parse(safeString(state?.startedAt));
+        const remainingMs = safeString(state?.appliedAt)
+          ? 0
+          : (Number.isFinite(startedMs)
+              ? Math.max(0, RETENTION_15_GRACE_MS - (Date.now() - startedMs))
+              : RETENTION_15_GRACE_MS);
+        return {
+          startedAt: safeString(state?.startedAt),
+          appliedAt: safeString(state?.appliedAt),
+          pending: !safeString(state?.appliedAt),
+          graceRemainingMs: remainingMs
+        };
+      })(),
+
       breakdown:
         storageBreakdown(),
 
@@ -16434,6 +17379,7 @@ router.post(
   (req, res) => {
     try {
       const result = runSafeStorageMaintenance({ forceEmergency: true });
+      markRetention15MigrationApplied();
       persistentConversationEventsCache = { stamp: '', entries: [] };
       combinedConversationLogCache = {
         liveStamp: '',
