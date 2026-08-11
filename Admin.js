@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.31.1
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -27,6 +27,8 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
+// V6.32.0 — sessions persistantes : survivent aux redéploiements Railway.
+const SESSIONS_PATH = path.join(DATA_DIR, 'admin-sessions.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
 const CONVERSATIONS_LOG_PATH = path.join(DATA_DIR, 'conversation-log.json');
@@ -66,7 +68,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.31.1 — deux tokens Facebook indépendants :
+// V6.32.0 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,11 +94,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.31.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.32.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.31.1 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.32.0 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -141,7 +143,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.31.1 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.32.0 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -228,7 +230,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.31.1 — garde-fou permanent contre ENOSPC.
+// V6.32.0 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -460,7 +462,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.31.1 — CLOUDINARY / CLOUD STORAGE
+// V6.32.0 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -968,7 +970,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.31.1 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.32.0 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1209,7 +1211,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.31.1 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.32.0 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1344,7 +1346,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.31.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.32.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2232,7 +2234,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.31.1 : écriture atomique avec garde-fou ENOSPC.
+  // V6.32.0 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3153,10 +3155,9 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.31.1 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
-// /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
-// Ces réponses sont générées à la volée : elles n'occupent pas d'espace
-// supplémentaire dans /data et suivent automatiquement les mises à jour produit.
+// V6.32.0 — Le catalogue produit reste séparé des réponses rapides.
+// Les helpers ci-dessous sont conservés uniquement pour compatibilité interne,
+// mais /api/quick-replies ne les expose plus aux commerciaux.
 // ============================================================
 
 function productAvailabilityLabel(value) {
@@ -3806,7 +3807,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.31.1 — migration progressive des octets locaux vers Cloudinary.
+// V6.32.0 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3834,7 +3835,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.31.1 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.32.0 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -4055,11 +4056,81 @@ function getBusinessContext() {
 // AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
-const sessions = new Map();
+// V6.32.0 — Sessions commerciales persistantes.
+// Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
+// Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
+const SESSION_DURATION_DAYS = Math.max(
+  1,
+  Math.min(90, Number(process.env.MONDECO_SESSION_DAYS || 30) || 30)
+);
+const SESSION_DURATION = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+const SESSION_PERSIST_MIN_INTERVAL_MS = 60 * 1000;
+let sessionStoreDirty = false;
+let sessionStoreLastPersistAt = 0;
+
+function sessionStorageKey(token) {
+  const value = safeString(token);
+  if (!value) return '';
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function loadPersistentSessions() {
+  const map = new Map();
+  let items = [];
+  try {
+    if (fs.existsSync(SESSIONS_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(SESSIONS_PATH, 'utf8') || '[]');
+      items = Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (error) {
+    console.warn('⚠️ Sessions persistantes illisibles :', error.message);
+  }
+
+  const now = Date.now();
+  for (const item of items) {
+    const tokenHash = safeString(item?.tokenHash);
+    const userId = safeString(item?.userId);
+    const expiresAt = Number(item?.expiresAt || 0);
+    if (!tokenHash || !userId || !expiresAt || expiresAt <= now) continue;
+    map.set(tokenHash, {
+      userId,
+      createdAt: Number(item?.createdAt || now),
+      lastSeenAt: Number(item?.lastSeenAt || item?.createdAt || now),
+      lastPage: normalizePresencePage(item?.lastPage || ''),
+      expiresAt
+    });
+  }
+  return map;
+}
+
+const sessions = loadPersistentSessions();
 const loginAttempts = new Map();
 
-const SESSION_DURATION =
-  24 * 60 * 60 * 1000;
+function persistSessions(force = false) {
+  if (!sessionStoreDirty && !force) return;
+  const now = Date.now();
+  if (!force && now - sessionStoreLastPersistAt < SESSION_PERSIST_MIN_INTERVAL_MS) return;
+
+  const payload = [...sessions.entries()]
+    .map(([tokenHash, session]) => ({
+      tokenHash,
+      userId: safeString(session?.userId),
+      createdAt: Number(session?.createdAt || now),
+      lastSeenAt: Number(session?.lastSeenAt || session?.createdAt || now),
+      lastPage: normalizePresencePage(session?.lastPage || ''),
+      expiresAt: Number(session?.expiresAt || 0)
+    }))
+    .filter(item => item.tokenHash && item.userId && item.expiresAt > now)
+    .slice(-5000);
+
+  try {
+    writeJsonAtomic(SESSIONS_PATH, payload);
+    sessionStoreDirty = false;
+    sessionStoreLastPersistAt = now;
+  } catch (error) {
+    console.warn('⚠️ Sauvegarde sessions persistantes :', error.message);
+  }
+}
 
 // V6.17 — Présence équipe en temps réel.
 // Le navigateur envoie un heartbeat toutes les 20 secondes.
@@ -4562,11 +4633,11 @@ function cleanupSessions() {
       !expiresAt ||
       expiresAt <= now
     ) {
-      sessions.delete(
-        token
-      );
+      sessions.delete(token);
+      sessionStoreDirty = true;
     }
   }
+  persistSessions(false);
 }
 
 function getSessionToken(req) {
@@ -4596,8 +4667,9 @@ function touchSessionPresence(req, page = '') {
     return null;
   }
 
+  const sessionKey = sessionStorageKey(token);
   const session =
-    sessions.get(token);
+    sessions.get(sessionKey);
 
   if (
     !session ||
@@ -4615,7 +4687,9 @@ function touchSessionPresence(req, page = '') {
     session.lastPage = normalizedPage;
   }
 
-  sessions.set(token, session);
+  sessions.set(sessionKey, session);
+  sessionStoreDirty = true;
+  persistSessions(false);
   return session;
 }
 
@@ -4696,9 +4770,10 @@ function getAuthenticatedUser(req) {
     return null;
   }
 
+  const sessionKey = sessionStorageKey(token);
   const session =
     sessions.get(
-      token
+      sessionKey
     );
 
   if (!session) {
@@ -4719,9 +4794,9 @@ function getAuthenticatedUser(req) {
     expiresAt <=
       Date.now()
   ) {
-    sessions.delete(
-      token
-    );
+    sessions.delete(sessionKey);
+    sessionStoreDirty = true;
+    persistSessions(true);
 
     return null;
   }
@@ -4745,9 +4820,9 @@ function getAuthenticatedUser(req) {
     user.active ===
       false
   ) {
-    sessions.delete(
-      token
-    );
+    sessions.delete(sessionKey);
+    sessionStoreDirty = true;
+    persistSessions(true);
 
     return null;
   }
@@ -5213,8 +5288,9 @@ function createSessionForUser(
       .randomBytes(32)
       .toString('hex');
 
+  const sessionKey = sessionStorageKey(token);
   sessions.set(
-    token,
+    sessionKey,
     {
       userId:
         user.id,
@@ -5229,6 +5305,9 @@ function createSessionForUser(
         SESSION_DURATION
     }
   );
+
+  sessionStoreDirty = true;
+  persistSessions(true);
 
   const cookieParts = [
     `mondeco_admin_session=${encodeURIComponent(token)}`,
@@ -5373,7 +5452,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.26.0</span>
+        <span class="login-version">V6.32.0</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -5524,7 +5603,9 @@ router.post('/logout', (req, res) => {
   const token = getSessionToken(req);
 
   if (token) {
-    sessions.delete(token);
+    sessions.delete(sessionStorageKey(token));
+    sessionStoreDirty = true;
+    persistSessions(true);
   }
 
   const cookieParts = [
@@ -5867,9 +5948,10 @@ router.get(
 function invalidateUserSessions(
   userId
 ) {
+  let changed = false;
   for (
     const [
-      token,
+      tokenHash,
       session
     ]
     of sessions.entries()
@@ -5882,10 +5964,13 @@ function invalidateUserSessions(
         userId
       )
     ) {
-      sessions.delete(
-        token
-      );
+      sessions.delete(tokenHash);
+      changed = true;
     }
+  }
+  if (changed) {
+    sessionStoreDirty = true;
+    persistSessions(true);
   }
 }
 
@@ -10952,17 +11037,11 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
-    const saved = loadQuickReplies();
-    const savedShortcuts = new Set(
-      saved
-        .filter(item => item?.active !== false)
-        .map(item => normalizeQuickReplyShortcut(item?.shortcut))
-        .filter(Boolean)
-    );
-    const generated = generatedProductQuickReplies(savedShortcuts);
-
+    // V6.32.0 : uniquement les réponses réellement enregistrées dans
+    // /data/quick-replies.json. Le catalogue WooCommerce/Produits n'est plus
+    // transformé automatiquement en commandes /nom-produit.
     return res.json(
-      [...saved, ...generated]
+      loadQuickReplies()
         .sort(
           (a, b) =>
             safeString(a.title)
@@ -11027,6 +11106,7 @@ router.post(
       shortcut,
       content,
       active: true,
+      source: 'manual',
       createdAt: now,
       updatedAt: now
     };
@@ -11037,6 +11117,52 @@ router.post(
     return res
       .status(201)
       .json(item);
+  }
+);
+
+
+// Import massif de réponses manuelles (CSV/TXT analysé côté interface).
+router.post(
+  '/api/quick-replies/import',
+  requireAuth,
+  (req, res) => {
+    const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
+    if (!incoming.length) {
+      return res.status(400).json({ error: 'Aucune réponse à importer.' });
+    }
+
+    const items = loadQuickReplies();
+    const usedShortcuts = new Set(
+      items.map(item => normalizeQuickReplyShortcut(item?.shortcut)).filter(Boolean)
+    );
+    let imported = 0;
+    let skipped = 0;
+    const now = new Date().toISOString();
+
+    for (const raw of incoming) {
+      const title = safeString(raw?.title);
+      const content = safeString(raw?.content);
+      const shortcut = normalizeQuickReplyShortcut(raw?.shortcut || title);
+      if (!title || !content || !shortcut || usedShortcuts.has(shortcut)) {
+        skipped += 1;
+        continue;
+      }
+      items.push({
+        id: crypto.randomUUID(),
+        title,
+        shortcut,
+        content,
+        active: true,
+        source: 'manual-import',
+        createdAt: now,
+        updatedAt: now
+      });
+      usedShortcuts.add(shortcut);
+      imported += 1;
+    }
+
+    if (imported) saveQuickReplies(items);
+    return res.json({ success: true, imported, skipped, total: items.length });
   }
 );
 
@@ -15161,7 +15287,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.31.1 — récupération sûre après une panne de webhook/token.
+// V6.32.0 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15313,7 +15439,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.31.1 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.32.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15421,7 +15547,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.31.1 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.32.0 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15830,7 +15956,7 @@ router.post(
 // ============================================================
 
 
-// V6.31.1 — diagnostic sans exposer les secrets.
+// V6.32.0 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -15868,7 +15994,7 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// V6.31.1 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// V6.32.0 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
 // au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
 // User Access Token, MONDECO tente de dériver le Page Access Token de
 // FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
@@ -17275,7 +17401,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.31.1 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.32.0 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -17289,7 +17415,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.31.1 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.32.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
