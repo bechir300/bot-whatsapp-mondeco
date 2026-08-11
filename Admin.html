@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.0 — Réponses rapides manuelles uniquement
+   MONDECO V6.32.1 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5639,7 +5639,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.0 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.1 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5842,7 +5842,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.0 — Raccourcis manuels omnicanaux
+   V6.32.1 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6189,7 +6189,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.0</span>
+              <span class="inbox-version">V6.32.1</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8654,7 +8654,7 @@ function renderSocialCommentsList(){
     const post=comment?.post||{};
     const selected=selectedSocialCommentKey===comment.key;
     const unread=comment.read!==true;
-    const pending=comment.pendingReply===true || (!comment.lastReplyAt && !comment.privateReplySentAt);
+    const pending=comment.pendingReply===true;
     const author=comment.authorUsername?`@${comment.authorUsername}`:(comment.authorName||'Client');
     const hint=String(post.caption||'').trim()||`${commentChannelLabel(comment.channel)} • publication ${post.postId||comment.postId||''}`;
     return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
@@ -8758,11 +8758,11 @@ window.selectSocialCommentTarget=function(key){if(!selectedSocialCommentData)ret
 window.replyToSocialComment=async function(){
   const target=selectedSocialCommentData?.comment;if(!target)return;const input=document.getElementById('socialCommentReplyText');const message=String(input?.value||'').trim();if(!message)return;
   const btn=document.getElementById('socialCommentSendBtn');if(btn)btn.disabled=true;
-  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Réponse impossible : '+error.message);}finally{if(btn)btn.disabled=false;}
+  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();await refreshPendingCountsNow();}catch(error){alert('Réponse impossible : '+error.message);}finally{if(btn)btn.disabled=false;}
 };
 window.privateReplyToSocialComment=async function(){
   const target=selectedSocialCommentData?.comment;if(!target)return;const input=document.getElementById('socialCommentReplyText');const message=String(input?.value||'').trim();if(!message){alert('Écrivez d’abord le message privé dans la zone de saisie.');return;}if(!confirm('Envoyer ce texte en message privé au client via '+commentChannelLabel(target.channel)+' ?'))return;
-  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/private-reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Réponse privée impossible : '+error.message);}
+  try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/private-reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});if(input)input.value='';await openSocialComment(target.key);await loadSocialComments();await refreshPendingCountsNow();}catch(error){alert('Réponse privée impossible : '+error.message);}
 };
 window.toggleSocialCommentHidden=async function(){const target=selectedSocialCommentData?.comment;if(!target)return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/hide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hidden:!target.isHidden})});await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Modération impossible : '+error.message);}};
 window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(!target||!confirm('Supprimer définitivement ce commentaire sur '+commentChannelLabel(target.channel)+' ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();}catch(error){alert('Suppression impossible : '+error.message);}};
@@ -9776,7 +9776,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.0 : les conversations réellement à répondre restent en haut.
+        // V6.32.1 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12598,6 +12598,7 @@ window.sendConversationCommercialReply = async function(contact){
       clearConversationVoice();
     }
     await loadConversations();
+    await refreshPendingCountsNow();
     await window.openConversation(contact);
   }catch(error){
     if(error?.code==='FACEBOOK_TOKEN_EXPIRED'){
@@ -12622,7 +12623,7 @@ window.sendConversationCommercialReply = async function(contact){
 
 function pendingCountLabel(value){
   const n=Math.max(0,Number(value||0));
-  return n>999?'999+':String(n);
+  return String(n);
 }
 
 function updatePendingWorkUi(){
@@ -12639,6 +12640,21 @@ function updatePendingWorkUi(){
     summary.innerHTML=`<button class="pending-work-pill total" type="button" onclick="openPendingInteractions()">À répondre <strong>${pendingCountLabel(total)}</strong></button>`+
       `<button class="pending-work-pill" type="button" onclick="openPendingMessages()">💬 Messages <strong>${pendingCountLabel(messages)}</strong></button>`+
       `<button class="pending-work-pill" type="button" onclick="openPendingComments()">💭 Commentaires <strong>${pendingCountLabel(comments)}</strong></button>`;
+  }
+}
+
+async function refreshPendingCountsNow(){
+  try{
+    const data=await apiFetch(`${API}/interactions/pending-counts`);
+    if(data?.counts&&typeof data.counts==='object'){
+      interactionPendingCounts={...interactionPendingCounts,...data.counts};
+      updatePendingWorkUi();
+      updateNotificationBadges();
+    }
+    return interactionPendingCounts;
+  }catch(error){
+    console.debug('Recalcul compteurs :',error.message);
+    return interactionPendingCounts;
   }
 }
 
