@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.5 — Réponses rapides manuelles uniquement
+   MONDECO V6.32.6 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5640,7 +5640,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.5 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.6 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5843,7 +5843,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.5 — Raccourcis manuels omnicanaux
+   V6.32.6 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6190,7 +6190,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.5</span>
+              <span class="inbox-version">V6.32.6</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8541,7 +8541,7 @@ let socialCommentCounts = null;
 let socialCommentFilter = 'all';
 let selectedSocialCommentKey = '';
 let selectedSocialCommentData = null;
-// V6.32.5 — workflow commentaire : réponse publique puis message privé.
+// V6.32.6 — workflow commentaire : réponse publique puis message privé.
 let socialCommentComposeMode = 'public';
 let socialCommentsSyncTimer = null;
 let socialCommentsInitialSyncAttempted = false;
@@ -8800,7 +8800,7 @@ window.replyToSocialComment=async function(){
   try{
     await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
     if(input)input.value='';
-    // V6.32.5 — après la réponse publique, on propose immédiatement l'étape privée.
+    // V6.32.6 — après la réponse publique, on propose immédiatement l'étape privée.
     socialCommentComposeMode=(target.canReplyPrivately!==false&&!target.privateReplySentAt)?'private':'public';
     await openSocialComment(target.key);
     await loadSocialComments();
@@ -9836,7 +9836,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.5 : les conversations réellement à répondre restent en haut.
+        // V6.32.6 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12658,7 +12658,7 @@ window.sendConversationCommercialReply = async function(contact){
       clearConversationVoice();
     }
 
-    // V6.32.5 — le petit badge de la ligne client disparaît immédiatement
+    // V6.32.6 — le petit badge de la ligne client disparaît immédiatement
     // après succès, sans attendre le prochain rafraîchissement de l'Inbox.
     const answeredItem = conversations.find(item => item.contact === contact);
     if(answeredItem){
@@ -15698,6 +15698,24 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     showPage(
       defaultPage
     );
+
+
+    // V6.32.6 — une passe de réparation après connexion enlève les anciens
+    // badges rouges hérités des synchronisations Meta/WhatsApp précédentes.
+    setTimeout(async()=>{
+      try{
+        const repaired=await apiFetch(`${API}/interactions/reconcile`,{method:'POST'});
+        if(repaired?.counts&&typeof repaired.counts==='object'){
+          interactionPendingCounts={...interactionPendingCounts,...repaired.counts};
+          updatePendingWorkUi();
+          updateNotificationBadges();
+        }
+        if(typeof loadConversations==='function') await loadConversations();
+        if(inboxInteractionMode==='comments'&&typeof loadSocialComments==='function') await loadSocialComments();
+      }catch(error){
+        console.debug('Réconciliation initiale compteurs :',error.message);
+      }
+    },900);
   }catch(error){
     console.error(error);
   }
