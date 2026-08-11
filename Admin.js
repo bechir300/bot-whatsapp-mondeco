@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.31.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.31.1
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,7 +66,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.31.0 — deux tokens Facebook indépendants :
+// V6.31.1 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,11 +92,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.31.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.31.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.31.0 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.31.1 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -141,7 +141,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.31.0 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.31.1 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -228,7 +228,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.31.0 — garde-fou permanent contre ENOSPC.
+// V6.31.1 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -460,7 +460,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.31.0 — CLOUDINARY / CLOUD STORAGE
+// V6.31.1 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -968,7 +968,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.31.0 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.31.1 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1209,7 +1209,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.31.0 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.31.1 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1344,7 +1344,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.31.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.31.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2232,7 +2232,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.31.0 : écriture atomique avec garde-fou ENOSPC.
+  // V6.31.1 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3153,7 +3153,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.31.0 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.31.1 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -3806,7 +3806,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.31.0 — migration progressive des octets locaux vers Cloudinary.
+// V6.31.1 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3834,7 +3834,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.31.0 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.31.1 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -15161,7 +15161,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.31.0 — récupération sûre après une panne de webhook/token.
+// V6.31.1 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15313,7 +15313,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.31.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.31.1 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15421,7 +15421,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.31.0 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.31.1 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15830,7 +15830,7 @@ router.post(
 // ============================================================
 
 
-// V6.31.0 — diagnostic sans exposer les secrets.
+// V6.31.1 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -15838,7 +15838,8 @@ router.get('/api/facebook-token-status', requireAuth, (req, res) => {
     messengerConfigured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN),
     commentsConfigured: Boolean(FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN),
     legacyFallbackConfigured: Boolean(FACEBOOK_LEGACY_PAGE_TOKEN),
-    separatedTokens: Boolean(FACEBOOK_MESSENGER_TOKEN && FACEBOOK_COMMENTS_TOKEN && FACEBOOK_MESSENGER_TOKEN !== FACEBOOK_COMMENTS_TOKEN)
+    separatedTokens: Boolean(FACEBOOK_MESSENGER_TOKEN && FACEBOOK_COMMENTS_TOKEN && FACEBOOK_MESSENGER_TOKEN !== FACEBOOK_COMMENTS_TOKEN),
+    commentsPageTokenAutoResolve: true
   });
 });
 
@@ -15867,13 +15868,128 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// Publications/commentaires Facebook utilisent exclusivement FACEBOOK_COMMENTS_TOKEN.
-function facebookGraphRequestPath(pathname, options = {}) {
-  return graphJsonRequest(
-    `https://graph.facebook.com/${META_API_VERSION}/${String(pathname || '').replace(/^\//,'')}`,
-    FACEBOOK_COMMENTS_TOKEN,
-    options
-  );
+// V6.31.1 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
+// User Access Token, MONDECO tente de dériver le Page Access Token de
+// FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
+// écrit sur disque ni exposé dans les logs.
+let facebookCommentsPageTokenCache = {
+  sourceToken:'',
+  pageToken:'',
+  pageId:'',
+  pageName:'',
+  checkedAt:0,
+  derived:false
+};
+
+function clearFacebookCommentsPageTokenCache(){
+  facebookCommentsPageTokenCache = {
+    sourceToken:'', pageToken:'', pageId:'', pageName:'', checkedAt:0, derived:false
+  };
+}
+
+async function resolveFacebookCommentsPageToken({ force = false } = {}) {
+  if (!FACEBOOK_COMMENTS_TOKEN) {
+    throw new Error('FACEBOOK_COMMENTS_TOKEN manquant dans Railway.');
+  }
+  if (!FACEBOOK_PAGE_ID) {
+    throw new Error('FACEBOOK_PAGE_ID manquant dans Railway.');
+  }
+
+  const now = Date.now();
+  const cached = facebookCommentsPageTokenCache;
+  if (
+    !force &&
+    cached.pageToken &&
+    cached.sourceToken === FACEBOOK_COMMENTS_TOKEN &&
+    cached.pageId === FACEBOOK_PAGE_ID &&
+    now - Number(cached.checkedAt || 0) < 5 * 60 * 1000
+  ) {
+    return cached.pageToken;
+  }
+
+  const meUrl = `https://graph.facebook.com/${META_API_VERSION}/me?fields=${encodeURIComponent('id,name')}`;
+  const me = await graphJsonRequest(meUrl, FACEBOOK_COMMENTS_TOKEN);
+  const ownerId = safeString(me?.id);
+
+  // Cas idéal : Railway contient déjà le Page Access Token de Mondeco.tn.
+  if (ownerId === safeString(FACEBOOK_PAGE_ID)) {
+    facebookCommentsPageTokenCache = {
+      sourceToken:FACEBOOK_COMMENTS_TOKEN,
+      pageToken:FACEBOOK_COMMENTS_TOKEN,
+      pageId:ownerId,
+      pageName:safeString(me?.name),
+      checkedAt:now,
+      derived:false
+    };
+    return FACEBOOK_COMMENTS_TOKEN;
+  }
+
+  // Cas fréquent après régénération dans Graph API Explorer : un User Token a
+  // été collé dans Railway. On demande alors explicitement le token de la Page.
+  const pageUrl =
+    `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}` +
+    `?fields=${encodeURIComponent('id,name,access_token')}`;
+  let page;
+  try {
+    page = await graphJsonRequest(pageUrl, FACEBOOK_COMMENTS_TOKEN);
+  } catch (error) {
+    const e = new Error(
+      `FACEBOOK_COMMENTS_TOKEN appartient à l'utilisateur ${safeString(me?.name || ownerId || 'inconnu')} et MONDECO ne peut pas obtenir le Page Access Token de Mondeco.tn. ` +
+      `Générez un Page Access Token avec pages_read_engagement, pages_read_user_content et pages_manage_engagement.`
+    );
+    e.metaCode = error?.metaCode;
+    throw e;
+  }
+
+  const derivedToken = safeString(page?.access_token);
+  if (!derivedToken) {
+    throw new Error(
+      `FACEBOOK_COMMENTS_TOKEN est un User Access Token (${safeString(me?.name || ownerId)}). ` +
+      `Meta n'a pas retourné le Page Access Token de Mondeco.tn. Remplacez FACEBOOK_COMMENTS_TOKEN par le access_token de la Page ${FACEBOOK_PAGE_ID}.`
+    );
+  }
+
+  const verify = await graphJsonRequest(meUrl, derivedToken);
+  if (safeString(verify?.id) !== safeString(FACEBOOK_PAGE_ID)) {
+    throw new Error(
+      `Le Page Access Token dérivé appartient à ${safeString(verify?.name || verify?.id)}, pas à la Page ${FACEBOOK_PAGE_ID}.`
+    );
+  }
+
+  facebookCommentsPageTokenCache = {
+    sourceToken:FACEBOOK_COMMENTS_TOKEN,
+    pageToken:derivedToken,
+    pageId:safeString(verify?.id),
+    pageName:safeString(verify?.name),
+    checkedAt:now,
+    derived:true
+  };
+  return derivedToken;
+}
+
+async function facebookGraphRequestPath(pathname, options = {}) {
+  const cleanPath = String(pathname || '').replace(/^\//,'');
+  const url = `https://graph.facebook.com/${META_API_VERSION}/${cleanPath}`;
+  let token = await resolveFacebookCommentsPageToken();
+  try {
+    return await graphJsonRequest(url, token, options);
+  } catch (error) {
+    // Si Meta invalide le token dérivé/ancien, on le résout une seule fois de
+    // plus afin qu'un renouvellement côté Meta soit pris en compte proprement.
+    if (Number(error?.metaCode || 0) === 190) {
+      clearFacebookCommentsPageTokenCache();
+      token = await resolveFacebookCommentsPageToken({ force:true });
+      return await graphJsonRequest(url, token, options);
+    }
+    if (/publish_actions/i.test(safeString(error?.message))) {
+      throw new Error(
+        `Meta refuse la réponse car le token actif n'agit pas au nom de la Page. ` +
+        `Vérifiez FACEBOOK_COMMENTS_TOKEN : /me doit retourner Mondeco.tn (${FACEBOOK_PAGE_ID}) et le token doit avoir pages_manage_engagement.`
+      );
+    }
+    throw error;
+  }
 }
 
 async function instagramGraphRequestPath(pathname, options = {}) {
@@ -16874,9 +16990,12 @@ router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,r
     let data;
     if (target.channel === 'facebook') {
       if (!FACEBOOK_PAGE_ID) throw new Error('FACEBOOK_PAGE_ID manquant.');
-      data = await facebookGraphRequestPath(`${encodeURIComponent(FACEBOOK_PAGE_ID)}/messages`, {
-        method:'POST', json:{ recipient:{ comment_id:target.commentId }, message:{ text } }
-      });
+      if (!FACEBOOK_MESSENGER_TOKEN) throw new Error('FACEBOOK_MESSENGER_TOKEN manquant.');
+      data = await graphJsonRequest(
+        `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/messages`,
+        FACEBOOK_MESSENGER_TOKEN,
+        { method:'POST', json:{ recipient:{ comment_id:target.commentId }, message:{ text } } }
+      );
     } else if (target.channel === 'instagram') {
       if (!INSTAGRAM_ACCOUNT_ID) throw new Error('INSTAGRAM_ACCOUNT_ID manquant.');
       data = await instagramGraphRequestPath(`${encodeURIComponent(INSTAGRAM_ACCOUNT_ID)}/messages`, {
@@ -17156,7 +17275,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.31.0 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.31.1 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -17170,7 +17289,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.31.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.31.1 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
