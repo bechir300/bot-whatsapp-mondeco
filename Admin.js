@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.33.1
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.34.2
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -50,6 +50,8 @@ const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.js
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
 const MESSAGE_ID_INDEX_PATH = path.join(DATA_DIR, 'conversation-message-ids.jsonl');
+// V6.34.2 — empreintes irréversibles des éléments supprimés. Aucun texte, nom, numéro ou contenu n'est conservé.
+const PURGED_RECORD_HASHES_PATH = path.join(DATA_DIR, '.purged-record-hashes.json');
 const RETENTION_15_MIGRATION_PATH = path.join(DATA_DIR, '.v630-retention-15.json');
 const RETENTION_15_GRACE_MS = 12 * 60 * 60 * 1000;
 
@@ -137,6 +139,7 @@ const TASKS_PATH = path.join(DATA_DIR, 'tasks.json');
 const SLA_EVENTS_PATH = path.join(DATA_DIR, 'sla-events.json');
 const DAILY_REPORTS_PATH = path.join(DATA_DIR, 'daily-reports.json');
 const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
+const TEAM_ACTIVITY_PATH = path.join(DATA_DIR, 'team-activity.jsonl');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
@@ -1752,7 +1755,8 @@ function snapshotFiles() {
     { source: TASKS_PATH, name: 'tasks.json' },
     { source: SLA_EVENTS_PATH, name: 'sla-events.json' },
     { source: DAILY_REPORTS_PATH, name: 'daily-reports.json' },
-    { source: ATTENDANCE_PATH, name: 'attendance-log.json' }
+    { source: ATTENDANCE_PATH, name: 'attendance-log.json' },
+    { source: TEAM_ACTIVITY_PATH, name: 'team-activity.jsonl' }
   ];
 }
 
@@ -2355,8 +2359,135 @@ function readJsonArray(filePath, label) {
 // V6.26 — STOCKAGE COMMENTAIRES / PUBLICATIONS SOCIALES
 // ============================================================
 
+// V6.34.2 — suppression définitive MONDECO.
+// On conserve uniquement une empreinte SHA-256 irréversible pour empêcher
+// qu'une synchronisation Meta réimporte un élément volontairement supprimé.
+// L'empreinte ne permet pas de récupérer le texte, l'auteur ou la conversation.
+let purgedRecordHashesCache = { stamp:'', set:new Set() };
+
+function purgeRecordHash(kind, identity) {
+  const raw = `${safeString(kind)}|${safeString(identity)}`;
+  if (!safeString(identity)) return '';
+  return crypto.createHash('sha256').update(`mondeco-purge-v1|${raw}`).digest('hex');
+}
+
+function loadPurgedRecordHashes() {
+  const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
+  if (purgedRecordHashesCache.stamp === stamp) return purgedRecordHashesCache.set;
+  let hashes = [];
+  try {
+    if (fs.existsSync(PURGED_RECORD_HASHES_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8') || '{}');
+      hashes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.hashes) ? parsed.hashes : []);
+    }
+  } catch (error) {
+    console.warn('⚠️ Lecture empreintes suppression :', error.message);
+  }
+  const set = new Set(hashes.map(safeString).filter(Boolean));
+  purgedRecordHashesCache = { stamp, set };
+  return set;
+}
+
+function savePurgedRecordHashes(set) {
+  const hashes = [...(set instanceof Set ? set : new Set())].map(safeString).filter(Boolean).slice(-100000);
+  writeJsonAtomic(PURGED_RECORD_HASHES_PATH, { version:1, hashes });
+  purgedRecordHashesCache = { stamp:fileChangeStamp(PURGED_RECORD_HASHES_PATH), set:new Set(hashes) };
+}
+
+function rememberPurgedHashes(values = []) {
+  const set = new Set(loadPurgedRecordHashes());
+  let changed = false;
+  for (const value of Array.isArray(values) ? values : [values]) {
+    const hash = safeString(value);
+    if (hash && !set.has(hash)) { set.add(hash); changed = true; }
+  }
+  if (changed) savePurgedRecordHashes(set);
+  return changed;
+}
+
+function conversationEntryBaseIdentity(entry = {}) {
+  const channel = safeString(entry?.channel).toLowerCase() ||
+    (safeString(entry?.contact).startsWith('instagram:') ? 'instagram' : safeString(entry?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
+  const id = safeString(entry?.message_id || entry?.meta_message_id || entry?.mid || entry?.id);
+  if (id) return `${channel}|id:${id}`;
+  const attachments = Array.isArray(entry?.attachments) ? entry.attachments : [];
+  const attachmentIds = attachments.map(item => safeString(item?.id || item?.media_id || item?.url)).filter(Boolean).join(',');
+  return `${channel}|fp:${safeString(entry?.contact)}|${safeString(entry?.time || entry?.created_time || entry?.timestamp)}|${safeString(entry?.action)}|${safeString(entry?.source)}|${attachmentIds}`;
+}
+
+function conversationEntryPartPurgeHash(entry = {}, part = 'entry') {
+  const base = conversationEntryBaseIdentity(entry);
+  const value = part === 'incoming'
+    ? `${base}|incoming|${safeString(entry?.incoming)}`
+    : part === 'reply'
+      ? `${base}|reply|${safeString(entry?.reply)}|${safeString(entry?.reply_time)}`
+      : `${base}|entry`;
+  return purgeRecordHash('conversation', value);
+}
+
+function socialCommentPurgeHash(comment = {}) {
+  const channel = safeString(comment?.channel).toLowerCase();
+  const id = safeString(comment?.commentId || comment?.id || comment?.comment_id);
+  return purgeRecordHash('comment', `${channel}|${id}`);
+}
+
+function attachmentDirectionForPurge(entry = {}) {
+  const explicit = safeString(entry?.attachment_direction).toLowerCase();
+  if (explicit) return explicit;
+  const source = safeString(entry?.source).toLowerCase();
+  const sender = safeString(entry?.sender_kind).toLowerCase();
+  const direction = safeString(entry?.direction).toLowerCase();
+  if (direction === 'outgoing' || sender === 'human' || sender === 'meta' || source.startsWith('commercial')) return 'outgoing';
+  return 'incoming';
+}
+
+function applyConversationPurgeTombstones(entry = {}) {
+  if (!entry || typeof entry !== 'object') return null;
+  const hashes = loadPurgedRecordHashes();
+  const incomingHash = conversationEntryPartPurgeHash(entry,'incoming');
+  const replyHash = conversationEntryPartPurgeHash(entry,'reply');
+  let next = { ...entry };
+  let changed = false;
+
+  if (safeString(next?.incoming) || attachmentDirectionForPurge(next) === 'incoming') {
+    if (incomingHash && hashes.has(incomingHash)) {
+      next.incoming = '';
+      if (attachmentDirectionForPurge(next) === 'incoming') {
+        next.attachments = [];
+        next.attachment_type = '';
+        next.attachment_url = '';
+      }
+      changed = true;
+    }
+  }
+  if (safeString(next?.reply) || attachmentDirectionForPurge(next) === 'outgoing') {
+    if (replyHash && hashes.has(replyHash)) {
+      next.reply = '';
+      next.reply_sent = false;
+      if (attachmentDirectionForPurge(next) === 'outgoing') {
+        next.attachments = [];
+        next.attachment_type = '';
+        next.attachment_url = '';
+      }
+      changed = true;
+    }
+  }
+
+  const meaningful = Boolean(
+    safeString(next?.incoming) || safeString(next?.reply) ||
+    (Array.isArray(next?.attachments) && next.attachments.length) ||
+    ['facebook_message_read','facebook_message_delivery','facebook_message_reaction'].includes(safeString(next?.action))
+  );
+  return meaningful ? next : null;
+}
+
 function loadSocialComments() {
-  return readJsonArray(SOCIAL_COMMENTS_PATH, 'social-comments.json');
+  const hashes = loadPurgedRecordHashes();
+  return readJsonArray(SOCIAL_COMMENTS_PATH, 'social-comments.json')
+    .filter(item => {
+      const hash = socialCommentPurgeHash(item);
+      return !hash || !hashes.has(hash);
+    });
 }
 
 function loadSocialPosts() {
@@ -2418,7 +2549,12 @@ function mergeSocialRecords(current, incoming, keyField = 'key') {
 }
 
 function upsertSocialComments(records) {
-  const merged = mergeSocialRecords(loadSocialComments(), records, 'key');
+  const hashes = loadPurgedRecordHashes();
+  const accepted = (Array.isArray(records) ? records : []).filter(item => {
+    const hash = socialCommentPurgeHash(item);
+    return !hash || !hashes.has(hash);
+  });
+  const merged = mergeSocialRecords(loadSocialComments(), accepted, 'key');
   saveSocialComments(merged);
   return merged;
 }
@@ -5020,6 +5156,200 @@ function commercialCanWriteConversation(user, state) {
   return conversationAssignedToUser(state, user);
 }
 
+// V6.34.1 — verrou anti-double-réponse.
+// Un commercial possède la conversation tant qu'il la traite. Si le client
+// attend une réponse au-delà du délai SLA (5 min par défaut), un autre
+// commercial autorisé peut reprendre la conversation. Le contrôle est fait
+// côté serveur afin que deux navigateurs ne puissent pas contourner le verrou.
+const DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES = Math.max(
+  1,
+  Math.min(120, Number(process.env.CONVERSATION_REPLY_LOCK_MINUTES || 5) || 5)
+);
+
+function conversationStateChannel(contact, state = {}) {
+  const explicit = safeString(state?.channel).toLowerCase();
+  if (['whatsapp','instagram','facebook'].includes(explicit)) return explicit;
+  const normalized = safeString(contact);
+  if (normalized.startsWith('instagram:')) return 'instagram';
+  if (normalized.startsWith('facebook:')) return 'facebook';
+  return 'whatsapp';
+}
+
+function commercialReplyLockInfo(user, state = {}, contact = '', nowMs = Date.now()) {
+  const isCommercial = safeString(user?.role) === 'commercial';
+  if (!isCommercial) {
+    return { canReply:true, assignedToMe:false, canTakeover:true, locked:false, reason:'manager' };
+  }
+
+  const viewerId = safeString(user?.id);
+  const ownerId = safeString(state?.assignedUserId);
+  const ownerNameFromState = safeString(state?.assignedTo);
+  const channel = conversationStateChannel(contact, state);
+
+  if (!ownerId) {
+    return {
+      canReply:true,
+      assignedToMe:false,
+      canTakeover:true,
+      locked:false,
+      reason:'unassigned',
+      channel,
+      ownerId:'',
+      ownerName:''
+    };
+  }
+
+  if (ownerId === viewerId) {
+    return {
+      canReply:true,
+      assignedToMe:true,
+      canTakeover:false,
+      locked:false,
+      reason:'owner',
+      channel,
+      ownerId,
+      ownerName:ownerNameFromState || safeString(user?.name || user?.email)
+    };
+  }
+
+  const owner = loadUsers().find(item => safeString(item?.id) === ownerId);
+  const ownerName = ownerNameFromState || safeString(owner?.name || owner?.email) || 'Un autre commercial';
+
+  // Si le propriétaire n'est plus actif ou n'est pas réellement dans une
+  // mission active maintenant sur ce canal, la conversation peut être reprise
+  // immédiatement. Ceci évite qu'un shift terminé bloque l'équipe suivante.
+  const ownerHasActiveShift = Boolean(
+    owner && owner.active !== false &&
+    loadSchedules().some(schedule =>
+      safeString(schedule?.userId) === ownerId &&
+      scheduleIsActiveNow(schedule, new Date(nowMs), channel)
+    )
+  );
+  if (!owner || owner.active === false || !ownerHasActiveShift) {
+    return {
+      canReply:true,
+      assignedToMe:false,
+      canTakeover:true,
+      locked:false,
+      reason:'owner_unavailable',
+      channel,
+      ownerId,
+      ownerName
+    };
+  }
+
+  const lastCustomerMs = Date.parse(safeString(state?.lastCustomerAt));
+  const lastHumanMs = Date.parse(safeString(state?.lastHumanAt || state?.lastAnsweredAt));
+  const customerWaiting = Number.isFinite(lastCustomerMs) && (!Number.isFinite(lastHumanMs) || lastCustomerMs > lastHumanMs);
+
+  // Si le dernier message vient du commercial, on conserve naturellement
+  // l'affectation : il attend le client, il n'y a rien à reprendre.
+  if (!customerWaiting) {
+    return {
+      canReply:false,
+      assignedToMe:false,
+      canTakeover:false,
+      locked:true,
+      reason:'owned_waiting_customer',
+      channel,
+      ownerId,
+      ownerName,
+      retryAt:''
+    };
+  }
+
+  const configuredMinutes = Math.max(
+    1,
+    Math.min(
+      120,
+      Number(state?.sla?.minutes || state?.slaMinutes || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES) || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES
+    )
+  );
+  const ownerActivityCandidates = [
+    state?.replyOwnerActivityAt,
+    state?.assignedAt,
+    state?.takeoverAt
+  ]
+    .map(value => Date.parse(safeString(value)))
+    .filter(Number.isFinite);
+  const ownerActivityMs = ownerActivityCandidates.length ? Math.max(...ownerActivityCandidates) : 0;
+  const lockStartedAtMs = Math.max(lastCustomerMs, ownerActivityMs || 0);
+  const unlockAtMs = lockStartedAtMs + configuredMinutes * 60 * 1000;
+  const expired = Number(nowMs) >= unlockAtMs;
+
+  return {
+    canReply:expired,
+    assignedToMe:false,
+    canTakeover:expired,
+    locked:!expired,
+    reason:expired ? 'owner_timeout' : 'owner_active',
+    channel,
+    ownerId,
+    ownerName,
+    lockMinutes:configuredMinutes,
+    retryAt:new Date(unlockAtMs).toISOString(),
+    remainingMs:Math.max(0, unlockAtMs - Number(nowMs))
+  };
+}
+
+function acquireCommercialConversationReply(req, res, contact, channel = '') {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const resolvedChannel = safeString(channel).toLowerCase() || conversationStateChannel(contact, {});
+  if (!requireCommercialMessageChannelAccess(req, res, resolvedChannel)) return false;
+
+  const states = loadConversationStatesAdmin();
+  const current = states[safeString(contact)] && typeof states[safeString(contact)] === 'object'
+    ? states[safeString(contact)]
+    : {};
+  const info = commercialReplyLockInfo(req.user, current, contact);
+
+  if (info.assignedToMe) {
+    updateConversationStateAdmin(contact, state => ({
+      ...state,
+      replyOwnerActivityAt:new Date().toISOString()
+    }));
+    return true;
+  }
+
+  if (!info.canTakeover) {
+    res.status(409).json({
+      error: info.retryAt
+        ? `Conversation déjà prise en charge par ${info.ownerName}. Reprise possible après ${info.lockMinutes || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES} min sans réponse.`
+        : `Conversation déjà prise en charge par ${info.ownerName}.`,
+      errorCode:'CONVERSATION_LOCKED',
+      ownerUserId:info.ownerId,
+      ownerName:info.ownerName,
+      retryAt:info.retryAt || '',
+      remainingMs:Number(info.remainingMs || 0)
+    });
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  updateConversationStateAdmin(contact, state => ({
+    ...state,
+    previousAssignedUserId:safeString(state?.assignedUserId),
+    previousAssignedTo:safeString(state?.assignedTo),
+    assignedUserId:safeString(req.user?.id),
+    assignedTo:safeString(req.user?.name || req.user?.email),
+    assignedAt:now,
+    takeoverAt:info.ownerId ? now : safeString(state?.takeoverAt),
+    replyOwnerActivityAt:now,
+    takeoverReason:info.reason
+  }));
+  appendTeamActivity({
+    type:info.ownerId ? 'conversation_takeover' : 'conversation_claim',
+    userId:safeString(req.user?.id),
+    userName:safeString(req.user?.name || req.user?.email),
+    contact:safeString(contact),
+    channel:resolvedChannel,
+    previousUserId:info.ownerId,
+    previousUserName:info.ownerName,
+    reason:info.reason
+  });
+  return true;
+}
+
 function requireCommercialConversationWriteAccess(req, res, contact) {
   if (safeString(req.user?.role) !== 'commercial') return true;
   const normalizedContact = safeString(contact);
@@ -7151,6 +7481,47 @@ function saveAttendance(items) {
   writeJsonAtomic(ATTENDANCE_PATH, items && typeof items === 'object' ? items : {});
 }
 
+// V6.34 — journal d'activité léger pour les actions qui ne passent pas par
+// conversation-log.json (ouverture d'une discussion, réponse à un commentaire,
+// réponse privée depuis un commentaire). Il permet d'attribuer les rapports à
+// un compte précis sans mesurer la présence comme KPI principal.
+function appendTeamActivity(event = {}) {
+  try {
+    const item = {
+      id: safeString(event.id) || crypto.randomUUID(),
+      ...event,
+      time: safeString(event.time) || new Date().toISOString()
+    };
+    fs.appendFileSync(TEAM_ACTIVITY_PATH, `${JSON.stringify(item)}\n`, 'utf8');
+    return item;
+  } catch (error) {
+    console.warn('⚠️ Journal activité équipe :', error.message);
+    return null;
+  }
+}
+
+function loadTeamActivity(date = '') {
+  if (!fs.existsSync(TEAM_ACTIVITY_PATH)) return [];
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const target = safeString(date);
+  const items = [];
+  try {
+    const lines = fs.readFileSync(TEAM_ACTIVITY_PATH, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const item = JSON.parse(line);
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        if (target && dateKeyInTimezone(item.time, timezone) !== target) continue;
+        items.push(item);
+      } catch {}
+    }
+  } catch (error) {
+    console.warn('⚠️ Lecture team-activity.jsonl :', error.message);
+  }
+  return items;
+}
+
 function timeMinutes(value) {
   const match = safeString(value).match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
@@ -7185,6 +7556,12 @@ const TEAM_ACCESS_CHANNELS = new Set([
 ]);
 
 function normalizeChannels(value) {
+  // V6.34.1 — faire la différence entre un ancien planning qui ne possède
+  // vraiment pas le champ channels et une sélection explicitement vide.
+  // Une sélection vide signifie désormais : AUCUN accès réseau.
+  if (value === undefined || value === null) {
+    return ['whatsapp_messages', 'instagram_messages', 'instagram_comments'];
+  }
   const raw = Array.isArray(value) ? value : [value];
   const expanded = [];
   for (const item of raw) {
@@ -7199,12 +7576,7 @@ function normalizeChannels(value) {
     if (channel === 'instagram') expanded.push('instagram_messages', 'instagram_comments');
     if (channel === 'facebook') expanded.push('facebook_messages', 'facebook_comments');
   }
-  const channels = [...new Set(expanded)];
-  // Ancien planning réellement dépourvu de champ channels : conserver son
-  // ancien périmètre WhatsApp + Instagram (messages + commentaires IG).
-  return channels.length
-    ? channels
-    : ['whatsapp_messages', 'instagram_messages', 'instagram_comments'];
+  return [...new Set(expanded)];
 }
 
 function messageAccessKey(channel) {
@@ -7248,17 +7620,33 @@ function requireCommercialCommentChannelAccess(req, res, channel) {
   return false;
 }
 
+function scheduleWindowMs(schedule) {
+  const date = safeString(schedule?.date);
+  const start = tunisDateTimeMs(date, schedule?.startTime);
+  let end = tunisDateTimeMs(date, schedule?.endTime);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (end <= start) end += 24 * 60 * 60 * 1000;
+  return { start, end, crossesMidnight: end - start > 0 && safeString(schedule?.endTime) <= safeString(schedule?.startTime) };
+}
+
 function scheduleIsActiveNow(schedule, now = new Date(), channel = '') {
-  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  const today = dateKeyInTimezone(now, timezone);
-  if (safeString(schedule?.date) !== today || schedule?.active === false) return false;
-  const start = timeMinutes(schedule?.startTime);
-  const end = timeMinutes(schedule?.endTime);
-  const current = tunisMinutesNow(now);
-  if (start === null || end === null || current < start || current >= end) return false;
-  const breakStart = timeMinutes(schedule?.breakStart);
-  const breakEnd = timeMinutes(schedule?.breakEnd);
-  if (breakStart !== null && breakEnd !== null && current >= breakStart && current < breakEnd) return false;
+  if (schedule?.active === false) return false;
+  const window = scheduleWindowMs(schedule);
+  const nowMs = new Date(now).getTime();
+  if (!window || !Number.isFinite(nowMs) || nowMs < window.start || nowMs >= window.end) return false;
+
+  const breakStartMin = timeMinutes(schedule?.breakStart);
+  const breakEndMin = timeMinutes(schedule?.breakEnd);
+  if (breakStartMin !== null && breakEndMin !== null) {
+    let breakStart = tunisDateTimeMs(safeString(schedule?.date), schedule?.breakStart);
+    let breakEnd = tunisDateTimeMs(safeString(schedule?.date), schedule?.breakEnd);
+    if (Number.isFinite(breakStart) && Number.isFinite(breakEnd)) {
+      if (breakStart < window.start) breakStart += 24 * 60 * 60 * 1000;
+      if (breakEnd <= breakStart) breakEnd += 24 * 60 * 60 * 1000;
+      if (nowMs >= breakStart && nowMs < breakEnd) return false;
+    }
+  }
+
   const requestedChannel = safeString(channel).toLowerCase();
   if (!requestedChannel) return true;
   const scope = new Set(normalizeChannels(schedule?.channels));
@@ -7314,17 +7702,35 @@ function tunisDateTimeMs(date, time) {
 
 function scheduleIntervalsForDate(date, userId) {
   const intervals = [];
-  for (const schedule of getSchedulesForDate(date).filter(item => safeString(item.userId) === safeString(userId) && item.active !== false)) {
-    const start = tunisDateTimeMs(date, schedule.startTime);
-    const end = tunisDateTimeMs(date, schedule.endTime);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-    const breakStart = tunisDateTimeMs(date, schedule.breakStart);
-    const breakEnd = tunisDateTimeMs(date, schedule.breakEnd);
-    if (Number.isFinite(breakStart) && Number.isFinite(breakEnd) && breakEnd > breakStart && breakStart > start && breakEnd < end) {
-      intervals.push([start, breakStart], [breakEnd, end]);
-    } else {
-      intervals.push([start, end]);
+  const dayStart = Date.parse(`${date}T00:00:00+01:00`);
+  const dayEnd = Date.parse(`${date}T23:59:59.999+01:00`);
+  const previousDate = teamDateAdd(date, -1);
+  const schedules = loadSchedules().filter(item =>
+    safeString(item.userId) === safeString(userId) &&
+    item.active !== false &&
+    [safeString(date), previousDate].includes(safeString(item.date))
+  );
+  for (const schedule of schedules) {
+    const window = scheduleWindowMs(schedule);
+    if (!window) continue;
+    let start = Math.max(dayStart, window.start);
+    let end = Math.min(dayEnd, window.end);
+    if (end <= start) continue;
+
+    let breakStart = tunisDateTimeMs(safeString(schedule.date), schedule.breakStart);
+    let breakEnd = tunisDateTimeMs(safeString(schedule.date), schedule.breakEnd);
+    if (Number.isFinite(breakStart) && Number.isFinite(breakEnd)) {
+      if (breakStart < window.start) breakStart += 24 * 60 * 60 * 1000;
+      if (breakEnd <= breakStart) breakEnd += 24 * 60 * 60 * 1000;
+      const clippedBreakStart = Math.max(start, breakStart);
+      const clippedBreakEnd = Math.min(end, breakEnd);
+      if (clippedBreakEnd > clippedBreakStart) {
+        if (clippedBreakStart > start) intervals.push([start, clippedBreakStart]);
+        if (clippedBreakEnd < end) intervals.push([clippedBreakEnd, end]);
+        continue;
+      }
     }
+    intervals.push([start, end]);
   }
   return intervals;
 }
@@ -7771,19 +8177,42 @@ function isNightTimeInTunis(value) {
 
 function simpleScheduleForUserDate(date, userId) {
   const shifts = getSchedulesForDate(date).filter(s => safeString(s.userId) === safeString(userId) && s.active !== false);
-  if (!shifts.length) return { planned:false, channels:[], startTime:'09:00', endTime:'18:00' };
+  if (!shifts.length) return { planned:false, channels:[], startTime:'09:00', endTime:'18:00', mission:'' };
   const channels = [...new Set(shifts.flatMap(s => normalizeChannels(s.channels)))];
-  const starts = shifts.map(s => safeString(s.startTime)).filter(Boolean).sort();
-  const ends = shifts.map(s => safeString(s.endTime)).filter(Boolean).sort();
-  return { planned:true, channels, startTime:starts[0] || '09:00', endTime:ends[ends.length-1] || '18:00', shiftIds:shifts.map(s=>s.id) };
+  const first = shifts[0];
+  return {
+    planned:true,
+    channels,
+    startTime:safeString(first?.startTime) || '09:00',
+    endTime:safeString(first?.endTime) || '18:00',
+    mission:safeString(first?.mission),
+    crossesMidnight:Boolean(scheduleWindowMs(first)?.crossesMidnight),
+    shiftIds:shifts.map(s=>s.id)
+  };
 }
 
 function plannedChannelSetForUser(user, date = '') {
   if (safeString(user?.role) !== 'commercial') return null;
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  const targetDate = safeString(date) || dateKeyInTimezone(new Date(), timezone);
-  const schedule = simpleScheduleForUserDate(targetDate, user.id);
-  return schedule.planned ? new Set(schedule.channels || []) : null;
+  const explicit = safeString(date);
+  const targetDate = explicit || dateKeyInTimezone(new Date(), timezone);
+  const scope = new Set(simpleScheduleForUserDate(targetDate, user.id).channels || []);
+
+  // Après minuit, une mission de nuit 22:00 → 02:00 créée la veille garde ses
+  // accès jusqu'à sa fin. En dehors de ce cas, l'absence de planning = aucun accès.
+  if (!explicit) {
+    const previousDate = teamDateAdd(targetDate, -1);
+    for (const schedule of loadSchedules().filter(item =>
+      safeString(item.userId) === safeString(user.id) &&
+      safeString(item.date) === previousDate &&
+      item.active !== false &&
+      Boolean(scheduleWindowMs(item)?.crossesMidnight) &&
+      scheduleIsActiveNow(item, new Date())
+    )) {
+      for (const channel of normalizeChannels(schedule.channels)) scope.add(channel);
+    }
+  }
+  return scope;
 }
 
 function pendingAssignedForUser(user, date = '') {
@@ -7839,14 +8268,256 @@ function simpleTeamDayForUser(user, date) {
   };
 }
 
+
+function teamEntryIsClientMessage(entry) {
+  const direction = safeString(entry?.direction || entry?.attachment_direction).toLowerCase();
+  if (direction === 'incoming' || safeString(entry?.sender_kind).toLowerCase() === 'client') return true;
+  return Boolean(safeString(entry?.incoming)) && safeString(entry?.action) !== 'commercial_reply';
+}
+
+function likelyPriceOnlyText(value) {
+  const text = safeString(value).trim().toLowerCase();
+  if (!text) return false;
+  const priceSignal = /(?:\bprix\b|\bprice\b|\b\d{2,6}(?:[.,]\d{1,3})?\s*(?:dt|tnd|dinars?)\b|بقداش|قداش)/i.test(text);
+  const followQuestion = /\?|quel|quelle|ville|dimension|espace|livraison|showroom|commande|couleur|délai|delai|متوفر|ولاية|قياس/.test(text);
+  return priceSignal && text.length <= 120 && !followQuestion;
+}
+
+function medianNumber(values) {
+  const list = values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+  if (!list.length) return 0;
+  const mid = Math.floor(list.length/2);
+  return list.length % 2 ? Math.round(list[mid]) : Math.round((list[mid-1]+list[mid])/2);
+}
+
+function performanceWindowForSchedule(schedule) {
+  const window = scheduleWindowMs(schedule);
+  if (!window) return null;
+  return { ...window, startAt:new Date(window.start).toISOString(), endAt:new Date(window.end).toISOString() };
+}
+
+function commercialMissionMetrics(schedule, userId, messageReplies, activities, slaEvents) {
+  const window = performanceWindowForSchedule(schedule);
+  if (!window) return null;
+  const inWindow = value => {
+    const ms = Date.parse(safeString(value));
+    return Number.isFinite(ms) && ms >= window.start && ms < window.end;
+  };
+  const messages = messageReplies.filter(item => inWindow(item.time));
+  const comments = activities.filter(item =>
+    safeString(item.userId) === safeString(userId) &&
+    ['comment_reply','comment_private_reply'].includes(safeString(item.type)) &&
+    inWindow(item.time)
+  );
+  const started = slaEvents.filter(item => item.event === 'started' && safeString(item.assignedUserId) === safeString(userId) && inWindow(item.startedAt || item.time));
+  const resolved = slaEvents.filter(item => item.event === 'resolved' && safeString(item.answeredByUserId || item.assignedUserId) === safeString(userId) && inWindow(item.answeredAt || item.time));
+  const actions = [...messages.map(x=>x.time), ...comments.map(x=>x.time)].map(Date.parse).filter(Number.isFinite).sort((a,b)=>a-b);
+  const clients = new Set([
+    ...messages.map(x=>`msg:${safeString(x.contact)}`).filter(x=>x !== 'msg:'),
+    ...comments.map(x=>`comment:${safeString(x.authorId || x.commentId || x.key)}`).filter(x=>x !== 'comment:')
+  ]);
+  return {
+    id:safeString(schedule.id),
+    mission:safeString(schedule.mission || 'Mission commerciale'),
+    channels:normalizeChannels(schedule.channels),
+    startTime:safeString(schedule.startTime),
+    endTime:safeString(schedule.endTime),
+    crossesMidnight:window.crossesMidnight,
+    startAt:window.startAt,
+    endAt:window.endAt,
+    messageReplies:messages.length,
+    commentReplies:comments.length,
+    clientsTreated:clients.size,
+    assignedReceived:started.length,
+    assignedHandled:resolved.length,
+    assignedUnhandled:Math.max(0, started.length - resolved.length),
+    firstActionAt:actions.length ? new Date(actions[0]).toISOString() : '',
+    lastActionAt:actions.length ? new Date(actions[actions.length-1]).toISOString() : ''
+  };
+}
+
+function buildTeamPerformanceDashboard(date) {
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const users = loadUsers().filter(user => user.role === 'commercial');
+  const log = loadWhatsAppLog();
+  const dayEntries = log.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
+  const activities = loadTeamActivity(date);
+  const missionActivities = [...activities, ...loadTeamActivity(teamDateAdd(date, 1))];
+  const slaEvents = loadSlaEvents();
+  const today = dateKeyInTimezone(new Date(), timezone);
+
+  const raw = users.map(user => {
+    const userId = safeString(user.id);
+    const replies = dayEntries.filter(entry =>
+      safeString(entry?.action) === 'commercial_reply' &&
+      safeString(entry?.commercial_user_id) === userId
+    );
+    const allUserReplies = log.filter(entry =>
+      safeString(entry?.action) === 'commercial_reply' &&
+      safeString(entry?.commercial_user_id) === userId
+    );
+    const commentActivities = activities.filter(item =>
+      safeString(item.userId) === userId &&
+      ['comment_reply','comment_private_reply'].includes(safeString(item.type))
+    );
+    const openedContacts = new Set(activities.filter(item => safeString(item.userId) === userId && item.type === 'conversation_open').map(item => safeString(item.contact)).filter(Boolean));
+    const contacts = [...new Set(replies.map(entry => safeString(entry.contact)).filter(Boolean))];
+    let developedConversations = 0;
+    let completeConversations = 0;
+    let priceOnlyConversations = 0;
+    let priceContinuedConversations = 0;
+
+    for (const contact of contacts) {
+      const thread = dayEntries.filter(entry => safeString(entry.contact) === contact).sort((a,b)=>(Date.parse(a.time)||0)-(Date.parse(b.time)||0));
+      const clientMessages = thread.filter(teamEntryIsClientMessage);
+      const ownReplies = thread.filter(entry => safeString(entry?.action) === 'commercial_reply' && safeString(entry?.commercial_user_id) === userId);
+      const ownTexts = ownReplies.map(entry => safeString(entry.reply)).filter(Boolean);
+      const hasPrice = ownTexts.some(likelyPriceOnlyText);
+      if (clientMessages.length >= 2 && ownReplies.length >= 2) developedConversations += 1;
+      if (clientMessages.length >= 3 && ownReplies.length >= 3) completeConversations += 1;
+      if (ownReplies.length === 1 && hasPrice) priceOnlyConversations += 1;
+      if (ownReplies.length >= 2 && hasPrice) priceContinuedConversations += 1;
+    }
+
+    const substantiveComments = commentActivities.filter(item => {
+      const text = safeString(item.text);
+      return text.length >= 20 && !likelyPriceOnlyText(text);
+    }).length;
+    const priceOnlyComments = commentActivities.filter(item => likelyPriceOnlyText(item.text)).length;
+    const commentThreads = new Set(commentActivities.map(item => safeString(item.commentKey || item.commentId || item.key)).filter(Boolean)).size;
+    const qualityDenominator = contacts.length + commentThreads;
+    const qualityNumerator = developedConversations + substantiveComments;
+    const qualityRate = qualityDenominator ? Math.min(100, Math.round((qualityNumerator / qualityDenominator) * 1000) / 10) : 0;
+
+    const started = slaEvents.filter(item => item.event === 'started' && safeString(item.assignedUserId) === userId && dateKeyInTimezone(item.startedAt || item.time, timezone) === date);
+    const resolved = slaEvents.filter(item => item.event === 'resolved' && (safeString(item.answeredByUserId) === userId || (!safeString(item.answeredByUserId) && safeString(item.assignedUserId) === userId)) && dateKeyInTimezone(item.answeredAt || item.time, timezone) === date);
+    const resolvedIds = new Set(resolved.map(item => safeString(item.slaId || item.id)).filter(Boolean));
+    const nowMs = Date.now();
+    const missed = started.filter(item => {
+      const id = safeString(item.id || item.slaId);
+      if (resolvedIds.has(id)) return false;
+      const due = Date.parse(item.dueAt || '');
+      return Number.isFinite(due) && due < nowMs;
+    });
+    const onTime = resolved.filter(item => item.late !== true);
+    const late = resolved.filter(item => item.late === true);
+    const totalSla = Math.max(started.length, resolved.length + missed.length);
+    const pending = pendingAssignedForUser(user, date);
+    const handledRate = started.length ? Math.min(100, (resolved.length / started.length) * 100) : (replies.length || commentActivities.length ? 100 : 0);
+    const responseCompliance = totalSla ? Math.max(0, Math.min(100, (onTime.length / totalSla) * 100)) : (replies.length || commentActivities.length ? 100 : 0);
+    const continuityDenom = Math.max(1, contacts.length + commentThreads);
+    const continuityRate = Math.max(0, Math.min(100, ((contacts.length + commentThreads - priceOnlyConversations - priceOnlyComments - missed.length) / continuityDenom) * 100));
+
+    const persons = new Set([
+      ...contacts.map(x=>`msg:${x}`),
+      ...commentActivities.map(item=>`comment:${safeString(item.authorId || item.commentId || item.commentKey)}`).filter(x=>x !== 'comment:')
+    ]);
+    const byChannel = { whatsappMessages:0, instagramMessages:0, facebookMessages:0, instagramComments:0, facebookComments:0 };
+    for (const reply of replies) {
+      const channel = replyChannel(reply);
+      if (channel === 'instagram') byChannel.instagramMessages += 1;
+      else if (channel === 'facebook') byChannel.facebookMessages += 1;
+      else byChannel.whatsappMessages += 1;
+    }
+    for (const item of commentActivities) {
+      if (safeString(item.channel) === 'facebook') byChannel.facebookComments += 1;
+      else byChannel.instagramComments += 1;
+    }
+
+    const schedules = getSchedulesForDate(date).filter(item => safeString(item.userId) === userId && item.active !== false);
+    const missionMetrics = schedules.map(schedule => commercialMissionMetrics(schedule, userId, allUserReplies, missionActivities, slaEvents)).filter(Boolean);
+    const nightMissions = missionMetrics.filter(item => item.crossesMidnight || safeString(item.startTime) >= '20:00' || safeString(item.startTime) < '08:00' || safeString(item.endTime) <= '08:00');
+
+    return {
+      userId,
+      name:safeString(user.name) || safeString(user.email),
+      email:safeString(user.email),
+      active:user.active !== false,
+      messageReplies:replies.length,
+      commentReplies:commentActivities.length,
+      totalReplies:replies.length + commentActivities.length,
+      conversations:contacts.length,
+      clientsTreated:persons.size,
+      openedConversations:openedContacts.size,
+      developedConversations,
+      completeConversations,
+      priceOnlyConversations,
+      priceContinuedConversations,
+      substantiveComments,
+      priceOnlyComments,
+      qualityRate,
+      handledRate:Math.round(handledRate*10)/10,
+      responseCompliance:Math.round(responseCompliance*10)/10,
+      continuityRate:Math.round(continuityRate*10)/10,
+      slaTotal:totalSla,
+      slaOnTime:onTime.length,
+      slaLate:late.length,
+      slaMissed:missed.length,
+      medianFirstResponseSeconds:medianNumber(resolved.map(item => item.responseSeconds)),
+      unanswered:missed.length + (date === today ? Number(pending.pending || 0) : 0),
+      currentlyLate:date === today ? Number(pending.late || 0) : 0,
+      byChannel,
+      missions:missionMetrics,
+      nightMissions
+    };
+  });
+
+  const maxClients = Math.max(1, ...raw.map(item => Number(item.clientsTreated || 0)));
+  const ranking = raw.map(item => {
+    const volumeScore = item.clientsTreated > 0 ? 10 * Math.sqrt(item.clientsTreated / maxClients) : 0;
+    const qualityScore = 25 * (item.qualityRate / 100);
+    const coverageScore = 30 * (item.handledRate / 100);
+    const responseScore = 20 * (item.responseCompliance / 100);
+    const continuityScore = 15 * (item.continuityRate / 100);
+    const hasActivity = item.totalReplies > 0 || item.slaTotal > 0;
+    const score = hasActivity ? Math.round(Math.max(0, Math.min(100, coverageScore + qualityScore + responseScore + continuityScore + volumeScore))) : null;
+    return {
+      ...item,
+      score,
+      scoreBreakdown:{
+        coverage:Math.round(coverageScore*10)/10,
+        quality:Math.round(qualityScore*10)/10,
+        responsiveness:Math.round(responseScore*10)/10,
+        continuity:Math.round(continuityScore*10)/10,
+        volume:Math.round(volumeScore*10)/10
+      }
+    };
+  }).sort((a,b)=>Number(b.score ?? -1)-Number(a.score ?? -1) || b.clientsTreated-a.clientsTreated || b.completeConversations-a.completeConversations || b.totalReplies-a.totalReplies)
+    .map((item,index)=>({...item,rank:index+1}));
+
+  return {
+    ranking,
+    summary:{
+      clientsTreated:ranking.reduce((sum,item)=>sum+Number(item.clientsTreated||0),0),
+      totalReplies:ranking.reduce((sum,item)=>sum+Number(item.totalReplies||0),0),
+      messageReplies:ranking.reduce((sum,item)=>sum+Number(item.messageReplies||0),0),
+      commentReplies:ranking.reduce((sum,item)=>sum+Number(item.commentReplies||0),0),
+      developedConversations:ranking.reduce((sum,item)=>sum+Number(item.developedConversations||0),0),
+      completeConversations:ranking.reduce((sum,item)=>sum+Number(item.completeConversations||0),0),
+      priceOnly:ranking.reduce((sum,item)=>sum+Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0),0),
+      unanswered:ranking.reduce((sum,item)=>sum+Number(item.unanswered||0),0),
+      late:ranking.reduce((sum,item)=>sum+Number(item.slaLate||0)+Number(item.slaMissed||0),0),
+      activeCommercials:ranking.filter(item=>item.totalReplies>0).length
+    },
+    scoreWeights:{ coverage:30, quality:25, responsiveness:20, continuity:15, volume:10 },
+    definitions:{
+      developed:'Au moins 2 messages client + 2 réponses du commercial dans la journée.',
+      complete:'Au moins 3 messages client + 3 réponses du commercial dans la journée.',
+      priceOnly:'Une seule réponse commerciale courte contenant principalement un prix, sans relance détectée.'
+    }
+  };
+}
+
 router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,res) => {
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date)) ? safeString(req.query.date) : dateKeyInTimezone(new Date(),timezone);
+  const performance = buildTeamPerformanceDashboard(date);
+  const performanceByUser = new Map((performance.ranking || []).map(item => [safeString(item.userId), item]));
   const users = loadUsers().filter(user => user.role === 'commercial').map(user => {
     const day = simpleTeamDayForUser(user,date);
-    return { ...sanitizeUserForClient(user), presence:getPresenceForUser(user.id), ...day };
+    return { ...sanitizeUserForClient(user), presence:getPresenceForUser(user.id), ...day, performance:performanceByUser.get(safeString(user.id)) || null };
   }).sort((a,b) => (a.presence?.status==='online'?0:a.presence?.status==='idle'?1:2)-(b.presence?.status==='online'?0:b.presence?.status==='idle'?1:2) || safeString(a.name||a.email).localeCompare(safeString(b.name||b.email),'fr'));
-  return res.json({ date, generatedAt:new Date().toISOString(), users });
+  return res.json({ date, generatedAt:new Date().toISOString(), users, performance });
 });
 
 router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager, (req,res) => {
@@ -7858,8 +8529,9 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
   const requestedActive = req.body?.active !== false && channels.length > 0;
   const startTime = safeString(req.body?.startTime || '09:00');
   const endTime = safeString(req.body?.endTime || '18:00');
+  const mission = safeString(req.body?.mission).slice(0,1000);
   if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({error:'Commercial ou date invalide.'});
-  if (requestedActive && (timeMinutes(startTime) === null || timeMinutes(endTime) === null || timeMinutes(endTime) <= timeMinutes(startTime))) return res.status(400).json({error:'Horaire invalide. Pour un service après minuit, utilisez la date suivante pour la partie après 00:00.'});
+  if (requestedActive && (timeMinutes(startTime) === null || timeMinutes(endTime) === null || startTime === endTime)) return res.status(400).json({error:'Horaire invalide. Un service de nuit peut traverser minuit, par exemple 22:00 → 02:00.'});
   const items = loadSchedules();
   const existing = items.filter(item => safeString(item.userId) === userId && safeString(item.date) === date);
   const kept = items.filter(item => !(safeString(item.userId) === userId && safeString(item.date) === date));
@@ -7869,7 +8541,7 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
       ...first,
       id:safeString(first.id)||crypto.randomUUID(), userId, userName:safeString(user.name), date, startTime, endTime,
       breakStart:safeString(first.breakStart), breakEnd:safeString(first.breakEnd), channels,
-      mission:safeString(first.mission || 'Planning quotidien'), priority:safeString(first.priority || 'normal'),
+      mission:mission || safeString(first.mission || 'Mission commerciale'), priority:safeString(first.priority || 'normal'),
       slaMinutes:Math.max(1,Math.min(120,Number(first.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),
       active:true, createdBy:safeString(first.createdBy || req.user?.id), createdAt:safeString(first.createdAt)||new Date().toISOString(), updatedAt:new Date().toISOString()
     });
@@ -7884,12 +8556,14 @@ router.get('/api/team/commercial-report/:userId', requireAdminOrCommercialManage
   const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&item.role==='commercial');
   if(!user)return res.status(404).json({error:'Commercial introuvable.'});
   const day=simpleTeamDayForUser(user,date);
+  const performance=buildTeamPerformanceDashboard(date).ranking.find(item=>safeString(item.userId)===safeString(user.id))||null;
   const history=[];
   for(let i=0;i<7;i++){
     const d=teamDateAdd(date,-i);const x=simpleTeamDayForUser(user,d);
-    history.push({date:d,activeDay:x.activeDay,onlineMs:x.attendance.onlineMs,replies:x.replies,nightMs:x.nightMs,channels:x.schedule.channels||[],planned:x.schedule.planned});
+    const px=buildTeamPerformanceDashboard(d).ranking.find(item=>safeString(item.userId)===safeString(user.id))||{};
+    history.push({date:d,activeDay:x.activeDay,onlineMs:x.attendance.onlineMs,replies:Number(px.totalReplies||x.replies||0),clientsTreated:Number(px.clientsTreated||0),developedConversations:Number(px.developedConversations||0),completeConversations:Number(px.completeConversations||0),unanswered:Number(px.unanswered||0),score:px.score??null,nightMs:x.nightMs,channels:x.schedule.channels||[],planned:x.schedule.planned});
   }
-  return res.json({date,user:sanitizeUserForClient(user),presence:getPresenceForUser(user.id),day,history});
+  return res.json({date,user:sanitizeUserForClient(user),presence:getPresenceForUser(user.id),day,performance,history});
 });
 
 router.get('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
@@ -7904,8 +8578,8 @@ router.post('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
   const date = safeString(req.body?.date);
   const startTime = safeString(req.body?.startTime);
   const endTime = safeString(req.body?.endTime);
-  if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date) || timeMinutes(startTime) === null || timeMinutes(endTime) === null || timeMinutes(endTime) <= timeMinutes(startTime)) {
-    return res.status(400).json({error:'Commercial, date ou horaires invalides.'});
+  if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date) || timeMinutes(startTime) === null || timeMinutes(endTime) === null || startTime === endTime) {
+    return res.status(400).json({error:'Commercial, date ou horaires invalides. Les services après minuit sont acceptés (ex. 22:00 → 02:00).'});
   }
   const now = new Date().toISOString();
   const item = {
@@ -7922,7 +8596,7 @@ router.put('/api/schedules/:id', requireAdminOrCommercialManager, (req,res) => {
   const items=loadSchedules(); const index=items.findIndex(item=>item.id===req.params.id); if(index<0)return res.status(404).json({error:'Planning introuvable.'});
   const current=items[index]; const userId=safeString(req.body?.userId ?? current.userId); const user=loadUsers().find(item=>item.id===userId&&item.role==='commercial');
   const startTime=safeString(req.body?.startTime ?? current.startTime); const endTime=safeString(req.body?.endTime ?? current.endTime);
-  if(!user||timeMinutes(startTime)===null||timeMinutes(endTime)===null||timeMinutes(endTime)<=timeMinutes(startTime))return res.status(400).json({error:'Planning invalide.'});
+  if(!user||timeMinutes(startTime)===null||timeMinutes(endTime)===null||startTime===endTime)return res.status(400).json({error:'Planning invalide. Un service après minuit est accepté (ex. 22:00 → 02:00).'});
   items[index]={...current,userId,userName:safeString(user.name),date:safeString(req.body?.date??current.date),startTime,endTime,breakStart:safeString(req.body?.breakStart??current.breakStart),breakEnd:safeString(req.body?.breakEnd??current.breakEnd),channels:normalizeChannels(req.body?.channels??current.channels),mission:safeString(req.body?.mission??current.mission).slice(0,1000),priority:safeString(req.body?.priority??current.priority),slaMinutes:Math.max(1,Math.min(120,Number(req.body?.slaMinutes??current.slaMinutes??DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),active:req.body?.active===undefined?current.active!==false:req.body.active===true,updatedAt:new Date().toISOString()};
   saveSchedules(items); return res.json(items[index]);
 });
@@ -12240,7 +12914,7 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!requireCommercialMessageChannelAccess(req, res, channel)) return;
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const externalContact =
         safeString(
@@ -12382,7 +13056,7 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!requireCommercialMessageChannelAccess(req, res, channel)) return;
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const externalContact =
         safeString(
@@ -13545,7 +14219,10 @@ function loadWhatsAppLog() {
   }
 
   const entries =
-    [...merged.values()].sort(conversationEntryComparator);
+    [...merged.values()]
+      .map(entry => applyConversationPurgeTombstones(entry))
+      .filter(Boolean)
+      .sort(conversationEntryComparator);
 
   combinedConversationLogCache = {
     liveStamp,
@@ -17191,7 +17868,10 @@ function socialCommentCounts(items, user) {
     pendingFacebook: pendingThreads.filter(thread => thread.channel === 'facebook').length,
     pendingInstagram: pendingThreads.filter(thread => thread.channel === 'instagram').length,
     hidden: active.filter(item => item.isHidden === true).length,
-    privateReply: active.filter(item => Boolean(item.privateReplySentAt)).length
+    privateReply: active.filter(item => Boolean(item.privateReplySentAt)).length,
+    answered: pendingThreads.length <= threadIndex.threads.size
+      ? [...threadIndex.threads.values()].filter(thread => thread.pending !== true).length
+      : 0
   };
 }
 
@@ -17364,6 +18044,38 @@ router.post('/api/social-comments/sync', requireAdminOrCommercialManager, (req,r
   return res.status(202).json({ success:true, started:true, channel });
 });
 
+router.post('/api/social-comments/reconcile-pending', requireAdminOrCommercialManager, async (req,res) => {
+  try {
+    const before = loadSocialComments();
+    const index = socialCommentThreadIndex(before);
+    const limit = Math.max(1, Math.min(12, Number(req.body?.limit || 8) || 8));
+    const pending = [...index.threads.values()]
+      .filter(thread => thread.pending === true && thread.latestIncomingItem)
+      .sort((a,b) => Number(a.latestIncomingMs||0) - Number(b.latestIncomingMs||0));
+    const unique = [];
+    const seen = new Set();
+    for (const thread of pending) {
+      const item = thread.latestIncomingItem;
+      const identity = `${safeString(item?.channel)}|${safeString(item?.postId || item?.mediaId)}`;
+      if (!safeString(item?.postId || item?.mediaId) || seen.has(identity)) continue;
+      seen.add(identity);
+      unique.push(item);
+      if (unique.length >= limit) break;
+    }
+    const errors = [];
+    for (const item of unique) {
+      const error = await refreshSocialThreadIfNeeded(item, true);
+      if (error) errors.push(`${safeString(item?.channel)}:${safeString(item?.postId)} — ${error}`);
+    }
+    const after = loadSocialComments();
+    const counts = socialCommentCounts(after, req.user);
+    return res.json({ success:true, checkedThreads:unique.length, pendingBefore:pending.length, pendingAfter:Number(counts.pendingReply||0), counts, errors:errors.slice(-5) });
+  } catch (error) {
+    console.warn('⚠️ Réconciliation commentaires à répondre :', error.message);
+    return res.status(500).json({ error:'Impossible de vérifier les commentaires à répondre.' });
+  }
+});
+
 router.get('/api/social-comments', requireAuth, (req,res) => {
   try {
     const posts = loadSocialPosts();
@@ -17379,6 +18091,7 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
     if (['facebook','instagram'].includes(channel)) comments = comments.filter(item => item.channel === channel);
     if (filter === 'unread') comments = comments.filter(item => !socialCommentReadByUser(item,req.user));
     if (filter === 'pending') comments = comments.filter(item => socialCommentNeedsReply(item, threadIndex));
+    if (filter === 'answered') comments = comments.filter(item => !socialCommentNeedsReply(item, threadIndex));
     if (filter === 'hidden') comments = comments.filter(item => item.isHidden === true);
     if (filter === 'private') comments = comments.filter(item => Boolean(item.privateReplySentAt));
     if (q) {
@@ -17457,6 +18170,12 @@ router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
     selected = comments.find(item => safeString(item?.key) === key) || selected;
   } catch {}
   const read = markSocialCommentRead(key, req.user) || selected;
+  if (safeString(req.user?.role) === 'commercial') {
+    appendTeamActivity({
+      type:'comment_open', userId:safeString(req.user.id), userName:safeString(req.user.name || req.user.email),
+      channel:safeString(selected.channel), commentKey:key, commentId:safeString(selected.commentId), authorId:safeString(selected.authorId)
+    });
+  }
   return res.json({
     comment:{...read,read:true},
     post,
@@ -17491,8 +18210,12 @@ router.post('/api/social-comments/:key/reply', requireAuth, async (req,res) => {
       data = await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}/replies`, { method:'POST', form:{ message:text } });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
     const now = new Date().toISOString();
-    comments[index] = { ...target, lastReply:text, lastReplyAt:now, answeredAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email) };
+    comments[index] = { ...target, lastReply:text, lastReplyAt:now, answeredAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email), lastReplyByUserId:safeString(req.user?.id), lastReplyByEmail:safeString(req.user?.email) };
     saveSocialComments(comments);
+    appendTeamActivity({
+      type:'comment_reply', userId:safeString(req.user?.id), userName:safeString(req.user?.name || req.user?.email),
+      channel:safeString(target.channel), commentKey:key, commentId:safeString(target.commentId), authorId:safeString(target.authorId), text
+    });
     // Ajoute immédiatement la réponse dans le fil local, même avant le webhook d'écho Meta.
     const replyId = safeString(data?.id);
     if (replyId) upsertSocialComments([{
@@ -17533,27 +18256,44 @@ router.post('/api/social-comments/:key/hide', requireAuth, async (req,res) => {
   }
 });
 
-router.delete('/api/social-comments/:key', requireAuth, async (req,res) => {
+router.delete('/api/social-comments/:key', requireAdmin, async (req,res) => {
   try {
     const key = safeString(req.params.key);
     const comments = loadSocialComments();
     const index = comments.findIndex(item => safeString(item?.key) === key);
     if (index < 0) return res.status(404).json({ error:'Commentaire introuvable.' });
     const target = comments[index];
-    if (!requireCommercialCommentChannelAccess(req, res, target.channel)) return;
     if (target.canRemove === false) return res.status(403).json({ error:'Meta indique que ce commentaire ne peut pas être supprimé par ce compte.' });
+
+    // Suppression publique réelle d'abord. Si Meta refuse, MONDECO ne fait pas
+    // croire que le commentaire a disparu alors qu'il est encore public.
     if (target.channel === 'facebook') {
       await facebookGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
     } else if (target.channel === 'instagram') {
       await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
-    comments[index] = { ...target, deleted:true, deletedAt:new Date().toISOString(), deletedBy:safeString(req.user?.name || req.user?.email) };
-    saveSocialComments(comments);
-    return res.json({ success:true });
+
+    // Supprime physiquement le commentaire ET ses réponses locales descendantes.
+    const removedIds = new Set([safeString(target.commentId)]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const item of comments) {
+        if (safeString(item?.channel) !== safeString(target.channel) || safeString(item?.postId) !== safeString(target.postId)) continue;
+        const parentId = safeString(item?.parentId);
+        const id = safeString(item?.commentId);
+        if (id && parentId && removedIds.has(parentId) && !removedIds.has(id)) { removedIds.add(id); grew = true; }
+      }
+    }
+    const removed = comments.filter(item => removedIds.has(safeString(item?.commentId)) && safeString(item?.channel) === safeString(target.channel));
+    rememberPurgedHashes(removed.map(socialCommentPurgeHash));
+    saveSocialComments(comments.filter(item => !removedIds.has(safeString(item?.commentId)) || safeString(item?.channel) !== safeString(target.channel)));
+    return res.json({ success:true, permanentlyDeleted:true, removedLocal:removed.length, remoteDeleted:true });
   } catch (error) {
     return res.status(502).json({ error:`Meta : ${error.message}` });
   }
 });
+
 
 router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,res) => {
   try {
@@ -17586,9 +18326,15 @@ router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,r
     comments[index] = {
       ...target, privateReplySentAt:now, answeredAt:now, privateReplyMessage:text,
       privateReplyBy:safeString(req.user?.name || req.user?.email),
+      privateReplyByUserId:safeString(req.user?.id),
+      privateReplyByEmail:safeString(req.user?.email),
       privateRecipientId:recipientId
     };
     saveSocialComments(comments);
+    appendTeamActivity({
+      type:'comment_private_reply', userId:safeString(req.user?.id), userName:safeString(req.user?.name || req.user?.email),
+      channel:safeString(target.channel), commentKey:key, commentId:safeString(target.commentId), authorId:safeString(target.authorId), text
+    });
 
     // Relie la future conversation privée à la publication/commentaire source.
     // Ainsi, si le client répond au message privé, le commercial retrouve le
@@ -18260,6 +19006,129 @@ router.get('/api/conversations', requireAuth, (req, res) => {
   }
 });
 
+
+// ============================================================
+// V6.34.2 — SUPPRESSION DÉFINITIVE D'UN MESSAGE DANS MONDECO
+// ============================================================
+function rewriteConversationArrayFileForPurge(filePath, targetHash, part) {
+  if (!fs.existsSync(filePath)) return 0;
+  let items;
+  try { items = JSON.parse(fs.readFileSync(filePath,'utf8') || '[]'); }
+  catch { return 0; }
+  if (!Array.isArray(items)) return 0;
+  let removed = 0;
+  const next = [];
+  for (const original of items) {
+    const hash = conversationEntryPartPurgeHash(original, part);
+    if (hash !== targetHash) { next.push(original); continue; }
+    removed += 1;
+    const transformed = applyConversationPurgeTombstones(original);
+    if (transformed) next.push(transformed);
+  }
+  if (removed) writeJsonAtomic(filePath, next);
+  return removed;
+}
+
+function rewritePersistentConversationEventsForPurge(targetHash, part) {
+  if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
+  let removed = 0;
+  for (const name of fs.readdirSync(CONVERSATION_EVENTS_DIR)) {
+    if (!/^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)) continue;
+    const filePath = path.join(CONVERSATION_EVENTS_DIR,name);
+    const output = [];
+    let changed = false;
+    for (const line of fs.readFileSync(filePath,'utf8').split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const original = JSON.parse(line);
+        if (conversationEntryPartPurgeHash(original, part) === targetHash) {
+          removed += 1; changed = true;
+          const transformed = applyConversationPurgeTombstones(original);
+          if (transformed) output.push(JSON.stringify(transformed));
+        } else output.push(line);
+      } catch { output.push(line); }
+    }
+    if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+  }
+  return removed;
+}
+
+function purgeMessageIdsFromIndex(entry = {}) {
+  const ids = new Set([safeString(entry?.message_id),safeString(entry?.meta_message_id)].filter(Boolean));
+  if (!ids.size || !fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
+  const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH,'utf8').split(/\r?\n/).filter(Boolean);
+  const next = lines.filter(line => !ids.has(safeString(line)));
+  if (next.length !== lines.length) fs.writeFileSync(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '', 'utf8');
+  return lines.length - next.length;
+}
+
+function purgeNotificationsForConversationEntry(entry = {}) {
+  const ids = new Set([safeString(entry?.message_id),safeString(entry?.meta_message_id)].filter(Boolean));
+  const contact = safeString(entry?.contact);
+  const time = safeString(entry?.time);
+  const store = loadNotificationsStore();
+  const before = store.items.length;
+  store.items = store.items.filter(item => {
+    if (safeString(item?.contact) !== contact) return true;
+    const messageId = safeString(item?.messageId || item?.id);
+    if (messageId && ids.has(messageId)) return false;
+    if (!ids.size && time && safeString(item?.createdAt) === time) return false;
+    return true;
+  });
+  if (store.items.length !== before) saveNotificationsStore(store);
+  return before - store.items.length;
+}
+
+function rebuildConversationStateAfterPurge(contact) {
+  const states = loadConversationStatesAdmin();
+  const current = states[contact] && typeof states[contact] === 'object' ? states[contact] : {};
+  let entries = loadWhatsAppLog().filter(item => safeString(item?.contact) === safeString(contact));
+  entries = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
+  if (!entries.length) {
+    delete states[contact];
+    saveConversationStatesAdmin(states);
+    return {};
+  }
+  const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
+  const evidence = conversationDirectionalEvidence(entries, cleanState);
+  const latestInbound = [...entries].reverse().find(item => conversationEntryNeedsDirection(item).inbound) || {};
+  const latestBot = [...entries].reverse().find(item => {
+    const flags = conversationEntryNeedsDirection(item);
+    return flags.outbound && !conversationEntryIsBusinessReply(item);
+  }) || {};
+  states[contact] = {
+    ...current,
+    lastCustomerAt:safeString(evidence.latestInboundIso),
+    lastHumanAt:safeString(evidence.latestHumanIso),
+    lastBotAt:safeString(latestBot?.time || latestBot?.reply_time),
+    lastAnsweredAt:safeString(evidence.latestOutboundIso),
+    lastAnsweredCustomerAt:evidence.answered ? safeString(evidence.latestInboundIso) : '',
+    unreadCount:evidence.pending ? 1 : 0,
+    lastUnreadMessageId:evidence.pending ? safeString(latestInbound?.message_id || latestInbound?.meta_message_id) : '',
+    awaitingResponse:evidence.pending,
+    updatedAt:new Date().toISOString()
+  };
+  saveConversationStatesAdmin(states);
+  return states[contact];
+}
+
+function purgeConversationMessagePart(target, part) {
+  const targetHash = conversationEntryPartPurgeHash(target, part);
+  if (!targetHash) throw new Error('Empreinte de message invalide.');
+  rememberPurgedHashes([targetHash]);
+  let removed = 0;
+  removed += rewriteConversationArrayFileForPurge(CONVERSATIONS_LOG_PATH,targetHash,part);
+  removed += rewriteConversationArrayFileForPurge(INSTAGRAM_HISTORY_PATH,targetHash,part);
+  removed += rewriteConversationArrayFileForPurge(FACEBOOK_HISTORY_PATH,targetHash,part);
+  removed += rewritePersistentConversationEventsForPurge(targetHash,part);
+  purgeMessageIdsFromIndex(target);
+  purgeNotificationsForConversationEntry(target);
+  combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
+  persistentConversationEventsCache = { stamp:'', entries:[] };
+  const state = rebuildConversationStateAfterPurge(safeString(target?.contact));
+  return { targetHash, removed, state };
+}
+
 router.get('/api/conversations/:contact', requireAuth, (req, res) => {
   try {
     const contact = safeString(req.params.contact);
@@ -18271,15 +19140,21 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
     if (!requireCommercialMessageChannelAccess(req, res, accessChannel)) return;
     const isCommercial = safeString(req.user?.role) === 'commercial';
-    const assignedToMe = isCommercial && conversationAssignedToUser(state, req.user);
+    const replyLock = commercialReplyLockInfo(req.user, state, contact);
+    const assignedToMe = isCommercial && replyLock.assignedToMe === true;
     const access = {
       assignedToMe,
-      // Réponse ouverte à tous les commerciaux. L'affectation sert au suivi,
-      // au SLA et aux actions de gestion, mais ne bloque plus le clavier.
-      canWrite: true,
-      canReply: true,
+      canWrite: !isCommercial || replyLock.canReply === true,
+      canReply: !isCommercial || replyLock.canReply === true,
+      canTakeover: !isCommercial || replyLock.canTakeover === true,
       canManage: !isCommercial || assignedToMe,
-      readOnly: isCommercial && !assignedToMe,
+      readOnly: isCommercial && replyLock.canReply !== true,
+      lockOwnerUserId: safeString(replyLock.ownerId),
+      lockOwnerName: safeString(replyLock.ownerName),
+      lockReason: safeString(replyLock.reason),
+      lockRetryAt: safeString(replyLock.retryAt),
+      lockRemainingMs: Number(replyLock.remainingMs || 0),
+      lockMinutes: Number(replyLock.lockMinutes || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES),
       historyDays: HISTORY_IMPORT_DAYS
     };
 
@@ -18332,6 +19207,16 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
           }
         : state?.adReferral;
 
+    if (safeString(req.user?.role) === 'commercial') {
+      appendTeamActivity({
+        type:'conversation_open',
+        userId:safeString(req.user.id),
+        userName:safeString(req.user.name || req.user.email),
+        contact,
+        channel:accessChannel
+      });
+    }
+
     return res.json({
       contact,
       state: {
@@ -18339,7 +19224,13 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
         ...(adReferral ? { adReferral } : {}),
         sla: computeLiveSla(state)
       },
-      entries,
+      entries: entries.map(entry => ({
+        ...entry,
+        purgeKeys:{
+          incoming: (safeString(entry?.incoming) || attachmentDirectionForPurge(entry) === 'incoming') ? conversationEntryPartPurgeHash(entry,'incoming') : '',
+          reply: (safeString(entry?.reply) || attachmentDirectionForPurge(entry) === 'outgoing') ? conversationEntryPartPurgeHash(entry,'reply') : ''
+        }
+      })),
       hasMore,
       nextBefore,
       access
@@ -18347,6 +19238,34 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
   } catch (error) {
     console.error('❌ Détail conversation :', error);
     return res.status(500).json({ error: 'Impossible de lire cette conversation.' });
+  }
+});
+
+
+router.delete('/api/conversations/:contact/messages/:purgeKey', requireAdmin, (req,res) => {
+  try {
+    const contact = safeString(req.params.contact);
+    const purgeKey = safeString(req.params.purgeKey);
+    const part = safeString(req.query?.part).toLowerCase();
+    if (!contact || !purgeKey || !['incoming','reply'].includes(part)) {
+      return res.status(400).json({ error:'Message ou type de suppression invalide.' });
+    }
+    const target = loadWhatsAppLog().find(entry =>
+      safeString(entry?.contact) === contact && conversationEntryPartPurgeHash(entry,part) === purgeKey
+    );
+    if (!target) return res.status(404).json({ error:'Message introuvable ou déjà supprimé.' });
+    const result = purgeConversationMessagePart(target,part);
+    return res.json({
+      success:true,
+      permanentlyDeleted:true,
+      removedLocal:result.removed,
+      // Les APIs de messagerie privées ne fournissent pas ici un unsend business générique.
+      remoteDeleted:false,
+      state:result.state
+    });
+  } catch (error) {
+    console.error('❌ Suppression définitive message :', error);
+    return res.status(500).json({ error:'Suppression définitive impossible : '+safeString(error?.message) });
   }
 });
 
