@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.2
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.3
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,7 +66,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.30.2 — deux tokens Facebook indépendants :
+// V6.30.3 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,9 +92,27 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.30.2 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.30.3 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
+
+// V6.30.3 — l'historique reste conservé 15 jours, mais la boîte de travail
+// quotidienne n'affiche pas des milliers de conversations déjà traitées.
+// Les conversations à répondre, non lues, prioritaires ou favorites restent
+// toujours visibles. Les conversations déjà traitées quittent la vue active
+// après cette fenêtre et restent accessibles via « Historique 15j ».
+const ACTIVE_INBOX_HOURS = Math.max(
+  2,
+  Math.min(72, Number(process.env.ACTIVE_INBOX_HOURS || 12) || 12)
+);
+
+function activeInboxCutoffIso(reference = new Date()) {
+  const base = reference instanceof Date ? reference : new Date(reference);
+  const safeBase = Number.isFinite(base.getTime()) ? base : new Date();
+  return new Date(
+    safeBase.getTime() - ACTIVE_INBOX_HOURS * 60 * 60 * 1000
+  ).toISOString();
+}
 
 function historyImportCutoffIso(reference = new Date()) {
   const base = reference instanceof Date ? reference : new Date(reference);
@@ -714,7 +732,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.30.2 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.30.3 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -2598,7 +2616,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.30.2 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.30.3 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -14325,6 +14343,10 @@ async function runFacebookHistorySync() {
     for (const entry of existingHistory) {
       historyByKey.set(conversationLogDedupeKey(entry), entry);
     }
+    const liveByKey = new Map();
+    for (const entry of live) {
+      liveByKey.set(conversationLogDedupeKey(entry), entry);
+    }
 
     const states = loadConversationStatesAdmin();
 
@@ -14536,6 +14558,9 @@ let facebookRealtimeSyncJob = {
   importedInbound: 0,
   importedOutbound: 0,
   conversationsScanned: 0,
+  conversationPagesScanned: 0,
+  latestGraphConversationAt: '',
+  recoveryCutoffAt: '',
   webhookFields: [],
   webhookMessagesSubscribed: null,
   webhookCheckAt: '',
@@ -14544,7 +14569,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.30.2 — récupération sûre après une panne de webhook/token.
+// V6.30.3 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -14696,7 +14721,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.30.2 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.30.3 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -14801,8 +14826,15 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (!FACEBOOK_PAGE_ID || !FACEBOOK_MESSENGER_TOKEN) {
     return { configured: false, skipped: true };
   }
-  if (facebookRealtimeSyncJob.running || facebookHistorySyncJob.running) {
-    return { configured: true, skipped: true, reason: 'sync_running' };
+  if (facebookRealtimeSyncJob.running) {
+    return { configured: true, skipped: true, reason: 'realtime_sync_running' };
+  }
+  // V6.30.3 : le rattrapage des nouveaux messages est prioritaire.
+  // L'ancien code le bloquait pendant toute la synchronisation historique
+  // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
+  // L'historique n'est désormais plus lancé automatiquement côté interface.
+  if (facebookHistorySyncJob.running) {
+    console.warn('⚡ Facebook temps réel prioritaire : historique en cours, rattrapage lancé quand même.');
   }
 
   const persisted = loadFacebookRealtimeSyncState();
@@ -14884,6 +14916,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
     const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
     const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
     const persistentEvents = loadPersistentConversationEvents();
+    const realtimeWriteToLive = facebookHistorySyncJob.running === true;
     const knownMessageIds = new Set(
       [...live, ...existingHistory, ...persistentEvents]
         .flatMap(entry => conversationEntryMessageIds(entry))
@@ -14991,7 +15024,11 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         }
 
         earliest = earliest ? minIso(earliest, time) : time;
-        historyByKey.set(conversationLogDedupeKey(entry), entry);
+        if (realtimeWriteToLive) {
+          liveByKey.set(conversationLogDedupeKey(entry), entry);
+        } else {
+          historyByKey.set(conversationLogDedupeKey(entry), entry);
+        }
         knownMessageIds.add(messageId);
         facebookRealtimeSyncJob.importedMessages += 1;
         changed = true;
@@ -15038,10 +15075,22 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
     }
 
     if (changed) {
-      const historyList = [...historyByKey.values()]
-        .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
-      writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
-      saveConversationStatesAdmin(states);
+      if (realtimeWriteToLive) {
+        const liveList = [...liveByKey.values()]
+          .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
+        writeJsonAtomic(CONVERSATIONS_LOG_PATH, liveList);
+      } else {
+        const historyList = [...historyByKey.values()]
+          .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
+        writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
+      }
+      // Recharger l'état courant avant de sauvegarder afin de ne pas écraser
+      // une affectation/favori effectuée pendant le rattrapage.
+      const freshestStates = loadConversationStatesAdmin();
+      for (const [contact, state] of Object.entries(states)) {
+        freshestStates[contact] = { ...(freshestStates[contact] || {}), ...state };
+      }
+      saveConversationStatesAdmin(freshestStates);
       // Forcer la reconstruction du cache combiné au prochain appel Inbox.
       combinedConversationLogCache = {
         liveStamp: '',
@@ -15189,7 +15238,7 @@ router.post(
 // ============================================================
 
 
-// V6.30.2 — diagnostic sans exposer les secrets.
+// V6.30.3 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16515,7 +16564,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.30.2 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.30.3 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -16526,34 +16575,39 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
     });
 
-    const commercialHistoryCutoff = historyImportCutoffIso();
-    let visibleConversations = req.user?.role === 'commercial'
-      ? conversations
-          .filter(item => item.favorite === true || historyTimeIsRecent(item.lastTime, commercialHistoryCutoff))
-          .map(item => {
-            const assignedToMe = safeString(item.assignedUserId) === safeString(req.user.id);
-            return {
-              ...item,
-              assignedToMe,
-              // V6.22.0 : tous les commerciaux peuvent répondre à tout moment,
-              // même si l'IA ou un autre commercial a déjà répondu.
-              canWrite: true,
-              canReply: true,
-              // Les actions de gestion restent liées à l'affectation.
-              canManage: assignedToMe,
-              readOnly: !assignedToMe
-            };
-          })
-      : conversations.map(item => ({
+    const retentionCutoff = historyImportCutoffIso();
+    const activeCutoff = activeInboxCutoffIso();
+
+    // V6.30.3 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
+    // laissait des milliers d'anciennes conversations dans l'interface admin.
+    let retainedConversations = conversations
+      .filter(item => item.favorite === true || historyTimeIsRecent(item.lastTime, retentionCutoff))
+      .map(item => {
+        const isCommercial = req.user?.role === 'commercial';
+        const assignedToMe = isCommercial && safeString(item.assignedUserId) === safeString(req.user.id);
+        return {
           ...item,
-          assignedToMe: false,
+          assignedToMe,
           canWrite: true,
           canReply: true,
-          canManage: true,
-          readOnly: false
-        }));
+          canManage: !isCommercial || assignedToMe,
+          readOnly: isCommercial && !assignedToMe
+        };
+      });
 
-    const countBase = visibleConversations;
+    // Boîte active : toujours conserver le travail à faire, les non lus,
+    // priorités et favoris. Une conversation déjà traitée reste visible
+    // ACTIVE_INBOX_HOURS heures, puis passe dans « Historique 15j ».
+    const activeConversations = retainedConversations.filter(item =>
+      item.favorite === true ||
+      item.pendingReply === true ||
+      Number(item.unreadCount || 0) > 0 ||
+      item.priority === true ||
+      historyTimeIsRecent(item.lastTime, activeCutoff)
+    );
+
+    const countBase = activeConversations;
     const counts = {
       all: countBase.filter(item => !item.resolved).length,
       whatsapp: countBase.filter(item => !item.resolved && item.channel === 'whatsapp').length,
@@ -16565,21 +16619,25 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       pendingInstagram: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'instagram').length,
       pendingFacebook: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'facebook').length,
       priority: countBase.filter(item => !item.resolved && item.priority).length,
-      favorites: countBase.filter(item => item.favorite === true).length,
+      favorites: retainedConversations.filter(item => item.favorite === true).length,
       commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
       sla: countBase.filter(item => !item.resolved && ['pending','late'].includes(safeString(item?.slaStatus))).length,
       ads: countBase.filter(item => !item.resolved && item.hasAdReferral).length,
-      resolved: countBase.filter(item => item.resolved).length
+      resolved: retainedConversations.filter(item => item.resolved).length,
+      history15: retainedConversations.filter(item => !item.resolved).length,
+      activeHours: ACTIVE_INBOX_HOURS
     };
 
     const requestedFilter = safeString(req.query?.filter).toLowerCase();
+    let visibleConversations;
     if (requestedFilter === 'resolved') {
-      visibleConversations = visibleConversations.filter(item => item.resolved === true);
+      visibleConversations = retainedConversations.filter(item => item.resolved === true);
     } else if (requestedFilter === 'favorites') {
-      // Les favoris restent retrouvables même après résolution ou après 15 jours.
-      visibleConversations = visibleConversations.filter(item => item.favorite === true);
+      visibleConversations = retainedConversations.filter(item => item.favorite === true);
+    } else if (requestedFilter === 'history15') {
+      visibleConversations = retainedConversations.filter(item => !item.resolved);
     } else {
-      visibleConversations = visibleConversations.filter(item => !item.resolved);
+      visibleConversations = activeConversations.filter(item => !item.resolved);
       if (['whatsapp','instagram','facebook'].includes(requestedFilter)) {
         visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
       } else if (requestedFilter === 'unread') {
@@ -16599,6 +16657,14 @@ router.get('/api/conversations', requireAuth, (req, res) => {
 
     const search = safeString(req.query?.q).toLowerCase();
     if (search) {
+      // La recherche couvre tout l'historique conservé 15 jours, même si la
+      // conversation est sortie de la boîte active.
+      if (!['resolved','favorites'].includes(requestedFilter)) {
+        visibleConversations = retainedConversations.filter(item => !item.resolved);
+        if (['whatsapp','instagram','facebook'].includes(requestedFilter)) {
+          visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
+        }
+      }
       visibleConversations = visibleConversations.filter(item => {
         const entries = byContact[item.contact] || [];
         const searchable = [
@@ -16644,7 +16710,9 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         offset,
         limit,
         hasMore: offset + limit < visibleConversations.length,
-        counts
+        counts,
+        activeInboxHours: ACTIVE_INBOX_HOURS,
+        retentionDays: HISTORY_IMPORT_DAYS
       });
     }
 
