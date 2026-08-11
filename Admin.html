@@ -1950,6 +1950,8 @@ tbody tr:hover{
 }
 
 @media(max-width:900px){
+  .quick-reply-actions{width:100%;justify-content:flex-end;flex-wrap:wrap}
+
 
   body.mobile-menu-open{
     overflow:hidden;
@@ -3871,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.15 — Réponses rapides plus claires
+   MONDECO V6.32.0 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -3916,6 +3918,24 @@ tbody tr:hover{
 .quick-reply-save-btn:hover{
   opacity:.9;
 }
+.quick-reply-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex:0 0 auto;
+}
+.quick-reply-import-btn{
+  min-height:32px;
+  padding:0 9px;
+  border:1px solid #d9d1c9;
+  border-radius:9px;
+  background:#fff;
+  color:#4e4741;
+  font-size:9.5px;
+  font-weight:900;
+  cursor:pointer;
+}
+.quick-reply-import-btn:hover{background:#f5f1ed}
 .quick-reply-row{
   display:grid;
   grid-template-columns:minmax(0,1fr) auto;
@@ -5619,7 +5639,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.31.1 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.0 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5822,7 +5842,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.31.1 — Commandes /produit omnicanales
+   V6.32.0 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6169,7 +6189,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.31.1</span>
+              <span class="inbox-version">V6.32.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -9756,7 +9776,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.31.1 : les conversations réellement à répondre restent en haut.
+        // V6.32.0 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -10341,18 +10361,29 @@ function buildConversationComposer(
       >
         <div class="quick-reply-head">
           <div>
-            <strong>⚡ Réponses rapides</strong>
-            <span>Choisissez une réponse enregistrée pour l’insérer.</span>
+            <strong>⚡ Réponses rapides MONDECO</strong>
+            <span>Uniquement les réponses enregistrées manuellement · catalogue produit exclu.</span>
           </div>
 
-          <button
-            class="quick-reply-save-btn"
-            type="button"
-            onclick="saveConversationQuickReply()"
-            title="Enregistrer le texte actuellement écrit comme nouvelle réponse rapide"
-          >
-            ＋ Enregistrer
-          </button>
+          <div class="quick-reply-actions">
+            <button
+              class="quick-reply-import-btn"
+              type="button"
+              onclick="document.getElementById('quickReplyImportFile')?.click()"
+              title="Importer plusieurs réponses rapides depuis un fichier CSV ou TXT"
+            >
+              ⇩ Importer
+            </button>
+            <button
+              class="quick-reply-save-btn"
+              type="button"
+              onclick="saveConversationQuickReply()"
+              title="Enregistrer le texte actuellement écrit comme nouvelle réponse rapide"
+            >
+              ＋ Enregistrer
+            </button>
+          </div>
+          <input id="quickReplyImportFile" class="hidden" type="file" accept=".csv,.txt,text/csv,text/plain" onchange="importConversationQuickRepliesFile(this.files?.[0]);this.value=''">
         </div>
 
         <div class="quick-reply-row">
@@ -11262,7 +11293,7 @@ function populateConversationQuickReplySelect(){
       .filter(item => item.active !== false)
       .map(item => `
         <option value="${escapeHtml(item.id)}">
-          ${item.shortcut ? `/${escapeHtml(item.shortcut)} — ` : ''}${escapeHtml(item.title)}${item.generated ? ' · auto catalogue' : ''}
+          ${item.shortcut ? `/${escapeHtml(item.shortcut)} — ` : ''}${escapeHtml(item.title)}
         </option>
       `)
       .join('');
@@ -11376,6 +11407,95 @@ window.saveConversationQuickReply = async function(){
   }
 };
 
+
+function parseQuickReplyCsvRows(text){
+  const source=String(text||'').replace(/^\uFEFF/,'');
+  const rows=[];
+  let row=[],field='',quoted=false;
+  const delimiter=(()=>{
+    const first=(source.split(/\r?\n/).find(line=>line.trim())||'');
+    const counts=[['\t',(first.match(/\t/g)||[]).length],[';',(first.match(/;/g)||[]).length],[',',(first.match(/,/g)||[]).length]];
+    counts.sort((a,b)=>b[1]-a[1]);
+    return counts[0][1] ? counts[0][0] : '|';
+  })();
+  for(let i=0;i<source.length;i++){
+    const ch=source[i];
+    if(ch==='"'){
+      if(quoted && source[i+1]==='"'){field+='"';i++;}
+      else quoted=!quoted;
+      continue;
+    }
+    if(!quoted && ch===delimiter){row.push(field);field='';continue;}
+    if(!quoted && (ch==='\n'||ch==='\r')){
+      if(ch==='\r'&&source[i+1]==='\n') i++;
+      row.push(field);field='';
+      if(row.some(v=>String(v||'').trim())) rows.push(row);
+      row=[];continue;
+    }
+    field+=ch;
+  }
+  row.push(field);
+  if(row.some(v=>String(v||'').trim())) rows.push(row);
+  return rows;
+}
+
+function normalizeQuickReplyImportHeader(value){
+  return String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+}
+
+function parseQuickReplyImportText(text){
+  const rows=parseQuickReplyCsvRows(text);
+  if(!rows.length) return [];
+  const header=rows[0].map(normalizeQuickReplyImportHeader);
+  const findIndex=(names)=>header.findIndex(v=>names.includes(v));
+  let shortcutIndex=findIndex(['shortcut','raccourci','commande','code']);
+  let titleIndex=findIndex(['title','titre','nom','name']);
+  let contentIndex=findIndex(['content','contenu','reponse','response','message','texte','text']);
+  let start=0;
+  if(shortcutIndex>=0 || titleIndex>=0 || contentIndex>=0){
+    start=1;
+  }else{
+    shortcutIndex=0;titleIndex=1;contentIndex=2;
+  }
+  const items=[];
+  for(const row of rows.slice(start)){
+    let shortcut=String(row[shortcutIndex]||'').trim().replace(/^\/+/, '');
+    let title=String(row[titleIndex]||'').trim();
+    let content=String(row[contentIndex]||'').trim();
+    // Format TXT pratique : /raccourci | Titre | Réponse
+    if(!content && row.length===1 && String(row[0]||'').includes('|')){
+      const parts=String(row[0]||'').split('|');
+      shortcut=String(parts.shift()||'').trim().replace(/^\/+/, '');
+      title=String(parts.shift()||shortcut).trim();
+      content=parts.join('|').trim();
+    }
+    if(!title) title=shortcut;
+    if(shortcut && title && content) items.push({shortcut,title,content});
+  }
+  return items.slice(0,500);
+}
+
+window.importConversationQuickRepliesFile=async function(file){
+  if(!file) return;
+  try{
+    const text=await file.text();
+    const items=parseQuickReplyImportText(text);
+    if(!items.length){
+      alert('Aucune réponse reconnue. Format conseillé : raccourci;titre;reponse ou /raccourci | Titre | Réponse.');
+      return;
+    }
+    if(!confirm(`Importer ${items.length} réponse(s) rapide(s) ? Les raccourcis déjà existants seront ignorés.`)) return;
+    const result=await apiFetch(`${API}/quick-replies/import`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})
+    });
+    await loadQuickReplies();
+    populateConversationQuickReplySelect();
+    alert(`${Number(result?.imported||0)} réponse(s) importée(s). ${Number(result?.skipped||0)} ignorée(s) (doublon ou ligne invalide).`);
+  }catch(error){
+    alert(error.message||'Import impossible.');
+  }
+};
+
 window.deleteConversationQuickReply = async function(){
   const select =
     document.getElementById(
@@ -11394,11 +11514,6 @@ window.deleteConversationQuickReply = async function(){
     quickReplies.find(
       reply => reply.id === id
     );
-
-  if(item?.generated){
-    alert('Cette réponse est générée automatiquement depuis le catalogue Produit. Modifiez le produit pour modifier cette réponse.');
-    return;
-  }
 
   if(!confirm(`Supprimer « ${item?.title || 'cette réponse'} » ?`)){
     return;
