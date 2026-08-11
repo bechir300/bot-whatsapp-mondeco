@@ -6357,6 +6357,232 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
     max-height:35px !important;
   }
 }
+
+
+/* ==========================================================
+   MONDECO V6.34.7 — MOBILE CLIENT HEADER
+   Barre client compacte, sans chevauchement ni répétition.
+   ========================================================== */
+.inbox-header-name-mobile,
+.inbox-header-sub-mobile,
+.inbox-header-mobile-status{display:none}
+
+@media(max-width:900px){
+  #page-conversations .inbox-conversation-header{
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) auto !important;
+    grid-template-rows:auto !important;
+    align-items:center !important;
+    min-height:72px !important;
+    padding:7px 8px !important;
+    gap:6px !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-header-left{
+    display:grid !important;
+    grid-template-columns:36px 40px minmax(0,1fr) !important;
+    align-items:center !important;
+    gap:6px !important;
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-mobile-back{
+    width:36px !important;
+    min-width:36px !important;
+    max-width:36px !important;
+    height:40px !important;
+    min-height:40px !important;
+    padding:0 !important;
+    border-radius:10px !important;
+    font-size:19px !important;
+  }
+  #page-conversations .inbox-header-avatar,
+  #page-conversations .inbox-conversation-header .inbox-avatar{
+    width:40px !important;
+    min-width:40px !important;
+    max-width:40px !important;
+    height:40px !important;
+    min-height:40px !important;
+    max-height:40px !important;
+    flex-basis:40px !important;
+  }
+  #page-conversations .inbox-header-identity{
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-header-name-desktop{display:none !important}
+  #page-conversations .inbox-header-name-mobile{display:block !important}
+  #page-conversations .inbox-header-name{
+    display:block !important;
+    max-width:100% !important;
+    margin:0 !important;
+    font-size:14px !important;
+    line-height:1.15 !important;
+    font-weight:900 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-sub-desktop{display:none !important}
+  #page-conversations .inbox-header-sub-mobile{
+    display:block !important;
+    margin-top:2px !important;
+    max-width:100% !important;
+    font-size:9px !important;
+    line-height:1.15 !important;
+    color:#746d66 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-state{display:none !important}
+  #page-conversations .inbox-header-mobile-status{
+    display:flex !important;
+    align-items:center !important;
+    gap:4px !important;
+    margin-top:4px !important;
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-header-mobile-chip{
+    display:inline-flex !important;
+    align-items:center !important;
+    min-width:0 !important;
+    max-width:50% !important;
+    height:19px !important;
+    padding:0 6px !important;
+    border-radius:999px !important;
+    background:#eef7f1 !important;
+    color:#1f7044 !important;
+    font-size:8px !important;
+    line-height:19px !important;
+    font-weight:850 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-mobile-chip.paused{
+    background:#f2efeb !important;
+    color:#655e58 !important;
+  }
+  #page-conversations .inbox-header-mobile-chip.sla{
+    background:#fff5df !important;
+    color:#9a5a00 !important;
+  }
+  #page-conversations .inbox-header-mobile-chip.sla.late{
+    background:#fff0ef !important;
+    color:#b42318 !important;
+  }
+  #page-conversations .inbox-header-actions{
+    display:flex !important;
+    align-items:center !important;
+    justify-content:flex-end !important;
+    gap:5px !important;
+    flex:0 0 auto !important;
+    width:auto !important;
+    min-width:0 !important;
+    max-width:none !important;
+    overflow:visible !important;
+  }
+  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle){
+    display:none !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle,
+  #page-conversations .inbox-header-actions .wa-call-header-btn{
+    position:relative !important;
+    display:grid !important;
+    place-items:center !important;
+    flex:0 0 36px !important;
+    width:36px !important;
+    min-width:36px !important;
+    max-width:36px !important;
+    height:36px !important;
+    min-height:36px !important;
+    max-height:36px !important;
+    padding:0 !important;
+    margin:0 !important;
+    border-radius:50% !important;
+    overflow:hidden !important;
+    text-indent:0 !important;
+    font-size:0 !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle{
+    border:1px solid #ded8d1 !important;
+    background:#fff !important;
+    color:#2f2a26 !important;
+  }
+  #page-conversations .inbox-header-actions .wa-call-header-btn{
+    border:1px solid #a8dfbf !important;
+    background:#edf9f2 !important;
+    color:#087443 !important;
+    box-shadow:none !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle::before,
+  #page-conversations .inbox-header-actions .wa-call-header-btn::before{
+    content:none !important;
+    display:none !important;
+  }
+  #page-conversations .inbox-header-action-icon{
+    display:block !important;
+    width:auto !important;
+    height:auto !important;
+    font-size:17px !important;
+    line-height:1 !important;
+  }
+  #page-conversations .inbox-header-action-label{display:none !important}
+}
+
+@media(max-width:390px){
+  #page-conversations .inbox-conversation-header{
+    min-height:68px !important;
+    padding:6px !important;
+    gap:4px !important;
+  }
+  #page-conversations .inbox-header-left{
+    grid-template-columns:32px 36px minmax(0,1fr) !important;
+    gap:5px !important;
+  }
+  #page-conversations .inbox-mobile-back{
+    width:32px !important;
+    min-width:32px !important;
+    max-width:32px !important;
+    height:36px !important;
+    min-height:36px !important;
+  }
+  #page-conversations .inbox-header-avatar,
+  #page-conversations .inbox-conversation-header .inbox-avatar{
+    width:36px !important;
+    min-width:36px !important;
+    max-width:36px !important;
+    height:36px !important;
+    min-height:36px !important;
+    max-height:36px !important;
+    flex-basis:36px !important;
+  }
+  #page-conversations .inbox-header-name{font-size:13px !important}
+  #page-conversations .inbox-header-sub-mobile{font-size:8.5px !important}
+  #page-conversations .inbox-header-mobile-chip{
+    height:18px !important;
+    line-height:18px !important;
+    padding:0 5px !important;
+    font-size:7.5px !important;
+  }
+  #page-conversations .inbox-header-actions{
+    gap:3px !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle,
+  #page-conversations .inbox-header-actions .wa-call-header-btn{
+    flex-basis:32px !important;
+    width:32px !important;
+    min-width:32px !important;
+    max-width:32px !important;
+    height:32px !important;
+    min-height:32px !important;
+    max-height:32px !important;
+  }
+  #page-conversations .inbox-header-action-icon{font-size:15px !important}
+}
+
 </style>
 </head>
 
@@ -10492,16 +10718,43 @@ function renderConversationHeader(
         ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
         : '🤖 IA ACTIVE • Réponses automatiques';
 
+  // V6.34.7 — En-tête mobile lisible : ne jamais répéter le numéro et
+  // séparer l'identité des indicateurs opérationnels.
+  const normalizedExternal = String(external || '').replace(/[^0-9a-z]/gi,'').toLowerCase();
+  const normalizedName = String(name || '').replace(/[^0-9a-z]/gi,'').toLowerCase();
+  const nameIsExternal = Boolean(normalizedExternal && normalizedName && (normalizedName===normalizedExternal || normalizedName.endsWith(normalizedExternal)));
+  const assignedCompact = state.assignedTo ? String(state.assignedTo) : 'Non affecté';
+  const externalDisplay = channel === 'whatsapp'
+    ? (String(external || '').startsWith('+') ? String(external || '') : `+${String(external || '')}`)
+    : String(external || '');
+  const mobileHeaderName = channel === 'whatsapp' && nameIsExternal
+    ? externalDisplay
+    : name;
+  const mobileSub = channel === 'whatsapp'
+    ? `${nameIsExternal ? channelIdentity : `${channelIdentity} • ${externalDisplay}`} • ${assignedCompact}`
+    : `${channelIdentity} • ${assignedCompact}`;
+  const mobileAiLabel = facebook
+    ? 'Messenger'
+    : paused
+      ? 'IA en pause'
+      : 'IA active';
+
   header.innerHTML = `
     <div class="inbox-header-left">
       <button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()">←</button>
       ${conversationAvatarHtml(item, state.cameFromAd || state.adReferral ? 'ad' : '')}
 
       <div class="inbox-header-identity">
-        <div class="inbox-header-name">${escapeHtml(name)}</div>
-        <div class="inbox-header-sub">
+        <div class="inbox-header-name inbox-header-name-desktop">${escapeHtml(name)}</div>
+        <div class="inbox-header-name inbox-header-name-mobile">${escapeHtml(mobileHeaderName)}</div>
+        <div class="inbox-header-sub inbox-header-sub-desktop">
           ${channelIdentity}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
+        </div>
+        <div class="inbox-header-sub inbox-header-sub-mobile">${escapeHtml(mobileSub)}</div>
+        <div class="inbox-header-mobile-status">
+          <span class="inbox-header-mobile-chip ${paused ? 'paused' : 'active'}">${escapeHtml(mobileAiLabel)}</span>
+          ${Number.isFinite(selectedSlaRemaining) ? `<span class="inbox-header-mobile-chip sla ${selectedSlaRemaining < 0 ? 'late' : ''}">${escapeHtml(formatSlaHuman(selectedSlaRemaining))}</span>` : ''}
         </div>
         ${(stateText || Number.isFinite(selectedSlaRemaining)) ? `
         <div class="inbox-header-state ${facebook ? 'ai' : paused ? 'human' : 'ai'}">
