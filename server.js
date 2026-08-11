@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.0
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.1
 // server.js
 //
 // Ajouts V5 :
@@ -96,9 +96,23 @@ const FACEBOOK_PAGE_ID =
     ''
   ).trim();
 
-const FACEBOOK_PAGE_ACCESS_TOKEN =
+// V6.30.1 — Facebook : sépare Messenger et Pages/Commentaires.
+// L'ancienne variable FACEBOOK_PAGE_ACCESS_TOKEN reste uniquement comme fallback
+// pour préserver la compatibilité avec les anciens déploiements Railway.
+const FACEBOOK_LEGACY_PAGE_TOKEN =
+  (process.env.FACEBOOK_PAGE_ACCESS_TOKEN || '').trim();
+
+const FACEBOOK_MESSENGER_TOKEN =
   (
-    process.env.FACEBOOK_PAGE_ACCESS_TOKEN ||
+    process.env.FACEBOOK_MESSENGER_TOKEN ||
+    FACEBOOK_LEGACY_PAGE_TOKEN ||
+    ''
+  ).trim();
+
+const FACEBOOK_COMMENTS_TOKEN =
+  (
+    process.env.FACEBOOK_COMMENTS_TOKEN ||
+    FACEBOOK_LEGACY_PAGE_TOKEN ||
     ''
   ).trim();
 
@@ -1050,12 +1064,12 @@ function facebookAttachmentRemoteUrl(attachment) {
 async function fetchFacebookMediaUrl(remoteUrl) {
   let response = null;
 
-  if (FACEBOOK_PAGE_ACCESS_TOKEN) {
+  if (FACEBOOK_MESSENGER_TOKEN) {
     response = await fetch(
       remoteUrl,
       {
         headers: {
-          Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`
+          Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`
         }
       }
     );
@@ -5176,7 +5190,7 @@ function facebookMessengerApiError(data, status = 500) {
   if (metaCode === 190) {
     const error = new Error(
       'Connexion Facebook expirée. Aucun message n’a été envoyé. ' +
-      'Un administrateur doit renouveler FACEBOOK_PAGE_ACCESS_TOKEN dans Railway avec un Page Access Token longue durée.'
+      'Un administrateur doit renouveler FACEBOOK_MESSENGER_TOKEN dans Railway avec le Page Access Token Messenger valide.'
     );
     error.code = 'FACEBOOK_TOKEN_EXPIRED';
     error.channel = 'facebook';
@@ -5196,8 +5210,8 @@ function facebookMessengerApiError(data, status = 500) {
 }
 
 async function sendFacebookMessage(to, text) {
-  if (!FACEBOOK_PAGE_ACCESS_TOKEN) {
-    throw new Error('FACEBOOK_PAGE_ACCESS_TOKEN manquant.');
+  if (!FACEBOOK_MESSENGER_TOKEN) {
+    throw new Error('FACEBOOK_MESSENGER_TOKEN manquant (token Messenger).');
   }
   if (!FACEBOOK_PAGE_ID) {
     throw new Error('FACEBOOK_PAGE_ID manquant.');
@@ -5222,7 +5236,7 @@ async function sendFacebookMessage(to, text) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}`,
+      Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
@@ -5638,14 +5652,14 @@ function facebookProfileNeedsRefresh(state) {
 }
 
 async function getFacebookProfile(psid) {
-  if (!FACEBOOK_PAGE_ACCESS_TOKEN || !psid) return {};
+  if (!FACEBOOK_MESSENGER_TOKEN || !psid) return {};
 
   const fetchFields = async fields => {
     const url =
       `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(psid)}` +
       `?fields=${encodeURIComponent(fields)}`;
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${FACEBOOK_PAGE_ACCESS_TOKEN}` }
+      headers: { Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}` }
     });
     if (!response.ok) return null;
     const data = await response.json();
@@ -5964,7 +5978,7 @@ app.get('/debug-env', (req, res) => {
         Boolean(FACEBOOK_PAGE_ID),
 
       facebook_page_access_token_present:
-        Boolean(FACEBOOK_PAGE_ACCESS_TOKEN),
+        Boolean(FACEBOOK_MESSENGER_TOKEN),
 
       meta_app_secret_present:
         Boolean(META_APP_SECRET),
