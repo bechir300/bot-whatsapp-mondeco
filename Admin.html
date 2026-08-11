@@ -5888,6 +5888,166 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 }
 
 
+
+/* ==========================================================
+   MONDECO V6.34.5 — MOBILE COMMERCIAL UX
+   Corrige le clavier iPhone + simplifie l'en-tête conversation.
+   ========================================================== */
+@media(max-width:900px){
+  /* L'ancien V6.14 mettait le bouton primaire sur une ligne entière.
+     Reset indispensable : micro / envoyer reste à droite de la saisie. */
+  #page-conversations #conversationSendBtn.wa-send-btn{
+    grid-column:auto !important;
+    grid-row:auto !important;
+    justify-self:end !important;
+    align-self:end !important;
+  }
+  #page-conversations .wa-composer-row,
+  #page-conversations .wa-composer-row.no-attachments{
+    align-items:end !important;
+  }
+  #page-conversations .inbox-thread{
+    padding-bottom:10px !important;
+  }
+
+  /* En-tête commercial : identité à gauche, seulement actions utiles à droite. */
+  #page-conversations .inbox-conversation-header{
+    min-height:68px !important;
+    padding:7px 7px !important;
+    gap:6px !important;
+    align-items:center !important;
+  }
+  #page-conversations .inbox-header-left{
+    flex:1 1 auto !important;
+    min-width:0 !important;
+    gap:7px !important;
+  }
+  #page-conversations .inbox-header-identity{
+    min-width:0 !important;
+    flex:1 1 auto !important;
+  }
+  #page-conversations .inbox-header-name{
+    font-size:14px !important;
+    line-height:1.15 !important;
+  }
+  #page-conversations .inbox-header-sub{
+    margin-top:2px !important;
+    font-size:10px !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-state{
+    margin-top:3px !important;
+    font-size:10px !important;
+    line-height:1.25 !important;
+    gap:4px !important;
+  }
+  /* La carte Pub juste sous l'en-tête contient déjà cette information. */
+  #page-conversations .inbox-access-note{
+    display:none !important;
+  }
+  #page-conversations .inbox-header-actions{
+    flex:0 0 auto !important;
+    max-width:none !important;
+    overflow:visible !important;
+    gap:5px !important;
+  }
+  /* Sur téléphone, Favori + badges de suivi surchargent l'en-tête.
+     Ils restent disponibles sur desktop ; on garde Appel + Fiche client. */
+  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle){
+    display:none !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle{
+    width:40px !important;
+    min-width:40px !important;
+    max-width:40px !important;
+    height:40px !important;
+    min-height:40px !important;
+    padding:0 !important;
+    display:grid !important;
+    place-items:center !important;
+    border-radius:50% !important;
+    font-size:0 !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle::before{
+    content:'👤';
+    font-size:18px !important;
+    line-height:1;
+  }
+  #page-conversations .wa-call-header-btn{
+    width:40px !important;
+    min-width:40px !important;
+    max-width:40px !important;
+    height:40px !important;
+    min-height:40px !important;
+  }
+
+  /* Origine pub : compacte et non flottante sur mobile pour ne plus masquer les messages. */
+  #page-conversations .inbox-ad-origin-sticky{
+    position:relative !important;
+    top:auto !important;
+    z-index:2 !important;
+    width:100% !important;
+    margin:0 0 7px !important;
+    padding:6px 7px !important;
+    gap:7px !important;
+    border-radius:10px !important;
+    box-shadow:none !important;
+    backdrop-filter:none !important;
+  }
+  #page-conversations .inbox-ad-origin-thumb{
+    width:38px !important;
+    height:38px !important;
+    flex-basis:38px !important;
+    border-radius:8px !important;
+  }
+  #page-conversations .inbox-ad-origin-kicker{
+    display:none !important;
+  }
+  #page-conversations .inbox-ad-origin-product{
+    font-size:11px !important;
+    margin-top:0 !important;
+  }
+  #page-conversations .inbox-ad-origin-text{
+    font-size:9px !important;
+    margin-top:1px !important;
+  }
+  #page-conversations .inbox-ad-origin-link{
+    min-width:38px !important;
+    padding:6px 7px !important;
+    font-size:9px !important;
+  }
+
+  /* Clavier type WhatsApp : une seule ligne + zone de saisie prioritaire. */
+  #page-conversations .whatsapp-composer,
+  #page-conversations .whatsapp-composer.is-compact{
+    padding:7px 7px calc(7px + env(safe-area-inset-bottom,0px)) !important;
+  }
+  #page-conversations .wa-composer-row{
+    grid-template-columns:44px minmax(0,1fr) 44px !important;
+    gap:6px !important;
+  }
+  #page-conversations .wa-input-shell{
+    min-width:0 !important;
+  }
+}
+@media(max-width:390px){
+  #page-conversations .inbox-header-actions .inbox-customer-toggle,
+  #page-conversations .wa-call-header-btn{
+    width:36px !important;
+    min-width:36px !important;
+    max-width:36px !important;
+    height:36px !important;
+    min-height:36px !important;
+  }
+  #page-conversations .inbox-mobile-back{
+    flex-basis:38px !important;
+    width:38px !important;
+    height:38px !important;
+  }
+}
+
 /* ==========================================================
    MONDECO V6.34.3 — Pilotage commercial & correction HTTP 502
    ========================================================== */
@@ -9544,6 +9704,16 @@ function conversationDisplayName(item){
 }
 
 function conversationInitials(item){
+  const channel=conversationChannel(item);
+  const hasPicture=Boolean(conversationProfilePicture(item));
+  const profile=String(item?.profileName||'').trim();
+  const username=String(item?.instagramUsername||'').trim();
+  if(!hasPicture && !profile && !username){
+    if(channel==='whatsapp') return 'WA';
+    if(channel==='instagram') return 'IG';
+    if(channel==='facebook') return 'FB';
+  }
+
   const name =
     conversationDisplayName(item)
       .replace(/^[+@]/, '')
@@ -10066,7 +10236,7 @@ function renderConversationHeader(
       : `WhatsApp • +${escapeHtml(external)}`;
 
   const stateText=limitedCommercial
-    ? `💬 RÉPONSE AUTORISÉE • ${state.assignedTo ? `Suivi affecté à ${state.assignedTo}` : 'Conversation non affectée'}`
+    ? '💬 RÉPONSE AUTORISÉE'
     : facebook
       ? '🔵 FACEBOOK MESSENGER • RÉPONSE COMMERCIALE AUTORISÉE'
       : paused
