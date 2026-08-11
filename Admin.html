@@ -5613,7 +5613,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.29 — UX 10/10 : lisibilité + mobile interactions
+   MONDECO V6.30.0 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5812,6 +5812,48 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
   .inbox-command-actions{max-width:43vw}
   #page-conversations .inbox-command-filters .inbox-filter{font-size:10.5px !important}
   .social-comment-posthint{max-width:230px}
+}
+
+
+/* ==========================================================
+   V6.30.0 — Commandes /produit omnicanales
+   ========================================================== */
+.wa-input-shell{position:relative}
+.wa-slash-suggestions{
+  position:absolute;
+  left:6px;
+  right:6px;
+  bottom:calc(100% + 7px);
+  z-index:120;
+  max-height:260px;
+  overflow:auto;
+  padding:6px;
+  border:1px solid #ded8d1;
+  border-radius:14px;
+  background:#fff;
+  box-shadow:0 14px 34px rgba(24,20,17,.18);
+}
+.wa-slash-suggestions.hidden{display:none!important}
+.wa-slash-item{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(90px,auto) minmax(0,1fr);
+  align-items:center;
+  gap:10px;
+  padding:9px 10px;
+  border:0;
+  border-radius:10px;
+  background:transparent;
+  color:#28231f;
+  text-align:left;
+  cursor:pointer;
+}
+.wa-slash-item:hover,.wa-slash-item.active{background:#f4f1ed}
+.wa-slash-command{font-weight:900;color:#b3141a}
+.wa-slash-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+@media(max-width:760px){
+  .wa-slash-suggestions{max-height:38dvh}
+  .wa-slash-item{min-height:44px}
 }
 
 </style>
@@ -6035,7 +6077,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
         <div id="storageBreakdown" style="margin-top:10px;font-size:12px;color:#6f675f;line-height:1.55"></div>
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" id="cleanupStorageBtn" type="button">🧹 Nettoyer le stockage sûr</button>
-          <span style="font-size:11px;color:#8a817a;align-self:center">Conserve les données métier et les 90 derniers jours.</span>
+          <span style="font-size:11px;color:#8a817a;align-self:center">Conserve les données métier et les 15 derniers jours.</span>
         </div>
       </div>
     </section>
@@ -6120,7 +6162,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.29.0</span>
+              <span class="inbox-version">V6.30.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -6161,6 +6203,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             <button class="inbox-filter" data-filter="unread">Non lus <span id="filterCountUnread">0</span></button>
             <button class="inbox-filter" data-filter="pending">À répondre <span id="filterCountPending">0</span></button>
             <button class="inbox-filter" data-filter="priority">Priorité <span id="filterCountPriority">0</span></button>
+            <button class="inbox-filter" data-filter="favorites">⭐ Favoris <span id="filterCountFavorites">0</span></button>
             <button class="inbox-filter" data-filter="commercial">Commercial <span id="filterCountCommercial">0</span></button>
             <button class="inbox-filter" data-filter="sla">SLA <span id="filterCountSla">0</span></button>
             <button class="inbox-filter" data-filter="ads">Publicités <span id="filterCountAds">0</span></button>
@@ -7749,10 +7792,14 @@ async function apiFetch(url, options = {}){
   }
 
   if(!response.ok){
-    throw new Error(
+    const error = new Error(
       data?.error ||
       `Erreur HTTP ${response.status}`
     );
+    error.code = data?.errorCode || '';
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
 
   return data;
@@ -7833,7 +7880,11 @@ async function refreshHome(){
       if(breakdown){
         const b = storage.breakdown || {};
         const mb = value => `${(Number(value || 0)/(1024*1024)).toFixed(1)} MB`;
-        breakdown.textContent = `Médias conversations ${mb(b.conversationMediaBytes)} • Profils ${mb(b.conversationProfileBytes)} • Événements ${mb(b.conversationEventsBytes)} • Historique IG ${mb(b.instagramHistoryBytes)} • Historique FB ${mb(b.facebookHistoryBytes)} • Backups ${mb(b.backupsBytes)}`;
+        const migration=storage.retentionMigration||{};
+        const migrationText=migration.pending
+          ? ' • ⚠ Rétention 15j en attente : marquez les discussions importantes ★ puis lancez le nettoyage'
+          : ' • Rétention 15j active';
+        breakdown.textContent = `Médias conversations ${mb(b.conversationMediaBytes)} • Profils ${mb(b.conversationProfileBytes)} • Événements ${mb(b.conversationEventsBytes)} • Historique IG ${mb(b.instagramHistoryBytes)} • Historique FB ${mb(b.facebookHistoryBytes)} • Backups ${mb(b.backupsBytes)}${migrationText}`;
       }
     }else{
       storageNotice.className = 'notice warning';
@@ -7848,7 +7899,11 @@ async function refreshHome(){
 
 
 document.getElementById('cleanupStorageBtn')?.addEventListener('click', async () => {
-  if(!confirm('Nettoyer uniquement les caches, sauvegardes redondantes et fichiers de conversations plus anciens que la rétention configurée ?')) return;
+  if(!confirm(
+    'Appliquer maintenant la rétention de 15 jours ?\n\n' +
+    'Les conversations de plus de 15 jours NON marquées ★ Favori pourront être supprimées du stockage.\n' +
+    'Les conversations ★ Favori seront conservées.\n\nContinuer ?'
+  )) return;
   const button=document.getElementById('cleanupStorageBtn');
   if(button) button.disabled=true;
   try{
@@ -8816,9 +8871,9 @@ function renderInstagramHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Instagram : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
+      label.textContent = `Instagram : historique 15 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 15 jours atteint` : ``}`;
     }else{
-      label.textContent = `Instagram : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+      label.textContent = `Instagram : import 15 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
     }
     return;
   }
@@ -8838,7 +8893,7 @@ function renderInstagramHistoryStatus(status = {}){
     }else if(total === 0){
       label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
     }else{
-      label.textContent = `Instagram : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      label.textContent = `Instagram : historique 15 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
     }
   }else{
     label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
@@ -8947,9 +9002,9 @@ function renderFacebookHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 90 jours atteint` : ``}`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 15 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 15 jours atteint` : ``}`;
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 90 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 15 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
     }
     return;
   }
@@ -8969,7 +9024,7 @@ function renderFacebookHistoryStatus(status = {}){
     }else if(total === 0){
       label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 90 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 15 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
     }
   }else{
     label.textContent = 'Facebook : ancien historique pas encore synchronisé.';
@@ -9302,6 +9357,10 @@ function conversationMatchesFilter(item){
     return item.resolved === true;
   }
 
+  if(conversationFilter === 'favorites'){
+    return item.favorite === true;
+  }
+
   if(item.resolved){
     return false;
   }
@@ -9424,6 +9483,8 @@ function updateConversationFilterCounts(){
         item =>
           item.priority
       ).length,
+    favorites:
+      conversations.filter(item => item.favorite === true).length,
     commercial:
       open.filter(
         item =>
@@ -9460,6 +9521,7 @@ function updateConversationFilterCounts(){
     filterCountUnread:'unread',
     filterCountPending:'pendingReply',
     filterCountPriority:'priority',
+    filterCountFavorites:'favorites',
     filterCountCommercial:'commercial',
     filterCountSla:'sla',
     filterCountAds:'ads',
@@ -9539,6 +9601,7 @@ function conversationListTags(item){
   const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
   const status=[];
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
+  if(item.favorite) status.push('<span class="assigned">⭐ Favori</span>');
   if(facebook){
     status.push('<span class="ai-active">✨ IA Meta / Business Suite</span>');
   }else{
@@ -9564,6 +9627,11 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
+        // V6.30.0 : les conversations réellement à répondre restent en haut.
+        const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
+        if(pendingDelta) return pendingDelta;
+        const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
+        if(unreadDelta) return unreadDelta;
         const aMs = Date.parse(String(a?.lastTime || ''));
         const bMs = Date.parse(String(b?.lastTime || ''));
         const safeA = Number.isFinite(aMs) ? aMs : 0;
@@ -9772,6 +9840,7 @@ function renderConversationHeader(
     </div>
 
     <div class="inbox-header-actions">
+      <button class="inbox-header-btn ${state.favorite ? 'active' : ''}" type="button" onclick="toggleConversationFavorite('${escapeHtml(contact)}', ${state.favorite ? 'false' : 'true'})" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 15 jours'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
       <button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()" title="Afficher la fiche client">👤 Fiche client</button>
       ${channel === 'whatsapp'
         ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')" title="Appeler ce client sur WhatsApp">📞 Appel WhatsApp</button>`
@@ -10256,12 +10325,13 @@ function buildConversationComposer(
         ` : ''}
 
         <div class="wa-input-shell">
+          <div id="conversationSlashSuggestions" class="wa-slash-suggestions hidden" role="listbox" aria-label="Raccourcis disponibles"></div>
           <textarea
             id="conversationQuickReply"
             rows="1"
             placeholder="Écrire un message"
             aria-label="Écrire un message au client"
-            oninput="autoResizeConversationComposer(this);syncConversationPrimaryAction()"
+            oninput="autoResizeConversationComposer(this);syncConversationPrimaryAction();handleConversationSlashInput(this)"
           ></textarea>
 
           <button
@@ -10646,6 +10716,35 @@ async function refreshSelectedConversation(){
     );
   }
 }
+
+
+window.toggleConversationFavorite = async function(contact, favorite){
+  try{
+    const result = await apiFetch(
+      `${API}/conversations/${encodeURIComponent(contact)}/favorite`,
+      {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({favorite:Boolean(favorite)})
+      }
+    );
+
+    const item=conversations.find(entry=>entry.contact===contact);
+    if(item){
+      item.favorite=Boolean(result?.state?.favorite);
+      item.favoriteAt=String(result?.state?.favoriteAt||'');
+    }
+    if(selectedConversationData?.state){
+      selectedConversationData.state.favorite=Boolean(result?.state?.favorite);
+      selectedConversationData.state.favoriteAt=String(result?.state?.favoriteAt||'');
+    }
+    renderConversationsList();
+    renderConversationHeader(contact,result?.state||selectedConversationData?.state||{});
+    updateConversationFilterCounts();
+  }catch(error){
+    alert(error.message);
+  }
+};
 
 window.toggleConversationPriority = async function(
   contact,
@@ -11034,7 +11133,7 @@ function populateConversationQuickReplySelect(){
       .filter(item => item.active !== false)
       .map(item => `
         <option value="${escapeHtml(item.id)}">
-          ${item.shortcut ? `/${escapeHtml(item.shortcut)} — ` : ''}${escapeHtml(item.title)}
+          ${item.shortcut ? `/${escapeHtml(item.shortcut)} — ` : ''}${escapeHtml(item.title)}${item.generated ? ' · auto catalogue' : ''}
         </option>
       `)
       .join('');
@@ -11166,6 +11265,11 @@ window.deleteConversationQuickReply = async function(){
     quickReplies.find(
       reply => reply.id === id
     );
+
+  if(item?.generated){
+    alert('Cette réponse est générée automatiquement depuis le catalogue Produit. Modifiez le produit pour modifier cette réponse.');
+    return;
+  }
 
   if(!confirm(`Supprimer « ${item?.title || 'cette réponse'} » ?`)){
     return;
@@ -11676,6 +11780,9 @@ function setConversationComposerMenuState(menuId, buttonId, open){
 }
 
 window.closeConversationComposerMenus = function(except = ''){
+  if(except !== 'slash'){
+    closeConversationSlashSuggestions();
+  }
   if(except !== 'attachments'){
     setConversationComposerMenuState(
       'conversationAttachmentMenu',
@@ -11752,6 +11859,92 @@ window.clearConversationAttachment = function(){
   syncConversationPrimaryAction();
 };
 
+
+let conversationSlashMatches = [];
+let conversationSlashActiveIndex = 0;
+let conversationSlashAutoExpanding = false;
+
+function closeConversationSlashSuggestions(){
+  conversationSlashMatches=[];
+  conversationSlashActiveIndex=0;
+  document.getElementById('conversationSlashSuggestions')?.classList.add('hidden');
+}
+
+function renderConversationSlashSuggestions(){
+  const panel=document.getElementById('conversationSlashSuggestions');
+  if(!panel) return;
+  if(!conversationSlashMatches.length){
+    panel.classList.add('hidden');
+    panel.innerHTML='';
+    return;
+  }
+  panel.innerHTML=conversationSlashMatches.map((item,index)=>`
+    <button class="wa-slash-item ${index===conversationSlashActiveIndex?'active':''}" type="button"
+      onmousedown="event.preventDefault()" onclick="applyConversationSlashMatch(${index})">
+      <span class="wa-slash-command">/${escapeHtml(item.shortcut||'')}</span>
+      <span class="wa-slash-title">${escapeHtml(item.title||'Réponse rapide')}</span>
+    </button>`).join('');
+  panel.classList.remove('hidden');
+}
+
+window.applyConversationSlashMatch=function(index=0){
+  const item=conversationSlashMatches[Number(index)||0];
+  const textarea=document.getElementById('conversationQuickReply');
+  if(!item||!textarea) return;
+  conversationSlashAutoExpanding=true;
+  textarea.value=item.content||'';
+  closeConversationSlashSuggestions();
+  autoResizeConversationComposer(textarea);
+  syncConversationPrimaryAction();
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length,textarea.value.length);
+  queueMicrotask(()=>{conversationSlashAutoExpanding=false;});
+};
+
+
+function quickReplyCommandAliases(item){
+  return [
+    String(item?.shortcut||'').toLowerCase(),
+    ...(Array.isArray(item?.aliases)?item.aliases.map(value=>String(value||'').toLowerCase()):[])
+  ].filter(Boolean);
+}
+
+function quickReplyMatchesCommand(item,term){
+  return quickReplyCommandAliases(item).includes(String(term||'').toLowerCase());
+}
+
+window.handleConversationSlashInput=function(textarea){
+  if(conversationSlashAutoExpanding||!textarea) return;
+  const value=String(textarea.value||'');
+  const match=/^\/([^\s]*)$/.exec(value.trim());
+  if(!match){
+    closeConversationSlashSuggestions();
+    return;
+  }
+
+  const term=String(match[1]||'').toLowerCase();
+  const active=quickReplies.filter(item=>item?.active!==false&&item?.shortcut);
+  const exact=active.find(item=>quickReplyMatchesCommand(item,term));
+
+  // Comportement historique demandé : dès qu'un raccourci complet /produit est
+  // reconnu, le texte de réponse apparaît immédiatement, quel que soit le canal.
+  if(term && exact){
+    conversationSlashMatches=[exact];
+    applyConversationSlashMatch(0);
+    return;
+  }
+
+  conversationSlashMatches=active
+    .filter(item=>{
+      const aliases=quickReplyCommandAliases(item);
+      const title=String(item.title||'').toLowerCase();
+      return !term || aliases.some(alias=>alias.startsWith(term)) || title.includes(term);
+    })
+    .slice(0,8);
+  conversationSlashActiveIndex=0;
+  renderConversationSlashSuggestions();
+};
+
 function bindSmartKeyboardShortcuts(){
   const textarea =
     document.getElementById(
@@ -11776,12 +11969,37 @@ function bindSmartKeyboardShortcuts(){
     () => {
       autoResizeConversationComposer(textarea);
       syncConversationPrimaryAction();
+      handleConversationSlashInput(textarea);
     }
   );
 
   textarea.addEventListener(
     'keydown',
     event => {
+      if(conversationSlashMatches.length && !document.getElementById('conversationSlashSuggestions')?.classList.contains('hidden')){
+        if(event.key==='ArrowDown'){
+          event.preventDefault();
+          conversationSlashActiveIndex=(conversationSlashActiveIndex+1)%conversationSlashMatches.length;
+          renderConversationSlashSuggestions();
+          return;
+        }
+        if(event.key==='ArrowUp'){
+          event.preventDefault();
+          conversationSlashActiveIndex=(conversationSlashActiveIndex-1+conversationSlashMatches.length)%conversationSlashMatches.length;
+          renderConversationSlashSuggestions();
+          return;
+        }
+        if((event.key==='Enter'||event.key==='Tab')&&!event.shiftKey&&!event.isComposing){
+          event.preventDefault();
+          applyConversationSlashMatch(conversationSlashActiveIndex);
+          return;
+        }
+        if(event.key==='Escape'){
+          closeConversationSlashSuggestions();
+          return;
+        }
+      }
+
       if(event.key !== 'Enter' || event.shiftKey || event.isComposing){
         return;
       }
@@ -11796,7 +12014,7 @@ function bindSmartKeyboardShortcuts(){
         const item =
           quickReplies.find(
             reply =>
-              String(reply.shortcut || '').toLowerCase() === shortcut &&
+              quickReplyMatchesCommand(reply, shortcut) &&
               reply.active !== false
           );
 
@@ -12138,7 +12356,14 @@ window.sendConversationCommercialReply = async function(contact){
     await loadConversations();
     await window.openConversation(contact);
   }catch(error){
-    alert(error.message);
+    if(error?.code==='FACEBOOK_TOKEN_EXPIRED'){
+      alert(
+        'Facebook Messenger est temporairement déconnecté : le Page Access Token a expiré.\n\n' +
+        'Aucun message n’a été envoyé. Demandez à l’administrateur de renouveler le token longue durée dans Railway.'
+      );
+    }else{
+      alert(error.message);
+    }
   }finally{
     const currentButton =
       document.getElementById('conversationSendBtn');
@@ -12616,6 +12841,68 @@ if(syncFacebookHistoryBtn){
   });
 }
 
+
+
+// ============================================================
+// V6.29.1 — RATTRAPAGE FACEBOOK MESSENGER EN TEMPS RÉEL
+// ============================================================
+// Le webhook Meta reste prioritaire. Lorsque l'application est ouverte,
+// ce filet de sécurité vérifie régulièrement les conversations Facebook
+// récentes. Il ne change jamais l'onglet Messages/Commentaires actif.
+let facebookRealtimeRecoveryBusy = false;
+let facebookRealtimeRecoveryTimer = null;
+
+async function syncFacebookRealtimeMessages({ force = false } = {}){
+  if(!currentUser || facebookRealtimeRecoveryBusy) return;
+  facebookRealtimeRecoveryBusy = true;
+  try{
+    const suffix = force ? '?force=1' : '';
+    const result = await apiFetch(
+      `${API}/facebook-realtime/sync${suffix}`,
+      { method:'POST' }
+    );
+    const imported = Number(result?.importedMessages || 0);
+    if(imported > 0){
+      if(
+        document.getElementById('page-conversations')?.classList?.contains('active') &&
+        inboxInteractionMode === 'messages'
+      ){
+        await loadConversations();
+        if(
+          selectedConversationContact &&
+          conversationChannel(
+            conversations.find(item => item.contact === selectedConversationContact) || {}
+          ) === 'facebook'
+        ){
+          await softRefreshSelectedConversation();
+        }
+      }
+      // Met à jour cloche + compteurs même si le message récupéré date de
+      // quelques minutes et se situe avant le curseur de notifications.
+      await pollCommercialNotifications();
+    }
+  }catch(error){
+    if(!/session|auth|connect/i.test(String(error?.message || ''))){
+      console.debug('Rattrapage Facebook temps réel :', error.message);
+    }
+  }finally{
+    facebookRealtimeRecoveryBusy = false;
+  }
+}
+
+setTimeout(
+  () => syncFacebookRealtimeMessages({ force:true }),
+  4500
+);
+
+facebookRealtimeRecoveryTimer = setInterval(
+  () => {
+    if(document.visibilityState === 'visible'){
+      syncFacebookRealtimeMessages();
+    }
+  },
+  30000
+);
 
 setInterval(
   pollCommercialNotifications,
