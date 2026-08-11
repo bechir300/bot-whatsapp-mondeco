@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.4 — Réponses rapides manuelles uniquement
+   MONDECO V6.32.5 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5640,7 +5640,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.4 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.5 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5843,7 +5843,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.4 — Raccourcis manuels omnicanaux
+   V6.32.5 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6190,7 +6190,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.4</span>
+              <span class="inbox-version">V6.32.5</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8541,7 +8541,7 @@ let socialCommentCounts = null;
 let socialCommentFilter = 'all';
 let selectedSocialCommentKey = '';
 let selectedSocialCommentData = null;
-// V6.32.4 — workflow commentaire : réponse publique puis message privé.
+// V6.32.5 — workflow commentaire : réponse publique puis message privé.
 let socialCommentComposeMode = 'public';
 let socialCommentsSyncTimer = null;
 let socialCommentsInitialSyncAttempted = false;
@@ -8800,7 +8800,7 @@ window.replyToSocialComment=async function(){
   try{
     await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
     if(input)input.value='';
-    // V6.32.4 — après la réponse publique, on propose immédiatement l'étape privée.
+    // V6.32.5 — après la réponse publique, on propose immédiatement l'étape privée.
     socialCommentComposeMode=(target.canReplyPrivately!==false&&!target.privateReplySentAt)?'private':'public';
     await openSocialComment(target.key);
     await loadSocialComments();
@@ -9801,17 +9801,20 @@ function liveSlaForConversation(item){
 function conversationListTags(item){
   const channel=conversationChannel(item);
   const facebook=channel==='facebook';
+  const pending=item.pendingReply===true;
   const paused=!facebook&&Boolean(item.humanPaused||item.manualTakeover||item.commercialAttention||item.imageNeedsCommercial);
-  const liveSla=liveSlaForConversation(item);
+  const liveSla=pending?liveSlaForConversation(item):null;
   const sourceContext=item.sourceContext||null;
-  const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
+  const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&pending&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
   const status=[];
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
   if(item.favorite) status.push('<span class="assigned">⭐ Favori</span>');
   if(facebook){
     status.push('<span class="ai-active">✨ IA Meta / Business Suite</span>');
   }else{
-    status.push(paused?'<span class="ai-paused">🤖 IA en pause</span>':item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
+    status.push(paused
+      ? (pending?'<span class="ai-paused">🤖 IA en pause</span>':'<span class="assigned">👤 Suivi commercial</span>')
+      : item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
   }
   if(liveSla) status.push(`<span class="sla-human ${liveSla.status}">${escapeHtml(formatSlaHuman(liveSla.remainingMs))}</span>`);
   const sourceLabel=item.hasAdReferral
@@ -9833,7 +9836,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.4 : les conversations réellement à répondre restent en haut.
+        // V6.32.5 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -9896,8 +9899,8 @@ function renderConversationsList(){
           );
 
         const urgent =
-          item.commercialAttention ||
-          item.imageNeedsCommercial;
+          item.pendingReply === true &&
+          (item.commercialAttention || item.imageNeedsCommercial);
 
         const selected =
           selectedConversationContact ===
@@ -12655,7 +12658,7 @@ window.sendConversationCommercialReply = async function(contact){
       clearConversationVoice();
     }
 
-    // V6.32.4 — le petit badge de la ligne client disparaît immédiatement
+    // V6.32.5 — le petit badge de la ligne client disparaît immédiatement
     // après succès, sans attendre le prochain rafraîchissement de l'Inbox.
     const answeredItem = conversations.find(item => item.contact === contact);
     if(answeredItem){
