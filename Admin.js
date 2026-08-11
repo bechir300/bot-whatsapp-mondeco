@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.0
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.2
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -27,7 +27,7 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
-// V6.32.0 — sessions persistantes : survivent aux redéploiements Railway.
+// V6.32.2 — sessions persistantes : survivent aux redéploiements Railway.
 const SESSIONS_PATH = path.join(DATA_DIR, 'admin-sessions.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
@@ -68,7 +68,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.32.0 — deux tokens Facebook indépendants :
+// V6.32.2 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -94,11 +94,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.32.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.32.2 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.32.0 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.32.2 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -143,7 +143,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.32.0 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.32.2 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -230,7 +230,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.32.0 — garde-fou permanent contre ENOSPC.
+// V6.32.2 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -462,7 +462,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.32.0 — CLOUDINARY / CLOUD STORAGE
+// V6.32.2 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -970,7 +970,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.32.0 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.32.2 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1211,7 +1211,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.32.0 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.32.2 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1346,7 +1346,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.32.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.32.2 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2234,7 +2234,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.32.0 : écriture atomique avec garde-fou ENOSPC.
+  // V6.32.2 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3155,7 +3155,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.32.0 — Le catalogue produit reste séparé des réponses rapides.
+// V6.32.2 — Le catalogue produit reste séparé des réponses rapides.
 // Les helpers ci-dessous sont conservés uniquement pour compatibilité interne,
 // mais /api/quick-replies ne les expose plus aux commerciaux.
 // ============================================================
@@ -3807,7 +3807,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.32.0 — migration progressive des octets locaux vers Cloudinary.
+// V6.32.2 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3835,7 +3835,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.32.0 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.32.2 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -4056,7 +4056,7 @@ function getBusinessContext() {
 // AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
-// V6.32.0 — Sessions commerciales persistantes.
+// V6.32.2 — Sessions commerciales persistantes.
 // Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
 // Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
 const SESSION_DURATION_DAYS = Math.max(
@@ -5452,7 +5452,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.32.0</span>
+        <span class="login-version">V6.32.2</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11037,7 +11037,7 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
-    // V6.32.0 : uniquement les réponses réellement enregistrées dans
+    // V6.32.2 : uniquement les réponses réellement enregistrées dans
     // /data/quick-replies.json. Le catalogue WooCommerce/Produits n'est plus
     // transformé automatiquement en commandes /nom-produit.
     return res.json(
@@ -15287,7 +15287,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.32.0 — récupération sûre après une panne de webhook/token.
+// V6.32.2 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15439,7 +15439,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.32.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.32.2 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15547,7 +15547,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.32.0 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.32.2 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15956,7 +15956,7 @@ router.post(
 // ============================================================
 
 
-// V6.32.0 — diagnostic sans exposer les secrets.
+// V6.32.2 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -15994,7 +15994,7 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// V6.32.0 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// V6.32.2 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
 // au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
 // User Access Token, MONDECO tente de dériver le Page Access Token de
 // FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
@@ -16740,18 +16740,36 @@ async function refreshSocialThreadIfNeeded(comment, force = false) {
   }
 }
 
-function socialCommentNeedsReply(item) {
+function socialOutgoingReplyIndex(items = []) {
+  const byParent = new Map();
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || item.deleted || safeString(item?.direction) !== 'outgoing') continue;
+    const parentId = safeString(item?.parentId);
+    if (!parentId) continue;
+    const ms = Date.parse(safeString(item?.createdAt || item?.updatedAt)) || 0;
+    if (ms > (byParent.get(parentId) || 0)) byParent.set(parentId, ms);
+  }
+  return byParent;
+}
+
+function socialCommentNeedsReply(item, outgoingReplyIndex = null) {
   if (!item || item.deleted || safeString(item?.direction) === 'outgoing') return false;
   const createdMs = Date.parse(safeString(item?.createdAt)) || 0;
   const publicReplyMs = Date.parse(safeString(item?.lastReplyAt)) || 0;
   const privateReplyMs = Date.parse(safeString(item?.privateReplySentAt)) || 0;
-  const latestReplyMs = Math.max(publicReplyMs, privateReplyMs);
-  return latestReplyMs <= createdMs;
+  const answeredMs = Date.parse(safeString(item?.answeredAt)) || 0;
+  const childReplyMs = outgoingReplyIndex instanceof Map
+    ? Number(outgoingReplyIndex.get(safeString(item?.commentId)) || 0)
+    : 0;
+  const latestReplyMs = Math.max(publicReplyMs, privateReplyMs, answeredMs, childReplyMs);
+  return createdMs > 0 && latestReplyMs < createdMs;
 }
 
 function socialCommentCounts(items, user) {
-  const active = items.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
-  const pending = active.filter(socialCommentNeedsReply);
+  const allItems = Array.isArray(items) ? items : [];
+  const replyIndex = socialOutgoingReplyIndex(allItems);
+  const active = allItems.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
+  const pending = active.filter(item => socialCommentNeedsReply(item, replyIndex));
   return {
     all: active.length,
     facebook: active.filter(item => item.channel === 'facebook').length,
@@ -16929,13 +16947,15 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
   try {
     const posts = loadSocialPosts();
     const postMap = new Map(posts.map(post => [safeString(post?.key), post]));
-    let comments = loadSocialComments().filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
+    const allComments = loadSocialComments();
+    const replyIndex = socialOutgoingReplyIndex(allComments);
+    let comments = allComments.filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing');
     const channel = safeString(req.query?.channel).toLowerCase();
     const filter = safeString(req.query?.filter || 'all').toLowerCase();
     const q = safeString(req.query?.q).toLowerCase();
     if (['facebook','instagram'].includes(channel)) comments = comments.filter(item => item.channel === channel);
     if (filter === 'unread') comments = comments.filter(item => !socialCommentReadByUser(item,req.user));
-    if (filter === 'pending') comments = comments.filter(socialCommentNeedsReply);
+    if (filter === 'pending') comments = comments.filter(item => socialCommentNeedsReply(item, replyIndex));
     if (filter === 'hidden') comments = comments.filter(item => item.isHidden === true);
     if (filter === 'private') comments = comments.filter(item => Boolean(item.privateReplySentAt));
     if (q) {
@@ -16946,13 +16966,13 @@ router.get('/api/social-comments', requireAuth, (req,res) => {
       });
     }
     comments.sort((a,b) => (Date.parse(b.createdAt)||0) - (Date.parse(a.createdAt)||0));
-    const counts = socialCommentCounts(loadSocialComments(), req.user);
+    const counts = socialCommentCounts(allComments, req.user);
     const limit = Math.max(20, Math.min(200, Number(req.query?.limit || 100) || 100));
     const offset = Math.max(0, Number(req.query?.offset || 0) || 0);
     const items = comments.slice(offset, offset + limit).map(comment => ({
       ...comment,
       read: socialCommentReadByUser(comment,req.user),
-      pendingReply: socialCommentNeedsReply(comment),
+      pendingReply: socialCommentNeedsReply(comment, replyIndex),
       post: postMap.get(socialKey(comment.channel, comment.postId)) || null
     }));
     return res.json({ items, total:comments.length, counts, offset, limit, hasMore:offset+limit<comments.length });
@@ -17041,7 +17061,7 @@ router.post('/api/social-comments/:key/reply', requireAuth, async (req,res) => {
       data = await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}/replies`, { method:'POST', form:{ message:text } });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
     const now = new Date().toISOString();
-    comments[index] = { ...target, lastReply:text, lastReplyAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email) };
+    comments[index] = { ...target, lastReply:text, lastReplyAt:now, answeredAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email) };
     saveSocialComments(comments);
     // Ajoute immédiatement la réponse dans le fil local, même avant le webhook d'écho Meta.
     const replyId = safeString(data?.id);
@@ -17131,7 +17151,7 @@ router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,r
     const now = new Date().toISOString();
     const recipientId = safeString(data?.recipient_id);
     comments[index] = {
-      ...target, privateReplySentAt:now, privateReplyMessage:text,
+      ...target, privateReplySentAt:now, answeredAt:now, privateReplyMessage:text,
       privateReplyBy:safeString(req.user?.name || req.user?.email),
       privateRecipientId:recipientId
     };
@@ -17231,13 +17251,25 @@ function conversationNeedsReplyFromEntries(entries = [], state = {}) {
   const stateInboundMs = conversationTimeMs(state?.lastCustomerAt);
   const stateHumanMs = conversationTimeMs(state?.lastHumanAt);
   const stateBotMs = conversationTimeMs(state?.lastBotAt);
+  const stateAnsweredMs = conversationTimeMs(state?.lastAnsweredAt);
+  const answeredCustomerMs = conversationTimeMs(state?.lastAnsweredCustomerAt);
   if (Number.isFinite(stateInboundMs)) lastInboundMs = Math.max(lastInboundMs, stateInboundMs);
   if (Number.isFinite(stateHumanMs)) lastOutboundMs = Math.max(lastOutboundMs, stateHumanMs);
   if (Number.isFinite(stateBotMs)) lastOutboundMs = Math.max(lastOutboundMs, stateBotMs);
+  if (Number.isFinite(stateAnsweredMs)) lastOutboundMs = Math.max(lastOutboundMs, stateAnsweredMs);
+  // Marqueur déterministe : si le commercial a répondu au dernier message client
+  // connu, la conversation n'est plus « À répondre », même avant le prochain webhook.
+  if (
+    Number.isFinite(stateInboundMs) &&
+    Number.isFinite(answeredCustomerMs) &&
+    Number.isFinite(stateAnsweredMs) &&
+    answeredCustomerMs >= stateInboundMs &&
+    stateAnsweredMs >= stateInboundMs
+  ) return false;
   return lastInboundMs > 0 && lastInboundMs > lastOutboundMs;
 }
 
-function pendingInteractionCountsForUser(user) {
+function pendingMessageStatusByContact() {
   const log = loadWhatsAppLog();
   const states = loadConversationStatesAdmin();
   const byContact = {};
@@ -17247,7 +17279,8 @@ function pendingInteractionCountsForUser(user) {
     (byContact[contact] ||= []).push(entry);
   }
   const cutoffAt = historyImportCutoffIso();
-  const messageItems = Object.entries(byContact).map(([contact, entries]) => {
+  const result = new Map();
+  for (const [contact, entries] of Object.entries(byContact)) {
     const state = states[contact] || {};
     const sorted = contact.startsWith('instagram:')
       ? normalizeInstagramThreadEntries(entries)
@@ -17259,15 +17292,22 @@ function pendingInteractionCountsForUser(user) {
       : channelRaw === 'facebook' || contact.startsWith('facebook:')
         ? 'facebook'
         : 'whatsapp';
-    return {
+    const lastTime = safeString(last?.time || state?.lastCustomerAt);
+    if (!historyTimeIsRecent(lastTime, cutoffAt)) continue;
+    result.set(contact, {
       contact,
       channel,
-      pending: conversationNeedsReplyFromEntries(sorted, state),
+      pending: state?.resolved === true ? false : conversationNeedsReplyFromEntries(sorted, state),
       resolved: state?.resolved === true,
-      lastTime: safeString(last?.time || state?.lastCustomerAt)
-    };
-  }).filter(item => historyTimeIsRecent(item.lastTime, cutoffAt));
-  const pendingMessages = messageItems.filter(item => !item.resolved && item.pending);
+      lastTime
+    });
+  }
+  return result;
+}
+
+function pendingInteractionCountsForUser(user) {
+  const messageStatus = pendingMessageStatusByContact();
+  const pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
   const commentCounts = socialCommentCounts(loadSocialComments(), user);
   return {
     messages: pendingMessages.length,
@@ -17280,6 +17320,16 @@ function pendingInteractionCountsForUser(user) {
     total: pendingMessages.length + Number(commentCounts.pendingReply || 0)
   };
 }
+
+
+router.get('/api/interactions/pending-counts', requireAuth, (req,res) => {
+  try {
+    return res.json({ counts: pendingInteractionCountsForUser(req.user), checkedAt:new Date().toISOString() });
+  } catch (error) {
+    console.error('❌ Recalcul compteurs interactions :', error);
+    return res.status(500).json({ error:'Impossible de recalculer les compteurs.' });
+  }
+});
 
 router.get('/api/conversations', requireAuth, (req, res) => {
   try {
@@ -17401,7 +17451,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.32.0 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.32.2 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -17415,7 +17465,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.32.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.32.2 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -17666,17 +17716,10 @@ router.post(
         });
     }
 
-    if (safeString(req.user?.role) === 'commercial') {
-      const currentState = loadConversationStatesAdmin()[contact] || {};
-      if (!conversationAssignedToUser(currentState, req.user)) {
-        return res.json({
-          success: true,
-          readOnly: true,
-          state: currentState
-        });
-      }
-    }
-
+    // V6.32.2 — Tous les commerciaux peuvent répondre à toute conversation.
+    // Le statut « lu » doit donc suivre la même règle : ouvrir une conversation
+    // la marque comme lue même si elle est affectée à un autre commercial.
+    // Les droits de gestion (affectation, résolution, etc.) restent séparés.
     const state =
       updateConversationStateAdmin(
         contact,
@@ -17999,6 +18042,7 @@ router.get(
       const sinceMs = Date.parse(safeString(req.query?.since));
       const store = loadNotificationsStore();
 
+      const pendingMessageMap = pendingMessageStatusByContact();
       let messageItems = store.items
         .filter(item => notificationVisibleToUser(item, req.user, states))
         .map(item => ({
@@ -18006,10 +18050,13 @@ router.get(
           read: Array.isArray(item?.readBy) && item.readBy.includes(userKey),
           channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : safeString(item?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
           assignedTo: safeString(states[item?.contact]?.assignedTo || item?.assignedTo),
+          pendingReply: pendingMessageMap.get(safeString(item?.contact))?.pending === true,
           kind: item?.urgent ? 'commercial' : 'message'
         }));
 
-      const commentItems = loadSocialComments()
+      const notificationSocialComments = loadSocialComments();
+      const notificationSocialReplyIndex = socialOutgoingReplyIndex(notificationSocialComments);
+      const commentItems = notificationSocialComments
         .filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing')
         .map(item => ({
           id: `social-comment:${safeString(item.key)}`,
@@ -18024,7 +18071,7 @@ router.get(
           preview: safeString(item.text) || 'Nouveau commentaire',
           createdAt: safeString(item.createdAt) || new Date().toISOString(),
           read: socialCommentReadByUser(item, req.user),
-          pendingReply: socialCommentNeedsReply(item),
+          pendingReply: socialCommentNeedsReply(item, notificationSocialReplyIndex),
           kind: 'comment',
           urgent: false,
           action: 'social_comment'
@@ -18038,7 +18085,7 @@ router.get(
       } else if (filter === 'comments') {
         items = items.filter(item => item.kind === 'comment');
       } else if (filter === 'pending') {
-        items = items.filter(item => item.kind === 'comment' ? item.pendingReply === true : true);
+        items = items.filter(item => item.pendingReply === true);
       }
 
       items.sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
