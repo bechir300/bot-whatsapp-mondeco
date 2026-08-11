@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.6 — Réponses rapides manuelles uniquement
+   MONDECO V6.33.0 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5640,7 +5640,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.6 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.33.0 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5843,7 +5843,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.6 — Raccourcis manuels omnicanaux
+   V6.33.0 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -5882,6 +5882,47 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
   .wa-slash-suggestions{max-height:38dvh}
   .wa-slash-item{min-height:44px}
 }
+
+
+/* ==========================================================
+   MONDECO V6.33.0 — Équipe simple & planning quotidien
+   ========================================================== */
+.simple-team-page .page-header{align-items:flex-end}
+.simple-team-actions{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.simple-team-date{display:grid;gap:4px;font-size:9px;font-weight:800;color:#746d66}
+.simple-team-date input{height:38px;border:1px solid var(--line);border-radius:10px;padding:0 10px;background:#fff;color:var(--text)}
+.simple-team-summary{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.simple-team-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:9px;font-weight:800;color:#625b55}
+.simple-team-chip strong{font-size:11px;color:#171411}
+.simple-team-card{padding:0;overflow:hidden}
+.simple-team-card-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);background:#fcfbf9}
+.simple-team-card-head h3{margin:0;font-size:14px}
+.simple-team-card-head p{margin:4px 0 0;color:var(--muted);font-size:9px}
+.simple-team-scroll{overflow:auto;max-width:100%}
+.simple-team-table{width:100%;border-collapse:collapse;min-width:1040px}
+.simple-team-table th{padding:9px 10px;background:#f8f5f1;border-bottom:1px solid var(--line);text-align:left;font-size:8px;letter-spacing:.04em;text-transform:uppercase;color:#746d66;white-space:nowrap}
+.simple-team-table td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:9px}
+.simple-team-table tbody tr:last-child td{border-bottom:0}
+.simple-person{display:flex;align-items:center;gap:9px;min-width:190px}
+.simple-avatar{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:#171411;color:#fff;font-size:10px;font-weight:900;flex:0 0 auto}
+.simple-person strong{display:block;font-size:10.5px}.simple-person span{display:block;color:#8a827b;font-size:8px;margin-top:2px}
+.simple-status{display:inline-flex;align-items:center;gap:6px;font-weight:800;white-space:nowrap}.simple-status i{width:8px;height:8px;border-radius:50%;background:#aaa49e}.simple-status.online i{background:#16a45a;box-shadow:0 0 0 3px rgba(22,164,90,.12)}.simple-status.idle i{background:#e69b22}.simple-status.offline i{background:#aaa49e}
+.simple-channel-set{display:flex;gap:5px;align-items:center;white-space:nowrap}.simple-channel-check{display:inline-flex;align-items:center;gap:4px;padding:5px 7px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:8px;font-weight:800;cursor:pointer}.simple-channel-check input{margin:0;width:13px;height:13px}.simple-channel-check:has(input:checked){border-color:#b9d7c6;background:#f2fbf6;color:#17673e}
+.simple-hours{display:flex;gap:5px;align-items:center;white-space:nowrap}.simple-hours input{width:76px;height:32px;border:1px solid var(--line);border-radius:8px;padding:0 5px;background:#fff;font-size:9px}.simple-night{font-size:8px;color:#6f58a8;font-weight:800}
+.simple-metric strong{display:block;font-size:11px}.simple-metric span{display:block;color:#8a827b;font-size:7.5px;margin-top:2px;white-space:nowrap}
+.simple-pending.ok strong{color:#13723f}.simple-pending.warn strong{color:#b34b37}
+.simple-team-row-actions{display:flex;gap:5px;white-space:nowrap}
+.simple-save-state{font-size:8px;color:#777;min-width:44px;display:inline-block}
+.simple-team-note{padding:10px 14px;border-top:1px solid var(--line);background:#fffaf0;color:#796338;font-size:8.5px}
+.team-simple-modal .modal{width:min(760px,calc(100vw - 28px));max-height:min(86vh,850px);overflow:auto}
+.team-account-modal .modal{width:min(520px,calc(100vw - 28px))}
+.simple-report-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.simple-report-head h3{margin:0;font-size:17px}.simple-report-head p{margin:4px 0 0;color:var(--muted);font-size:9px}
+.simple-report-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.simple-report-kpi{padding:10px;border:1px solid var(--line);border-radius:11px;background:#fff}.simple-report-kpi span{display:block;color:#817970;font-size:8px;font-weight:700}.simple-report-kpi strong{display:block;margin-top:4px;font-size:15px}.simple-report-kpi small{display:block;margin-top:3px;color:#8f877f;font-size:7.5px}
+.simple-report-section{margin-top:14px}.simple-report-section h4{margin:0 0 8px;font-size:11px}
+.simple-report-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.simple-report-line{padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fbfaf8;font-size:9px}.simple-report-line strong{display:block;margin-bottom:3px}.simple-day-list{border:1px solid var(--line);border-radius:11px;overflow:hidden}.simple-day-row{display:grid;grid-template-columns:100px 90px 110px 90px 1fr;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:8.5px}.simple-day-row:last-child{border-bottom:0}.simple-day-row.header{background:#f8f5f1;text-transform:uppercase;font-size:7.5px;font-weight:900;color:#776f68}.simple-active-yes{color:#13723f;font-weight:900}.simple-active-no{color:#9b938b;font-weight:800}
+@media(max-width:760px){.simple-team-actions{width:100%}.simple-team-date{flex:1}.simple-team-date input{width:100%}.simple-report-kpis{grid-template-columns:1fr 1fr}.simple-report-grid{grid-template-columns:1fr}.simple-day-row{grid-template-columns:88px 70px 90px 1fr}.simple-day-row>*:nth-child(4){display:none}.simple-team-card-head{align-items:flex-start;flex-direction:column}}
 
 </style>
 </head>
@@ -6190,7 +6231,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.6</span>
+              <span class="inbox-version">V6.33.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -7127,200 +7168,60 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
     </section>
 
     <!-- ================================================== -->
-    <!-- ÉQUIPE & RAPPORTS -->
+    <!-- ÉQUIPE & PLANNING SIMPLE — V6.33.0 -->
     <!-- ================================================== -->
 
-    <section id="page-team" class="page">
+    <section id="page-team" class="page simple-team-page">
       <div class="page-header">
         <div>
-          <h2 class="page-title">Équipe commerciale & planning</h2>
-          <p class="page-subtitle">
-            Planifiez les commerciaux, répartissez WhatsApp / Instagram et suivez les clients en attente.
-          </p>
+          <h2 class="page-title">Équipe commerciale</h2>
+          <p class="page-subtitle">Comptes, présence, réseaux affectés et compte rendu quotidien — sans écrans inutiles.</p>
         </div>
-
-        <div class="actions">
-          <label class="team-date-field admin-report-section">
-            <span>Rapport du</span>
-            <input id="teamReportDate" type="date">
-          </label>
-
-          <button class="btn team-presence-btn" id="teamPresenceBtn" type="button" title="Afficher uniquement les membres connectés">
-            <span>🟢 Connectés</span>
-            <span class="presence-count" id="teamOnlineCount">0</span>
-          </button>
-
-          <button class="btn admin-report-section" id="refreshTeamReportBtn" type="button">
-            ↻ Actualiser
-          </button>
+        <div class="simple-team-actions">
+          <label class="simple-team-date"><span>Journée</span><input id="simpleTeamDate" type="date"></label>
+          <button class="btn" id="simpleTeamRefresh" type="button">↻ Actualiser</button>
+          <button class="btn primary" id="openTeamAccountModal" type="button">＋ Nouveau compte</button>
         </div>
       </div>
 
-      <div class="team-summary-grid admin-report-section">
-        <div class="card team-stat-card">
-          <span>Réponses commerciales</span>
-          <strong id="teamStatReplies">0</strong>
-        </div>
-
-        <div class="card team-stat-card">
-          <span>Conversations traitées</span>
-          <strong id="teamStatConversations">0</strong>
-        </div>
-
-        <div class="card team-stat-card">
-          <span>Commerciaux actifs</span>
-          <strong id="teamStatActive">0</strong>
-        </div>
-
-        <div class="card team-stat-card">
-          <span>Fichiers envoyés</span>
-          <strong id="teamStatFiles">0</strong>
-        </div>
+      <div class="simple-team-summary">
+        <span class="simple-team-chip">🟢 En ligne <strong id="simpleOnlineCount">0</strong></span>
+        <span class="simple-team-chip">👥 Commerciaux <strong id="simpleCommercialCount">0</strong></span>
+        <span class="simple-team-chip">📅 Planifiés <strong id="simplePlannedCount">0</strong></span>
+        <span class="simple-team-chip">💬 En attente affectés <strong id="simplePendingCount">0</strong></span>
       </div>
 
-      <div class="card team-ranking-card admin-report-section">
-        <div class="team-card-head">
-          <div>
-            <h3>Classement commercial du jour</h3>
-            <p>
-              Classement basé sur les réponses envoyées depuis l’application MONDECO.
-            </p>
-          </div>
-
-          <span class="badge" id="teamReportDateLabel">Aujourd’hui</span>
+      <div class="card simple-team-card">
+        <div class="simple-team-card-head">
+          <div><h3>Planning du jour</h3><p>Cochez uniquement les réseaux que chaque commercial doit traiter pour la journée sélectionnée.</p></div>
+          <span class="badge" id="simpleTeamDateLabel">Aujourd’hui</span>
         </div>
-
-        <div id="teamRankingContainer" class="table-wrap">
-          <div class="empty">
-            Chargement du rapport...
-          </div>
+        <div class="simple-team-scroll">
+          <table class="simple-team-table">
+            <thead><tr><th>Commercial</th><th>Maintenant</th><th>Réseaux du jour</th><th>Horaire</th><th>Temps app</th><th>Réponses</th><th>En attente</th><th>Actions</th></tr></thead>
+            <tbody id="simpleTeamRows"><tr><td colspan="8"><div class="empty">Chargement...</div></td></tr></tbody>
+          </table>
         </div>
-
-        <div id="teamReportWarning" class="notice warning hidden" style="margin-top:12px"></div>
+        <div class="simple-team-note">Les réseaux cochés alimentent le planning et l’affectation automatique. Pour un commercial planifié aujourd’hui, MONDECO limite aussi sa boîte Messages/Commentaires à ces réseaux. Si aucun réseau n’est coché, aucun blocage automatique n’est appliqué. Le temps de présence est mesuré par l’activité réelle dans MONDECO.</div>
       </div>
 
-      <div class="operations-summary-grid">
-        <div class="card ops-stat"><span>Clients en attente</span><strong id="opsPendingSla">0</strong></div>
-        <div class="card ops-stat danger"><span>SLA dépassés</span><strong id="opsLateSla">0</strong></div>
-        <div class="card ops-stat"><span>Tâches en retard</span><strong id="opsLateTasks">0</strong></div>
-        <div class="card ops-stat"><span>En ligne</span><strong id="opsOnlineUsers">0</strong></div>
-      </div>
-
-      <div class="card operations-live-card">
-        <div class="team-card-head">
-          <div><h3>Équipe en direct</h3><p>Charge actuelle, plateforme planifiée et prochain délai client.</p></div>
-          <input id="operationsDate" type="date" class="compact-date-input">
-        </div>
-        <div id="operationsLive"><div class="empty">Chargement...</div></div>
-      </div>
-
-
-      <div class="card presence-time-card">
-        <div class="team-card-head">
-          <div>
-            <h3>⏱ Temps de présence MONDECO</h3>
-            <p>Temps réellement détecté dans l’application. Hors ligne est calculé sur le planning écoulé quand un horaire existe.</p>
-          </div>
-          <span class="badge" id="presenceTimeDateLabel">Aujourd’hui</span>
-        </div>
-        <div id="presenceTimeTable" class="presence-time-table">
-          <div class="empty">Chargement des temps de présence...</div>
-        </div>
-      </div>
-
-      <div class="grid grid-2 manager-work-grid">
-        <div class="card">
-          <div class="team-card-head"><div><h3>Planning des commerciaux</h3><p>Définissez horaires, pause, plateforme, mission et SLA.</p></div></div>
-          <form id="scheduleForm" class="manager-form">
-            <div class="field"><label>Commercial</label><select id="scheduleUser" required></select></div>
-            <div class="manager-form-row"><div class="field"><label>Date</label><input id="scheduleDate" type="date" required></div><div class="field"><label>SLA (minutes)</label><input id="scheduleSla" type="number" min="1" max="120" value="5" required></div></div>
-            <div class="manager-form-row"><div class="field"><label>Début</label><input id="scheduleStart" type="time" value="09:00" required></div><div class="field"><label>Fin</label><input id="scheduleEnd" type="time" value="17:00" required></div></div>
-            <div class="manager-form-row"><div class="field"><label>Début pause</label><input id="scheduleBreakStart" type="time" value="13:00"></div><div class="field"><label>Fin pause</label><input id="scheduleBreakEnd" type="time" value="14:00"></div></div>
-            <div class="field"><label>Plateformes</label><div class="channel-checks"><label><input id="scheduleWhatsApp" type="checkbox" checked> WhatsApp</label><label><input id="scheduleInstagram" type="checkbox" checked> Instagram</label><label><input id="scheduleFacebook" type="checkbox"> Facebook</label></div></div>
-            <div class="field"><label>Mission</label><textarea id="scheduleMission" rows="3" placeholder="Ex. Traiter les demandes salons et reprendre tous les transferts IA."></textarea></div>
-            <button class="btn primary" type="submit">Ajouter au planning</button>
-          </form>
-          <div id="scheduleList" class="manager-list"></div>
-        </div>
-
-        <div class="card">
-          <div class="team-card-head"><div><h3>Tâches commerciales</h3><p>Créez des missions avec heure de début, échéance et plateforme.</p></div></div>
-          <form id="taskForm" class="manager-form">
-            <div class="field"><label>Commercial / équipe</label><select id="taskUser" required></select><div class="help">Choisissez « Tous les commerciaux » pour créer la même tâche pour toute l’équipe.</div></div>
-            <div class="manager-form-row"><div class="field"><label>Date</label><input id="taskDate" type="date" required></div><div class="field"><label>Plateforme</label><select id="taskChannel"><option value="both">WhatsApp + Instagram</option><option value="whatsapp">WhatsApp</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option></select></div></div>
-            <div class="manager-form-row"><div class="field"><label>Début</label><input id="taskStart" type="time"></div><div class="field"><label>À terminer avant</label><input id="taskDue" type="time"></div></div>
-            <div class="field"><label>Tâche</label><input id="taskTitle" required placeholder="Ex. Reprendre toutes les demandes chambres enfants"></div>
-            <div class="field"><label>Détails</label><textarea id="taskDetails" rows="3"></textarea></div>
-            <div class="field"><label>Priorité</label><select id="taskPriority"><option value="normal">Normale</option><option value="high">Haute</option><option value="urgent">Urgente</option></select></div>
-            <button class="btn primary" type="submit">Créer la tâche</button>
-          </form>
-          <div id="taskList" class="manager-list"></div>
-        </div>
-      </div>
-
-      <div class="grid grid-2 team-management-grid">
-        <div class="card">
-          <div class="team-card-head">
-            <div>
-              <h3>Comptes de l’équipe</h3>
-              <p>
-                Chaque personne se connecte avec son e-mail personnel.
-              </p>
-            </div>
-          </div>
-
-          <div id="teamUsersContainer">
-            <div class="empty">Chargement...</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="team-card-head">
-            <div>
-              <h3>Ajouter un membre</h3>
-              <p>
-                Choisissez le rôle selon les responsabilités de la personne.
-              </p>
-            </div>
-          </div>
-
+      <div class="modal-backdrop team-account-modal" id="teamAccountModal">
+        <div class="modal">
+          <div class="modal-header"><div><h3>Nouveau compte</h3><p>Créer rapidement un compte MONDECO.</p></div><button class="close" type="button" data-close="teamAccountModal">×</button></div>
           <form id="teamUserForm" class="team-user-form">
-            <div class="field">
-              <label>Nom complet</label>
-              <input id="teamUserName" required placeholder="Ex. Sarah Karoui">
-            </div>
-
-            <div class="field">
-              <label>Adresse e-mail</label>
-              <input id="teamUserEmail" type="email" required placeholder="sarah@mondeco.tn">
-            </div>
-
-            <div class="field">
-              <label>Rôle</label>
-              <select id="teamUserRole">
-                <option value="commercial">Commercial</option>
-                <option value="responsable_commercial">Responsable commercial</option>
-                <option value="editor">Éditeur</option>
-                <option value="admin">Administrateur</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label>Mot de passe initial</label>
-              <input id="teamUserPassword" type="password" minlength="8" required placeholder="Minimum 8 caractères">
-            </div>
-
-            <div class="role-help">
-              <div><strong>Commercial</strong><span>Conversations affectées, planning personnel, tâches et notifications.</span></div>
-              <div><strong>Responsable commercial</strong><span>Conversations, planning, tâches et gestion des comptes commerciaux. Aucun accès aux rapports.</span></div>
-              <div><strong>Éditeur</strong><span>Commercial + produits, WooCommerce, instructions, corrections et suivi.</span></div>
-              <div><strong>Administrateur</strong><span>Accès complet, équipe, paramètres, sauvegardes et rapports.</span></div>
-            </div>
-
-            <button class="btn primary" id="createTeamUserBtn" type="submit">
-              Créer le compte
-            </button>
+            <div class="field"><label>Nom complet</label><input id="teamUserName" required placeholder="Ex. Sarah Karoui"></div>
+            <div class="field"><label>Adresse e-mail</label><input id="teamUserEmail" type="email" required placeholder="sarah@mondeco.tn"></div>
+            <div class="field"><label>Rôle</label><select id="teamUserRole"><option value="commercial">Commercial</option><option value="responsable_commercial">Responsable commercial</option><option value="editor">Éditeur</option><option value="admin">Administrateur</option></select><div class="help">Le tableau de planning affiche uniquement les comptes Commercial.</div></div>
+            <div class="field"><label>Mot de passe initial</label><input id="teamUserPassword" type="password" minlength="8" required placeholder="Minimum 8 caractères"></div>
+            <div class="actions"><button class="btn" type="button" data-close="teamAccountModal">Annuler</button><button class="btn primary" id="createTeamUserBtn" type="submit">Créer le compte</button></div>
           </form>
+        </div>
+      </div>
+
+      <div class="modal-backdrop team-simple-modal" id="teamDailyReportModal">
+        <div class="modal">
+          <div class="modal-header"><div><h3 id="simpleReportTitle">Compte rendu</h3><p id="simpleReportSubtitle">—</p></div><button class="close" type="button" data-close="teamDailyReportModal">×</button></div>
+          <div id="simpleDailyReportBody"><div class="empty">Chargement...</div></div>
         </div>
       </div>
     </section>
@@ -7563,6 +7464,8 @@ let teamPresenceOnly = false;
 let teamSchedules = [];
 let teamTasks = [];
 let teamOperations = null;
+let simpleTeamDashboard = null;
+let simpleTeamReportUserId = '';
 let slaUiTimer = null;
 let presenceHeartbeatTimer = null;
 let presenceRefreshTimer = null;
@@ -8541,7 +8444,7 @@ let socialCommentCounts = null;
 let socialCommentFilter = 'all';
 let selectedSocialCommentKey = '';
 let selectedSocialCommentData = null;
-// V6.32.6 — workflow commentaire : réponse publique puis message privé.
+// V6.33.0 — workflow commentaire : réponse publique puis message privé.
 let socialCommentComposeMode = 'public';
 let socialCommentsSyncTimer = null;
 let socialCommentsInitialSyncAttempted = false;
@@ -8800,7 +8703,7 @@ window.replyToSocialComment=async function(){
   try{
     await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
     if(input)input.value='';
-    // V6.32.6 — après la réponse publique, on propose immédiatement l'étape privée.
+    // V6.33.0 — après la réponse publique, on propose immédiatement l'étape privée.
     socialCommentComposeMode=(target.canReplyPrivately!==false&&!target.privateReplySentAt)?'private':'public';
     await openSocialComment(target.key);
     await loadSocialComments();
@@ -9836,7 +9739,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.6 : les conversations réellement à répondre restent en haut.
+        // V6.33.0 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12658,7 +12561,7 @@ window.sendConversationCommercialReply = async function(contact){
       clearConversationVoice();
     }
 
-    // V6.32.6 — le petit badge de la ligne client disparaît immédiatement
+    // V6.33.0 — le petit badge de la ligne client disparaît immédiatement
     // après succès, sans attendre le prochain rafraîchissement de l'Inbox.
     const answeredItem = conversations.find(item => item.contact === contact);
     if(answeredItem){
@@ -14669,6 +14572,7 @@ async function loadTeamPresence(){
 
     renderTeamUsers();
     renderPresenceTimeTable();
+    if(document.getElementById('page-team')?.classList.contains('active')) refreshSimplePresenceOnly();
     return teamPresence;
   }catch(error){
     console.warn(
@@ -15450,23 +15354,11 @@ async function loadTeamReport(){
 }
 
 async function loadTeamAdmin(){
-  if(!['admin','responsable_commercial'].includes(currentUser?.role)){
-    return;
-  }
-
-  const jobs = [
-    loadTeamUsers(),
-    loadTeamPresence(),
-    loadTeamOperations(),
-    loadTeamSchedules(),
-    loadTeamTasks()
-  ];
-
-  if(currentUser?.role === 'admin'){
-    jobs.push(loadTeamReport());
-  }
-
-  await Promise.all(jobs);
+  if(!['admin','responsable_commercial'].includes(currentUser?.role)) return;
+  const input=document.getElementById('simpleTeamDate');
+  if(input&&!input.value) input.value=tunisDateKey();
+  await loadTeamUsers();
+  await Promise.all([loadTeamPresence(),loadSimpleTeamDashboard()]);
 }
 
 document
@@ -15554,8 +15446,8 @@ document
         event.target.reset();
 
         await loadTeamUsers();
-        if(currentUser?.role === 'admin') await loadTeamReport();
-        await loadTeamOperations();
+        closeModal('teamAccountModal');
+        await loadSimpleTeamDashboard(false);
       }catch(error){
         alert(error.message);
       }finally{
@@ -15569,6 +15461,46 @@ document
     }
   );
 
+
+
+// ============================================================
+// V6.33.0 — ÉQUIPE SIMPLE / PLANNING / COMPTE RENDU
+// ============================================================
+function simpleTeamDate(){
+  const el=document.getElementById('simpleTeamDate');
+  if(el&&!el.value)el.value=tunisDateKey();
+  return el?.value||tunisDateKey();
+}
+function simpleChannelChecked(userId,channel){return Boolean(document.querySelector(`[data-simple-user="${CSS.escape(userId)}"][data-channel="${channel}"]`)?.checked)}
+function simplePresenceLabel(p){return p?.status==='online'?'En ligne':p?.status==='idle'?'Inactif':'Hors ligne'}
+function simplePresenceClass(p){return ['online','idle'].includes(p?.status)?p.status:'offline'}
+function simpleScheduleForRow(user){return user?.schedule||{channels:[],startTime:'09:00',endTime:'18:00',planned:false}}
+function simpleNightSchedule(schedule){const s=String(schedule?.startTime||'');const e=String(schedule?.endTime||'');return Boolean((s&&s<'08:00')||(s&&s>='20:00')||(e&&e>'20:00')||(e&&e<='08:00'))}
+async function loadSimpleTeamDashboard(showLoading=true){
+  const host=document.getElementById('simpleTeamRows');if(!host)return null;
+  const date=simpleTeamDate();
+  if(showLoading)host.innerHTML='<tr><td colspan="8"><div class="empty">Chargement...</div></td></tr>';
+  try{simpleTeamDashboard=await apiFetch(`${API}/team/simple-dashboard?date=${encodeURIComponent(date)}`);renderSimpleTeamDashboard();return simpleTeamDashboard}catch(error){host.innerHTML=`<tr><td colspan="8"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;return null}
+}
+function renderSimpleTeamDashboard(){
+  const data=simpleTeamDashboard||{};const users=Array.isArray(data.users)?data.users:[];
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=String(value??0)};
+  set('simpleOnlineCount',users.filter(u=>u.presence?.status==='online').length);set('simpleCommercialCount',users.length);set('simplePlannedCount',users.filter(u=>u.schedule?.planned).length);set('simplePendingCount',users.reduce((s,u)=>s+Number(u.pendingAssigned||0),0));
+  const label=document.getElementById('simpleTeamDateLabel');if(label)label.textContent=data.date||simpleTeamDate();
+  const host=document.getElementById('simpleTeamRows');if(!host)return;
+  if(!users.length){host.innerHTML='<tr><td colspan="8"><div class="empty">Aucun commercial.</div></td></tr>';return;}
+  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp" ${channels.has('whatsapp')?'checked':''}> WA</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram" ${channels.has('instagram')?'checked':''}> IG</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook" ${channels.has('facebook')?'checked':''}> FB</label></div></td><td><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-night">🌙 Horaire nuit</div>':''}</td><td><div class="simple-metric"><strong>${escapeHtml(formatPresenceDuration(user.attendance?.onlineMs||0))}</strong><span>${user.activeDay?'Actif ce jour':'Aucune activité détectée'}</span></div></td><td><div class="simple-metric"><strong>${Number(user.replies||0)}</strong><span>${Number(user.repliesWhileOnline||0)} pendant présence</span></div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Compte rendu</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Modifier</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
+}
+window.saveSimpleTeamSchedule=async function(userId,button){
+  const channels=['whatsapp','instagram','facebook'].filter(c=>simpleChannelChecked(userId,c));const startTime=document.querySelector(`[data-simple-start="${CSS.escape(userId)}"]`)?.value||'09:00';const endTime=document.querySelector(`[data-simple-end="${CSS.escape(userId)}"]`)?.value||'18:00';const state=document.querySelector(`[data-simple-save-state="${CSS.escape(userId)}"]`);const old=button?.textContent;
+  if(button){button.disabled=true;button.textContent='...'}if(state)state.textContent='Enregistrement…';
+  try{await apiFetch(`${API}/team/simple-schedule/${encodeURIComponent(userId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:simpleTeamDate(),channels,startTime,endTime,active:channels.length>0})});if(state)state.textContent='✓ Enregistré';await loadSimpleTeamDashboard(false)}catch(error){if(state)state.textContent='Erreur';alert(error.message)}finally{if(button){button.disabled=false;button.textContent=old||'Enregistrer'}setTimeout(()=>{if(state)state.textContent=''},1800)}
+};
+window.openSimpleDailyReport=async function(userId){simpleTeamReportUserId=userId;const date=simpleTeamDate();openModal('teamDailyReportModal');const body=document.getElementById('simpleDailyReportBody');if(body)body.innerHTML='<div class="empty">Chargement du compte rendu...</div>';try{const report=await apiFetch(`${API}/team/commercial-report/${encodeURIComponent(userId)}?date=${encodeURIComponent(date)}`);renderSimpleDailyReport(report)}catch(error){if(body)body.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`}};
+function renderSimpleDailyReport(report){const d=report?.day||{};const user=report?.user||{};const title=document.getElementById('simpleReportTitle');const sub=document.getElementById('simpleReportSubtitle');if(title)title.textContent=`Compte rendu — ${user.name||user.email||'Commercial'}`;if(sub)sub.textContent=`${report.date||'—'} • ${d.activeDay?'Actif':'Non actif'} • ${d.schedule?.planned?(d.schedule.channels||[]).map(channelDisplayName).join(' + '):'Non planifié'}`;const body=document.getElementById('simpleDailyReportBody');if(!body)return;const replyBy=d.replyByChannel||{};const hist=Array.isArray(report.history)?report.history:[];body.innerHTML=`<div class="simple-report-kpis"><div class="simple-report-kpi"><span>Temps dans MONDECO</span><strong>${escapeHtml(formatPresenceDuration(d.attendance?.onlineMs||0))}</strong><small>${Number(d.attendance?.sessions||0)} session(s)</small></div><div class="simple-report-kpi"><span>Réponses envoyées</span><strong>${Number(d.replies||0)}</strong><small>${Number(d.repliesWhileOnline||0)} pendant présence</small></div><div class="simple-report-kpi"><span>Non répondus affectés</span><strong>${Number(d.pendingAssigned||0)}</strong><small>${Number(d.lateAssigned||0)} en retard actuellement</small></div><div class="simple-report-kpi"><span>Activité de nuit</span><strong>${escapeHtml(formatPresenceDuration(d.nightMs||0))}</strong><small>${Number(d.nightReplies||0)} réponse(s) entre 20h et 08h</small></div></div><div class="simple-report-section"><h4>Détail de la journée</h4><div class="simple-report-grid"><div class="simple-report-line"><strong>Connexion</strong>${d.attendance?.firstSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.firstSeenAt)):'Aucune connexion'} → ${d.attendance?.lastSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.lastSeenAt)):'—'}</div><div class="simple-report-line"><strong>Réseaux planifiés</strong>${d.schedule?.planned?(d.schedule.channels||[]).map(channelDisplayName).join(' + '):'Repos / non planifié'}${d.schedule?.planned?` • ${escapeHtml(d.schedule.startTime)}–${escapeHtml(d.schedule.endTime)}`:''}</div><div class="simple-report-line"><strong>Réponses par réseau</strong>WhatsApp ${Number(replyBy.whatsapp||0)} • Instagram ${Number(replyBy.instagram||0)} • Facebook ${Number(replyBy.facebook||0)}</div><div class="simple-report-line"><strong>Suivi</strong>${Number(d.slaMissed||0)} dossier(s) SLA manqué(s) ce jour • ${Number(d.conversations||0)} conversation(s) traitée(s)</div></div></div><div class="simple-report-section"><h4>Activité des 7 derniers jours</h4><div class="simple-day-list"><div class="simple-day-row header"><div>Date</div><div>Actif</div><div>Temps app</div><div>Réponses</div><div>Réseaux</div></div>${hist.map(x=>`<div class="simple-day-row"><div><strong>${escapeHtml(x.date)}</strong></div><div class="${x.activeDay?'simple-active-yes':'simple-active-no'}">${x.activeDay?'● Actif':'○ Non actif'}</div><div>${escapeHtml(formatPresenceDuration(x.onlineMs||0))}</div><div>${Number(x.replies||0)}</div><div>${x.channels?.length?x.channels.map(channelDisplayName).join(' + '):'—'}${Number(x.nightMs||0)>0?` • 🌙 ${escapeHtml(formatPresenceDuration(x.nightMs))}`:''}</div></div>`).join('')}</div></div>`}
+function formatPresenceLastSeenAbsolute(value){try{return new Intl.DateTimeFormat('fr-TN',{timeZone:'Africa/Tunis',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}catch{return String(value||'—')}}
+function refreshSimplePresenceOnly(){if(!simpleTeamDashboard?.users)return;(teamPresence?.users||[]).forEach(item=>{const user=simpleTeamDashboard.users.find(u=>u.id===item.id);if(user)user.presence=item.presence||user.presence});renderSimpleTeamDashboard()}
+document.getElementById('simpleTeamRefresh')?.addEventListener('click',()=>loadSimpleTeamDashboard());document.getElementById('simpleTeamDate')?.addEventListener('change',()=>loadSimpleTeamDashboard());document.getElementById('openTeamAccountModal')?.addEventListener('click',()=>openModal('teamAccountModal'));
 
 // ============================================================
 // V6.19 — PLANNING / TÂCHES / SLA
@@ -15700,7 +15632,7 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     );
 
 
-    // V6.32.6 — une passe de réparation après connexion enlève les anciens
+    // V6.33.0 — une passe de réparation après connexion enlève les anciens
     // badges rouges hérités des synchronisations Meta/WhatsApp précédentes.
     setTimeout(async()=>{
       try{
