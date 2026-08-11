@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.3
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.5
 // server.js
 //
 // Ajouts V5 :
@@ -31,7 +31,8 @@ const {
   setWhatsAppCallHandler,
   registerCommercialEscalation,
   resolveCommercialSla,
-  processSocialCommentWebhookEntry
+  processSocialCommentWebhookEntry,
+  ensureStorageHeadroom
 } = require('./Admin');
 
 const app = express();
@@ -96,7 +97,7 @@ const FACEBOOK_PAGE_ID =
     ''
   ).trim();
 
-// V6.30.3 — Facebook : sépare Messenger et Pages/Commentaires.
+// V6.30.5 — Facebook : sépare Messenger et Pages/Commentaires.
 // L'ancienne variable FACEBOOK_PAGE_ACCESS_TOKEN reste uniquement comme fallback
 // pour préserver la compatibilité avec les anciens déploiements Railway.
 const FACEBOOK_LEGACY_PAGE_TOKEN =
@@ -403,28 +404,48 @@ function conversationChannel(contact, state = null) {
   return 'whatsapp';
 }
 
+function withStorageRetry(operation, label = 'écriture') {
+  try {
+    return operation();
+  } catch (error) {
+    if (safeString(error?.code) !== 'ENOSPC') throw error;
+    console.warn(`🛟 ENOSPC (${label}) : tentative de libération automatique du Volume.`);
+    try { ensureStorageHeadroom(); } catch {}
+    return operation();
+  }
+}
+
 function writeJsonAtomic(filePath, data) {
-  // V6.20.6 : un nom temporaire unique évite que deux écritures
-  // simultanées se partagent le même .tmp et provoquent ENOENT/HTTP 500.
+  const serialized = JSON.stringify(data, null, 2);
   const tmp = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
 
-  fs.mkdirSync(
-    path.dirname(filePath),
-    { recursive: true }
-  );
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+
+  const attempt = () => {
+    try {
+      fs.writeFileSync(tmp, serialized, 'utf8');
+      fs.renameSync(tmp, filePath);
+    } finally {
+      try {
+        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+      } catch {}
+    }
+  };
 
   try {
-    fs.writeFileSync(
-      tmp,
-      JSON.stringify(data, null, 2),
-      'utf8'
-    );
-
-    fs.renameSync(tmp, filePath);
-  } finally {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {}
+    withStorageRetry(attempt, path.basename(filePath));
+  } catch (error) {
+    // En ultime recours, un fichier JSON existant plus grand que la nouvelle
+    // version peut être compacté directement : le truncate libère immédiatement
+    // ses anciens blocs sur le Volume.
+    let currentSize = 0;
+    try { currentSize = fs.existsSync(filePath) ? Number(fs.statSync(filePath).size || 0) : 0; } catch {}
+    const nextSize = Buffer.byteLength(serialized, 'utf8');
+    if (safeString(error?.code) === 'ENOSPC' && currentSize > nextSize) {
+      fs.writeFileSync(filePath, serialized, 'utf8');
+      return;
+    }
+    throw error;
   }
 }
 
@@ -470,11 +491,11 @@ function isoDateKey(value = new Date()) {
 
 function appendJsonLine(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.appendFileSync(
+  withStorageRetry(() => fs.appendFileSync(
     filePath,
     `${JSON.stringify(value)}\n`,
     'utf8'
-  );
+  ), path.basename(filePath));
 }
 
 function appendPersistentConversationEvent(entry) {
@@ -512,11 +533,11 @@ function persistMessageId(value) {
   persistentMessageIds.add(id);
 
   try {
-    fs.appendFileSync(
+    withStorageRetry(() => fs.appendFileSync(
       MESSAGE_ID_INDEX_PATH,
       `${id}\n`,
       'utf8'
-    );
+    ), 'conversation-message-ids.jsonl');
   } catch (error) {
     console.warn('⚠️ Index message_id non enregistré :', error.message);
   }
@@ -829,10 +850,10 @@ function saveConversationMediaBuffer({
     );
 
   if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(
+    withStorageRetry(() => fs.writeFileSync(
       filePath,
       buffer
-    );
+    ), `média ${filename}`);
   }
 
   return {
@@ -5537,10 +5558,10 @@ async function persistInstagramProfilePicture(
       }
     }
 
-    fs.writeFileSync(
+    withStorageRetry(() => fs.writeFileSync(
       path.join(CONVERSATION_PROFILE_DIR, filename),
       buffer
-    );
+    ), `avatar ${filename}`);
 
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
@@ -5636,7 +5657,7 @@ async function persistFacebookProfilePicture(profilePictureUrl, psid) {
       }
     }
 
-    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    withStorageRetry(() => fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer), `avatar ${filename}`);
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
     console.warn('⚠️ Photo profil Facebook non sauvegardée :', error.message);
