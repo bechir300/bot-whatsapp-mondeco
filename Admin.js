@@ -8336,6 +8336,69 @@ function commercialMissionMetrics(schedule, userId, messageReplies, activities, 
   };
 }
 
+// V6.34.4 — lecture mémoire-sûre des événements nécessaires au pilotage.
+// Le rapport commercial n'a besoin que de la journée demandée (et de la
+// suivante pour les missions qui traversent minuit). Il ne doit surtout pas
+// appeler loadWhatsAppLog(), qui fusionne et met en cache jusqu'à 90 jours
+// d'historique Instagram/Facebook/WhatsApp en RAM.
+function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/Tunis') {
+  const wantedDates = new Set((Array.isArray(localDates) ? localDates : [localDates])
+    .map(safeString)
+    .filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value)));
+  if (!wantedDates.size) return [];
+
+  const candidateFileDays = new Set();
+  for (const date of wantedDates) {
+    // Les journaux conversation-events sont nommés en date UTC. Une journée
+    // locale peut donc chevaucher la veille/le lendemain UTC. Lire ±1 jour
+    // reste borné à quelques fichiers et couvre aussi un changement de fuseau.
+    candidateFileDays.add(teamDateAdd(date, -1));
+    candidateFileDays.add(date);
+    candidateFileDays.add(teamDateAdd(date, 1));
+  }
+
+  const entries = [];
+  const pushIfWanted = item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+    const time = safeString(item.time || item.event_time || item.meta_created_time || item.created_time || item.timestamp);
+    if (!time) return;
+    const localDate = dateKeyInTimezone(time, timezone);
+    if (!wantedDates.has(localDate)) return;
+    entries.push(item);
+  };
+
+  for (const fileDay of candidateFileDays) {
+    const filePath = path.join(CONVERSATION_EVENTS_DIR, `conversation-events-${fileDay}.jsonl`);
+    if (!fs.existsSync(filePath)) continue;
+    try {
+      // Un fichier journal ne contient qu'une journée, donc la mémoire reste
+      // bornée. On ne concatène jamais tous les fichiers de rétention.
+      const content = fs.readFileSync(filePath, 'utf8');
+      for (const line of content.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try { pushIfWanted(JSON.parse(line)); } catch {}
+      }
+    } catch (error) {
+      console.warn(`⚠️ Performance: lecture ${path.basename(filePath)} :`, error.message);
+    }
+  }
+
+  // Compatibilité avec d'anciens déploiements : conversation-log.json est déjà
+  // limité à 5000 entrées. On l'utilise uniquement comme petit filet de
+  // sécurité, puis on déduplique avec le journal append-only.
+  try {
+    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
+    for (const item of live) pushIfWanted(item);
+  } catch {}
+
+  const merged = new Map();
+  for (const entry of entries) {
+    const key = conversationLogDedupeKey(entry);
+    merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
+  }
+  return [...merged.values()].sort(conversationEntryComparator);
+}
+
 function buildTeamPerformanceDashboard(date, onlyUserId = '') {
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const requestedUserId = safeString(onlyUserId);
@@ -8343,10 +8406,11 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
     user.role === 'commercial' &&
     (!requestedUserId || safeString(user.id) === requestedUserId)
   );
-  const log = loadWhatsAppLog();
-  const dayEntries = log.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
+  const nextDate = teamDateAdd(date, 1);
+  const performanceEvents = loadPerformanceConversationEvents([date, nextDate], timezone);
+  const dayEntries = performanceEvents.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
   const activities = loadTeamActivity(date);
-  const missionActivities = [...activities, ...loadTeamActivity(teamDateAdd(date, 1))];
+  const missionActivities = [...activities, ...loadTeamActivity(nextDate)];
   const slaEvents = loadSlaEvents();
   const today = dateKeyInTimezone(new Date(), timezone);
 
@@ -8356,7 +8420,9 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
       safeString(entry?.action) === 'commercial_reply' &&
       safeString(entry?.commercial_user_id) === userId
     );
-    const allUserReplies = log.filter(entry =>
+    // Seulement la journée demandée + le lendemain local pour couvrir une
+    // mission 22:00 → 02:00. Aucun historique 90 jours n'est dupliqué en RAM.
+    const allUserReplies = performanceEvents.filter(entry =>
       safeString(entry?.action) === 'commercial_reply' &&
       safeString(entry?.commercial_user_id) === userId
     );
@@ -8541,7 +8607,12 @@ router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,r
     }).sort((a,b) => (a.presence?.status==='online'?0:a.presence?.status==='idle'?1:2)-(b.presence?.status==='online'?0:b.presence?.status==='idle'?1:2) || safeString(a.name||a.email).localeCompare(safeString(b.name||b.email),'fr'));
 
     const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs > 1500) console.warn(`⚠️ Team simple-dashboard lent: ${elapsedMs} ms (${date}, ${users.length} commerciaux)`);
+    const memory = process.memoryUsage();
+    const rssMb = Math.round(Number(memory.rss || 0) / 1024 / 1024);
+    const heapMb = Math.round(Number(memory.heapUsed || 0) / 1024 / 1024);
+    if (elapsedMs > 1500 || rssMb > 350) {
+      console.warn(`⚠️ Team simple-dashboard: ${elapsedMs} ms | RSS ${rssMb} MB | heap ${heapMb} MB | ${users.length} commerciaux`);
+    }
     return res.json({ date, generatedAt:new Date().toISOString(), elapsedMs, users, performance });
   } catch (error) {
     console.error('❌ Team simple-dashboard :', error);
