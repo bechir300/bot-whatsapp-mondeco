@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.1 — Réponses rapides manuelles uniquement
+   MONDECO V6.32.2 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5629,6 +5629,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .pending-work-pill{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:4px 8px;border:1px solid #e4ded8;border-radius:999px;background:#fff;font-size:9px;font-weight:850;color:#4b4540;cursor:pointer}
 .pending-work-pill strong{font-size:11px;color:#171513}
 .pending-work-pill.total{background:#171513;color:#fff;border-color:#171513}.pending-work-pill.total strong{color:#fff}
+.pending-work-pill.metric{cursor:default;background:#faf9f7}.pending-work-pill.metric.network-whatsapp{border-color:#bde8d1}.pending-work-pill.metric.network-instagram{border-color:#f1c4d9}.pending-work-pill.metric.network-facebook{border-color:#c8daf2}
 .inbox-mode-tab .mode-count.pending{background:#ed1c24}
 .notification-kind-badge{display:inline-flex;align-items:center;margin-left:5px;padding:2px 5px;border-radius:999px;background:#f1eeea;color:#5d5750;font-size:8px;font-weight:850}
 .notification-item.pending-reply{box-shadow:inset 3px 0 0 #ed1c24}
@@ -5639,7 +5640,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.1 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.2 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5842,7 +5843,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.1 — Raccourcis manuels omnicanaux
+   V6.32.2 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6189,7 +6190,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.1</span>
+              <span class="inbox-version">V6.32.2</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -9776,7 +9777,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.1 : les conversations réellement à répondre restent en haut.
+        // V6.32.2 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12631,6 +12632,11 @@ function updatePendingWorkUi(){
   const messages=Math.max(0,Number(counts.messages||0));
   const comments=Math.max(0,Number(counts.comments||0));
   const total=Math.max(0,Number(counts.total||messages+comments));
+  const whatsapp=Math.max(0,Number(counts.whatsapp||0));
+  const instagramMessages=Math.max(0,Number(counts.instagramMessages||0));
+  const facebookMessages=Math.max(0,Number(counts.facebookMessages||0));
+  const instagramComments=Math.max(0,Number(counts.instagramComments||0));
+  const facebookComments=Math.max(0,Number(counts.facebookComments||0));
   const msgBadge=document.getElementById('messagesPendingBadge');
   if(msgBadge){msgBadge.textContent=pendingCountLabel(messages);msgBadge.classList.toggle('hidden',messages<=0);}
   const commentBadge=document.getElementById('commentsPendingBadge');
@@ -12639,7 +12645,34 @@ function updatePendingWorkUi(){
   if(summary){
     summary.innerHTML=`<button class="pending-work-pill total" type="button" onclick="openPendingInteractions()">À répondre <strong>${pendingCountLabel(total)}</strong></button>`+
       `<button class="pending-work-pill" type="button" onclick="openPendingMessages()">💬 Messages <strong>${pendingCountLabel(messages)}</strong></button>`+
-      `<button class="pending-work-pill" type="button" onclick="openPendingComments()">💭 Commentaires <strong>${pendingCountLabel(comments)}</strong></button>`;
+      `<span class="pending-work-pill metric network-whatsapp" title="Conversations WhatsApp qui attendent une réponse">WA <strong>${pendingCountLabel(whatsapp)}</strong></span>`+
+      `<span class="pending-work-pill metric network-instagram" title="Messages Instagram qui attendent une réponse">IG msg <strong>${pendingCountLabel(instagramMessages)}</strong></span>`+
+      `<span class="pending-work-pill metric network-facebook" title="Messages Facebook Messenger qui attendent une réponse">FB msg <strong>${pendingCountLabel(facebookMessages)}</strong></span>`+
+      `<button class="pending-work-pill" type="button" onclick="openPendingComments()">💭 Commentaires <strong>${pendingCountLabel(comments)}</strong></button>`+
+      `<span class="pending-work-pill metric network-instagram" title="Commentaires Instagram qui attendent une réponse">IG com <strong>${pendingCountLabel(instagramComments)}</strong></span>`+
+      `<span class="pending-work-pill metric network-facebook" title="Commentaires Facebook qui attendent une réponse">FB com <strong>${pendingCountLabel(facebookComments)}</strong></span>`;
+  }
+
+  // Les compteurs des filtres de canal indiquent le volume actif total ;
+  // leur infobulle précise maintenant le nombre réellement à répondre.
+  const channelHints={
+    whatsapp:['filterCountWhatsApp',whatsapp,'conversations WhatsApp'],
+    instagram:['filterCountInstagram',instagramMessages,'messages Instagram'],
+    facebook:['filterCountFacebook',facebookMessages,'messages Facebook']
+  };
+  for(const [channel,[id,pending,label]] of Object.entries(channelHints)){
+    const countEl=document.getElementById(id);
+    const button=countEl?.closest?.('.inbox-filter');
+    if(button) button.title=`${countEl?.textContent||'0'} ${label} actives • ${pendingCountLabel(pending)} à répondre`;
+  }
+  const commentHints=[
+    ['commentCountInstagram',instagramComments,'commentaires Instagram'],
+    ['commentCountFacebook',facebookComments,'commentaires Facebook']
+  ];
+  for(const [id,pending,label] of commentHints){
+    const countEl=document.getElementById(id);
+    const button=countEl?.closest?.('.inbox-filter');
+    if(button) button.title=`${countEl?.textContent||'0'} ${label} actifs • ${pendingCountLabel(pending)} à répondre`;
   }
 }
 
