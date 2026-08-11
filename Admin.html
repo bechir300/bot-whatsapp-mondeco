@@ -3873,7 +3873,7 @@ tbody tr:hover{
 
 
 /* ==========================================================
-   MONDECO V6.32.2 — Réponses rapides manuelles uniquement
+   MONDECO V6.32.3 — Réponses rapides manuelles uniquement
    ========================================================== */
 .quick-reply-box{
   margin-bottom:7px;
@@ -5640,7 +5640,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.32.2 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.32.3 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5843,7 +5843,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.32.2 — Raccourcis manuels omnicanaux
+   V6.32.3 — Raccourcis manuels omnicanaux
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6190,7 +6190,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.32.2</span>
+              <span class="inbox-version">V6.32.3</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -9777,7 +9777,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.32.2 : les conversations réellement à répondre restent en haut.
+        // V6.32.3 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12598,6 +12598,19 @@ window.sendConversationCommercialReply = async function(contact){
     if(conversationVoiceFile){
       clearConversationVoice();
     }
+
+    // V6.32.3 — le petit badge de la ligne client disparaît immédiatement
+    // après succès, sans attendre le prochain rafraîchissement de l'Inbox.
+    const answeredItem = conversations.find(item => item.contact === contact);
+    if(answeredItem){
+      answeredItem.unreadCount = 0;
+      answeredItem.pendingReply = false;
+    }
+    if(selectedConversationData?.contact === contact && selectedConversationData?.state){
+      selectedConversationData.state.unreadCount = 0;
+    }
+    renderConversationsList();
+
     await loadConversations();
     await refreshPendingCountsNow();
     await window.openConversation(contact);
