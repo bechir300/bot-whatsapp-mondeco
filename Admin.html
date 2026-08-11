@@ -6108,6 +6108,255 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 @media(max-width:1100px){.performance-summary{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){.performance-summary{grid-template-columns:repeat(2,1fr)}.team-edit-grid{grid-template-columns:1fr}.team-edit-grid .field.full{grid-column:auto}.night-mission-grid{grid-template-columns:1fr 1fr}.team-control-tabs{width:100%}.team-control-tab{flex:1}}
 
+
+
+/* ==========================================================
+   MONDECO V6.34.6 — MOBILE LAYOUT STABLE
+   Une seule source de vérité pour la hauteur iPhone/tablette.
+   ========================================================== */
+@media(max-width:900px){
+  /* Le bandeau MONDECO fait 66px. La page Inbox occupe exactement le reste
+     du viewport dynamique, sans 100vh/min-height concurrents. */
+  body.inbox-page-active{
+    overflow:hidden !important;
+    height:100dvh !important;
+  }
+  body.inbox-page-active .main{
+    position:fixed !important;
+    top:66px !important;
+    right:0 !important;
+    bottom:0 !important;
+    left:0 !important;
+    width:auto !important;
+    height:auto !important;
+    min-height:0 !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations{
+    position:absolute !important;
+    inset:0 !important;
+    width:auto !important;
+    height:auto !important;
+    min-height:0 !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-shell{
+    position:absolute !important;
+    inset:0 !important;
+    width:auto !important;
+    height:auto !important;
+    min-height:0 !important;
+    max-height:none !important;
+    border-radius:0 !important;
+    border-left:0 !important;
+    border-right:0 !important;
+    border-bottom:0 !important;
+    overflow:hidden !important;
+  }
+
+  /* Vue liste : barre omnicanale en haut, liste qui remplit tout le reste. */
+  #page-conversations:not(.has-selection) .inbox-shell{
+    grid-template-rows:auto minmax(0,1fr) !important;
+  }
+  #page-conversations:not(.has-selection) .inbox-left{
+    display:flex !important;
+    height:auto !important;
+    min-height:0 !important;
+    overflow:hidden !important;
+  }
+  #page-conversations:not(.has-selection) .inbox-conversation-list{
+    flex:1 1 auto !important;
+    height:auto !important;
+    min-height:0 !important;
+    overflow-y:auto !important;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+    padding-bottom:max(10px,env(safe-area-inset-bottom,0px)) !important;
+  }
+
+  /* Vue conversation : pas de barre de filtres au-dessus. Retour = liste. */
+  #page-conversations.has-selection .inbox-commandbar{
+    display:none !important;
+  }
+  #page-conversations.has-selection .inbox-shell{
+    grid-template-rows:minmax(0,1fr) !important;
+  }
+  #page-conversations.has-selection .inbox-center{
+    grid-row:1 !important;
+    display:flex !important;
+    height:auto !important;
+    min-height:0 !important;
+    overflow:hidden !important;
+  }
+
+  /* En-tête conversation volontairement minimal. */
+  #page-conversations .inbox-conversation-header{
+    flex:0 0 auto !important;
+    min-height:58px !important;
+    max-height:none !important;
+    padding:6px 7px !important;
+    gap:5px !important;
+    align-items:center !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-header-left{
+    flex:1 1 auto !important;
+    min-width:0 !important;
+    gap:6px !important;
+    align-items:center !important;
+  }
+  #page-conversations .inbox-header-avatar,
+  #page-conversations .inbox-conversation-header .inbox-avatar{
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+  }
+  #page-conversations .inbox-header-identity{min-width:0 !important}
+  #page-conversations .inbox-header-name{
+    font-size:13px !important;
+    line-height:1.15 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-sub{
+    margin-top:1px !important;
+    font-size:9px !important;
+    line-height:1.15 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-state{
+    margin-top:2px !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:4px !important;
+    font-size:9px !important;
+    line-height:1.15 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+  }
+  #page-conversations .inbox-header-state-main{display:none !important}
+  #page-conversations .inbox-header-state-sla{
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+  #page-conversations .inbox-header-actions{
+    flex:0 0 auto !important;
+    width:auto !important;
+    max-width:none !important;
+    overflow:visible !important;
+    gap:4px !important;
+  }
+  #page-conversations .inbox-header-action-label{display:none !important}
+  #page-conversations .inbox-header-action-icon{
+    display:block !important;
+    font-size:17px !important;
+    line-height:1 !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle,
+  #page-conversations .inbox-header-actions .wa-call-header-btn{
+    display:grid !important;
+    place-items:center !important;
+    flex:0 0 38px !important;
+    width:38px !important;
+    min-width:38px !important;
+    max-width:38px !important;
+    height:38px !important;
+    min-height:38px !important;
+    max-height:38px !important;
+    padding:0 !important;
+    border-radius:50% !important;
+    font-size:0 !important;
+    overflow:hidden !important;
+    text-indent:0 !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle::before,
+  #page-conversations .inbox-header-actions .wa-call-header-btn::before{
+    content:none !important;
+    display:none !important;
+  }
+
+  /* Fil de discussion : il prend tout l'espace restant et scrolle seul. */
+  #page-conversations .inbox-thread{
+    flex:1 1 auto !important;
+    min-height:0 !important;
+    height:auto !important;
+    overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+    padding:10px 10px 12px !important;
+  }
+  #page-conversations .inbox-message-row{margin:7px 0 !important}
+  #page-conversations .inbox-message-wrap{max-width:86% !important}
+  #page-conversations .inbox-message-label{font-size:9px !important;margin-bottom:3px !important}
+  #page-conversations .inbox-bubble{
+    padding:9px 11px !important;
+    font-size:14px !important;
+    line-height:1.42 !important;
+    text-align:left !important;
+  }
+  #page-conversations .inbox-message-meta{font-size:8px !important}
+
+  /* Carte pub normale dans le flux, jamais flottante. */
+  #page-conversations .inbox-ad-origin-sticky{
+    position:static !important;
+    inset:auto !important;
+    flex:0 0 auto !important;
+    margin:0 0 6px !important;
+  }
+
+  /* Composer = dernier enfant du flex, pas sticky : aucun espace blanc sous lui. */
+  #page-conversations .inbox-composer-host{
+    flex:0 0 auto !important;
+    min-height:0 !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:visible !important;
+    background:#fff !important;
+  }
+  #page-conversations .inbox-composer{
+    position:relative !important;
+    inset:auto !important;
+    bottom:auto !important;
+    margin:0 !important;
+    box-shadow:0 -1px 0 #e5dfd9,0 -6px 16px rgba(24,20,17,.04) !important;
+  }
+  #page-conversations .whatsapp-composer,
+  #page-conversations .whatsapp-composer.is-compact{
+    padding:7px 7px max(7px,env(safe-area-inset-bottom,0px)) !important;
+  }
+  #page-conversations .wa-composer-desktop-hint{display:none !important}
+}
+
+@media(max-width:390px){
+  #page-conversations .inbox-mobile-back{
+    flex:0 0 36px !important;
+    width:36px !important;
+    height:36px !important;
+  }
+  #page-conversations .inbox-header-avatar,
+  #page-conversations .inbox-conversation-header .inbox-avatar{
+    flex-basis:36px !important;
+    width:36px !important;
+    height:36px !important;
+  }
+  #page-conversations .inbox-header-actions .inbox-customer-toggle,
+  #page-conversations .inbox-header-actions .wa-call-header-btn{
+    flex-basis:35px !important;
+    width:35px !important;
+    min-width:35px !important;
+    max-width:35px !important;
+    height:35px !important;
+    min-height:35px !important;
+    max-height:35px !important;
+  }
+}
 </style>
 </head>
 
@@ -10230,13 +10479,13 @@ function renderConversationHeader(
 
   const external=conversationExternalContact(item);
   const channelIdentity=channel==='instagram'
-    ? `Instagram • ${escapeHtml(external)}`
+    ? 'Instagram'
     : channel==='facebook'
-      ? `Facebook Messenger • ${escapeHtml(external)}`
-      : `WhatsApp • +${escapeHtml(external)}`;
+      ? 'Facebook Messenger'
+      : 'WhatsApp';
 
   const stateText=limitedCommercial
-    ? '💬 RÉPONSE AUTORISÉE'
+    ? ''
     : facebook
       ? '🔵 FACEBOOK MESSENGER • RÉPONSE COMMERCIALE AUTORISÉE'
       : paused
@@ -10254,19 +10503,20 @@ function renderConversationHeader(
           ${channelIdentity}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
+        ${(stateText || Number.isFinite(selectedSlaRemaining)) ? `
         <div class="inbox-header-state ${facebook ? 'ai' : paused ? 'human' : 'ai'}">
-          ${stateText}
-          ${Number.isFinite(selectedSlaRemaining) ? ` • ${escapeHtml(formatSlaHuman(selectedSlaRemaining))}` : ''}
-        </div>
+          ${stateText ? `<span class="inbox-header-state-main">${stateText}</span>` : ''}
+          ${Number.isFinite(selectedSlaRemaining) ? `<span class="inbox-header-state-sla">${escapeHtml(formatSlaHuman(selectedSlaRemaining))}</span>` : ''}
+        </div>` : ''}
         ${state?.adReferral ? `<div class="inbox-access-note">📣 Pub Meta : ${escapeHtml(state.adReferral.productHint || state.adReferral.headline || 'origine publicitaire détectée')}</div>` : ''}
       </div>
     </div>
 
     <div class="inbox-header-actions">
       <button class="inbox-header-btn ${state.favorite ? 'active' : ''}" type="button" onclick="toggleConversationFavorite('${escapeHtml(contact)}', ${state.favorite ? 'false' : 'true'})" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 15 jours'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
-      <button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()" title="Afficher la fiche client">👤 Fiche client</button>
+      <button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()" title="Afficher la fiche client"><span class="inbox-header-action-icon">👤</span><span class="inbox-header-action-label">Fiche client</span></button>
       ${channel === 'whatsapp'
-        ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')" title="Appeler ce client sur WhatsApp">📞 Appel WhatsApp</button>`
+        ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')" title="Appeler ce client sur WhatsApp"><span class="inbox-header-action-icon">📞</span><span class="inbox-header-action-label">Appel WhatsApp</span></button>`
         : ''}
       ${limitedCommercial
         ? `<span class="inbox-header-btn" style="cursor:default">💬 Réponse ouverte</span><span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Non affectée')}</span>`
