@@ -5610,6 +5610,210 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .notification-network-dot.whatsapp{background:#25d366}.notification-network-dot.instagram{background:#c13584}.notification-network-dot.facebook{background:#1877f2}
 @media(max-width:760px){.pending-work-summary{width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}.pending-work-pill{flex:0 0 auto}}
 
+
+
+/* ==========================================================
+   MONDECO V6.29 — UX 10/10 : lisibilité + mobile interactions
+   ========================================================== */
+/* Desktop : lisibilité sans perdre la densité CRM. */
+#page-conversations .inbox-item-name{font-size:13px !important}
+#page-conversations .inbox-item-preview{font-size:11px !important;line-height:1.42 !important}
+.social-comment-author{font-size:12px}
+.social-comment-preview{font-size:11px;line-height:1.45}
+.social-comment-posthint{font-size:9px}
+.comment-card-text{font-size:12px;line-height:1.5}
+.comment-card-author{font-size:10.5px}
+
+/* Focus clavier : visible au clavier, utile aux commerciaux travaillant vite. */
+#page-conversations button:focus-visible,
+#page-conversations a:focus-visible,
+#page-conversations input:focus-visible,
+#page-conversations textarea:focus-visible{
+  outline:3px solid rgba(237,28,36,.22) !important;
+  outline-offset:2px;
+}
+
+@media(max-width:900px){
+  /* Le choix Messages / Commentaires DOIT rester visible sur téléphone. */
+  #page-conversations .inbox-commandbar{
+    grid-template-columns:minmax(0,1fr) auto !important;
+    grid-template-areas:
+      "modes modes"
+      "search actions"
+      "filters filters"
+      "status status" !important;
+    align-items:center;
+    gap:7px 8px !important;
+    padding:7px 7px 8px !important;
+  }
+  #page-conversations .inbox-command-brand{
+    grid-area:modes !important;
+    display:block !important;
+    min-width:0 !important;
+    width:100%;
+  }
+  #page-conversations .inbox-command-brand .inbox-title-line,
+  #page-conversations .inbox-command-brand .inbox-mini-sub,
+  #page-conversations .inbox-command-brand .pending-work-summary{
+    display:none !important;
+  }
+  #page-conversations .inbox-mode-tabs{
+    display:grid !important;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    width:100% !important;
+    margin:0 !important;
+    padding:3px !important;
+    gap:3px !important;
+    border-radius:12px;
+  }
+  #page-conversations .inbox-mode-tab{
+    min-height:42px !important;
+    width:100%;
+    justify-content:center;
+    padding:7px 10px !important;
+    border-radius:9px !important;
+    font-size:12px !important;
+    letter-spacing:0 !important;
+  }
+  #page-conversations .mode-count{
+    min-width:20px;height:20px;font-size:9px;
+  }
+
+  /* Recherche lisible + actions qui ne peuvent plus écraser le champ. */
+  .inbox-command-search{grid-area:search !important;min-width:120px}
+  .inbox-command-actions{
+    grid-area:actions !important;
+    max-width:46vw;
+    overflow-x:auto;
+    overflow-y:hidden;
+    justify-content:flex-start !important;
+    scrollbar-width:none;
+  }
+  .inbox-command-actions::-webkit-scrollbar{display:none}
+  .inbox-toolbar-btn{
+    flex:0 0 42px !important;
+    width:42px !important;
+    min-width:42px !important;
+    height:42px !important;
+    padding:0 !important;
+    border-radius:11px !important;
+    font-size:13px !important;
+  }
+  #page-conversations .inbox-command-search .inbox-search{
+    min-height:42px !important;
+    height:42px !important;
+    padding:0 12px !important;
+  }
+
+  /* Filtres : vrais boutons tactiles, défilement horizontal évident. */
+  #page-conversations .inbox-command-filters{
+    scroll-snap-type:x proximity;
+    padding:1px 0 3px !important;
+  }
+  #page-conversations .inbox-command-filters .inbox-filter{
+    min-height:38px !important;
+    padding:7px 11px !important;
+    font-size:11px !important;
+    scroll-snap-align:start;
+  }
+
+  /* Liste des messages/commentaires : lecture confortable au doigt. */
+  #page-conversations .inbox-conversation-item,
+  #page-conversations .social-comment-item{
+    min-height:88px !important;
+    padding:11px 10px !important;
+  }
+  .social-comment-item{
+    grid-template-columns:44px minmax(0,1fr) auto !important;
+    gap:9px !important;
+  }
+  .social-comment-avatar{width:44px;height:44px;flex-basis:44px;font-size:15px}
+  .social-comment-author{font-size:13px !important}
+  .social-comment-preview{font-size:12.5px !important;line-height:1.42 !important;-webkit-line-clamp:2}
+  .social-comment-posthint{font-size:10px !important;line-height:1.3}
+  .social-comment-side{font-size:10px !important}
+  .comment-badge{font-size:9px !important;padding:3px 6px !important}
+
+  /* Détail commentaire : texte et boutons adaptés téléphone. */
+  .comment-detail-shell{padding:10px 8px 138px !important}
+  .social-post-card{border-radius:13px}
+  .social-post-caption{padding:11px 12px;font-size:14px !important;line-height:1.5 !important}
+  .social-post-link{font-size:11px !important}
+  .comment-thread-title strong{font-size:14px !important}
+  .comment-thread-title span{font-size:11px !important}
+  .comment-card{padding:11px 10px !important;border-radius:12px}
+  .comment-card.reply{margin-left:14px !important}
+  .comment-card-avatar{width:34px;height:34px;flex-basis:34px;font-size:11px}
+  .comment-card-author{font-size:12px !important;flex-wrap:wrap}
+  .comment-card-time{font-size:10px !important}
+  .comment-card-text{font-size:14px !important;line-height:1.5 !important}
+  .comment-card-meta .comment-badge{font-size:9px !important}
+
+  /* En-tête détail : retour toujours visible et actions accessibles. */
+  #page-conversations .inbox-conversation-header{
+    min-height:62px;
+    padding:8px !important;
+  }
+  #page-conversations .inbox-header-main,
+  #page-conversations .inbox-header-left{
+    min-width:0;
+  }
+  #page-conversations .inbox-mobile-back{
+    display:inline-grid !important;
+    flex:0 0 42px;
+    width:42px;height:42px;
+    place-items:center;
+    border-radius:11px;
+    font-size:20px;
+  }
+  #page-conversations .inbox-header-copy strong,
+  #page-conversations .inbox-header-name{font-size:13px !important}
+  #page-conversations .inbox-header-copy span,
+  #page-conversations .inbox-header-sub{font-size:10px !important}
+  #page-conversations .inbox-header-actions{
+    max-width:45%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;
+  }
+  #page-conversations .inbox-header-actions::-webkit-scrollbar{display:none}
+  #page-conversations .inbox-header-btn{
+    min-height:40px !important;
+    flex:0 0 auto;
+    padding:7px 9px !important;
+    font-size:10px !important;
+  }
+
+  /* Composer commentaire : actions de modération faciles à toucher. */
+  .social-comment-composer{
+    padding:8px 7px calc(8px + env(safe-area-inset-bottom,0px)) !important;
+  }
+  .social-comment-compose-row textarea{
+    min-height:46px !important;
+    font-size:16px !important; /* évite le zoom iOS */
+    line-height:1.4 !important;
+    resize:none !important;
+  }
+  .social-comment-send{
+    width:46px !important;height:46px !important;border-radius:13px !important;
+  }
+  .social-comment-action{
+    min-height:38px !important;
+    padding:7px 10px !important;
+    font-size:10px !important;
+  }
+
+  /* Les statuts de sync restent informatifs sans voler l'écran. */
+  .inbox-sync-statuses{overflow-x:auto !important;scrollbar-width:none}
+  .inbox-sync-statuses::-webkit-scrollbar{display:none}
+  .inbox-sync-status{flex:0 0 auto;max-width:78vw !important;font-size:9px !important}
+}
+
+@media(max-width:420px){
+  #page-conversations .inbox-commandbar{gap:6px !important;padding:6px !important}
+  #page-conversations .inbox-mode-tab{font-size:11.5px !important}
+  .inbox-command-actions{max-width:43vw}
+  #page-conversations .inbox-command-filters .inbox-filter{font-size:10.5px !important}
+  .social-comment-posthint{max-width:230px}
+}
+
 </style>
 </head>
 
@@ -5916,7 +6120,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.28.0</span>
+              <span class="inbox-version">V6.29.0</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8285,6 +8489,12 @@ function resetInteractionDetail(){
 
 window.setInboxInteractionMode = async function(mode){
   inboxInteractionMode = mode === 'comments' ? 'comments' : 'messages';
+  // V6.29 : un changement Messages / Commentaires revient toujours à la liste.
+  // Sur mobile, conserver has-selection masquait toute la liste du nouvel onglet.
+  const inboxPage=document.getElementById('page-conversations');
+  inboxPage?.classList.remove('has-selection','inbox-focus','customer-panel-open');
+  updateInboxFocusButton?.();
+  updateCustomerPanelButton?.();
   // Invalide immédiatement toute requête de l'autre onglet encore en vol.
   if(inboxInteractionMode==='comments') conversationLoadGeneration++;
   else socialCommentsLoadGeneration++;
@@ -8411,15 +8621,27 @@ function renderSocialCommentComposer(target){
 function renderSocialCommentDetail(data){
   const selected=data?.comment||{};const post=data?.post||{};const thread=Array.isArray(data?.thread)?data.thread:[];
   const header=document.getElementById('inboxConversationHeader');const detail=document.getElementById('conversationDetail');
-  if(header) header.innerHTML=`<div class="inbox-header-main"><div class="inbox-header-avatar comment-header-photo ${escapeHtml(selected.channel||'')}"><span>${selected.channel==='instagram'?'IG':'FB'}</span>${selected.authorAvatar?`<img src="${escapeHtml(selected.authorAvatar)}" alt="Photo profil" onerror="this.remove()">`:''}</div><div class="inbox-header-copy"><strong>${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Client'))}</strong><span>${escapeHtml(commentChannelLabel(selected.channel))} • Commentaire sur publication</span></div></div><div class="inbox-header-actions"><button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleInboxCustomerPanel()">👤 Contexte</button>${post?.permalink?`<a class="inbox-header-btn" href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">↗ Publication</a>`:''}</div>`;
+  if(header) header.innerHTML=`<div class="inbox-header-main"><button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()" aria-label="Retour aux commentaires">←</button><div class="inbox-header-avatar comment-header-photo ${escapeHtml(selected.channel||'')}"><span>${selected.channel==='instagram'?'IG':'FB'}</span>${selected.authorAvatar?`<img src="${escapeHtml(selected.authorAvatar)}" alt="Photo profil" onerror="this.remove()">`:''}</div><div class="inbox-header-copy"><strong>${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Client'))}</strong><span>${escapeHtml(commentChannelLabel(selected.channel))} • Commentaire sur publication</span></div></div><div class="inbox-header-actions"><button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()">👤 Contexte</button>${post?.permalink?`<a class="inbox-header-btn" href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">↗ Publication</a>`:''}</div>`;
   if(detail){detail.className='inbox-thread';detail.innerHTML=`<div class="comment-detail-shell">${commentPostHtml(post,selected.channel)}<div class="comment-thread-title"><strong>💭 Tous les commentaires de cette publication</strong><span>${thread.length} interaction${thread.length>1?'s':''}</span></div>${data?.refreshError?`<div class="social-comment-warning">⚠️ Mise à jour Meta partielle : ${escapeHtml(data.refreshError)}</div>`:''}${!post?.caption&&!post?.mediaUrl&&!post?.thumbnailUrl?'<div class="social-comment-warning">Meta a signalé le commentaire mais n’a pas encore fourni le contenu complet de la publication. Utilisez 💭 ↻ ou vérifiez les permissions de lecture des publications.</div>':''}<div class="comment-thread">${thread.length?(()=>{const ids=new Set(thread.map(item=>item.commentId));return thread.map(item=>renderSocialCommentCard(item,selectedSocialCommentKey,Boolean(item.parentId&&ids.has(item.parentId)))).join('')})():'<div class="empty">Aucun autre commentaire.</div>'}</div></div>`;}
   renderSocialCommentComposer(selected);
-  const panel=document.getElementById('inboxCustomerPanel');if(panel)panel.innerHTML=`<div class="inbox-drawer-head"><div><strong>Contexte commentaire</strong><span>${escapeHtml(commentChannelLabel(selected.channel))}</span></div><button class="inbox-drawer-close" onclick="toggleInboxCustomerPanel(false)">×</button></div><div style="padding:14px"><div class="customer-card"><strong>Client</strong><div class="manager-item-meta">${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Non identifié par Meta'))}</div></div><div class="customer-card" style="margin-top:10px"><strong>Publication</strong><div class="manager-item-meta">${escapeHtml(String(post?.caption||'').slice(0,220)||post?.postId||selected.postId||'—')}</div></div><div class="customer-card" style="margin-top:10px"><strong>Modération</strong><div class="manager-item-meta">${selected.isHidden?'Commentaire actuellement masqué':'Commentaire visible'}${selected.privateReplySentAt?' • Réponse privée déjà envoyée':''}</div></div></div>`;
+  const panel=document.getElementById('inboxCustomerPanel');if(panel)panel.innerHTML=`<div class="inbox-drawer-head"><div><strong>Contexte commentaire</strong><span>${escapeHtml(commentChannelLabel(selected.channel))}</span></div><button class="inbox-drawer-close" onclick="toggleCustomerPanel(false)">×</button></div><div style="padding:14px"><div class="customer-card"><strong>Client</strong><div class="manager-item-meta">${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Non identifié par Meta'))}</div></div><div class="customer-card" style="margin-top:10px"><strong>Publication</strong><div class="manager-item-meta">${escapeHtml(String(post?.caption||'').slice(0,220)||post?.postId||selected.postId||'—')}</div></div><div class="customer-card" style="margin-top:10px"><strong>Modération</strong><div class="manager-item-meta">${selected.isHidden?'Commentaire actuellement masqué':'Commentaire visible'}${selected.privateReplySentAt?' • Réponse privée déjà envoyée':''}</div></div></div>`;
 }
 
 window.openSocialComment=async function(key){
-  if(!key)return;selectedSocialCommentKey=key;renderSocialCommentsList();
-  try{const data=await apiFetch(`${API}/social-comments/${encodeURIComponent(key)}?refresh=1`);selectedSocialCommentData=data;renderSocialCommentDetail(data);await loadSocialComments();}catch(error){alert(error.message);}
+  if(!key)return;
+  selectedSocialCommentKey=key;
+  // V6.29 : comme openConversation(), active la vue détail sur mobile.
+  document.getElementById('page-conversations')?.classList.add('has-selection');
+  renderSocialCommentsList();
+  try{
+    const data=await apiFetch(`${API}/social-comments/${encodeURIComponent(key)}?refresh=1`);
+    selectedSocialCommentData=data;
+    renderSocialCommentDetail(data);
+    await loadSocialComments();
+  }catch(error){
+    // En cas d'erreur, on laisse l'utilisateur revenir facilement à la liste.
+    alert(error.message);
+  }
 };
 window.selectSocialCommentTarget=function(key){if(!selectedSocialCommentData)return;const item=(selectedSocialCommentData.thread||[]).find(x=>x.key===key);if(!item)return;selectedSocialCommentKey=key;selectedSocialCommentData.comment=item;renderSocialCommentDetail(selectedSocialCommentData);renderSocialCommentsList();};
 
