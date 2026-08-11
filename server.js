@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.1
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.2
 // server.js
 //
 // Ajouts V5 :
@@ -96,7 +96,7 @@ const FACEBOOK_PAGE_ID =
     ''
   ).trim();
 
-// V6.30.1 — Facebook : sépare Messenger et Pages/Commentaires.
+// V6.30.2 — Facebook : sépare Messenger et Pages/Commentaires.
 // L'ancienne variable FACEBOOK_PAGE_ACCESS_TOKEN reste uniquement comme fallback
 // pour préserver la compatibilité avec les anciens déploiements Railway.
 const FACEBOOK_LEGACY_PAGE_TOKEN =
