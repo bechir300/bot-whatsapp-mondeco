@@ -1,5 +1,5 @@
 // ============================================================
-// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.30.5
+// MONDECO - AGENT WHATSAPP + INSTAGRAM + FACEBOOK + COMMENTAIRES + IA + RESPONSABLE COMMERCIAL + SLA — V6.31.0
 // server.js
 //
 // Ajouts V5 :
@@ -32,7 +32,8 @@ const {
   registerCommercialEscalation,
   resolveCommercialSla,
   processSocialCommentWebhookEntry,
-  ensureStorageHeadroom
+  ensureStorageHeadroom,
+  storeCloudAssetBuffer
 } = require('./Admin');
 
 const app = express();
@@ -97,7 +98,7 @@ const FACEBOOK_PAGE_ID =
     ''
   ).trim();
 
-// V6.30.5 — Facebook : sépare Messenger et Pages/Commentaires.
+// V6.31.0 — Facebook : sépare Messenger et Pages/Commentaires.
 // L'ancienne variable FACEBOOK_PAGE_ACCESS_TOKEN reste uniquement comme fallback
 // pour préserver la compatibilité avec les anciens déploiements Railway.
 const FACEBOOK_LEGACY_PAGE_TOKEN =
@@ -288,7 +289,7 @@ console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.22.0');
+console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.31.0');
 console.log(
   '=============================================='
 );
@@ -788,7 +789,7 @@ function normalizeConversationMediaType(value) {
   return 'file';
 }
 
-function saveConversationMediaBuffer({
+async function saveConversationMediaBuffer({
   buffer,
   mimetype,
   type = 'file',
@@ -843,20 +844,21 @@ function saveConversationMediaBuffer({
   const filename =
     `${safeChannel}-${safeDirection}-${safeMessageId}-${Number(index) || 0}.${extension}`;
 
-  const filePath =
-    path.join(
-      CONVERSATION_MEDIA_DIR,
-      filename
-    );
 
-  if (!fs.existsSync(filePath)) {
-    withStorageRetry(() => fs.writeFileSync(
-      filePath,
-      buffer
-    ), `média ${filename}`);
-  }
+const filePath = path.join(CONVERSATION_MEDIA_DIR, filename);
+const cloudEntry = await storeCloudAssetBuffer({
+  buffer,
+  mimetype: safeString(mimetype) || 'application/octet-stream',
+  filename,
+  kind: 'media'
+});
 
-  return {
+// Fallback local uniquement si Cloudinary est absent ou refuse l'asset.
+if (!cloudEntry && !fs.existsSync(filePath)) {
+  withStorageRetry(() => fs.writeFileSync(filePath, buffer), `média ${filename}`);
+}
+
+return {
     type:
       normalizedType,
     name:
@@ -874,7 +876,8 @@ function saveConversationMediaBuffer({
       buffer.length,
     url:
       `/admin/conversation-media/${encodeURIComponent(filename)}`,
-    filename
+    filename,
+    cloudStored: Boolean(cloudEntry)
   };
 }
 
@@ -1030,7 +1033,7 @@ async function persistInstagramAttachments(
         );
 
       saved.push(
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -1163,7 +1166,7 @@ async function persistFacebookAttachments(
         );
 
       saved.push(
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer,
           mimetype,
           type,
@@ -2346,7 +2349,7 @@ async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '')
       response.headers.get('content-type') ||
       (mediaType === 'video' ? 'video/mp4' : 'image/jpeg');
 
-    const saved = saveConversationMediaBuffer({
+    const saved = await saveConversationMediaBuffer({
       buffer,
       mimetype,
       type: mediaType,
@@ -4852,7 +4855,7 @@ setCommercialSendHandler(
           safeString(result?.media?.messages?.[0]?.id) ||
           safeString(result?.messages?.[0]?.id) ||
           crypto.randomUUID();
-        const savedMedia = saveConversationMediaBuffer({
+        const savedMedia = await saveConversationMediaBuffer({
           buffer: file.buffer,
           mimetype: safeString(file.mimetype),
           type: sentMediaKind === 'document' ? 'file' : sentMediaKind,
@@ -5558,12 +5561,20 @@ async function persistInstagramProfilePicture(
       }
     }
 
-    withStorageRetry(() => fs.writeFileSync(
-      path.join(CONVERSATION_PROFILE_DIR, filename),
-      buffer
-    ), `avatar ${filename}`);
 
-    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+const cloudEntry = await storeCloudAssetBuffer({
+  buffer,
+  mimetype: response.headers.get('content-type') || 'image/jpeg',
+  filename,
+  kind: 'profile'
+});
+if (!cloudEntry) {
+  withStorageRetry(() => fs.writeFileSync(
+    path.join(CONVERSATION_PROFILE_DIR, filename),
+    buffer
+  ), `avatar ${filename}`);
+}
+return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
     console.warn(
       '⚠️ Photo profil Instagram non sauvegardée :',
@@ -5657,7 +5668,15 @@ async function persistFacebookProfilePicture(profilePictureUrl, psid) {
       }
     }
 
-    withStorageRetry(() => fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer), `avatar ${filename}`);
+    const cloudEntry = await storeCloudAssetBuffer({
+      buffer,
+      mimetype: response.headers.get('content-type') || 'image/jpeg',
+      filename,
+      kind: 'profile'
+    });
+    if (!cloudEntry) {
+      withStorageRetry(() => fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer), `avatar ${filename}`);
+    }
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch (error) {
     console.warn('⚠️ Photo profil Facebook non sauvegardée :', error.message);
@@ -7990,7 +8009,7 @@ async function processSingleMessage(message) {
           );
 
         const savedMedia =
-          saveConversationMediaBuffer({
+          await saveConversationMediaBuffer({
             buffer:
               preparedWhatsAppImage.buffer,
             mimetype:
@@ -8618,7 +8637,7 @@ async function processWhatsAppImage(
         );
 
       const savedMedia =
-        saveConversationMediaBuffer({
+        await saveConversationMediaBuffer({
           buffer:
             image.buffer,
           mimetype:
