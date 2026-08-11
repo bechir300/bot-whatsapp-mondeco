@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.30.5
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.31.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -66,7 +66,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.30.5 — deux tokens Facebook indépendants :
+// V6.31.0 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -92,11 +92,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.30.5 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.31.0 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.30.5 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.31.0 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -139,6 +139,36 @@ const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
+
+
+// V6.31.0 — les médias de conversations et avatars quittent le Volume Railway.
+// Railway conserve uniquement les données structurées; Cloudinary devient le
+// stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
+// navigateur : les routes /admin/conversation-* restent protégées par auth et
+// servent/proxifient l'asset depuis le cloud.
+const CLOUDINARY_CLOUD_NAME = safeEnvValue(process.env.CLOUDINARY_CLOUD_NAME);
+const CLOUDINARY_API_KEY = safeEnvValue(process.env.CLOUDINARY_API_KEY);
+const CLOUDINARY_API_SECRET = safeEnvValue(process.env.CLOUDINARY_API_SECRET);
+const CLOUDINARY_ROOT_FOLDER = (
+  safeEnvValue(process.env.CLOUDINARY_MONDECO_FOLDER) || 'mondeco'
+).replace(/[^a-zA-Z0-9_\/-]/g, '').replace(/^\/+|\/+$/g, '') || 'mondeco';
+const CLOUD_STORAGE_ENABLED = Boolean(
+  CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET
+);
+const CLOUD_MEDIA_MANIFEST_PATH = path.join(DATA_DIR, 'cloud-media-manifest.jsonl');
+const CLOUD_MIGRATION_STATE_PATH = path.join(DATA_DIR, 'cloud-media-migration.json');
+const CLOUD_MIGRATION_BATCH_FILES = Math.max(
+  10,
+  Math.min(1000, Number(process.env.CLOUDINARY_MIGRATION_BATCH_FILES || 150) || 150)
+);
+const CLOUD_MIGRATION_INTERVAL_MS = Math.max(
+  60 * 1000,
+  (Number(process.env.CLOUDINARY_MIGRATION_MINUTES || 5) || 5) * 60 * 1000
+);
+
+function safeEnvValue(value) {
+  return String(value ?? '').trim();
+}
 
 const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 const JSON_BACKUPS_DIR = path.join(BACKUPS_DIR, 'json');
@@ -198,7 +228,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.30.5 — garde-fou permanent contre ENOSPC.
+// V6.31.0 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -428,6 +458,294 @@ function humanBytes(bytes) {
   return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+
+// ============================================================
+// V6.31.0 — CLOUDINARY / CLOUD STORAGE
+// ============================================================
+
+let cloudManifestLoaded = false;
+const cloudManifest = new Map();
+let cloudMigrationRunning = false;
+let cloudMigrationLastResult = null;
+
+function cloudManifestKey(kind, filename) {
+  const safeKind = safeString(kind) === 'profile' ? 'profile' : 'media';
+  return `${safeKind}:${path.basename(safeString(filename))}`;
+}
+
+function loadCloudManifest() {
+  if (cloudManifestLoaded) return cloudManifest;
+  cloudManifestLoaded = true;
+  try {
+    if (!fs.existsSync(CLOUD_MEDIA_MANIFEST_PATH)) return cloudManifest;
+    const lines = fs.readFileSync(CLOUD_MEDIA_MANIFEST_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        const key = safeString(entry?.key) || cloudManifestKey(entry?.kind, entry?.filename);
+        if (key && safeString(entry?.secureUrl)) cloudManifest.set(key, entry);
+      } catch {}
+    }
+  } catch (error) {
+    console.warn('⚠️ Manifest Cloudinary illisible :', error.message);
+  }
+  return cloudManifest;
+}
+
+function cloudManifestEntry(kind, filename) {
+  return loadCloudManifest().get(cloudManifestKey(kind, filename)) || null;
+}
+
+function appendCloudManifestEntry(entry) {
+  const normalized = {
+    ...entry,
+    key: cloudManifestKey(entry?.kind, entry?.filename),
+    filename: path.basename(safeString(entry?.filename)),
+    updatedAt: new Date().toISOString()
+  };
+  if (!normalized.filename || !safeString(normalized.secureUrl)) {
+    throw new Error('Entrée Cloudinary incomplète.');
+  }
+  // Une ligne JSONL est beaucoup moins coûteuse qu'une réécriture atomique de
+  // tout le manifeste lorsque le Volume est déjà proche de sa limite.
+  try { ensureStorageHeadroom(); } catch {}
+  fs.mkdirSync(path.dirname(CLOUD_MEDIA_MANIFEST_PATH), { recursive: true });
+  fs.appendFileSync(CLOUD_MEDIA_MANIFEST_PATH, `${JSON.stringify(normalized)}\n`, 'utf8');
+  loadCloudManifest().set(normalized.key, normalized);
+  return normalized;
+}
+
+function cloudinarySignedParams(params) {
+  const stringToSign = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
+  return crypto
+    .createHash('sha1')
+    .update(`${stringToSign}${CLOUDINARY_API_SECRET}`)
+    .digest('hex');
+}
+
+function cloudPublicId(filename) {
+  const base = path.basename(safeString(filename), path.extname(safeString(filename)))
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 100) || crypto.randomUUID();
+  return base;
+}
+
+async function cloudinaryUploadBuffer({ buffer, mimetype, filename, kind = 'media' }) {
+  if (!CLOUD_STORAGE_ENABLED) return null;
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Fichier Cloudinary vide.');
+
+  const safeKind = kind === 'profile' ? 'profile' : 'media';
+  const folder = `${CLOUDINARY_ROOT_FOLDER}/${safeKind === 'profile' ? 'profiles' : 'conversations'}`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const publicId = cloudPublicId(filename);
+  const params = {
+    folder,
+    overwrite: 'true',
+    public_id: publicId,
+    timestamp
+  };
+  const signature = cloudinarySignedParams(params);
+  const form = new FormData();
+  form.append('api_key', CLOUDINARY_API_KEY);
+  form.append('timestamp', String(timestamp));
+  form.append('folder', folder);
+  form.append('overwrite', 'true');
+  form.append('public_id', publicId);
+  form.append('signature', signature);
+  form.append(
+    'file',
+    new Blob([buffer], { type: safeString(mimetype) || 'application/octet-stream' }),
+    path.basename(safeString(filename) || 'asset.bin')
+  );
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  let response;
+  try {
+    response = await fetch(
+      `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/auto/upload`,
+      { method: 'POST', body: form, signal: controller.signal }
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let body = {};
+  try { body = await response.json(); } catch {}
+  if (!response.ok || !safeString(body?.secure_url)) {
+    throw new Error(
+      safeString(body?.error?.message) || `Cloudinary HTTP ${response.status}`
+    );
+  }
+
+  return appendCloudManifestEntry({
+    kind: safeKind,
+    filename: path.basename(filename),
+    secureUrl: safeString(body.secure_url),
+    publicId: safeString(body.public_id),
+    resourceType: safeString(body.resource_type),
+    format: safeString(body.format),
+    bytes: Number(body.bytes || buffer.length || 0),
+    createdAt: safeString(body.created_at) || new Date().toISOString()
+  });
+}
+
+async function storeCloudAssetBuffer(options = {}) {
+  if (!CLOUD_STORAGE_ENABLED) return null;
+  try {
+    return await cloudinaryUploadBuffer(options);
+  } catch (error) {
+    console.warn(`⚠️ Cloudinary ${safeString(options?.kind) || 'media'} :`, error.message);
+    return null;
+  }
+}
+
+function mimeFromFilename(filename) {
+  const ext = path.extname(safeString(filename)).toLowerCase();
+  const map = {
+    '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.gif':'image/gif',
+    '.mp4':'video/mp4','.mov':'video/quicktime','.webm':'video/webm',
+    '.mp3':'audio/mpeg','.m4a':'audio/mp4','.ogg':'audio/ogg','.wav':'audio/wav',
+    '.pdf':'application/pdf','.txt':'text/plain','.doc':'application/msword',
+    '.docx':'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls':'application/vnd.ms-excel','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+async function proxyCloudAsset(req, res, entry, { profile = false } = {}) {
+  if (!entry || !safeString(entry.secureUrl)) return false;
+  try {
+    const headers = {};
+    if (safeString(req.headers?.range)) headers.Range = req.headers.range;
+    const upstream = await fetch(entry.secureUrl, { headers });
+    if (!upstream.ok && upstream.status !== 206) return false;
+    res.status(upstream.status);
+    for (const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified']) {
+      const value = upstream.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+    res.setHeader('Cache-Control', profile ? 'private, max-age=86400' : 'private, max-age=3600');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.end(buffer);
+    return true;
+  } catch (error) {
+    console.warn('⚠️ Lecture Cloudinary impossible :', error.message);
+    return false;
+  }
+}
+
+function cloudStorageStats() {
+  const manifest = loadCloudManifest();
+  let mediaAssets = 0;
+  let profileAssets = 0;
+  let bytes = 0;
+  for (const entry of manifest.values()) {
+    if (entry?.kind === 'profile') profileAssets += 1;
+    else mediaAssets += 1;
+    bytes += Number(entry?.bytes || 0);
+  }
+  return {
+    configured: CLOUD_STORAGE_ENABLED,
+    cloudName: CLOUD_STORAGE_ENABLED ? CLOUDINARY_CLOUD_NAME : '',
+    rootFolder: CLOUDINARY_ROOT_FOLDER,
+    manifestAssets: manifest.size,
+    mediaAssets,
+    profileAssets,
+    migratedBytes: bytes,
+    localMediaBytes: pathSizeBytes(CONVERSATION_MEDIA_DIR),
+    localProfileBytes: pathSizeBytes(CONVERSATION_PROFILE_DIR),
+    migrationRunning: cloudMigrationRunning,
+    lastMigration: cloudMigrationLastResult
+  };
+}
+
+async function migrateCloudDirectory(directory, kind, budget) {
+  const result = { scanned: 0, migrated: 0, freedBytes: 0, failed: 0 };
+  if (!CLOUD_STORAGE_ENABLED || !fs.existsSync(directory) || budget <= 0) return result;
+  const files = fs.readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isFile() && !entry.name.startsWith('.'))
+    .map(entry => entry.name);
+
+  for (const filename of files) {
+    if (result.scanned >= budget) break;
+    result.scanned += 1;
+    const filePath = path.join(directory, filename);
+    try {
+      const existing = cloudManifestEntry(kind, filename);
+      if (existing) {
+        const size = Number(fs.statSync(filePath).size || 0);
+        fs.unlinkSync(filePath);
+        result.migrated += 1;
+        result.freedBytes += size;
+        continue;
+      }
+      const buffer = fs.readFileSync(filePath);
+      const entry = await cloudinaryUploadBuffer({
+        buffer,
+        mimetype: mimeFromFilename(filename),
+        filename,
+        kind
+      });
+      if (!entry) throw new Error('Cloudinary sans résultat.');
+      const size = Number(fs.statSync(filePath).size || buffer.length || 0);
+      fs.unlinkSync(filePath);
+      result.migrated += 1;
+      result.freedBytes += size;
+    } catch (error) {
+      result.failed += 1;
+      console.warn(`⚠️ Migration Cloudinary ${kind}/${filename} :`, error.message);
+    }
+  }
+  return result;
+}
+
+async function runCloudStorageMigration({ maxFiles = CLOUD_MIGRATION_BATCH_FILES } = {}) {
+  if (!CLOUD_STORAGE_ENABLED) {
+    return { configured: false, migrated: 0, freedBytes: 0, error: 'Cloudinary non configuré.' };
+  }
+  if (cloudMigrationRunning) return { configured: true, running: true, skipped: true };
+  cloudMigrationRunning = true;
+  const startedAt = new Date().toISOString();
+  try {
+    // Obtenir d'abord quelques Mo de marge si Railway est déjà au bord de ENOSPC.
+    try { ensureStorageHeadroom(); } catch {}
+    const media = await migrateCloudDirectory(CONVERSATION_MEDIA_DIR, 'media', maxFiles);
+    const remaining = Math.max(0, maxFiles - media.scanned);
+    const profiles = await migrateCloudDirectory(CONVERSATION_PROFILE_DIR, 'profile', remaining);
+    const result = {
+      configured: true,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      scanned: media.scanned + profiles.scanned,
+      migrated: media.migrated + profiles.migrated,
+      failed: media.failed + profiles.failed,
+      freedBytes: media.freedBytes + profiles.freedBytes,
+      localMediaBytes: pathSizeBytes(CONVERSATION_MEDIA_DIR),
+      localProfileBytes: pathSizeBytes(CONVERSATION_PROFILE_DIR)
+    };
+    cloudMigrationLastResult = result;
+    try { writeJsonAtomic(CLOUD_MIGRATION_STATE_PATH, result); } catch {}
+    if (result.migrated) {
+      console.log('☁️ MONDECO Cloudinary migration', {
+        migrated: result.migrated,
+        freed: humanBytes(result.freedBytes),
+        remainingMedia: humanBytes(result.localMediaBytes),
+        remainingProfiles: humanBytes(result.localProfileBytes)
+      });
+    }
+    return result;
+  } finally {
+    cloudMigrationRunning = false;
+  }
+}
+
 function pathSizeBytes(targetPath) {
   try {
     if (!targetPath || !fs.existsSync(targetPath)) return 0;
@@ -650,22 +968,25 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // Les avatars sont un cache cosmétique : en urgence on les régénère ensuite.
-    if (fs.existsSync(CONVERSATION_PROFILE_DIR)) {
-      freed += removePathForStorageRescue(CONVERSATION_PROFILE_DIR, 'conversation-profile (cache)');
-      try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
-    }
+    // V6.31.0 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // leur migration. Le transfert cloud démarre juste après le Storage Rescue
+    // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
+    // l'ancien comportement d'urgence.
+    if (!CLOUD_STORAGE_ENABLED) {
+      if (fs.existsSync(CONVERSATION_PROFILE_DIR)) {
+        freed += removePathForStorageRescue(CONVERSATION_PROFILE_DIR, 'conversation-profile (cache)');
+        try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
+      }
 
-    // Les médias des conversations favorites restent protégés. Les autres médias
-    // plus anciens que quelques jours sont supprimés seulement en mode urgence.
-    const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteConversationContacts());
-    const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    freed += pruneFilesOlderThan(
-      CONVERSATION_MEDIA_DIR,
-      mediaCutoff,
-      'conversation-media urgence',
-      { recursive: true, preserveBasenames: favoriteMedia }
-    );
+      const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteConversationContacts());
+      const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+      freed += pruneFilesOlderThan(
+        CONVERSATION_MEDIA_DIR,
+        mediaCutoff,
+        'conversation-media urgence',
+        { recursive: true, preserveBasenames: favoriteMedia }
+      );
+    }
   } catch (error) {
     console.warn('⚠️ Storage Rescue urgence :', error.message);
   } finally {
@@ -888,7 +1209,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.30.5 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.31.0 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1023,7 +1344,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.30.5 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.31.0 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -1911,7 +2232,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.30.5 : écriture atomique avec garde-fou ENOSPC.
+  // V6.31.0 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -2832,7 +3153,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.30.5 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
+// V6.31.0 — RÉPONSES RAPIDES AUTOMATIQUES DEPUIS LE CATALOGUE
 // /opera, /nuage, /gloria... utilisent les données réellement enregistrées.
 // Ces réponses sont générées à la volée : elles n'occupent pas d'espace
 // supplémentaire dans /data et suivent automatiquement les mises à jour produit.
@@ -3478,7 +3799,31 @@ function saveBotSettings(settings) {
 // V6.20.4 : tenter d'abord de libérer uniquement les copies de sauvegarde
 // redondantes. Cela permet à un Volume Railway Free presque plein de retrouver
 // quelques dizaines de Mo avant le test d'écriture strict.
+console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
+  ? `✅ Cloudinary actif (${CLOUDINARY_CLOUD_NAME}/${CLOUDINARY_ROOT_FOLDER})`
+  : '⚠️ Cloudinary non configuré — fallback Railway actif');
+
 runStartupStorageRescue();
+
+
+// V6.31.0 — migration progressive des octets locaux vers Cloudinary.
+// Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
+// écrire le petit manifeste avant de supprimer chaque fichier local migré.
+if (CLOUD_STORAGE_ENABLED) {
+  const cloudStartupTimer = setTimeout(() => {
+    runCloudStorageMigration({ maxFiles: CLOUD_MIGRATION_BATCH_FILES })
+      .catch(error => console.warn('⚠️ Migration Cloudinary démarrage :', error.message));
+  }, 12000);
+  if (typeof cloudStartupTimer.unref === 'function') cloudStartupTimer.unref();
+
+  const cloudMigrationTimer = setInterval(() => {
+    const stats = cloudStorageStats();
+    if (stats.localMediaBytes <= 0 && stats.localProfileBytes <= 0) return;
+    runCloudStorageMigration({ maxFiles: CLOUD_MIGRATION_BATCH_FILES })
+      .catch(error => console.warn('⚠️ Migration Cloudinary périodique :', error.message));
+  }, CLOUD_MIGRATION_INTERVAL_MS);
+  if (typeof cloudMigrationTimer.unref === 'function') cloudMigrationTimer.unref();
+}
 ensurePersistenceSafety();
 migrateLegacyData();
 initializePersistentInstructions();
@@ -3489,7 +3834,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.30.5 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.31.0 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -5468,35 +5813,29 @@ router.get(
 router.get(
   '/conversation-media/:filename',
   requireAuth,
-  (req, res) => {
-    const filename =
-      path.basename(req.params.filename || '');
-
+  async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
     if (!filename) return res.sendStatus(404);
+    const filePath = path.join(CONVERSATION_MEDIA_DIR, filename);
 
-    const filePath =
-      path.join(
-        CONVERSATION_MEDIA_DIR,
-        filename
-      );
-
-    if (!fs.existsSync(filePath)) {
-      return res.sendStatus(404);
-    }
-
-    res.setHeader(
-      'Cache-Control',
-      'private, max-age=3600'
-    );
-    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; sandbox");
-
     const extension = path.extname(filename).toLowerCase();
     if (['.pdf','.doc','.docx','.bin'].includes(extension)) {
       res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[\"\r\n]/g, '')}"`);
     }
 
-    return res.sendFile(filePath);
+    // Compatibilité : pendant la migration, les anciens fichiers locaux restent
+    // servis. Dès qu'un asset est migré, le même URL /admin/... continue à marcher
+    // mais les octets sont lus depuis Cloudinary sans réoccuper le Volume Railway.
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.sendFile(filePath);
+    }
+
+    const entry = cloudManifestEntry('media', filename);
+    if (entry && await proxyCloudAsset(req, res, entry)) return;
+    return res.sendStatus(404);
   }
 );
 
@@ -5504,29 +5843,18 @@ router.get(
 router.get(
   '/conversation-profile/:filename',
   requireAuth,
-  (req, res) => {
-    const filename =
-      path.basename(req.params.filename || '');
-
+  async (req, res) => {
+    const filename = path.basename(req.params.filename || '');
     if (!filename) return res.sendStatus(404);
-
-    const filePath =
-      path.join(
-        CONVERSATION_PROFILE_DIR,
-        filename
-      );
-
-    if (!fs.existsSync(filePath)) {
-      return res.sendStatus(404);
+    const filePath = path.join(CONVERSATION_PROFILE_DIR, filename);
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.sendFile(filePath);
     }
-
-    res.setHeader(
-      'Cache-Control',
-      'private, max-age=86400'
-    );
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-
-    return res.sendFile(filePath);
+    const entry = cloudManifestEntry('profile', filename);
+    if (entry && await proxyCloudAsset(req, res, entry, { profile: true })) return;
+    return res.sendStatus(404);
   }
 );
 
@@ -13307,12 +13635,17 @@ async function persistInstagramHistoryProfilePicture(
       }
     }
 
-    fs.writeFileSync(
-      path.join(CONVERSATION_PROFILE_DIR, filename),
-      buffer
-    );
 
-    return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
+const cloudEntry = await storeCloudAssetBuffer({
+  buffer,
+  mimetype: response.headers.get('content-type') || 'image/jpeg',
+  filename,
+  kind: 'profile'
+});
+if (!cloudEntry) {
+  fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+}
+return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch {
     return '';
   }
@@ -14377,8 +14710,9 @@ async function persistFacebookHistoryAttachments(message) {
       const type=facebookHistoryMediaType(item,mimetype);
       const extension=facebookHistoryMediaExtension(mimetype,type);
       const filename=`facebook-history-${messageId}-${index}.${extension}`;
+      const cloudEntry = await storeCloudAssetBuffer({ buffer, mimetype, filename, kind: 'media' });
       const filePath=path.join(CONVERSATION_MEDIA_DIR,filename);
-      if(!fs.existsSync(filePath)) fs.writeFileSync(filePath,buffer);
+      if(!cloudEntry && !fs.existsSync(filePath)) fs.writeFileSync(filePath,buffer);
       stored.push({
         type,
         sourceType:safeString(item?.type)||type,
@@ -14387,6 +14721,7 @@ async function persistFacebookHistoryAttachments(message) {
         size:buffer.length,
         url:`/admin/conversation-media/${encodeURIComponent(filename)}`,
         filename,
+        cloudStored:Boolean(cloudEntry),
         metaAttachmentId:safeString(item?.id)
       });
     }catch(error){
@@ -14448,7 +14783,13 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
       }
     }
 
-    fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
+    const cloudEntry = await storeCloudAssetBuffer({
+      buffer,
+      mimetype: response.headers.get('content-type') || 'image/jpeg',
+      filename,
+      kind: 'profile'
+    });
+    if (!cloudEntry) fs.writeFileSync(path.join(CONVERSATION_PROFILE_DIR, filename), buffer);
     return `/admin/conversation-profile/${encodeURIComponent(filename)}`;
   } catch {
     return '';
@@ -14820,7 +15161,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.30.5 — récupération sûre après une panne de webhook/token.
+// V6.31.0 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -14972,7 +15313,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.30.5 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.31.0 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15080,7 +15421,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.30.5 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.31.0 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15489,7 +15830,7 @@ router.post(
 // ============================================================
 
 
-// V6.30.5 — diagnostic sans exposer les secrets.
+// V6.31.0 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -16815,7 +17156,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.30.5 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.31.0 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -16829,7 +17170,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.30.5 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.31.0 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -17723,6 +18064,9 @@ router.get(
       breakdown:
         storageBreakdown(),
 
+      cloudStorage:
+        cloudStorageStats(),
+
       productsFile:
         fs.existsSync(PRODUCTS_PATH),
 
@@ -17821,6 +18165,23 @@ router.post(
   }
 );
 
+
+
+router.post(
+  '/api/storage-cloud-migrate',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const maxFiles = Math.max(10, Math.min(1000, Number(req.body?.maxFiles || CLOUD_MIGRATION_BATCH_FILES) || CLOUD_MIGRATION_BATCH_FILES));
+      const result = await runCloudStorageMigration({ maxFiles });
+      return res.json({ success: true, ...result, cloudStorage: cloudStorageStats() });
+    } catch (error) {
+      console.error('❌ Migration Cloudinary :', error);
+      return res.status(500).json({ error: error.message || 'Migration Cloudinary impossible.' });
+    }
+  }
+);
+
 router.get(
   '/api/stats',
   requireAuth,
@@ -17910,5 +18271,7 @@ module.exports = {
   registerCommercialEscalation,
   resolveCommercialSla,
   processSocialCommentWebhookEntry,
-  ensureStorageHeadroom
+  ensureStorageHeadroom,
+  storeCloudAssetBuffer,
+  cloudManifestEntry
 };
