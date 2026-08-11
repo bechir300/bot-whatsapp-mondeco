@@ -5294,9 +5294,15 @@ body.inbox-page-active .main{
 
 .inbox-sync-statuses{grid-area:status;display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;max-width:460px}
 .inbox-sync-status{
-  max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  padding:5px 7px;border:1px solid #eadfce;border-radius:8px;background:#fffaf1;color:#8b5b18;font-size:8px;font-weight:750;
+  max-width:310px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  padding:6px 9px;border:1px solid #ded8d2;border-radius:999px;background:#fff;color:#514b46;font-size:9.5px;font-weight:850;
 }
+.inbox-sync-status.sync-ok{border-color:#bfe3cd;background:#f2fbf5;color:#12613b}
+.inbox-sync-status.sync-running{border-color:#bfd6f4;background:#f4f8ff;color:#245b9d}
+.inbox-sync-status.sync-warning{border-color:#ead5a6;background:#fff9eb;color:#8b5b18}
+.inbox-sync-status.sync-error{border-color:#efbcbc;background:#fff3f3;color:#a91f26}
+.inbox-sync-status.sync-idle{border-color:#ded8d2;background:#faf9f7;color:#6a625c}
+
 
 /* Liste et conversation : 2 colonnes par défaut */
 #page-conversations .inbox-left{
@@ -5613,7 +5619,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.30.3 — Facebook stable + raccourcis + favoris + 15 jours
+   MONDECO V6.30.5 — Facebook stable + raccourcis + favoris + 15 jours
    ========================================================== */
 /* Desktop : lisibilité sans perdre la densité CRM. */
 #page-conversations .inbox-item-name{font-size:13px !important}
@@ -5816,7 +5822,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   V6.30.3 — Commandes /produit omnicanales
+   V6.30.5 — Commandes /produit omnicanales
    ========================================================== */
 .wa-input-shell{position:relative}
 .wa-slash-suggestions{
@@ -6162,7 +6168,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.30.3</span>
+              <span class="inbox-version">V6.30.5</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8845,6 +8851,91 @@ function openAllNewMessages(){
   showPage('conversations');
 }
 
+function syncStatusTime(value){
+  const raw = String(value || '').trim();
+  if(!raw) return '';
+  const d = new Date(raw);
+  if(Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+}
+
+function setInboxSyncStatus(el, state, text, detail = ''){
+  if(!el) return;
+  el.style.display = '';
+  el.classList.remove('sync-ok','sync-running','sync-warning','sync-error','sync-idle');
+  el.classList.add(`sync-${state || 'idle'}`);
+  el.textContent = text;
+  el.title = detail || text;
+}
+
+function renderFacebookRealtimeBadge(status = {}){
+  const el = document.getElementById('facebookRealtimeStatus');
+  if(!el) return;
+
+  if(status?.configured === false){
+    setInboxSyncStatus(el,'warning','⚠ FB Messenger · non configuré','Ajoutez FACEBOOK_PAGE_ID et FACEBOOK_MESSENGER_TOKEN dans Railway.');
+    return;
+  }
+
+  if(status?.running){
+    setInboxSyncStatus(el,'running','⟳ FB Messenger · vérification en cours…','Contrôle des nouvelles conversations Facebook Messenger en cours.');
+    return;
+  }
+
+  const error = String(status?.lastError || status?.error || '').trim();
+  if(error){
+    setInboxSyncStatus(el,'error','✕ FB Messenger · erreur de synchro',error);
+    return;
+  }
+
+  const lastAt = String(status?.lastSuccessfulAt || status?.lastCompletedAt || '').trim();
+  const time = syncStatusTime(lastAt);
+  const imported = Number(status?.importedMessages || 0);
+  const inbound = Number(status?.importedInbound || 0);
+  const scanned = Number(status?.conversationsScanned || 0);
+  const subscribed = status?.webhookMessagesSubscribed;
+  const latest = String(status?.latestGraphConversationAt || '').trim();
+
+  if(!lastAt){
+    setInboxSyncStatus(el,'idle','FB Messenger · attente du 1er contrôle','Le premier contrôle automatique démarre quelques secondes après le chargement.');
+    return;
+  }
+
+  const suffix = time ? ` · ${time}` : '';
+  if(subscribed === false){
+    setInboxSyncStatus(
+      el,
+      'warning',
+      `⚠ FB Messenger · webhook inactif${suffix}`,
+      `Dernier contrôle de secours : ${time || 'effectué'} · ${scanned} conversation(s) récente(s) vérifiée(s) · ${imported} message(s) importé(s). Le webhook « messages » doit être réparé.`
+    );
+    return;
+  }
+
+  const text = imported > 0
+    ? `✓ FB Messenger · +${imported} nouveau${imported > 1 ? 'x' : ''}${suffix}`
+    : `✓ FB Messenger · vérifié${suffix} · 0 nouveau`;
+  const webhookText = subscribed === true ? 'Webhook messages actif.' : 'État webhook non confirmé lors de ce contrôle.';
+  setInboxSyncStatus(
+    el,
+    'ok',
+    text,
+    `${webhookText} ${scanned} conversation(s) récente(s) vérifiée(s) · ${inbound} message(s) entrant(s) importé(s)${latest ? ` · Dernière activité Meta : ${formatShortDateTime(latest)}` : ''}. Contrôle de secours automatique environ toutes les 60 s.`
+  );
+}
+
+async function refreshFacebookRealtimeBadge(){
+  const el = document.getElementById('facebookRealtimeStatus');
+  try{
+    const status = await apiFetch(`${API}/facebook-realtime/status`);
+    renderFacebookRealtimeBadge(status);
+  }catch(error){
+    if(el){
+      setInboxSyncStatus(el,'error','✕ FB Messenger · statut indisponible',String(error?.message || 'Impossible de lire le statut Facebook.'));
+    }
+  }
+}
+
 function renderInstagramHistoryStatus(status = {}){
   const button = document.getElementById('syncInstagramHistoryBtn');
   const label = document.getElementById('instagramHistorySyncStatus');
@@ -8859,7 +8950,7 @@ function renderInstagramHistoryStatus(status = {}){
 
   if(!status.configured){
     button.disabled = true;
-    label.textContent = 'Instagram : historique non disponible — vérifiez la configuration Railway.';
+    setInboxSyncStatus(label,'warning','⚠ Instagram · non configuré','Vérifiez INSTAGRAM_ACCESS_TOKEN et INSTAGRAM_ACCOUNT_ID dans Railway.');
     return;
   }
 
@@ -8873,9 +8964,9 @@ function renderInstagramHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Instagram : historique 15 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 15 jours atteint` : ``}`;
+      setInboxSyncStatus(label,'running','⟳ Instagram · synchronisation…',`Historique 15 jours : ${listed} discussion(s) détectée(s) · page ${Number(status.listPages || 0) || 1}.`);
     }else{
-      label.textContent = `Instagram : import 15 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) sans contenu détaillé Meta` : ''}`;
+      setInboxSyncStatus(label,'running',`⟳ Instagram · ${done}/${total || listed || '…'} discussions`,`${discovered || imported} ID message(s) trouvés · ${imported} importé(s)${unavailable ? ` · ${unavailable} sans contenu détaillé Meta` : ''}.`);
     }
     return;
   }
@@ -8891,14 +8982,14 @@ function renderInstagramHistoryStatus(status = {}){
     const warning = String(status.warning || '').trim();
     const lastError = String(status.lastError || '').trim();
     if(lastError && errors){
-      label.textContent = `Instagram : synchronisation terminée avec erreur • ${lastError}`;
+      setInboxSyncStatus(label,'error','✕ Instagram · erreur de synchro',lastError);
     }else if(total === 0){
-      label.textContent = `Instagram : Meta retourne 0 conversation. ${warning || 'Vérifiez le compte Instagram professionnel, le token, les permissions de messagerie et le niveau d’accès Meta.'}`;
+      setInboxSyncStatus(label,'warning','⚠ Instagram · 0 conversation',warning || 'Meta retourne 0 conversation. Vérifiez le compte Instagram professionnel, le token et les permissions de messagerie.');
     }else{
-      label.textContent = `Instagram : historique 15 jours synchronisé • ${total} discussions • ${discovered || imported} ID message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} ancien(s) : contenu détaillé non fourni par Meta (limite 20 récents/discussion)` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      setInboxSyncStatus(label,'ok',`✓ Instagram · à jour${syncStatusTime(status.completedAt) ? ` · ${syncStatusTime(status.completedAt)}` : ''}`,`${total} discussion(s) · ${imported} message(s) importé(s)${unavailable ? ` · ${unavailable} sans détail Meta` : ''}${errors ? ` · ${errors} erreur(s)` : ''}.`);
     }
   }else{
-    label.textContent = 'Instagram : ancien historique pas encore synchronisé.';
+    setInboxSyncStatus(label,'idle','Instagram · historique non lancé','Cliquez sur IG ↻ pour lancer l’historique Instagram 15 jours.');
   }
 }
 
@@ -8947,7 +9038,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
     const label = document.getElementById('instagramHistorySyncStatus');
     if(label && canManageInstagramHistory()){
       label.style.display = '';
-      label.textContent = `Instagram : impossible de lire l’état de synchronisation — ${error.message}`;
+      setInboxSyncStatus(label,'error','✕ Instagram · statut indisponible',error.message);
     }
   }
 }
@@ -8990,7 +9081,7 @@ function renderFacebookHistoryStatus(status = {}){
 
   if(!status.configured){
     button.disabled = true;
-    label.textContent = 'Facebook : historique non disponible — ajoutez FACEBOOK_PAGE_ID et FACEBOOK_MESSENGER_TOKEN dans Railway.';
+    setInboxSyncStatus(label,'warning','⚠ FB historique · non configuré','Ajoutez FACEBOOK_PAGE_ID et FACEBOOK_MESSENGER_TOKEN dans Railway.');
     return;
   }
 
@@ -9004,9 +9095,9 @@ function renderFacebookHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 15 jours… ${listed} discussion(s) récentes détectée(s) • page ${Number(status.listPages || 0) || 1}${status.cutoffReached ? ` • seuil 15 jours atteint` : ``}`;
+      setInboxSyncStatus(label,'running','⟳ FB historique · synchronisation…',`${pageName || 'Facebook'} · ${listed} discussion(s) récentes détectée(s) · page ${Number(status.listPages || 0) || 1}.`);
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : import 15 jours ${done}/${total || listed || '…'} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés`;
+      setInboxSyncStatus(label,'running',`⟳ FB historique · ${done}/${total || listed || '…'} discussions`,`${discovered || imported} message(s) trouvé(s) · ${imported} importé(s).`);
     }
     return;
   }
@@ -9022,14 +9113,14 @@ function renderFacebookHistoryStatus(status = {}){
     const lastError = String(status.lastError || '').trim();
     const pageName = String(status.pageName || '').trim();
     if(lastError && errors){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : synchronisation terminée avec erreur • ${lastError}`;
+      setInboxSyncStatus(label,'error','✕ FB historique · erreur',lastError);
     }else if(total === 0){
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : Meta retourne 0 conversation. ${warning || 'Vérifiez le Page Access Token et les permissions Messenger.'}`;
+      setInboxSyncStatus(label,'warning','⚠ FB historique · 0 conversation',warning || 'Meta retourne 0 conversation. Vérifiez le Page Access Token et les permissions Messenger.');
     }else{
-      label.textContent = `Facebook${pageName ? ` (${pageName})` : ''} : historique 15 jours synchronisé • ${total} discussions • ${discovered || imported} message(s) trouvés • ${imported} importés${unavailable ? ` • ${unavailable} détail(s) indisponible(s) Meta` : ''}${errors ? ` • ${errors} erreur(s)` : ''}`;
+      setInboxSyncStatus(label,'ok',`✓ FB historique 15j · à jour${syncStatusTime(status.completedAt) ? ` · ${syncStatusTime(status.completedAt)}` : ''}`,`${pageName || 'Facebook'} · ${total} discussion(s) · ${imported} message(s) importé(s)${unavailable ? ` · ${unavailable} détail(s) indisponible(s)` : ''}${errors ? ` · ${errors} erreur(s)` : ''}.`);
     }
   }else{
-    label.textContent = 'Facebook : historique 15 jours disponible manuellement (FB ↻). Le temps réel reste prioritaire.';
+    setInboxSyncStatus(label,'idle','FB historique 15j · manuel','Le temps réel Messenger reste prioritaire. Utilisez FB ↻ seulement pour resynchroniser l’historique 15 jours.');
   }
 }
 
@@ -9638,7 +9729,7 @@ function renderConversationsList(){
     conversations
       .slice()
       .sort((a,b) => {
-        // V6.30.3 : les conversations réellement à répondre restent en haut.
+        // V6.30.5 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
         const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
@@ -12866,23 +12957,23 @@ let facebookRealtimeRecoveryTimer = null;
 async function syncFacebookRealtimeMessages({ force = false } = {}){
   if(!currentUser || facebookRealtimeRecoveryBusy) return;
   facebookRealtimeRecoveryBusy = true;
+  const fbStatus = document.getElementById('facebookRealtimeStatus');
   try{
+    if(fbStatus){
+      setInboxSyncStatus(fbStatus,'running','⟳ FB Messenger · vérification…','Contrôle des nouveaux messages Facebook en cours.');
+    }
     const suffix = force ? '?force=1' : '';
     const result = await apiFetch(
       `${API}/facebook-realtime/sync${suffix}`,
       { method:'POST' }
     );
     const imported = Number(result?.importedMessages || 0);
-    const fbStatus = document.getElementById('facebookRealtimeStatus');
-    if(fbStatus){
-      fbStatus.style.display = '';
-      const subscribed = result?.webhookMessagesSubscribed;
-      const scanned = Number(result?.conversationsScanned || 0);
-      const latest = String(result?.latestGraphConversationAt || '').trim();
-      fbStatus.textContent = imported > 0
-        ? `FB temps réel : +${imported} message(s) • ${scanned} discussion(s) vérifiée(s)`
-        : `FB temps réel ${subscribed === true ? '✓ webhook' : subscribed === false ? '⚠ webhook' : ''} • ${scanned} discussion(s) vérifiée(s)${latest ? ` • Meta ${formatShortDateTime(latest)}` : ''}`;
-    }
+
+    // Le POST peut être ignoré pendant le cooldown parce que Railway a déjà
+    // effectué le contrôle quelques secondes auparavant. Dans ce cas, lire
+    // l'état réellement sauvegardé évite d'afficher un faux « 0 vérifié ».
+    await refreshFacebookRealtimeBadge();
+
     if(imported > 0){
       if(
         document.getElementById('page-conversations')?.classList?.contains('active') &&
@@ -12898,15 +12989,16 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
           await softRefreshSelectedConversation();
         }
       }
-      // Met à jour cloche + compteurs même si le message récupéré date de
-      // quelques minutes et se situe avant le curseur de notifications.
       await pollCommercialNotifications();
     }
   }catch(error){
-    const fbStatus = document.getElementById('facebookRealtimeStatus');
     if(fbStatus){
-      fbStatus.style.display = '';
-      fbStatus.textContent = `FB temps réel : erreur • ${String(error?.message || 'inconnue')}`;
+      setInboxSyncStatus(
+        fbStatus,
+        'error',
+        '✕ FB Messenger · erreur de synchro',
+        String(error?.message || 'Erreur Facebook inconnue')
+      );
     }
     if(!/session|auth|connect/i.test(String(error?.message || ''))){
       console.debug('Rattrapage Facebook temps réel :', error.message);
@@ -12915,6 +13007,11 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
     facebookRealtimeRecoveryBusy = false;
   }
 }
+
+setTimeout(
+  refreshFacebookRealtimeBadge,
+  900
+);
 
 setTimeout(
   () => syncFacebookRealtimeMessages({ force:true }),
