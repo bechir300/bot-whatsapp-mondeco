@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.2
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.32.3
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -27,7 +27,7 @@ const SECURE_IMAGE_MIGRATION_MARKER = path.join(DATA_DIR, '.secure-image-v676-mi
 const CUSTOMIZATIONS_PATH = path.join(DATA_DIR, 'customization-requests.json');
 const COMMERCIAL_CORRECTIONS_PATH = path.join(DATA_DIR, 'commercial-corrections.json');
 const QUICK_REPLIES_PATH = path.join(DATA_DIR, 'quick-replies.json');
-// V6.32.2 — sessions persistantes : survivent aux redéploiements Railway.
+// V6.32.3 — sessions persistantes : survivent aux redéploiements Railway.
 const SESSIONS_PATH = path.join(DATA_DIR, 'admin-sessions.json');
 const USERS_PATH = path.join(DATA_DIR, 'users.json');
 const ADMIN_ENV_SYNC_PATH = path.join(DATA_DIR, '.admin-env-credentials-fingerprint');
@@ -68,7 +68,7 @@ const FACEBOOK_PAGE_ID = (
   ''
 ).trim();
 
-// V6.32.2 — deux tokens Facebook indépendants :
+// V6.32.3 — deux tokens Facebook indépendants :
 // - FACEBOOK_MESSENGER_TOKEN : Messenger, historique et rattrapage temps réel
 // - FACEBOOK_COMMENTS_TOKEN  : Pages, publications et commentaires
 // L'ancienne FACEBOOK_PAGE_ACCESS_TOKEN reste un fallback de compatibilité.
@@ -94,11 +94,11 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.32.2 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
+// V6.32.3 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
 // Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
 const HISTORY_IMPORT_DAYS = 15;
 
-// V6.32.2 — l'historique reste conservé 15 jours, mais la boîte de travail
+// V6.32.3 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
 // Les conversations à répondre, non lues, prioritaires ou favorites restent
 // toujours visibles. Les conversations déjà traitées quittent la vue active
@@ -143,7 +143,7 @@ const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
 const CONVERSATION_PROFILE_DIR = path.join(DATA_DIR, 'conversation-profile');
 
 
-// V6.32.2 — les médias de conversations et avatars quittent le Volume Railway.
+// V6.32.3 — les médias de conversations et avatars quittent le Volume Railway.
 // Railway conserve uniquement les données structurées; Cloudinary devient le
 // stockage binaire. Les URLs Cloudinary ne sont pas envoyées directement au
 // navigateur : les routes /admin/conversation-* restent protégées par auth et
@@ -230,7 +230,7 @@ const STORAGE_RESCUE_TARGET_FREE_BYTES = Math.max(
     1024
 );
 
-// V6.32.2 — garde-fou permanent contre ENOSPC.
+// V6.32.3 — garde-fou permanent contre ENOSPC.
 // Le stockage doit garder une marge avant toute écriture JSON atomique.
 const STORAGE_CRITICAL_FREE_BYTES = Math.max(
   16 * 1024 * 1024,
@@ -462,7 +462,7 @@ function humanBytes(bytes) {
 
 
 // ============================================================
-// V6.32.2 — CLOUDINARY / CLOUD STORAGE
+// V6.32.3 — CLOUDINARY / CLOUD STORAGE
 // ============================================================
 
 let cloudManifestLoaded = false;
@@ -970,7 +970,7 @@ function emergencyFreeDisposableStorage() {
       }
     }
 
-    // V6.32.2 : si Cloudinary est configuré, ne pas jeter les médias avant
+    // V6.32.3 : si Cloudinary est configuré, ne pas jeter les médias avant
     // leur migration. Le transfert cloud démarre juste après le Storage Rescue
     // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
     // l'ancien comportement d'urgence.
@@ -1211,7 +1211,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   const retentionCutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   let freed = 0;
 
-  // V6.32.2 : les gros historiques JSON sont réellement réduits à la fenêtre
+  // V6.32.3 : les gros historiques JSON sont réellement réduits à la fenêtre
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
@@ -1346,7 +1346,7 @@ function runStartupStorageRescue() {
     !beforeProbe.writable;
 
   const retentionReady = retention15MigrationReady();
-  // V6.32.2 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
+  // V6.32.3 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
@@ -2234,7 +2234,7 @@ function ensureDailySnapshot() {
 
 
 function writeJsonAtomic(filePath, data) {
-  // V6.32.2 : écriture atomique avec garde-fou ENOSPC.
+  // V6.32.3 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
@@ -3155,7 +3155,7 @@ function saveQuickReplies(items) {
 
 
 // ============================================================
-// V6.32.2 — Le catalogue produit reste séparé des réponses rapides.
+// V6.32.3 — Le catalogue produit reste séparé des réponses rapides.
 // Les helpers ci-dessous sont conservés uniquement pour compatibilité interne,
 // mais /api/quick-replies ne les expose plus aux commerciaux.
 // ============================================================
@@ -3807,7 +3807,7 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 runStartupStorageRescue();
 
 
-// V6.32.2 — migration progressive des octets locaux vers Cloudinary.
+// V6.32.3 — migration progressive des octets locaux vers Cloudinary.
 // Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
 // écrire le petit manifeste avant de supprimer chaque fichier local migré.
 if (CLOUD_STORAGE_ENABLED) {
@@ -3835,7 +3835,7 @@ initializeUsers();
 syncBootstrapAdminFromEnvironment();
 ensureDailySnapshot();
 
-// V6.32.2 — surveillance préventive. Le Volume est contrôlé périodiquement
+// V6.32.3 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 const storageGuardTimer = setInterval(() => {
   if (storagePeriodicGuardRunning) return;
@@ -4056,7 +4056,7 @@ function getBusinessContext() {
 // AUTHENTIFICATION / UTILISATEURS / RÔLES
 // ============================================================
 
-// V6.32.2 — Sessions commerciales persistantes.
+// V6.32.3 — Sessions commerciales persistantes.
 // Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
 // Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
 const SESSION_DURATION_DAYS = Math.max(
@@ -5452,7 +5452,7 @@ input:focus{border-color:#d9a5a8;box-shadow:0 0 0 3px rgba(237,28,36,.06)}
       <div class="eyebrow">Administration</div>
       <div class="login-title-row">
         <h2>Connexion</h2>
-        <span class="login-version">V6.32.2</span>
+        <span class="login-version">V6.32.3</span>
       </div>
       <div class="sub">Connectez-vous avec votre compte MONDECO.</div>
       <form id="form">
@@ -11037,7 +11037,7 @@ router.get(
   '/api/quick-replies',
   requireAuth,
   (req, res) => {
-    // V6.32.2 : uniquement les réponses réellement enregistrées dans
+    // V6.32.3 : uniquement les réponses réellement enregistrées dans
     // /data/quick-replies.json. Le catalogue WooCommerce/Produits n'est plus
     // transformé automatiquement en commandes /nom-produit.
     return res.json(
@@ -12037,6 +12037,16 @@ router.post(
           }
         });
 
+      // V6.32.3 — une réponse envoyée avec succès remet aussi le petit badge
+      // non-lu de la ligne client à zéro, de façon persistante.
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        unreadCount: 0,
+        lastUnreadMessageId: '',
+        lastReadAt: new Date().toISOString()
+      }));
+      markNotificationsReadForContact(contact, req.user);
+
       return res.json({
         success: true,
         ...(
@@ -12196,6 +12206,15 @@ router.post(
             size: req.file.size
           }
         });
+
+      // V6.32.3 — même acquittement pour les médias WhatsApp.
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        unreadCount: 0,
+        lastUnreadMessageId: '',
+        lastReadAt: new Date().toISOString()
+      }));
+      markNotificationsReadForContact(contact, req.user);
 
       return res.json({
         success: true,
@@ -15287,7 +15306,7 @@ let facebookRealtimeSyncJob = {
   lastError: ''
 };
 
-// V6.32.2 — récupération sûre après une panne de webhook/token.
+// V6.32.3 — récupération sûre après une panne de webhook/token.
 // Le premier rattrapage regarde jusqu'à 48 h en arrière ; ensuite on repart
 // du dernier succès avec 15 minutes de chevauchement. Cela récupère les
 // messages manqués sans rescanner 15 jours à chaque minute.
@@ -15439,7 +15458,7 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
     result.fields = await readFields();
     result.messagesSubscribed = result.fields.includes('messages');
 
-    // V6.32.2 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
+    // V6.32.3 : réparer d'abord UNIQUEMENT le champ indispensable `messages`.
     // Avant, on tentait en une seule requête messages + feed + plusieurs champs
     // optionnels. Un seul champ refusé par les permissions pouvait faire échouer
     // toute la souscription Messenger.
@@ -15547,7 +15566,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
   if (facebookRealtimeSyncJob.running) {
     return { configured: true, skipped: true, reason: 'realtime_sync_running' };
   }
-  // V6.32.2 : le rattrapage des nouveaux messages est prioritaire.
+  // V6.32.3 : le rattrapage des nouveaux messages est prioritaire.
   // L'ancien code le bloquait pendant toute la synchronisation historique
   // Facebook, qui peut durer longtemps avec plusieurs milliers de conversations.
   // L'historique n'est désormais plus lancé automatiquement côté interface.
@@ -15806,7 +15825,40 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       // une affectation/favori effectuée pendant le rattrapage.
       const freshestStates = loadConversationStatesAdmin();
       for (const [contact, state] of Object.entries(states)) {
-        freshestStates[contact] = { ...(freshestStates[contact] || {}), ...state };
+        const freshest = freshestStates[contact] || {};
+        const merged = { ...freshest, ...state };
+
+        // V6.32.3 — le rattrapage Facebook peut finir après qu'un commercial
+        // a lu/répondu. Préserver les horodatages les plus récents empêche
+        // l'ancien unreadCount de revenir à 1.
+        merged.lastCustomerAt = maxIso(freshest.lastCustomerAt, state.lastCustomerAt);
+        merged.lastReadAt = maxIso(freshest.lastReadAt, state.lastReadAt);
+        merged.lastAnsweredAt = maxIso(freshest.lastAnsweredAt, state.lastAnsweredAt);
+        merged.lastAnsweredCustomerAt = maxIso(
+          freshest.lastAnsweredCustomerAt,
+          state.lastAnsweredCustomerAt
+        );
+        merged.lastHumanAt = maxIso(freshest.lastHumanAt, state.lastHumanAt);
+
+        const lastCustomerMs = Date.parse(safeString(merged.lastCustomerAt));
+        const lastReadMs = Date.parse(safeString(merged.lastReadAt));
+        const lastAnsweredMs = Date.parse(safeString(merged.lastAnsweredAt));
+        const acknowledgedMs = Math.max(
+          Number.isFinite(lastReadMs) ? lastReadMs : 0,
+          Number.isFinite(lastAnsweredMs) ? lastAnsweredMs : 0
+        );
+
+        if (Number.isFinite(lastCustomerMs) && acknowledgedMs >= lastCustomerMs) {
+          merged.unreadCount = 0;
+          merged.lastUnreadMessageId = '';
+        } else {
+          merged.unreadCount = Math.max(
+            Number(freshest.unreadCount || 0),
+            Number(state.unreadCount || 0)
+          );
+        }
+
+        freshestStates[contact] = merged;
       }
       saveConversationStatesAdmin(freshestStates);
       // Forcer la reconstruction du cache combiné au prochain appel Inbox.
@@ -15956,7 +16008,7 @@ router.post(
 // ============================================================
 
 
-// V6.32.2 — diagnostic sans exposer les secrets.
+// V6.32.3 — diagnostic sans exposer les secrets.
 router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   res.json({
     ok: true,
@@ -15994,7 +16046,7 @@ async function graphJsonRequest(url, token, options = {}) {
   return data;
 }
 
-// V6.32.2 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
+// V6.32.3 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
 // au nom de la Page. Si FACEBOOK_COMMENTS_TOKEN contient accidentellement un
 // User Access Token, MONDECO tente de dériver le Page Access Token de
 // FACEBOOK_PAGE_ID avant toute lecture/modération. Aucun token dérivé n'est
@@ -17451,7 +17503,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
-      // V6.32.2 : travail à faire d'abord. Une conversation descend dès qu'une
+      // V6.32.3 : travail à faire d'abord. Une conversation descend dès qu'une
       // vraie réponse commerciale/IA a été enregistrée.
       const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
       if (pendingDelta) return pendingDelta;
@@ -17465,7 +17517,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
-    // V6.32.2 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
+    // V6.32.3 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
     let retainedConversations = conversations
@@ -17716,7 +17768,7 @@ router.post(
         });
     }
 
-    // V6.32.2 — Tous les commerciaux peuvent répondre à toute conversation.
+    // V6.32.3 — Tous les commerciaux peuvent répondre à toute conversation.
     // Le statut « lu » doit donc suivre la même règle : ouvrir une conversation
     // la marque comme lue même si elle est affectée à un autre commercial.
     // Les droits de gestion (affectation, résolution, etc.) restent séparés.
