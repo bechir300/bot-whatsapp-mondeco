@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.34.2
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.34.3
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -8336,9 +8336,13 @@ function commercialMissionMetrics(schedule, userId, messageReplies, activities, 
   };
 }
 
-function buildTeamPerformanceDashboard(date) {
+function buildTeamPerformanceDashboard(date, onlyUserId = '') {
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  const users = loadUsers().filter(user => user.role === 'commercial');
+  const requestedUserId = safeString(onlyUserId);
+  const users = loadUsers().filter(user =>
+    user.role === 'commercial' &&
+    (!requestedUserId || safeString(user.id) === requestedUserId)
+  );
   const log = loadWhatsAppLog();
   const dayEntries = log.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
   const activities = loadTeamActivity(date);
@@ -8456,6 +8460,8 @@ function buildTeamPerformanceDashboard(date) {
       medianFirstResponseSeconds:medianNumber(resolved.map(item => item.responseSeconds)),
       unanswered:missed.length + (date === today ? Number(pending.pending || 0) : 0),
       currentlyLate:date === today ? Number(pending.late || 0) : 0,
+      pendingAssigned:date === today ? Number(pending.pending || 0) : 0,
+      lateAssigned:date === today ? Number(pending.late || 0) : 0,
       byChannel,
       missions:missionMetrics,
       nightMissions
@@ -8509,15 +8515,41 @@ function buildTeamPerformanceDashboard(date) {
 }
 
 router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,res) => {
-  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date)) ? safeString(req.query.date) : dateKeyInTimezone(new Date(),timezone);
-  const performance = buildTeamPerformanceDashboard(date);
-  const performanceByUser = new Map((performance.ranking || []).map(item => [safeString(item.userId), item]));
-  const users = loadUsers().filter(user => user.role === 'commercial').map(user => {
-    const day = simpleTeamDayForUser(user,date);
-    return { ...sanitizeUserForClient(user), presence:getPresenceForUser(user.id), ...day, performance:performanceByUser.get(safeString(user.id)) || null };
-  }).sort((a,b) => (a.presence?.status==='online'?0:a.presence?.status==='idle'?1:2)-(b.presence?.status==='online'?0:b.presence?.status==='idle'?1:2) || safeString(a.name||a.email).localeCompare(safeString(b.name||b.email),'fr'));
-  return res.json({ date, generatedAt:new Date().toISOString(), users, performance });
+  const startedAt = Date.now();
+  try {
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date)) ? safeString(req.query.date) : dateKeyInTimezone(new Date(),timezone);
+    const performance = buildTeamPerformanceDashboard(date);
+    const performanceByUser = new Map((performance.ranking || []).map(item => [safeString(item.userId), item]));
+
+    // V6.34.3 — IMPORTANT PERFORMANCE FIX:
+    // l'ancien code appelait simpleTeamDayForUser() pour chaque commercial alors
+    // que la vue Équipe n'utilise que planning + charge + présence. Cette fonction
+    // relisait/reparcourait conversation-log, attendance, SLA et états plusieurs
+    // fois par utilisateur et pouvait faire dépasser le timeout Railway (HTTP 502).
+    const users = loadUsers().filter(user => user.role === 'commercial').map(user => {
+      const userPerformance = performanceByUser.get(safeString(user.id)) || null;
+      const schedule = simpleScheduleForUserDate(date, user.id);
+      return {
+        ...sanitizeUserForClient(user),
+        presence:getPresenceForUser(user.id),
+        schedule,
+        pendingAssigned:Number(userPerformance?.pendingAssigned || 0),
+        lateAssigned:Number(userPerformance?.lateAssigned || 0),
+        performance:userPerformance
+      };
+    }).sort((a,b) => (a.presence?.status==='online'?0:a.presence?.status==='idle'?1:2)-(b.presence?.status==='online'?0:b.presence?.status==='idle'?1:2) || safeString(a.name||a.email).localeCompare(safeString(b.name||b.email),'fr'));
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs > 1500) console.warn(`⚠️ Team simple-dashboard lent: ${elapsedMs} ms (${date}, ${users.length} commerciaux)`);
+    return res.json({ date, generatedAt:new Date().toISOString(), elapsedMs, users, performance });
+  } catch (error) {
+    console.error('❌ Team simple-dashboard :', error);
+    return res.status(500).json({
+      error:'Le rapport commercial n’a pas pu être calculé. Réessayez dans quelques secondes.',
+      code:'TEAM_DASHBOARD_CALCULATION_ERROR'
+    });
+  }
 });
 
 router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager, (req,res) => {
@@ -8551,19 +8583,42 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
 });
 
 router.get('/api/team/commercial-report/:userId', requireAdminOrCommercialManager, (req,res) => {
-  const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');
-  const date=/^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date))?safeString(req.query.date):dateKeyInTimezone(new Date(),timezone);
-  const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&item.role==='commercial');
-  if(!user)return res.status(404).json({error:'Commercial introuvable.'});
-  const day=simpleTeamDayForUser(user,date);
-  const performance=buildTeamPerformanceDashboard(date).ranking.find(item=>safeString(item.userId)===safeString(user.id))||null;
-  const history=[];
-  for(let i=0;i<7;i++){
-    const d=teamDateAdd(date,-i);const x=simpleTeamDayForUser(user,d);
-    const px=buildTeamPerformanceDashboard(d).ranking.find(item=>safeString(item.userId)===safeString(user.id))||{};
-    history.push({date:d,activeDay:x.activeDay,onlineMs:x.attendance.onlineMs,replies:Number(px.totalReplies||x.replies||0),clientsTreated:Number(px.clientsTreated||0),developedConversations:Number(px.developedConversations||0),completeConversations:Number(px.completeConversations||0),unanswered:Number(px.unanswered||0),score:px.score??null,nightMs:x.nightMs,channels:x.schedule.channels||[],planned:x.schedule.planned});
+  const startedAt = Date.now();
+  try {
+    const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');
+    const date=/^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date))?safeString(req.query.date):dateKeyInTimezone(new Date(),timezone);
+    const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&item.role==='commercial');
+    if(!user)return res.status(404).json({error:'Commercial introuvable.'});
+
+    // Le détail de présence n'est calculé qu'une seule fois pour la journée ouverte.
+    const day=simpleTeamDayForUser(user,date);
+    const performance=buildTeamPerformanceDashboard(date,user.id).ranking.find(item=>safeString(item.userId)===safeString(user.id))||null;
+    const history=[];
+    for(let i=0;i<7;i++){
+      const d=teamDateAdd(date,-i);
+      // V6.34.3 — historique ciblé sur un seul commercial. On ne recalcule plus
+      // simpleTeamDayForUser() ni les performances de toute l'équipe 7 fois.
+      const px=buildTeamPerformanceDashboard(d,user.id).ranking.find(item=>safeString(item.userId)===safeString(user.id))||{};
+      history.push({
+        date:d,
+        replies:Number(px.totalReplies||0),
+        clientsTreated:Number(px.clientsTreated||0),
+        developedConversations:Number(px.developedConversations||0),
+        completeConversations:Number(px.completeConversations||0),
+        unanswered:Number(px.unanswered||0),
+        score:px.score??null
+      });
+    }
+    const elapsedMs=Date.now()-startedAt;
+    if(elapsedMs>2000)console.warn(`⚠️ Team commercial-report lent: ${elapsedMs} ms (${date}, ${safeString(user.id)})`);
+    return res.json({date,user:sanitizeUserForClient(user),presence:getPresenceForUser(user.id),day,performance,history,elapsedMs});
+  } catch (error) {
+    console.error('❌ Team commercial-report :', error);
+    return res.status(500).json({
+      error:'Le compte rendu n’a pas pu être calculé. Réessayez dans quelques secondes.',
+      code:'COMMERCIAL_REPORT_CALCULATION_ERROR'
+    });
   }
-  return res.json({date,user:sanitizeUserForClient(user),presence:getPresenceForUser(user.id),day,performance,history});
 });
 
 router.get('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
