@@ -3225,6 +3225,10 @@ tbody tr:hover{
 .inbox-message-row.commercial .inbox-message-meta{
   text-align:right;
 }
+.inbox-message-delete{border:0;background:transparent;color:#a63838;font-size:13px;font-weight:800;cursor:pointer;padding:2px 7px;border-radius:8px;margin-left:6px}
+.inbox-message-delete:hover{background:#fff0f0}
+.comment-unread-dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#d8242f;box-shadow:0 0 0 3px rgba(216,36,47,.08);margin-top:6px}
+
 .inbox-attachment{
   display:inline-flex;
   align-items:center;
@@ -5885,7 +5889,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* ==========================================================
-   MONDECO V6.33.1 — Équipe simple & planning quotidien
+   MONDECO V6.34.2 — Pilotage commercial & suppression définitive
    ========================================================== */
 .simple-team-page .page-header{align-items:flex-end}
 .simple-team-actions{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
@@ -5923,6 +5927,26 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .simple-report-section{margin-top:14px}.simple-report-section h4{margin:0 0 8px;font-size:11px}
 .simple-report-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.simple-report-line{padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:#fbfaf8;font-size:9px}.simple-report-line strong{display:block;margin-bottom:3px}.simple-day-list{border:1px solid var(--line);border-radius:11px;overflow:hidden}.simple-day-row{display:grid;grid-template-columns:100px 90px 110px 90px 1fr;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:8.5px}.simple-day-row:last-child{border-bottom:0}.simple-day-row.header{background:#f8f5f1;text-transform:uppercase;font-size:7.5px;font-weight:900;color:#776f68}.simple-active-yes{color:#13723f;font-weight:900}.simple-active-no{color:#9b938b;font-weight:800}
 @media(max-width:760px){.simple-team-actions{width:100%}.simple-team-date{flex:1}.simple-team-date input{width:100%}.simple-report-kpis{grid-template-columns:1fr 1fr}.simple-report-grid{grid-template-columns:1fr}.simple-day-row{grid-template-columns:88px 70px 90px 1fr}.simple-day-row>*:nth-child(4){display:none}.simple-team-card-head{align-items:flex-start;flex-direction:column}}
+
+/* ==========================================================
+   MONDECO V6.34.2 — Pilotage commercial & suppression définitive
+   ========================================================== */
+.team-control-tabs{display:flex;gap:6px;margin:0 0 12px;padding:4px;border:1px solid var(--line);background:#f8f6f3;border-radius:12px;width:max-content;max-width:100%;overflow:auto}
+.team-control-tab{border:0;background:transparent;color:#6f6760;padding:8px 12px;border-radius:9px;font-size:9px;font-weight:900;cursor:pointer;white-space:nowrap}
+.team-control-tab.active{background:#171411;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.team-tab-panel.hidden{display:none!important}
+.performance-summary{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-bottom:12px}
+.performance-kpi{border:1px solid var(--line);border-radius:12px;background:#fff;padding:11px 12px;min-width:0}
+.performance-kpi span{display:block;color:#817870;font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.performance-kpi strong{display:block;margin-top:5px;font-size:19px;line-height:1;color:#181512}.performance-kpi small{display:block;margin-top:5px;color:#8a827b;font-size:8px;line-height:1.3}
+.performance-table{width:100%;border-collapse:collapse;min-width:1180px}.performance-table th{padding:9px 10px;background:#f8f5f1;border-bottom:1px solid var(--line);text-align:left;font-size:8px;letter-spacing:.04em;text-transform:uppercase;color:#746d66;white-space:nowrap}.performance-table td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:9px}.performance-table tr:last-child td{border-bottom:0}
+.performance-rank{font-size:15px;font-weight:900}.performance-score{display:inline-flex;min-width:48px;justify-content:center;padding:5px 8px;border-radius:999px;background:#eef8f1;color:#136d3f;font-weight:900}.performance-score.low{background:#fff0ed;color:#ad4331}.performance-score.mid{background:#fff7e5;color:#8b6100}.performance-mini{display:block;color:#8a827b;font-size:8px;margin-top:3px;line-height:1.3}.performance-alert{color:#b24635;font-weight:900}.performance-good{color:#147344;font-weight:900}
+.simple-mission-box{display:grid;gap:6px;min-width:240px}.simple-mission-box input[type="text"]{height:34px;border:1px solid var(--line);border-radius:9px;padding:0 9px;font-size:9px;background:#fff}.simple-cross-midnight{display:inline-flex;align-items:center;gap:5px;color:#6f5c31;font-size:8px;font-weight:900}
+.team-edit-account-modal .modal{width:min(560px,calc(100vw - 28px))}.team-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.team-edit-grid .field.full{grid-column:1/-1}.team-security-note{padding:9px 10px;border-radius:10px;background:#f8f5f1;color:#6f6760;font-size:8.5px;line-height:1.45}
+.night-mission-card{border:1px solid #eadfca;background:#fffaf0;border-radius:12px;padding:11px;margin-top:8px}.night-mission-card strong{font-size:11px}.night-mission-grid{display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:7px;margin-top:8px}.night-mission-metric{background:#fff;border:1px solid #eee4d3;border-radius:9px;padding:8px}.night-mission-metric span{display:block;font-size:7.5px;color:#8a7a62;text-transform:uppercase;font-weight:900}.night-mission-metric b{display:block;margin-top:3px;font-size:12px}
+.performance-definition{padding:10px 12px;border-top:1px solid var(--line);background:#fbfaf8;color:#746d66;font-size:8.5px;line-height:1.5}
+@media(max-width:1100px){.performance-summary{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:700px){.performance-summary{grid-template-columns:repeat(2,1fr)}.team-edit-grid{grid-template-columns:1fr}.team-edit-grid .field.full{grid-column:auto}.night-mission-grid{grid-template-columns:1fr 1fr}.team-control-tabs{width:100%}.team-control-tab{flex:1}}
 
 </style>
 </head>
@@ -6281,11 +6305,12 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           </div>
 
           <div class="inbox-filters inbox-command-filters hidden" id="commentFilters" aria-label="Filtres commentaires">
-            <button class="inbox-filter active" data-comment-filter="all">Tous <span id="commentCountAll">0</span></button>
+            <button class="inbox-filter" data-comment-filter="all">Tous <span id="commentCountAll">0</span></button>
             <button class="inbox-filter channel facebook" data-comment-filter="facebook"><span class="channel-dot"></span>Facebook <span id="commentCountFacebook">0</span></button>
             <button class="inbox-filter channel instagram" data-comment-filter="instagram"><span class="channel-dot"></span>Instagram <span id="commentCountInstagram">0</span></button>
             <button class="inbox-filter" data-comment-filter="unread">Non lus <span id="commentCountUnread">0</span></button>
-            <button class="inbox-filter" data-comment-filter="pending">À répondre <span id="commentCountPending">0</span></button>
+            <button class="inbox-filter active" data-comment-filter="pending">À répondre <span id="commentCountPending">0</span></button>
+            <button class="inbox-filter" data-comment-filter="answered">✓ Traités <span id="commentCountAnswered">0</span></button>
             <button class="inbox-filter" data-comment-filter="hidden">🙈 Masqués <span id="commentCountHidden">0</span></button>
             <button class="inbox-filter" data-comment-filter="private">✉️ Privé envoyé <span id="commentCountPrivate">0</span></button>
           </div>
@@ -7168,14 +7193,14 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
     </section>
 
     <!-- ================================================== -->
-    <!-- ÉQUIPE & PLANNING SIMPLE — V6.33.1 -->
+    <!-- PILOTAGE COMMERCIAL — V6.34.2 -->
     <!-- ================================================== -->
 
     <section id="page-team" class="page simple-team-page">
       <div class="page-header">
         <div>
-          <h2 class="page-title">Équipe commerciale</h2>
-          <p class="page-subtitle">Comptes, présence, réseaux affectés et compte rendu quotidien — sans écrans inutiles.</p>
+          <h2 class="page-title">Pilotage commercial</h2>
+          <p class="page-subtitle">Qui traite réellement les clients, qualité des discussions, retards, missions de nuit et accès par canal.</p>
         </div>
         <div class="simple-team-actions">
           <label class="simple-team-date"><span>Journée</span><input id="simpleTeamDate" type="date"></label>
@@ -7184,25 +7209,57 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
         </div>
       </div>
 
-      <div class="simple-team-summary">
-        <span class="simple-team-chip">🟢 En ligne <strong id="simpleOnlineCount">0</strong></span>
-        <span class="simple-team-chip">👥 Commerciaux <strong id="simpleCommercialCount">0</strong></span>
-        <span class="simple-team-chip">📅 Planifiés <strong id="simplePlannedCount">0</strong></span>
-        <span class="simple-team-chip">💬 En attente affectés <strong id="simplePendingCount">0</strong></span>
+      <div class="team-control-tabs" role="tablist">
+        <button class="team-control-tab active" type="button" data-team-control-tab="performance">🏆 Performance</button>
+        <button class="team-control-tab" type="button" data-team-control-tab="access">👥 Équipe & accès</button>
       </div>
 
-      <div class="card simple-team-card">
-        <div class="simple-team-card-head">
-          <div><h3>Planning du jour</h3><p>Cochez uniquement les réseaux que chaque commercial doit traiter pour la journée sélectionnée.</p></div>
-          <span class="badge" id="simpleTeamDateLabel">Aujourd’hui</span>
+      <div class="team-tab-panel" id="teamPerformancePanel">
+        <div class="performance-summary">
+          <div class="performance-kpi"><span>Clients traités</span><strong id="perfClientsTreated">0</strong><small>Personnes distinctes prises en charge</small></div>
+          <div class="performance-kpi"><span>Messages répondus</span><strong id="perfMessageReplies">0</strong><small>WhatsApp + DM Instagram/Facebook</small></div>
+          <div class="performance-kpi"><span>Commentaires</span><strong id="perfCommentReplies">0</strong><small>Instagram + Facebook</small></div>
+          <div class="performance-kpi"><span>Discussions développées</span><strong id="perfDeveloped">0</strong><small>Échange réel, pas une réponse unique</small></div>
+          <div class="performance-kpi"><span>Sans suite</span><strong id="perfUnanswered">0</strong><small>Dossiers échus ou encore en attente</small></div>
+          <div class="performance-kpi"><span>Retards</span><strong id="perfLate">0</strong><small>SLA tardifs + manqués</small></div>
         </div>
-        <div class="simple-team-scroll">
-          <table class="simple-team-table">
-            <thead><tr><th>Commercial</th><th>Maintenant</th><th>Accès du jour</th><th>Horaire</th><th>Temps app</th><th>Réponses</th><th>En attente</th><th>Actions</th></tr></thead>
-            <tbody id="simpleTeamRows"><tr><td colspan="8"><div class="empty">Chargement...</div></td></tr></tbody>
-          </table>
+
+        <div class="card simple-team-card">
+          <div class="simple-team-card-head">
+            <div><h3>Classement de la journée</h3><p>Le temps connecté n'entre pas dans la note. Le classement privilégie prise en charge, profondeur des échanges, réactivité et continuité.</p></div>
+            <span class="badge" id="simplePerformanceDateLabel">Aujourd’hui</span>
+          </div>
+          <div class="simple-team-scroll">
+            <table class="performance-table">
+              <thead><tr><th>#</th><th>Commercial</th><th>Score</th><th>Clients</th><th>Messages</th><th>Commentaires</th><th>Développées</th><th>Complètes</th><th>Prix seul</th><th>Retards</th><th>Sans suite</th><th></th></tr></thead>
+              <tbody id="simplePerformanceRows"><tr><td colspan="12"><div class="empty">Chargement...</div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="performance-definition"><strong>Lecture MONDECO :</strong> « développée » = au moins 2 messages client + 2 réponses commerciales dans la journée. « complète » = au moins 3 messages client + 3 réponses commerciales. « prix seul » = réponse courte principalement tarifaire sans relance détectée. Ces règles sont transparentes et peuvent être ajustées plus tard.</div>
         </div>
-        <div class="simple-team-note"><strong>Accès strict par canal :</strong> cochez seulement ce que le commercial doit traiter. Exemple : <strong>WhatsApp messages + Instagram commentaires</strong> donne accès à ces deux canaux uniquement ; les DM Instagram et tout Facebook restent invisibles et bloqués. Le planning enregistré pour aujourd’hui contrôle aussi les compteurs, notifications et réponses autorisées.</div>
+      </div>
+
+      <div class="team-tab-panel hidden" id="teamAccessPanel">
+        <div class="simple-team-summary">
+          <span class="simple-team-chip">🟢 En ligne <strong id="simpleOnlineCount">0</strong></span>
+          <span class="simple-team-chip">👥 Commerciaux <strong id="simpleCommercialCount">0</strong></span>
+          <span class="simple-team-chip">📅 Avec mission <strong id="simplePlannedCount">0</strong></span>
+          <span class="simple-team-chip">💬 En attente affectés <strong id="simplePendingCount">0</strong></span>
+        </div>
+
+        <div class="card simple-team-card">
+          <div class="simple-team-card-head">
+            <div><h3>Équipe, mission & accès</h3><p>Choisissez exactement les canaux autorisés et la mission. Pour la nuit, saisissez directement 22:00 → 02:00.</p></div>
+            <span class="badge" id="simpleTeamDateLabel">Aujourd’hui</span>
+          </div>
+          <div class="simple-team-scroll">
+            <table class="simple-team-table" style="min-width:1180px">
+              <thead><tr><th>Commercial</th><th>Maintenant</th><th>Accès</th><th>Mission / plage à contrôler</th><th>En attente</th><th>Actions</th></tr></thead>
+              <tbody id="simpleTeamRows"><tr><td colspan="6"><div class="empty">Chargement...</div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="simple-team-note"><strong>Accès strict :</strong> aucun planning = aucun canal pour un compte Commercial. Les horaires servent surtout à mesurer une mission précise, notamment la nuit ; une mission 22:00 → 02:00 reste valide après minuit.</div>
+        </div>
       </div>
 
       <div class="modal-backdrop team-account-modal" id="teamAccountModal">
@@ -7211,9 +7268,27 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
           <form id="teamUserForm" class="team-user-form">
             <div class="field"><label>Nom complet</label><input id="teamUserName" required placeholder="Ex. Sarah Karoui"></div>
             <div class="field"><label>Adresse e-mail</label><input id="teamUserEmail" type="email" required placeholder="sarah@mondeco.tn"></div>
-            <div class="field"><label>Rôle</label><select id="teamUserRole"><option value="commercial">Commercial</option><option value="responsable_commercial">Responsable commercial</option><option value="editor">Éditeur</option><option value="admin">Administrateur</option></select><div class="help">Le tableau de planning affiche uniquement les comptes Commercial.</div></div>
+            <div class="field"><label>Rôle</label><select id="teamUserRole"><option value="commercial">Commercial</option><option value="responsable_commercial">Responsable commercial</option><option value="editor">Éditeur</option><option value="admin">Administrateur</option></select><div class="help">Le tableau des missions affiche uniquement les comptes Commercial.</div></div>
             <div class="field"><label>Mot de passe initial</label><input id="teamUserPassword" type="password" minlength="8" required placeholder="Minimum 8 caractères"></div>
             <div class="actions"><button class="btn" type="button" data-close="teamAccountModal">Annuler</button><button class="btn primary" id="createTeamUserBtn" type="submit">Créer le compte</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="modal-backdrop team-edit-account-modal" id="teamEditAccountModal">
+        <div class="modal">
+          <div class="modal-header"><div><h3>Modifier le compte</h3><p>Corriger l’identité, l’e-mail, le rôle ou réinitialiser le mot de passe.</p></div><button class="close" type="button" data-close="teamEditAccountModal">×</button></div>
+          <form id="teamEditAccountForm">
+            <input type="hidden" id="teamEditUserId">
+            <div class="team-edit-grid">
+              <div class="field"><label>Nom complet</label><input id="teamEditUserName" required></div>
+              <div class="field"><label>Adresse e-mail</label><input id="teamEditUserEmail" type="email" required></div>
+              <div class="field"><label>Rôle</label><select id="teamEditUserRole"><option value="commercial">Commercial</option><option value="responsable_commercial">Responsable commercial</option><option value="editor">Éditeur</option><option value="admin">Administrateur</option></select></div>
+              <div class="field"><label>État du compte</label><select id="teamEditUserActive"><option value="true">Actif</option><option value="false">Désactivé</option></select></div>
+              <div class="field full"><label>Nouveau mot de passe <span class="help">(optionnel)</span></label><input id="teamEditUserPassword" type="password" minlength="8" placeholder="Laisser vide pour ne pas le changer"></div>
+              <div class="field full"><div class="team-security-note">Le mot de passe actuel n’est jamais affiché. Si vous saisissez un nouveau mot de passe, toutes les sessions actives de ce compte seront déconnectées.</div></div>
+            </div>
+            <div class="actions"><button class="btn" type="button" data-close="teamEditAccountModal">Annuler</button><button class="btn primary" type="submit">Enregistrer</button></div>
           </form>
         </div>
       </div>
@@ -8443,7 +8518,7 @@ let socialComments = [];
 let socialCommentsTotal = 0;
 let socialCommentsHasMore = false;
 let socialCommentCounts = null;
-let socialCommentFilter = 'all';
+let socialCommentFilter = 'pending';
 let selectedSocialCommentKey = '';
 let selectedSocialCommentData = null;
 // V6.33.1 — workflow commentaire : réponse publique puis message privé.
@@ -8452,6 +8527,8 @@ let socialCommentsSyncTimer = null;
 let socialCommentsInitialSyncAttempted = false;
 let socialCommentSearchTimer = null;
 let socialCommentsLiveTimer = null;
+let socialCommentsPendingReconcileBusy = false;
+let socialCommentsLastPendingReconcileAt = 0;
 
 
 function conversationUiTimeMs(value){
@@ -8481,7 +8558,7 @@ function commentChannelLabel(channel){
 
 function setCommentFilterCounts(counts={}){
   socialCommentCounts = counts || {};
-  const map={commentCountAll:'all',commentCountFacebook:'facebook',commentCountInstagram:'instagram',commentCountUnread:'unread',commentCountPending:'pendingReply',commentCountHidden:'hidden',commentCountPrivate:'privateReply'};
+  const map={commentCountAll:'all',commentCountFacebook:'facebook',commentCountInstagram:'instagram',commentCountUnread:'unread',commentCountPending:'pendingReply',commentCountAnswered:'answered',commentCountHidden:'hidden',commentCountPrivate:'privateReply'};
   for(const [id,key] of Object.entries(map)){
     const el=document.getElementById(id);if(el) el.textContent=String(Number(counts?.[key]||0));
   }
@@ -8567,8 +8644,8 @@ function renderSocialCommentsList(){
     const hint=String(post.caption||'').trim()||`${commentChannelLabel(comment.channel)} • publication ${post.postId||comment.postId||''}`;
     return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
       ${socialCommentAvatar(comment)}
-      <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':''}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
-      <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="inbox-unread">1</span>':''}</span>
+      <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':'<span class="comment-badge comment-owned">✓ Traité</span>'}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
+      <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
     </button>`;
   }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
 }
@@ -8652,7 +8729,7 @@ function renderSocialCommentComposer(target){
   const author=target?.authorUsername?`@${target.authorUsername}`:(target?.authorName||'ce client');
   const mode=(socialCommentComposeMode==='private'&&canPrivate&&!privateSent)?'private':'public';
   socialCommentComposeMode=mode;
-  const moderation=`<button class="social-comment-action hide" type="button" onclick="toggleSocialCommentHidden()">${target?.isHidden?'👁 Afficher':'🙈 Masquer'}</button><button class="social-comment-action danger" type="button" onclick="deleteSocialComment()">🗑 Supprimer</button>`;
+  const moderation=`<button class="social-comment-action hide" type="button" onclick="toggleSocialCommentHidden()">${target?.isHidden?'👁 Afficher':'🙈 Masquer'}</button>${currentUser?.role==='admin'?'<button class="social-comment-action danger" type="button" onclick="deleteSocialComment()">🗑 Supprimer définitivement</button>':''}`;
 
   if(mode==='private'){
     host.classList.remove('hidden');
@@ -8727,7 +8804,7 @@ window.privateReplyToSocialComment=async function(){
   }catch(error){alert('Réponse privée impossible : '+error.message);}finally{if(btn)btn.disabled=false;}
 };
 window.toggleSocialCommentHidden=async function(){const target=selectedSocialCommentData?.comment;if(!target)return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/hide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hidden:!target.isHidden})});await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Modération impossible : '+error.message);}};
-window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(!target||!confirm('Supprimer définitivement ce commentaire sur '+commentChannelLabel(target.channel)+' ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();}catch(error){alert('Suppression impossible : '+error.message);}};
+window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(currentUser?.role!=='admin')return;if(!target||!confirm('SUPPRESSION DÉFINITIVE\n\nCe commentaire et ses réponses liées seront supprimés de MONDECO. La suppression sera aussi demandée à '+commentChannelLabel(target.channel)+'. Cette action est irréversible.\n\nContinuer ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();await refreshPendingCountsNow();}catch(error){alert('Suppression impossible : '+error.message);}};
 
 async function maybeStartInitialSocialCommentsSync(status){
   if(inboxInteractionMode!=='comments'||socialCommentsInitialSyncAttempted) return;
@@ -8780,6 +8857,23 @@ function socialCommentsStatusText(status){
   return '💭 Commentaires : vérification de la synchronisation…';
 }
 
+async function maybeReconcilePendingSocialComments(){
+  if(inboxInteractionMode!=='comments') return;
+  if(!['admin','responsable_commercial'].includes(String(currentUser?.role||''))) return;
+  if(socialCommentsPendingReconcileBusy) return;
+  if(Number(socialCommentCounts?.pendingReply||0)<=0) return;
+  const now=Date.now();
+  if(now-socialCommentsLastPendingReconcileAt<120000) return;
+  socialCommentsLastPendingReconcileAt=now;
+  socialCommentsPendingReconcileBusy=true;
+  try{
+    const data=await apiFetch(`${API}/social-comments/reconcile-pending`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:8})});
+    if(data?.counts)setCommentFilterCounts(data.counts);
+    await loadSocialComments();
+  }catch(error){console.debug('Réconciliation commentaires :',error.message);}
+  finally{socialCommentsPendingReconcileBusy=false;}
+}
+
 async function refreshSocialCommentsStatus(){
   try{
     const status=await apiFetch(`${API}/social-comments/status`);
@@ -8805,6 +8899,7 @@ async function refreshSocialCommentsStatus(){
     }else if(inboxInteractionMode==='comments'){
       await loadSocialComments();
       await maybeStartInitialSocialCommentsSync(status);
+      await maybeReconcilePendingSocialComments();
     }
   }catch(error){
     const el=document.getElementById('socialCommentsSyncStatus');
@@ -9234,8 +9329,8 @@ function applyCommentChannelAccessUI(){
   if(fb) fb.style.display=access.facebookComments===false?'none':'';
   if(ig) ig.style.display=access.instagramComments===false?'none':'';
   if((socialCommentFilter==='facebook' && access.facebookComments===false) || (socialCommentFilter==='instagram' && access.instagramComments===false)){
-    socialCommentFilter='all';
-    document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(button=>button.classList.toggle('active',button.dataset.commentFilter==='all'));
+    socialCommentFilter='pending';
+    document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(button=>button.classList.toggle('active',button.dataset.commentFilter==='pending'));
   }
 }
 
@@ -9896,9 +9991,15 @@ function selectedConversationAccess(contact, state = {}){
       assignedToMe,
       canWrite: serverAccess.canWrite !== false,
       canReply: serverAccess.canReply !== false,
+      canTakeover: serverAccess.canTakeover === true,
       canManage: serverAccess.canManage !== false && (currentUser?.role !== 'commercial' || assignedToMe),
-      // readOnly signifie désormais « gestion limitée », pas « clavier bloqué ».
-      readOnly: serverAccess.readOnly === true
+      readOnly: serverAccess.readOnly === true,
+      lockOwnerUserId:String(serverAccess.lockOwnerUserId||''),
+      lockOwnerName:String(serverAccess.lockOwnerName||''),
+      lockReason:String(serverAccess.lockReason||''),
+      lockRetryAt:String(serverAccess.lockRetryAt||''),
+      lockRemainingMs:Number(serverAccess.lockRemainingMs||0),
+      lockMinutes:Number(serverAccess.lockMinutes||5)
     };
   }
   if(currentUser?.role !== 'commercial'){
@@ -10204,6 +10305,9 @@ function renderThreadMessage(
             : '🤖 IA MONDECO • Réponse automatique';
 
   const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
+  const purgePart=type === 'incoming' ? 'incoming' : 'reply';
+  const purgeKey=String(entry?.purgeKeys?.[purgePart]||'');
+  const deleteButton=currentUser?.role==='admin'&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage('${escapeHtml(purgeKey)}','${purgePart}')" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
 
   return `
     <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
@@ -10238,6 +10342,7 @@ function renderThreadMessage(
           ${escapeHtml(formatDate(entry.time))}
           ${entry.action && entry.action !== 'ok' ? ` • ${escapeHtml(actionLabel(entry.action))}` : ''}
           ${directInstagram ? ' • Instagram direct' : ''}
+          ${deleteButton}
         </div>
       </div>
     </div>
@@ -10342,13 +10447,19 @@ function buildConversationComposer(
   const resolvedAccess = access || selectedConversationAccess(contact, selectedConversationData?.state || {});
 
   if(currentUser?.role === 'commercial' && resolvedAccess.canReply === false){
+    const owner = resolvedAccess.lockOwnerName || 'un autre commercial';
+    const retry = resolvedAccess.lockRetryAt ? formatPresenceLastSeenAbsolute(resolvedAccess.lockRetryAt) : '';
+    const waitText = retry
+      ? `Reprise automatique possible à ${escapeHtml(retry)} si le client reste sans réponse.`
+      : 'Cette conversation reste réservée à ce commercial tant qu’il attend le client.';
     return `
       <div class="inbox-composer conversation-composer" id="commercialComposer">
         <div class="inbox-composer-toolbar">
-          <div class="inbox-composer-title">Réponse indisponible</div>
+          <div class="inbox-composer-title">🔒 Conversation prise en charge</div>
         </div>
         <div class="inbox-alert" style="margin:12px 0 4px">
-          Vous ne pouvez pas répondre à cette conversation.
+          <strong>${escapeHtml(owner)}</strong> traite actuellement cette discussion.<br>
+          ${waitText}
         </div>
       </div>
     `;
@@ -10861,6 +10972,23 @@ window.loadOlderConversationMessages = async function(contact, before){
       detail.scrollTop=0;
     }
   }catch(error){alert(`Impossible de charger les messages plus anciens : ${error.message}`);}
+};
+
+window.deleteConversationMessage=async function(purgeKey,part){
+  if(currentUser?.role!=='admin'||!selectedConversationContact||!purgeKey)return;
+  const channel=conversationChannel(selectedConversationData?.state||{contact:selectedConversationContact});
+  const remoteNote=channel==='whatsapp'||channel==='instagram'||channel==='facebook'
+    ? '\n\nImportant : pour un message privé, cela le supprime définitivement de MONDECO mais ne peut pas garantir un « supprimer pour tout le monde » chez le client.'
+    : '';
+  if(!confirm('SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'))return;
+  try{
+    await apiFetch(`${API}/conversations/${encodeURIComponent(selectedConversationContact)}/messages/${encodeURIComponent(purgeKey)}?part=${encodeURIComponent(part)}`,{method:'DELETE'});
+    await loadConversations();
+    if(selectedConversationContact){
+      try{await openConversation(selectedConversationContact);}catch{selectedConversationContact='';selectedConversationData=null;resetInteractionDetail();}
+    }
+    await refreshPendingCountsNow();
+  }catch(error){alert('Suppression définitive impossible : '+error.message);}
 };
 
 window.backToInboxList = function(){
@@ -15504,7 +15632,7 @@ document
 
 
 // ============================================================
-// V6.33.1 — ÉQUIPE SIMPLE / PLANNING / COMPTE RENDU
+// V6.34.2 — PILOTAGE COMMERCIAL / PERFORMANCE / ACCÈS / VERROU / SUPPRESSION DÉFINITIVE
 // ============================================================
 function simpleTeamDate(){
   const el=document.getElementById('simpleTeamDate');
@@ -15514,35 +15642,92 @@ function simpleTeamDate(){
 function simpleChannelChecked(userId,channel){return Boolean(document.querySelector(`[data-simple-user="${CSS.escape(userId)}"][data-channel="${channel}"]`)?.checked)}
 function simplePresenceLabel(p){return p?.status==='online'?'En ligne':p?.status==='idle'?'Inactif':'Hors ligne'}
 function simplePresenceClass(p){return ['online','idle'].includes(p?.status)?p.status:'offline'}
-function simpleScheduleForRow(user){return user?.schedule||{channels:[],startTime:'09:00',endTime:'18:00',planned:false}}
-function simpleNightSchedule(schedule){const s=String(schedule?.startTime||'');const e=String(schedule?.endTime||'');return Boolean((s&&s<'08:00')||(s&&s>='20:00')||(e&&e>'20:00')||(e&&e<='08:00'))}
-async function loadSimpleTeamDashboard(showLoading=true){
-  const host=document.getElementById('simpleTeamRows');if(!host)return null;
-  const date=simpleTeamDate();
-  if(showLoading)host.innerHTML='<tr><td colspan="8"><div class="empty">Chargement...</div></td></tr>';
-  try{simpleTeamDashboard=await apiFetch(`${API}/team/simple-dashboard?date=${encodeURIComponent(date)}`);renderSimpleTeamDashboard();return simpleTeamDashboard}catch(error){host.innerHTML=`<tr><td colspan="8"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;return null}
+function simpleScheduleForRow(user){return user?.schedule||{channels:[],startTime:'09:00',endTime:'18:00',planned:false,mission:''}}
+function simpleNightSchedule(schedule){const s=String(schedule?.startTime||'');const e=String(schedule?.endTime||'');return Boolean(schedule?.crossesMidnight||(s&&s<'08:00')||(s&&s>='20:00')||(e&&e<='08:00'))}
+function performanceScoreClass(score){if(score===null||score===undefined)return '';return Number(score)>=80?'':Number(score)>=60?'mid':'low'}
+function performanceRankLabel(item){if(item?.score===null||item?.score===undefined)return '—';return item.rank===1?'🥇':item.rank===2?'🥈':item.rank===3?'🥉':`#${Number(item.rank||0)}`}
+function teamControlTab(name){
+  document.querySelectorAll('[data-team-control-tab]').forEach(btn=>btn.classList.toggle('active',btn.dataset.teamControlTab===name));
+  document.getElementById('teamPerformancePanel')?.classList.toggle('hidden',name!=='performance');
+  document.getElementById('teamAccessPanel')?.classList.toggle('hidden',name!=='access');
 }
+document.querySelectorAll('[data-team-control-tab]').forEach(btn=>btn.addEventListener('click',()=>teamControlTab(btn.dataset.teamControlTab)));
+
+async function loadSimpleTeamDashboard(showLoading=true){
+  const accessHost=document.getElementById('simpleTeamRows');
+  const perfHost=document.getElementById('simplePerformanceRows');
+  const date=simpleTeamDate();
+  if(showLoading&&accessHost)accessHost.innerHTML='<tr><td colspan="6"><div class="empty">Chargement...</div></td></tr>';
+  if(showLoading&&perfHost)perfHost.innerHTML='<tr><td colspan="12"><div class="empty">Chargement...</div></td></tr>';
+  try{simpleTeamDashboard=await apiFetch(`${API}/team/simple-dashboard?date=${encodeURIComponent(date)}`);renderSimpleTeamDashboard();return simpleTeamDashboard}
+  catch(error){if(accessHost)accessHost.innerHTML=`<tr><td colspan="6"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;if(perfHost)perfHost.innerHTML=`<tr><td colspan="12"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;return null}
+}
+
+function renderSimplePerformance(){
+  const data=simpleTeamDashboard||{};const perf=data.performance||{};const summary=perf.summary||{};const ranking=Array.isArray(perf.ranking)?perf.ranking:[];
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=String(value??0)};
+  set('perfClientsTreated',summary.clientsTreated);set('perfMessageReplies',summary.messageReplies);set('perfCommentReplies',summary.commentReplies);set('perfDeveloped',summary.developedConversations);set('perfUnanswered',summary.unanswered);set('perfLate',summary.late);
+  const dateLabel=document.getElementById('simplePerformanceDateLabel');if(dateLabel)dateLabel.textContent=data.date||simpleTeamDate();
+  const host=document.getElementById('simplePerformanceRows');if(!host)return;
+  if(!ranking.length){host.innerHTML='<tr><td colspan="12"><div class="empty">Aucun commercial.</div></td></tr>';return;}
+  host.innerHTML=ranking.map(item=>{
+    const by=item.byChannel||{};
+    return `<tr><td><span class="performance-rank">${performanceRankLabel(item)}</span></td><td><strong>${escapeHtml(item.name||item.email||'Commercial')}</strong><span class="performance-mini">${escapeHtml(item.email||'')}</span><span class="performance-mini">WA ${Number(by.whatsappMessages||0)} • IG msg ${Number(by.instagramMessages||0)} • FB msg ${Number(by.facebookMessages||0)} • IG com ${Number(by.instagramComments||0)} • FB com ${Number(by.facebookComments||0)}</span></td><td><span class="performance-score ${performanceScoreClass(item.score)}">${item.score===null||item.score===undefined?'—':`${Number(item.score)}/100`}</span><span class="performance-mini">Qualité ${Number(item.qualityRate||0)}% • Réactivité ${Number(item.responseCompliance||0)}%</span></td><td><strong>${Number(item.clientsTreated||0)}</strong><span class="performance-mini">${Number(item.conversations||0)} conversation(s)</span></td><td><strong>${Number(item.messageReplies||0)}</strong></td><td><strong>${Number(item.commentReplies||0)}</strong></td><td><strong class="performance-good">${Number(item.developedConversations||0)}</strong></td><td><strong>${Number(item.completeConversations||0)}</strong></td><td><strong class="${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)?'performance-alert':''}">${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)}</strong></td><td><strong class="${Number(item.slaLate||0)+Number(item.slaMissed||0)?'performance-alert':''}">${Number(item.slaLate||0)+Number(item.slaMissed||0)}</strong><span class="performance-mini">médiane ${item.medianFirstResponseSeconds?escapeHtml(formatCountdownMs(Number(item.medianFirstResponseSeconds)*1000)):'—'}</span></td><td><strong class="${Number(item.unanswered||0)?'performance-alert':''}">${Number(item.unanswered||0)}</strong></td><td><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(item.userId)}')">Rapport</button></td></tr>`
+  }).join('');
+}
+
 function renderSimpleTeamDashboard(){
   const data=simpleTeamDashboard||{};const users=Array.isArray(data.users)?data.users:[];
   const set=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=String(value??0)};
-  set('simpleOnlineCount',users.filter(u=>u.presence?.status==='online').length);set('simpleCommercialCount',users.length);set('simplePlannedCount',users.filter(u=>u.schedule?.planned).length);set('simplePendingCount',users.reduce((s,u)=>s+Number(u.pendingAssigned||0),0));
+  set('simpleOnlineCount',users.filter(u=>u.presence?.status==='online').length);set('simpleCommercialCount',users.length);set('simplePlannedCount',users.filter(u=>u.schedule?.planned).length);set('simplePendingCount',users.reduce((sum,u)=>sum+Number(u.pendingAssigned||0),0));
   const label=document.getElementById('simpleTeamDateLabel');if(label)label.textContent=data.date||simpleTeamDate();
+  renderSimplePerformance();
   const host=document.getElementById('simpleTeamRows');if(!host)return;
-  if(!users.length){host.innerHTML='<tr><td colspan="8"><div class="empty">Aucun commercial.</div></td></tr>';return;}
-  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div></td><td><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-night">🌙 Horaire nuit</div>':''}</td><td><div class="simple-metric"><strong>${escapeHtml(formatPresenceDuration(user.attendance?.onlineMs||0))}</strong><span>${user.activeDay?'Actif ce jour':'Aucune activité détectée'}</span></div></td><td><div class="simple-metric"><strong>${Number(user.replies||0)}</strong><span>${Number(user.repliesWhileOnline||0)} pendant présence</span></div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Compte rendu</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Modifier</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
+  if(!users.length){host.innerHTML='<tr><td colspan="6"><div class="empty">Aucun commercial.</div></td></tr>';return;}
+  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div></td><td><div class="simple-mission-box"><input type="text" data-simple-mission="${escapeHtml(user.id)}" value="${escapeHtml(s.mission||'')}" placeholder="Ex. Répondre WhatsApp la nuit"><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-cross-midnight">🌙 Mission de nuit / fin possible le lendemain</div>':''}</div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Rapport</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Compte</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
 }
+
 window.saveSimpleTeamSchedule=async function(userId,button){
   const channels=['whatsapp_messages','instagram_messages','instagram_comments','facebook_messages','facebook_comments'].filter(c=>simpleChannelChecked(userId,c));
-  if(!channels.length){alert('Sélectionnez au moins un accès pour ce commercial. Pour une journée de repos, laissez son planning de cette journée non créé.');return;}
-  const startTime=document.querySelector(`[data-simple-start="${CSS.escape(userId)}"]`)?.value||'09:00';const endTime=document.querySelector(`[data-simple-end="${CSS.escape(userId)}"]`)?.value||'18:00';const state=document.querySelector(`[data-simple-save-state="${CSS.escape(userId)}"]`);const old=button?.textContent;
+  const startTime=document.querySelector(`[data-simple-start="${CSS.escape(userId)}"]`)?.value||'09:00';
+  const endTime=document.querySelector(`[data-simple-end="${CSS.escape(userId)}"]`)?.value||'18:00';
+  const mission=document.querySelector(`[data-simple-mission="${CSS.escape(userId)}"]`)?.value?.trim()||'';
+  if(channels.length&&startTime===endTime){alert('L’heure de début et de fin ne peuvent pas être identiques. Pour une mission de nuit, utilisez par exemple 22:00 → 02:00.');return;}
+  const state=document.querySelector(`[data-simple-save-state="${CSS.escape(userId)}"]`);const old=button?.textContent;
   if(button){button.disabled=true;button.textContent='...'}if(state)state.textContent='Enregistrement…';
-  try{await apiFetch(`${API}/team/simple-schedule/${encodeURIComponent(userId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:simpleTeamDate(),channels,startTime,endTime,active:channels.length>0})});if(state)state.textContent='✓ Enregistré';await loadSimpleTeamDashboard(false)}catch(error){if(state)state.textContent='Erreur';alert(error.message)}finally{if(button){button.disabled=false;button.textContent=old||'Enregistrer'}setTimeout(()=>{if(state)state.textContent=''},1800)}
+  try{await apiFetch(`${API}/team/simple-schedule/${encodeURIComponent(userId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:simpleTeamDate(),channels,startTime,endTime,mission,active:channels.length>0})});if(state)state.textContent=channels.length?'✓ Mission enregistrée':'✓ Accès retirés';await loadSimpleTeamDashboard(false)}catch(error){if(state)state.textContent='Erreur';alert(error.message)}finally{if(button){button.disabled=false;button.textContent=old||'Enregistrer'}setTimeout(()=>{if(state)state.textContent=''},1800)}
 };
+
 window.openSimpleDailyReport=async function(userId){simpleTeamReportUserId=userId;const date=simpleTeamDate();openModal('teamDailyReportModal');const body=document.getElementById('simpleDailyReportBody');if(body)body.innerHTML='<div class="empty">Chargement du compte rendu...</div>';try{const report=await apiFetch(`${API}/team/commercial-report/${encodeURIComponent(userId)}?date=${encodeURIComponent(date)}`);renderSimpleDailyReport(report)}catch(error){if(body)body.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`}};
-function renderSimpleDailyReport(report){const d=report?.day||{};const user=report?.user||{};const title=document.getElementById('simpleReportTitle');const sub=document.getElementById('simpleReportSubtitle');if(title)title.textContent=`Compte rendu — ${user.name||user.email||'Commercial'}`;if(sub)sub.textContent=`${report.date||'—'} • ${d.activeDay?'Actif':'Non actif'} • ${d.schedule?.planned?(d.schedule.channels||[]).map(channelDisplayName).join(' + '):'Non planifié'}`;const body=document.getElementById('simpleDailyReportBody');if(!body)return;const replyBy=d.replyByChannel||{};const hist=Array.isArray(report.history)?report.history:[];body.innerHTML=`<div class="simple-report-kpis"><div class="simple-report-kpi"><span>Temps dans MONDECO</span><strong>${escapeHtml(formatPresenceDuration(d.attendance?.onlineMs||0))}</strong><small>${Number(d.attendance?.sessions||0)} session(s)</small></div><div class="simple-report-kpi"><span>Réponses envoyées</span><strong>${Number(d.replies||0)}</strong><small>${Number(d.repliesWhileOnline||0)} pendant présence</small></div><div class="simple-report-kpi"><span>Non répondus affectés</span><strong>${Number(d.pendingAssigned||0)}</strong><small>${Number(d.lateAssigned||0)} en retard actuellement</small></div><div class="simple-report-kpi"><span>Activité de nuit</span><strong>${escapeHtml(formatPresenceDuration(d.nightMs||0))}</strong><small>${Number(d.nightReplies||0)} réponse(s) entre 20h et 08h</small></div></div><div class="simple-report-section"><h4>Détail de la journée</h4><div class="simple-report-grid"><div class="simple-report-line"><strong>Connexion</strong>${d.attendance?.firstSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.firstSeenAt)):'Aucune connexion'} → ${d.attendance?.lastSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.lastSeenAt)):'—'}</div><div class="simple-report-line"><strong>Réseaux planifiés</strong>${d.schedule?.planned?(d.schedule.channels||[]).map(channelDisplayName).join(' + '):'Repos / non planifié'}${d.schedule?.planned?` • ${escapeHtml(d.schedule.startTime)}–${escapeHtml(d.schedule.endTime)}`:''}</div><div class="simple-report-line"><strong>Réponses par réseau</strong>WhatsApp ${Number(replyBy.whatsapp||0)} • Instagram ${Number(replyBy.instagram||0)} • Facebook ${Number(replyBy.facebook||0)}</div><div class="simple-report-line"><strong>Suivi</strong>${Number(d.slaMissed||0)} dossier(s) SLA manqué(s) ce jour • ${Number(d.conversations||0)} conversation(s) traitée(s)</div></div></div><div class="simple-report-section"><h4>Activité des 7 derniers jours</h4><div class="simple-day-list"><div class="simple-day-row header"><div>Date</div><div>Actif</div><div>Temps app</div><div>Réponses</div><div>Réseaux</div></div>${hist.map(x=>`<div class="simple-day-row"><div><strong>${escapeHtml(x.date)}</strong></div><div class="${x.activeDay?'simple-active-yes':'simple-active-no'}">${x.activeDay?'● Actif':'○ Non actif'}</div><div>${escapeHtml(formatPresenceDuration(x.onlineMs||0))}</div><div>${Number(x.replies||0)}</div><div>${x.channels?.length?x.channels.map(channelDisplayName).join(' + '):'—'}${Number(x.nightMs||0)>0?` • 🌙 ${escapeHtml(formatPresenceDuration(x.nightMs))}`:''}</div></div>`).join('')}</div></div>`}
+function renderSimpleDailyReport(report){
+  const d=report?.day||{};const p=report?.performance||{};const user=report?.user||{};const title=document.getElementById('simpleReportTitle');const sub=document.getElementById('simpleReportSubtitle');
+  if(title)title.textContent=`Compte rendu — ${user.name||user.email||'Commercial'}`;
+  if(sub)sub.textContent=`${report.date||'—'} • Score ${p.score===null||p.score===undefined?'—':`${Number(p.score)}/100`} • ${Number(p.clientsTreated||0)} client(s) traité(s)`;
+  const body=document.getElementById('simpleDailyReportBody');if(!body)return;const by=p.byChannel||{};const hist=Array.isArray(report.history)?report.history:[];const night=Array.isArray(p.nightMissions)?p.nightMissions:[];
+  const missionHtml=night.length?night.map(m=>`<div class="night-mission-card"><strong>🌙 ${escapeHtml(m.mission||'Mission de nuit')} — ${escapeHtml(m.startTime)} → ${escapeHtml(m.endTime)}${m.crossesMidnight?' (+1 jour)':''}</strong><div class="performance-mini">${(m.channels||[]).map(channelDisplayName).join(' + ')||'—'} • Première action ${m.firstActionAt?escapeHtml(formatPresenceLastSeenAbsolute(m.firstActionAt)):'aucune'} • Dernière action ${m.lastActionAt?escapeHtml(formatPresenceLastSeenAbsolute(m.lastActionAt)):'aucune'}</div><div class="night-mission-grid"><div class="night-mission-metric"><span>Clients traités</span><b>${Number(m.clientsTreated||0)}</b></div><div class="night-mission-metric"><span>Messages</span><b>${Number(m.messageReplies||0)}</b></div><div class="night-mission-metric"><span>Commentaires</span><b>${Number(m.commentReplies||0)}</b></div><div class="night-mission-metric"><span>Affectés reçus</span><b>${Number(m.assignedReceived||0)}</b></div><div class="night-mission-metric"><span>Non traités</span><b class="${Number(m.assignedUnhandled||0)?'performance-alert':''}">${Number(m.assignedUnhandled||0)}</b></div></div></div>`).join(''):'<div class="empty">Aucune mission de nuit définie pour cette journée.</div>';
+  body.innerHTML=`<div class="simple-report-kpis"><div class="simple-report-kpi"><span>Score global</span><strong>${p.score===null||p.score===undefined?'—':`${Number(p.score)}/100`}</strong><small>Sans utiliser le temps connecté</small></div><div class="simple-report-kpi"><span>Clients traités</span><strong>${Number(p.clientsTreated||0)}</strong><small>${Number(p.openedConversations||0)} discussion(s) ouverte(s)</small></div><div class="simple-report-kpi"><span>Réponses</span><strong>${Number(p.totalReplies||0)}</strong><small>${Number(p.messageReplies||0)} messages + ${Number(p.commentReplies||0)} commentaires</small></div><div class="simple-report-kpi"><span>Discussions développées</span><strong>${Number(p.developedConversations||0)}</strong><small>${Number(p.completeConversations||0)} conversation(s) complète(s)</small></div><div class="simple-report-kpi"><span>Prix seul</span><strong>${Number(p.priceOnlyConversations||0)+Number(p.priceOnlyComments||0)}</strong><small>${Number(p.priceContinuedConversations||0)} poursuivie(s) après le prix</small></div><div class="simple-report-kpi"><span>Retards / sans suite</span><strong>${Number(p.slaLate||0)+Number(p.slaMissed||0)} / ${Number(p.unanswered||0)}</strong><small>Médiane première réponse ${p.medianFirstResponseSeconds?escapeHtml(formatCountdownMs(Number(p.medianFirstResponseSeconds)*1000)):'—'}</small></div></div><div class="simple-report-section"><h4>Qualité & canaux</h4><div class="simple-report-grid"><div class="simple-report-line"><strong>Qualité des échanges</strong>${Number(p.qualityRate||0)}% • continuité ${Number(p.continuityRate||0)}%</div><div class="simple-report-line"><strong>Réactivité</strong>${Number(p.responseCompliance||0)}% dans le SLA • ${Number(p.slaMissed||0)} manqué(s)</div><div class="simple-report-line"><strong>Messages</strong>WhatsApp ${Number(by.whatsappMessages||0)} • Instagram ${Number(by.instagramMessages||0)} • Facebook ${Number(by.facebookMessages||0)}</div><div class="simple-report-line"><strong>Commentaires</strong>Instagram ${Number(by.instagramComments||0)} • Facebook ${Number(by.facebookComments||0)}</div></div></div><div class="simple-report-section"><h4>Contrôle des missions de nuit</h4>${missionHtml}</div><div class="simple-report-section"><h4>Connexion — information secondaire</h4><div class="simple-report-grid"><div class="simple-report-line"><strong>Première activité app</strong>${d.attendance?.firstSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.firstSeenAt)):'Aucune'}</div><div class="simple-report-line"><strong>Dernière activité app</strong>${d.attendance?.lastSeenAt?escapeHtml(formatPresenceLastSeenAbsolute(d.attendance.lastSeenAt)):'—'}</div></div></div><div class="simple-report-section"><h4>7 derniers jours</h4><div class="simple-day-list"><div class="simple-day-row header"><div>Date</div><div>Score</div><div>Clients</div><div>Développées</div><div>Sans suite</div></div>${hist.map(x=>`<div class="simple-day-row"><div><strong>${escapeHtml(x.date)}</strong></div><div>${x.score===null||x.score===undefined?'—':`${Number(x.score)}/100`}</div><div>${Number(x.clientsTreated||0)}</div><div>${Number(x.developedConversations||0)} <span class="performance-mini">(${Number(x.completeConversations||0)} complètes)</span></div><div class="${Number(x.unanswered||0)?'performance-alert':''}">${Number(x.unanswered||0)}</div></div>`).join('')}</div></div>`;
+}
 function formatPresenceLastSeenAbsolute(value){try{return new Intl.DateTimeFormat('fr-TN',{timeZone:'Africa/Tunis',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}catch{return String(value||'—')}}
 function refreshSimplePresenceOnly(){if(!simpleTeamDashboard?.users)return;(teamPresence?.users||[]).forEach(item=>{const user=simpleTeamDashboard.users.find(u=>u.id===item.id);if(user)user.presence=item.presence||user.presence});renderSimpleTeamDashboard()}
-document.getElementById('simpleTeamRefresh')?.addEventListener('click',()=>loadSimpleTeamDashboard());document.getElementById('simpleTeamDate')?.addEventListener('change',()=>loadSimpleTeamDashboard());document.getElementById('openTeamAccountModal')?.addEventListener('click',()=>openModal('teamAccountModal'));
+
+document.getElementById('simpleTeamRefresh')?.addEventListener('click',()=>loadSimpleTeamDashboard());
+document.getElementById('simpleTeamDate')?.addEventListener('change',()=>loadSimpleTeamDashboard());
+document.getElementById('openTeamAccountModal')?.addEventListener('click',()=>openModal('teamAccountModal'));
+
+// Remplace les anciens prompt() par une vraie fiche de compte.
+window.editTeamUser=function(id){
+  const user=teamUsers.find(item=>item.id===id)||simpleTeamDashboard?.users?.find(item=>item.id===id);if(!user)return;
+  document.getElementById('teamEditUserId').value=user.id||'';document.getElementById('teamEditUserName').value=user.name||'';document.getElementById('teamEditUserEmail').value=user.email||'';document.getElementById('teamEditUserRole').value=user.role||'commercial';document.getElementById('teamEditUserActive').value=user.active===false?'false':'true';document.getElementById('teamEditUserPassword').value='';
+  const roleSelect=document.getElementById('teamEditUserRole');if(roleSelect)roleSelect.disabled=currentUser?.role==='responsable_commercial';
+  openModal('teamEditAccountModal');
+};
+document.getElementById('teamEditAccountForm')?.addEventListener('submit',async event=>{
+  event.preventDefault();const id=document.getElementById('teamEditUserId')?.value;if(!id)return;
+  const password=document.getElementById('teamEditUserPassword')?.value||'';
+  const payload={name:document.getElementById('teamEditUserName')?.value?.trim()||'',email:document.getElementById('teamEditUserEmail')?.value?.trim()||'',role:currentUser?.role==='responsable_commercial'?'commercial':(document.getElementById('teamEditUserRole')?.value||'commercial'),active:document.getElementById('teamEditUserActive')?.value==='true'};
+  if(password)payload.password=password;
+  try{await apiFetch(`${API}/users/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});closeModal('teamEditAccountModal');await loadTeamUsers();await Promise.all([loadTeamPresence(),loadSimpleTeamDashboard(false)]);}catch(error){alert(error.message)}
+});
 
 // ============================================================
 // V6.19 — PLANNING / TÂCHES / SLA
