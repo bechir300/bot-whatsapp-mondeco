@@ -10508,13 +10508,17 @@ function conversationListTags(item){
   const sourceContext=item.sourceContext||null;
   const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&pending&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
   const status=[];
+  // V6.35.8 — Badge "Répondu / À répondre" affiché EN PREMIER et de façon
+  // identique sur les 3 canaux (avant, seul Facebook l'avait ; sur
+  // WhatsApp/Instagram on ne voyait que des badges de mode IA, sans dire
+  // clairement si le client attendait encore une réponse — signalé confus
+  // par les commerciaux).
+  status.push(pending
+    ? '<span class="ai-paused">🟠 À répondre</span>'
+    : '<span class="assigned">✓ Répondu</span>');
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
   if(item.favorite) status.push('<span class="assigned">⭐ Favori</span>');
-  if(facebook){
-    status.push(pending
-      ? '<span class="ai-paused">🟠 À répondre</span>'
-      : '<span class="assigned">✓ Répondu</span>');
-  }else{
+  if(!facebook){
     status.push(paused
       ? (pending?'<span class="ai-paused">🤖 IA en pause</span>':'<span class="assigned">👤 Suivi commercial</span>')
       : item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
