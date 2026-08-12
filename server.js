@@ -4784,9 +4784,34 @@ setCommercialSendHandler(
       if (file) {
         throw new Error('Les pièces jointes Facebook ne sont pas encore activées dans MONDECO. Envoyez une réponse texte.');
       }
+
+      // V6.35.4 — Fenêtre standard Messenger (24h) : Meta refuse un envoi
+      // messaging_type=RESPONSE au-delà. Entre 24h et 7 jours, un agent
+      // humain peut toujours répondre, mais UNIQUEMENT avec le tag
+      // human_agent (permission Meta "Human Agent"). Au-delà de 7 jours,
+      // Meta ne permet plus aucun envoi texte tant que le client n'a pas
+      // réécrit.
+      const stateForFacebookSend = getConversationState(conversationKey) || {};
+      const lastCustomerAtForSend = safeString(stateForFacebookSend?.lastCustomerAt);
+      const msSinceLastCustomerMessage = lastCustomerAtForSend
+        ? Date.now() - Date.parse(lastCustomerAtForSend)
+        : NaN;
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+      const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
+
+      if (Number.isFinite(msSinceLastCustomerMessage) && msSinceLastCustomerMessage > SEVEN_DAYS_MS) {
+        throw new Error(
+          'Ce client a écrit il y a plus de 7 jours. Meta ne permet plus d’envoyer un message texte tant que le client n’a pas repris contact lui-même.'
+        );
+      }
+
+      const useHumanAgentTag =
+        Number.isFinite(msSinceLastCustomerMessage) && msSinceLastCustomerMessage > ONE_DAY_MS;
+
       result = await sendFacebookMessage(
         resolvedExternal,
-        text
+        text,
+        { useHumanAgentTag }
       );
     } else if (file) {
       const resolvedMediaKind =
@@ -5238,6 +5263,23 @@ function facebookMessengerApiError(data, status = 500) {
     return error;
   }
 
+  // V6.35.4 — Meta code 10 : hors fenêtre de messagerie autorisée. Peut
+  // encore survenir si lastCustomerAt était manquant/faux au moment du
+  // calcul local. Message clair plutôt que le texte brut de Meta.
+  if (metaCode === 10) {
+    const error = new Error(
+      'Meta refuse cet envoi : ce client n’a pas écrit depuis plus de 24h et ' +
+      'le message n’a pas pu être envoyé avec le tag agent humain (ou plus de 7 jours se sont écoulés). ' +
+      'Demandez au client de réécrire un message pour rouvrir la conversation.'
+    );
+    error.code = 'FACEBOOK_OUTSIDE_WINDOW';
+    error.channel = 'facebook';
+    error.statusCode = 422;
+    error.metaCode = metaCode;
+    error.metaSubcode = subcode;
+    return error;
+  }
+
   const error = new Error(rawMessage || `Erreur Facebook Messenger HTTP ${status}`);
   error.code = 'FACEBOOK_SEND_ERROR';
   error.channel = 'facebook';
@@ -5247,7 +5289,7 @@ function facebookMessengerApiError(data, status = 500) {
   return error;
 }
 
-async function sendFacebookMessage(to, text) {
+async function sendFacebookMessage(to, text, { useHumanAgentTag = false } = {}) {
   if (!FACEBOOK_MESSENGER_TOKEN) {
     throw new Error('FACEBOOK_MESSENGER_TOKEN manquant (token Messenger).');
   }
@@ -5265,11 +5307,21 @@ async function sendFacebookMessage(to, text) {
     throw new Error('Message Facebook Messenger vide.');
   }
 
-  console.log('📤 ENVOI FACEBOOK MESSENGER VERS :', cleanRecipient);
+  console.log(
+    '📤 ENVOI FACEBOOK MESSENGER VERS :', cleanRecipient,
+    useHumanAgentTag ? '(hors fenêtre 24h — tag human_agent)' : '(fenêtre standard — RESPONSE)'
+  );
 
   const url =
     `https://graph.facebook.com/${META_API_VERSION}/` +
     `${encodeURIComponent(FACEBOOK_PAGE_ID)}/messages`;
+
+  // V6.35.4 — Au-delà de la fenêtre standard de 24h, Meta exige
+  // messaging_type=MESSAGE_TAG avec tag=HUMAN_AGENT (permission Meta
+  // "Human Agent") au lieu de RESPONSE, sinon l'envoi est refusé.
+  const messagingPayload = useHumanAgentTag
+    ? { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' }
+    : { messaging_type: 'RESPONSE' };
 
   const response = await fetch(url, {
     method: 'POST',
@@ -5279,7 +5331,7 @@ async function sendFacebookMessage(to, text) {
     },
     body: JSON.stringify({
       recipient: { id: cleanRecipient },
-      messaging_type: 'RESPONSE',
+      ...messagingPayload,
       message: { text: cleanText }
     })
   });
