@@ -4963,6 +4963,69 @@ setCommercialSendHandler(
 );
 
 // ============================================================
+// V6.35.6 — Résilience réseau pour les envois de messages (WhatsApp,
+// Facebook, Instagram). Contrairement aux appels de LECTURE (déjà
+// protégés depuis V6.35.2), un envoi n'est PAS rejouable à l'aveugle :
+// si la requête a atteint Meta et que seule la réponse s'est perdue, un
+// retry automatique enverrait le message une deuxième fois au client.
+// Règle appliquée ici : on ne retente QUE les échecs qui surviennent
+// avant tout contact réseau réel avec Meta (DNS, connexion refusée) —
+// ceux-là n'ont provoqué aucun envoi. Un timeout ou une coupure en cours
+// d'échange ne sont JAMAIS retentés automatiquement : l'erreur renvoyée
+// au commercial le dit explicitement, pour qu'il vérifie avant de renvoyer.
+// ============================================================
+
+const SEND_MESSAGE_TIMEOUT_MS = 20000;
+
+function isPreflightNetworkFailure(error) {
+  // Ces codes signifient que la connexion n'a JAMAIS été établie avec
+  // Meta : aucun risque de double envoi à retenter une fois.
+  const code = String(error?.cause?.code || error?.code || '');
+  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(code);
+}
+
+async function fetchWithSendTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_MESSAGE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (isPreflightNetworkFailure(error)) {
+      // Connexion jamais établie : un seul retry rapide, sans risque.
+      await new Promise(resolve => setTimeout(resolve, 700));
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } catch (retryError) {
+        throw wrapSendNetworkError(retryError);
+      }
+    }
+    throw wrapSendNetworkError(error);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function wrapSendNetworkError(error) {
+  if (error?.name === 'AbortError') {
+    const timeoutError = new Error(
+      `Envoi interrompu après ${SEND_MESSAGE_TIMEOUT_MS / 1000}s sans réponse de Meta. ` +
+      `Le message a peut-être été délivré malgré tout : vérifiez la conversation avant de renvoyer.`
+    );
+    timeoutError.code = 'SEND_TIMEOUT_UNCERTAIN';
+    return timeoutError;
+  }
+  if (error instanceof TypeError && /fetch failed/i.test(String(error.message || ''))) {
+    const networkError = new Error(
+      'Coupure réseau pendant l’envoi. Le message a peut-être été délivré malgré tout : ' +
+      'vérifiez la conversation avant de renvoyer.'
+    );
+    networkError.code = 'SEND_NETWORK_UNCERTAIN';
+    return networkError;
+  }
+  return error;
+}
+
+// ============================================================
 // ENVOI WHATSAPP
 // ============================================================
 
@@ -5010,7 +5073,7 @@ async function sendWhatsAppMessage(
     `${PHONE_NUMBER_ID}/messages`;
 
   const response =
-    await fetch(
+    await fetchWithSendTimeout(
       url,
       {
         method: 'POST',
@@ -5323,7 +5386,7 @@ async function sendFacebookMessage(to, text, { useHumanAgentTag = false } = {}) 
     ? { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' }
     : { messaging_type: 'RESPONSE' };
 
-  const response = await fetch(url, {
+  const response = await fetchWithSendTimeout(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
@@ -5407,7 +5470,7 @@ async function sendInstagramMessage(
     `${INSTAGRAM_ACCOUNT_ID}/messages`;
 
   const response =
-    await fetch(
+    await fetchWithSendTimeout(
       url,
       {
         method: 'POST',
