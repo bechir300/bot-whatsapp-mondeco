@@ -10523,13 +10523,41 @@ function conversationListTags(item){
       ? (pending?'<span class="ai-paused">🤖 IA en pause</span>':'<span class="assigned">👤 Suivi commercial</span>')
       : item.aiModeChoicePending?'<span>⏳ Choix IA/Commercial</span>':'<span class="ai-active">🤖 IA active</span>');
   }
-  if(liveSla) status.push(`<span class="sla-human ${liveSla.status}">${escapeHtml(formatSlaHuman(liveSla.remainingMs))}</span>`);
+  if(liveSla) status.push(`<span class="sla-human ${liveSla.status}" data-role="sla-badge">${escapeHtml(formatSlaHuman(liveSla.remainingMs))}</span>`);
   const sourceLabel=item.hasAdReferral
     ? `📣 ${item.adProductHint||item.adHeadline||'Publicité Meta'}`
     : sourceContext&&sourceContext.type&&sourceContext.type!=='direct'
       ? `${sourceContext.type==='story'?'⭕':sourceContext.type==='reel'?'🎬':sourceContext.type==='share'?'🔗':'💬'} ${sourceContext.label||`Source ${channelDisplayName(channel)}`}`
       : '';
   return `${line2}<span class="inbox-item-status-row">${status.join('')}</span>${sourceLabel?`<span class="inbox-item-source-row">${escapeHtml(sourceLabel)}</span>`:''}`;
+}
+
+// V6.35.10 — Mise à jour légère des compteurs SLA ("réponse attendue
+// dans...") SANS reconstruire toute la liste. L'ordre des conversations ne
+// dépend jamais du décompte SLA (seulement de répondu/non-lu/date), donc
+// il est toujours sûr de ne patcher que le texte du badge existant.
+// Avant ce correctif, la liste ENTIÈRE (1000+ conversations, tout leur
+// HTML) était reconstruite toutes les 5 secondes rien que pour ça —
+// un gaspillage important de CPU navigateur, cause probable de lenteurs
+// ressenties par les commerciaux.
+function refreshConversationListSlaTimers(){
+  const container = document.getElementById('conversationListContainer');
+  if(!container) return;
+  for(const item of conversations){
+    if(item.pendingReply !== true) continue;
+    const liveSla = liveSlaForConversation(item);
+    if(!liveSla) continue;
+    let itemNode;
+    try{
+      itemNode = container.querySelector(`[data-contact="${CSS.escape(item.contact)}"]`);
+    }catch{
+      continue;
+    }
+    const badge = itemNode?.querySelector('[data-role="sla-badge"]');
+    if(!badge) continue;
+    badge.textContent = formatSlaHuman(liveSla.remainingMs);
+    badge.className = `sla-human ${liveSla.status}`;
+  }
 }
 
 function renderConversationsList(){
@@ -10617,6 +10645,7 @@ function renderConversationsList(){
           <button
             class="inbox-conversation-item ${urgent ? 'urgent' : ''} ${selected ? 'selected' : ''}"
             type="button"
+            data-contact="${escapeHtml(item.contact)}"
             onclick="openConversation('${escapeHtml(item.contact)}')"
           >
             ${conversationAvatarHtml(item, item.hasAdReferral ? 'ad' : '')}
@@ -16581,7 +16610,7 @@ document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(butto
 
 if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
 
-if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{renderConversationsList();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 
 // ============================================================
 // LOGOUT / INIT
