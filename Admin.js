@@ -96,9 +96,18 @@ const META_API_VERSION = (
   'v26.0'
 ).trim();
 
-// V6.33.1 — historique Meta limité à 15 jours par défaut pour économiser le Volume Railway.
-// Une conversation marquée ⭐ Favori est conservée au-delà de cette fenêtre.
-const HISTORY_IMPORT_DAYS = 15;
+// V6.35.13 — Rétention réduite à 48h par défaut (au lieu de 15 jours), sur
+// demande explicite : moins de données à importer/stocker/migrer = app
+// plus légère et plus rapide. Réglable via la variable d'environnement
+// HISTORY_IMPORT_DAYS si besoin de revenir à une fenêtre plus large.
+// Une conversation ⭐ Favori OU encore SANS RÉPONSE reste protégée de la
+// purge indéfiniment, quel que soit son âge (voir
+// retentionProtectedConversationContacts ci-dessous) : réduire la fenêtre
+// ne fait jamais disparaître un client qui attend encore une réponse.
+const HISTORY_IMPORT_DAYS = Math.max(
+  1,
+  Math.min(30, Number(process.env.HISTORY_IMPORT_DAYS || 2) || 2)
+);
 
 // V6.33.1 — l'historique reste conservé 15 jours, mais la boîte de travail
 // quotidienne n'affiche pas des milliers de conversations déjà traitées.
@@ -994,7 +1003,7 @@ function emergencyFreeDisposableStorage() {
         try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
       }
 
-      const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteConversationContacts());
+      const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
       const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
       freed += pruneFilesOlderThan(
         CONVERSATION_MEDIA_DIR,
@@ -1069,6 +1078,41 @@ function favoriteConversationContacts() {
       .map(([contact]) => safeString(contact))
       .filter(Boolean)
   );
+}
+
+// V6.35.13 — Approximation légère de "conversation encore sans réponse",
+// utilisable sans charger tout l'historique de messages (contrairement à
+// conversationNeedsReplyFromEntries, qui a besoin des entries complètes).
+// Suffisant pour une décision de rétention : en cas de doute, on protège
+// plutôt que de risquer de purger un client qui attend encore.
+function stateLooksUnanswered(state = {}) {
+  if (!state || state.resolved === true) return false;
+  const inboundMs = conversationTimeMs(state?.lastCustomerAt);
+  if (!Number.isFinite(inboundMs) || inboundMs <= 0) return false;
+  const responseMs = Math.max(
+    Number(conversationTimeMs(state?.lastHumanAt)) || 0,
+    Number(conversationTimeMs(state?.lastBotAt)) || 0,
+    Number(conversationTimeMs(state?.lastAnsweredAt)) || 0,
+    Number(conversationTimeMs(state?.lastBusinessAt)) || 0
+  );
+  return !(responseMs >= inboundMs);
+}
+
+// V6.35.13 — Ensemble des contacts protégés de la purge par rétention :
+// favoris ET conversations encore sans réponse. Remplace
+// favoriteConversationContacts() dans tous les points de purge (la fonction
+// d'origine reste inchangée pour le comptage "favoris" affiché ailleurs).
+function retentionProtectedConversationContacts() {
+  const states = loadConversationStatesAdmin();
+  const protectedContacts = new Set();
+  for (const [contact, state] of Object.entries(states || {})) {
+    if (!state) continue;
+    if (state.favorite === true || stateLooksUnanswered(state)) {
+      const safeContact = safeString(contact);
+      if (safeContact) protectedContacts.add(safeContact);
+    }
+  }
+  return protectedContacts;
 }
 
 function conversationRecordTimeMs(entry) {
@@ -1168,7 +1212,7 @@ function collectFavoriteConversationMediaBasenames(favoriteContacts) {
 
 function pruneConversationHistoryByRetention() {
   const cutoffMs = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
-  const favorites = favoriteConversationContacts();
+  const favorites = retentionProtectedConversationContacts();
   let freed = 0;
   freed += pruneConversationJsonArrayFile(CONVERSATIONS_LOG_PATH, 'conversation-log.json', favorites, cutoffMs);
   freed += pruneConversationJsonArrayFile(INSTAGRAM_HISTORY_PATH, 'instagram-history.json', favorites, cutoffMs);
@@ -1176,7 +1220,7 @@ function pruneConversationHistoryByRetention() {
   return { freed, favorites, cutoffMs };
 }
 
-function pruneConversationEventsByRetention(favoriteContacts = favoriteConversationContacts()) {
+function pruneConversationEventsByRetention(favoriteContacts = retentionProtectedConversationContacts()) {
   let freed = 0;
   try {
     if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
@@ -1229,7 +1273,7 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
   // de rétention. Les conversations ⭐ Favori restent intégralement conservées.
   const historyPrune = pruneConversationHistoryByRetention();
   freed += historyPrune.freed;
-  const favoriteContacts = historyPrune.favorites || favoriteConversationContacts();
+  const favoriteContacts = historyPrune.favorites || retentionProtectedConversationContacts();
 
   // Les journaux append-only sont eux aussi réduits, mais les lignes favorites
   // sont réécrites dans le fichier au lieu d'être supprimées.
