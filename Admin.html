@@ -9123,6 +9123,10 @@ document.getElementById('confirmImportBtn').addEventListener('click', async () =
 
 let conversations = [];
 let quickReplies = [];
+// V6.35.14 — Horodatage du dernier chargement des réponses rapides, pour
+// éviter de les recharger depuis le serveur à CHAQUE ouverture de
+// conversation (elles changent rarement). Voir loadQuickReplies().
+let quickRepliesLoadedAt = 0;
 let conversationFilter = 'all';
 let selectedConversationContact = '';
 let selectedConversationTargetMessageId = '';
@@ -11740,12 +11744,16 @@ window.backToInboxList = function(){
 };
 
 async function refreshSelectedConversation(){
-  await loadConversations();
-
+  // V6.35.14 — openConversation() recharge déjà la liste à sa toute fin :
+  // pas besoin de le faire deux fois quand une conversation est ouverte.
+  // On ne garde l'appel direct que pour le cas (rare) où rien n'est
+  // sélectionné, seul cas où openConversation() ne serait pas appelée.
   if(selectedConversationContact){
     await window.openConversation(
       selectedConversationContact
     );
+  }else{
+    await loadConversations();
   }
 }
 
@@ -12133,12 +12141,23 @@ document
 // CLAVIER INTELLIGENT / RÉPONSES RAPIDES
 // ============================================================
 
-async function loadQuickReplies(){
+async function loadQuickReplies({ force = false } = {}){
+  // V6.35.14 — Les réponses rapides changent rarement. Sans ce cache, elles
+  // étaient rechargées depuis le serveur à CHAQUE ouverture de conversation
+  // (donc aussi après chaque envoi) — un aller-retour réseau inutile la
+  // plupart du temps. On ne recharge plus que toutes les 2 minutes, ou si
+  // `force` est explicitement demandé (ex : après modification d'un
+  // modèle dans les paramètres).
+  const QUICK_REPLIES_CACHE_MS = 120000;
+  if(!force && quickReplies.length && (Date.now() - quickRepliesLoadedAt) < QUICK_REPLIES_CACHE_MS){
+    return quickReplies;
+  }
   try{
     quickReplies =
       await apiFetch(
         `${API}/quick-replies`
       );
+    quickRepliesLoadedAt = Date.now();
   }catch(error){
     console.debug(
       'Réponses rapides :',
@@ -12263,7 +12282,7 @@ window.saveConversationQuickReply = async function(){
         }
       );
 
-    await loadQuickReplies();
+    await loadQuickReplies({ force:true });
     populateConversationQuickReplySelect();
 
     const select =
@@ -12360,7 +12379,7 @@ window.importConversationQuickRepliesFile=async function(file){
     const result=await apiFetch(`${API}/quick-replies/import`,{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})
     });
-    await loadQuickReplies();
+    await loadQuickReplies({ force:true });
     populateConversationQuickReplySelect();
     alert(`${Number(result?.imported||0)} réponse(s) importée(s). ${Number(result?.skipped||0)} ignorée(s) (doublon ou ligne invalide).`);
   }catch(error){
@@ -12399,7 +12418,7 @@ window.deleteConversationQuickReply = async function(){
       }
     );
 
-    await loadQuickReplies();
+    await loadQuickReplies({ force:true });
     populateConversationQuickReplySelect();
   }catch(error){
     alert(error.message);
@@ -13513,8 +13532,11 @@ window.sendConversationCommercialReply = async function(contact){
     // message est déjà parti. S'ils échouent (réseau lent, backend
     // occupé), on ne montre plus d'alerte d'échec d'envoi trompeuse — la
     // prochaine actualisation automatique (5s) rattrapera l'affichage.
+    // V6.35.14 — loadConversations() n'est plus appelée ici séparément :
+    // openConversation() en fait déjà une à sa toute fin. L'appeler deux
+    // fois de suite doublait inutilement ce chargement réseau à chaque
+    // envoi, sur une liste de 900+ conversations.
     try{
-      await loadConversations();
       await refreshPendingCountsNow();
       await window.openConversation(contact);
     }catch(refreshError){
