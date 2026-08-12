@@ -2927,8 +2927,8 @@ tbody tr:hover{
   background:#faf8f5;
 }
 .inbox-conversation-item.selected{
-  background:#f4f0eb;
-  box-shadow:inset 3px 0 0 #ed1c24;
+  background:#e7f0fe;
+  box-shadow:inset 4px 0 0 #1473e6;
 }
 .inbox-conversation-item.urgent:not(.selected){
   box-shadow:inset 3px 0 0 #ed1c24;
@@ -2947,6 +2947,56 @@ tbody tr:hover{
   overflow:hidden;
   flex:0 0 auto;
 }
+/* V6.35.18 — Couleur par réseau, comme dans l'appli d'origine, sur le
+   badge/avatar de chaque conversation dans la liste. */
+.inbox-avatar.avatar-channel-whatsapp{
+  background:#25d366;
+}
+.inbox-avatar.avatar-channel-facebook{
+  background:linear-gradient(135deg,#00b2ff,#006aff);
+}
+.inbox-avatar.avatar-channel-instagram{
+  background:linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5);
+}
+
+/* V6.35.18 — Thème visuel de la conversation ouverte, par canal (couleurs
+   de la vraie appli). Sélecteurs volontairement très spécifiques + !important
+   car ce fichier contient déjà de nombreuses règles !important équivalentes
+   (responsive) sur ces mêmes éléments — sans ça, ce thème serait silencieusement
+   ignoré sur mobile. */
+#page-conversations #inboxCenter[data-channel-theme="whatsapp"] .inbox-conversation-header{
+  border-bottom:3px solid #25d366 !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="whatsapp"] .inbox-message-row.commercial .inbox-bubble{
+  background:#25d366 !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="whatsapp"] #conversationSendBtn.wa-send-btn{
+  background:#25d366 !important;
+  box-shadow:0 2px 7px rgba(37,211,102,.3) !important;
+}
+
+#page-conversations #inboxCenter[data-channel-theme="facebook"] .inbox-conversation-header{
+  border-bottom:3px solid #006aff !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="facebook"] .inbox-message-row.commercial .inbox-bubble{
+  background:linear-gradient(135deg,#00b2ff,#006aff) !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="facebook"] #conversationSendBtn.wa-send-btn{
+  background:linear-gradient(135deg,#00b2ff,#006aff) !important;
+  box-shadow:0 2px 7px rgba(0,106,255,.3) !important;
+}
+
+#page-conversations #inboxCenter[data-channel-theme="instagram"] .inbox-conversation-header{
+  border-bottom:3px solid #d62976 !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="instagram"] .inbox-message-row.commercial .inbox-bubble{
+  background:linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5) !important;
+}
+#page-conversations #inboxCenter[data-channel-theme="instagram"] #conversationSendBtn.wa-send-btn{
+  background:linear-gradient(45deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5) !important;
+  box-shadow:0 2px 7px rgba(214,41,118,.3) !important;
+}
+
 .inbox-avatar .avatar-fallback{
   position:relative;
   z-index:1;
@@ -6968,7 +7018,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
           <div id="conversationListContainer" class="inbox-conversation-list"></div>
         </aside>
 
-        <main class="inbox-center">
+        <main class="inbox-center" id="inboxCenter">
           <div id="inboxConversationHeader" class="inbox-conversation-header">
             <div class="inbox-empty-header">
               Sélectionnez une conversation
@@ -9136,6 +9186,12 @@ let selectedConversationTargetMessageId = '';
 // ignorée, pour éviter qu'une réponse en retard n'écrase à l'écran la
 // conversation actuellement affichée avec les messages d'une autre.
 let conversationRequestToken = 0;
+// V6.35.17 — Fige la position de la conversation ouverte dans la liste
+// (même principe que WhatsApp : ouvrir une discussion ne la fait pas
+// sauter ailleurs). On mémorise ici si elle était non lue AVANT ouverture,
+// et le tri utilise cette valeur figée pour elle tant qu'elle reste
+// sélectionnée, au lieu de son statut réel (devenu "lu" dès l'ouverture).
+let selectedConversationPinnedUnread = false;
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
@@ -9225,6 +9281,9 @@ function resetInteractionDetail(){
   if(detail){detail.className='inbox-thread inbox-thread-empty';detail.innerHTML='<div class="inbox-empty-state"><div class="inbox-empty-icon">💬</div><strong>Aucune interaction sélectionnée</strong><span>Choisissez un élément à gauche.</span></div>';}
   if(composer){composer.classList.add('hidden');composer.innerHTML='';}
   if(panel) panel.innerHTML='<div class="inbox-empty-state compact"><strong>Contexte</strong><span>Les informations apparaîtront ici.</span></div>';
+  // V6.35.18 — Retire le thème visuel par canal quand plus aucune
+  // conversation n'est affichée.
+  document.getElementById('inboxCenter')?.removeAttribute('data-channel-theme');
 }
 
 window.setInboxInteractionMode = async function(mode){
@@ -10255,9 +10314,13 @@ function conversationAvatarHtml(item, extraClass = ''){
   const picture = conversationProfilePicture(item);
   const initials = escapeHtml(conversationInitials(item));
   const className = String(extraClass || '').trim();
+  // V6.35.18 — Classe de canal sur l'avatar, pour lui donner la couleur de
+  // la vraie appli (vert WhatsApp / bleu Messenger / dégradé Instagram)
+  // au lieu du même noir uniforme pour les 3 réseaux.
+  const channelClass = `avatar-channel-${escapeHtml(conversationChannel(item))}`;
 
   return `
-    <span class="inbox-avatar ${escapeHtml(className)}">
+    <span class="inbox-avatar ${channelClass} ${escapeHtml(className)}">
       <span class="avatar-fallback">${initials}</span>
       ${picture
         ? `<img src="${escapeHtml(picture)}" alt="Photo profil" loading="lazy" onerror="this.remove()">`
@@ -10604,7 +10667,15 @@ function renderConversationsList(){
         // V6.33.1 : les conversations réellement à répondre restent en haut.
         const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
         if(pendingDelta) return pendingDelta;
-        const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
+        // V6.35.17 — Pour la conversation actuellement ouverte, on utilise
+        // son statut non-lu figé au moment du clic plutôt que son statut
+        // réel (devenu "lu" dès l'ouverture) : elle ne saute plus dans la
+        // liste juste parce qu'on vient de la consulter.
+        const aIsOpen = a?.contact === selectedConversationContact;
+        const bIsOpen = b?.contact === selectedConversationContact;
+        const aUnread = aIsOpen ? selectedConversationPinnedUnread : Number(a?.unreadCount || 0) > 0;
+        const bUnread = bIsOpen ? selectedConversationPinnedUnread : Number(b?.unreadCount || 0) > 0;
+        const unreadDelta = Number(bUnread) - Number(aUnread);
         if(unreadDelta) return unreadDelta;
         const aMs = Date.parse(String(a?.lastTime || ''));
         const bMs = Date.parse(String(b?.lastTime || ''));
@@ -10768,6 +10839,13 @@ function renderConversationHeader(
 
   const header = document.getElementById('inboxConversationHeader');
   if(!header) return;
+
+  // V6.35.18 — Thème visuel par canal (couleurs de la vraie appli) sur
+  // toute la zone de conversation ouverte : bulles envoyées, bouton
+  // d'envoi, liseré de l'en-tête. Posé ici car cette fonction est appelée
+  // à chaque ouverture ET à chaque rafraîchissement de conversation.
+  document.getElementById('inboxCenter')
+    ?.setAttribute('data-channel-theme', conversationChannel(item));
 
   const name=conversationDisplayName(item);
   const channel=conversationChannel(item);
@@ -11561,6 +11639,12 @@ window.openConversation = async function(contact, targetMessageId = ''){
       item =>
         item.contact === contact
     );
+
+  // V6.35.17 — Capturé AVANT le passage à 0 : c'est cette valeur (l'état
+  // au moment du clic) qui sera utilisée pour trier cette conversation
+  // tant qu'elle reste sélectionnée, pas son statut réel devenu "lu".
+  selectedConversationPinnedUnread =
+    Number(localItem?.unreadCount || 0) > 0;
 
   if(localItem && readResult?.readOnly !== true){
     localItem.unreadCount = 0;
