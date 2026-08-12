@@ -9993,6 +9993,13 @@ async function loadConversations({ append = false } = {}){
       offset:String(offset),
       filter:conversationFilter
     });
+    // V6.35.15 — Ancrage de pagination sur la dernière conversation
+    // réellement affichée, plus fiable qu'un simple offset numérique sur
+    // une liste qui se retrie en permanence (voir note serveur).
+    if(append && conversations.length){
+      const lastContact = conversations[conversations.length-1]?.contact;
+      if(lastContact) params.set('afterContact', lastContact);
+    }
     if(search) params.set('q',search);
     const data = await apiFetch(`${API}/conversations?${params.toString()}`);
     // Protection anti-bascule : si l'utilisateur est passé dans Commentaires pendant la requête,
@@ -10562,6 +10569,25 @@ function refreshConversationListSlaTimers(){
     badge.textContent = formatSlaHuman(liveSla.remainingMs);
     badge.className = `sla-human ${liveSla.status}`;
   }
+}
+
+// V6.35.16 — Marque un élément de la liste comme sélectionné et efface son
+// badge non-lu SANS reconstruire/retrier toute la liste. Voir openConversation().
+function markConversationSelectedInList(contact){
+  const container = document.getElementById('conversationListContainer');
+  if(!container) return;
+  container.querySelectorAll('.inbox-conversation-item.selected').forEach(el => {
+    if(el.dataset.contact !== contact) el.classList.remove('selected');
+  });
+  let itemNode;
+  try{
+    itemNode = container.querySelector(`[data-contact="${CSS.escape(contact)}"]`);
+  }catch{
+    return;
+  }
+  if(!itemNode) return;
+  itemNode.classList.add('selected');
+  itemNode.querySelector('.inbox-unread')?.remove();
 }
 
 function renderConversationsList(){
@@ -11544,7 +11570,18 @@ window.openConversation = async function(contact, targetMessageId = ''){
   // la liste ni la conversation qu'elle affiche déjà.
   if(myRequestToken !== conversationRequestToken) return;
 
-  renderConversationsList();
+  // V6.35.16 — Avant, renderConversationsList() ici retriait TOUTE la
+  // liste immédiatement au clic. Comme le tri fait remonter les non lus,
+  // la conversation qu'on vient d'ouvrir changeait de position À L'INSTANT
+  // MÊME du clic (elle vient de passer "lue") — donnant l'impression
+  // qu'elle avait disparu, alors qu'elle avait juste sauté ailleurs dans
+  // la liste pendant que le regard restait au même endroit. On se contente
+  // maintenant de marquer visuellement l'élément comme sélectionné et de
+  // retirer son badge non-lu EN PLACE, sans reclasser toute la liste. Le
+  // vrai retri (légitime) n'arrivera qu'au prochain rafraîchissement
+  // naturel — à ce moment l'attention du commercial est déjà sur la
+  // conversation ouverte, donc le mouvement est beaucoup moins perturbant.
+  markConversationSelectedInList(contact);
 
   const detailParams = new URLSearchParams({limit:'120'});
   if(targetMessageId) detailParams.set('messageId',targetMessageId);
