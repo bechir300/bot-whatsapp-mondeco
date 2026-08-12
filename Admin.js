@@ -19447,6 +19447,12 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         commercialAttention: Boolean(state.commercialAttention),
         commercialAttentionReason: safeString(state?.commercialAttentionReason),
         lastCustomerAt: safeString(state?.lastCustomerAt),
+        // V6.35.19 — Accusé de lecture (WhatsApp/Facebook/Instagram) :
+        // dernier horodatage auquel Meta confirme que le client a lu nos
+        // messages. Comparé côté client au dernier message envoyé pour
+        // afficher "Vu" ou non.
+        lastReadByCustomerAt: safeString(state?.lastReadByCustomerAt),
+        lastDeliveredAt: safeString(state?.lastDeliveredAt),
         lastInboundType: safeString(state?.lastInboundType),
         profileName: safeString(state?.profileName),
         unreadCount: Number(state.unreadCount || 0),
