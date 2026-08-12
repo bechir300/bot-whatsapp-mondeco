@@ -6282,6 +6282,30 @@ router.get(
     }
     const entry = cloudManifestEntry('profile', filename);
     if (entry && await proxyCloudAsset(req, res, entry, { profile: true })) return;
+
+    // V6.35.2 — Photo introuvable nulle part (disque local ET Cloudinary).
+    // Sans ce correctif, l'état conversation gardait quand même l'ancienne
+    // URL (non vide) : le prochain rattrapage temps réel considérait donc
+    // la photo comme "déjà connue" et ne la retéléchargeait jamais depuis
+    // Meta, même si le fichier réel avait été purgé du disque (nettoyage
+    // 14 jours) après un échec de migration Cloudinary. On efface ici la
+    // référence morte pour que la photo soit re-tentée au prochain cycle.
+    const facebookMatch = filename.match(/^facebook-([a-zA-Z0-9_-]+)\.[a-zA-Z0-9]+$/);
+    if (facebookMatch) {
+      const customerId = facebookMatch[1];
+      try {
+        updateConversationStateAdmin(`facebook:${customerId}`, state => {
+          if (safeString(state?.profilePicture)) {
+            console.warn(`⚠️ Photo profil Facebook ${customerId} : lien mort (${filename}), sera retentée.`);
+            return { ...state, profilePicture: '' };
+          }
+          return state;
+        });
+      } catch (error) {
+        console.warn('⚠️ Nettoyage lien photo profil Facebook impossible :', error.message);
+      }
+    }
+
     return res.sendStatus(404);
   }
 );
