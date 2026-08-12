@@ -13433,9 +13433,25 @@ window.sendConversationCommercialReply = async function(contact){
       );
     }
 
+    // V6.35.6 — À partir d'ici, le message a été accepté par Meta : on
+    // efface le champ de saisie IMMÉDIATEMENT, quoi qu'il arrive ensuite.
+    // Avant ce correctif, si un simple rafraîchissement de la liste
+    // échouait juste après un envoi pourtant réussi, le texte restait
+    // affiché comme si l'envoi avait échoué, obligeant le commercial à
+    // l'effacer à la main avant de pouvoir écrire un nouveau message.
+    if(textEl){
+      textEl.value = '';
+      autoResizeConversationComposer(textEl);
+    }
     if(conversationVoiceFile){
       clearConversationVoice();
     }
+    ['conversationCameraFile','conversationImageFile','conversationDocumentFile'].forEach(id => {
+      const input = document.getElementById(id);
+      if(input) input.value = '';
+    });
+    const attachmentLabelEl = document.getElementById('conversationAttachmentName');
+    if(attachmentLabelEl) attachmentLabelEl.textContent = '';
 
     // V6.33.1 — le petit badge de la ligne client disparaît immédiatement
     // après succès, sans attendre le prochain rafraîchissement de l'Inbox.
@@ -13449,15 +13465,28 @@ window.sendConversationCommercialReply = async function(contact){
     }
     renderConversationsList();
 
-    await loadConversations();
-    await refreshPendingCountsNow();
-    await window.openConversation(contact);
+    // V6.35.6 — Ces trois appels ne font que rafraîchir l'affichage : le
+    // message est déjà parti. S'ils échouent (réseau lent, backend
+    // occupé), on ne montre plus d'alerte d'échec d'envoi trompeuse — la
+    // prochaine actualisation automatique (5s) rattrapera l'affichage.
+    try{
+      await loadConversations();
+      await refreshPendingCountsNow();
+      await window.openConversation(contact);
+    }catch(refreshError){
+      console.debug('Rafraîchissement post-envoi :', refreshError.message);
+    }
   }catch(error){
     if(error?.code==='FACEBOOK_TOKEN_EXPIRED'){
       alert(
         'Facebook Messenger est temporairement déconnecté : le Page Access Token a expiré.\n\n' +
         'Aucun message n’a été envoyé. Demandez à l’administrateur de renouveler le token longue durée dans Railway.'
       );
+    }else if(error?.code==='SEND_TIMEOUT_UNCERTAIN' || error?.code==='SEND_NETWORK_UNCERTAIN'){
+      // V6.35.6 — Cas ambigu : on ne sait pas si Meta a reçu le message.
+      // On ne vide PAS le champ de texte ici, pour que le commercial
+      // puisse vérifier la conversation avant de décider de renvoyer.
+      alert(error.message);
     }else{
       alert(error.message);
     }
