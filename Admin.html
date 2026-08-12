@@ -10002,6 +10002,18 @@ async function loadConversations({ append = false } = {}){
     conversationServerCounts = data?.counts && typeof data.counts === 'object'
       ? data.counts
       : null;
+    if(conversationServerCounts){
+      interactionPendingCounts={
+        ...interactionPendingCounts,
+        messages:Number(conversationServerCounts.pendingReply||0),
+        whatsapp:Number(conversationServerCounts.pendingWhatsApp||0),
+        instagramMessages:Number(conversationServerCounts.pendingInstagram||0),
+        facebookMessages:Number(conversationServerCounts.pendingFacebook||0),
+        total:Number(conversationServerCounts.pendingReply||0)+Number(interactionPendingCounts?.comments||0)
+      };
+      updatePendingWorkUi();
+      updateNotificationBadges();
+    }
     renderConversationsList();
     if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
       updateConversationFilterCounts();
@@ -10493,7 +10505,9 @@ function conversationListTags(item){
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
   if(item.favorite) status.push('<span class="assigned">⭐ Favori</span>');
   if(facebook){
-    status.push('<span class="ai-active">✨ IA Meta / Business Suite</span>');
+    status.push(pending
+      ? '<span class="ai-paused">🟠 À répondre</span>'
+      : '<span class="assigned">✓ Répondu</span>');
   }else{
     status.push(paused
       ? (pending?'<span class="ai-paused">🤖 IA en pause</span>':'<span class="assigned">👤 Suivi commercial</span>')
@@ -16357,7 +16371,7 @@ function renderSimpleTeamDashboard(){
   renderSimplePerformance();
   const host=document.getElementById('simpleTeamRows');if(!host)return;
   if(!users.length){host.innerHTML='<tr><td colspan="6"><div class="empty">Aucun commercial.</div></td></tr>';return;}
-  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div></td><td><div class="simple-mission-box"><input type="text" data-simple-mission="${escapeHtml(user.id)}" value="${escapeHtml(s.mission||'')}" placeholder="Ex. Répondre WhatsApp la nuit"><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-cross-midnight">🌙 Mission de nuit / fin possible le lendemain</div>':''}</div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Rapport</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Compte</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
+  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div>${s.defaultAllAccess?'<div class="help" style="margin-top:6px;color:#2f7a4d;font-weight:700">Par défaut : tous les réseaux actifs. Décochez seulement ceux non planifiés aujourd’hui.</div>':''}</td><td><div class="simple-mission-box"><input type="text" data-simple-mission="${escapeHtml(user.id)}" value="${escapeHtml(s.mission||'')}" placeholder="Ex. Répondre WhatsApp la nuit"><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-cross-midnight">🌙 Mission de nuit / fin possible le lendemain</div>':''}</div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Rapport</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Compte</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
 }
 
 window.saveSimpleTeamSchedule=async function(userId,button){
@@ -16532,22 +16546,10 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     );
 
 
-    // V6.33.1 — une passe de réparation après connexion enlève les anciens
-    // badges rouges hérités des synchronisations Meta/WhatsApp précédentes.
-    setTimeout(async()=>{
-      try{
-        const repaired=await apiFetch(`${API}/interactions/reconcile`,{method:'POST'});
-        if(repaired?.counts&&typeof repaired.counts==='object'){
-          interactionPendingCounts={...interactionPendingCounts,...repaired.counts};
-          updatePendingWorkUi();
-          updateNotificationBadges();
-        }
-        if(typeof loadConversations==='function') await loadConversations();
-        if(inboxInteractionMode==='comments'&&typeof loadSocialComments==='function') await loadSocialComments();
-      }catch(error){
-        console.debug('Réconciliation initiale compteurs :',error.message);
-      }
-    },900);
+    // V6.35 — /api/conversations réconcilie déjà les états répondus.
+    // Ne plus lancer 900 ms après connexion une deuxième fusion complète de
+    // l'historique puis un deuxième rechargement Inbox : ce doublon créait
+    // des pics RAM et pouvait déclencher un OOM/502 sur Railway.
   }catch(error){
     console.error(error);
   }
