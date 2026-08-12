@@ -16214,6 +16214,31 @@ function assertSafeFacebookHistoryMedia(buffer, mimetype='') {
   if(mime==='application/pdf' && buffer.subarray(0,5).toString('ascii')!=='%PDF-') throw new Error('PDF Facebook invalide.');
 }
 
+// V6.35.9 — Téléchargement de pièce jointe (GET, donc rejouable sans
+// risque, contrairement à un envoi) avec timeout + retry sur incident
+// réseau transitoire uniquement.
+async function fetchFacebookAttachmentWithRetry(url, options = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= GRAPH_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GRAPH_REQUEST_TIMEOUT_MS);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (error) {
+      lastError = error;
+      const transient = isTransientGraphNetworkError(error);
+      if (transient && attempt < GRAPH_REQUEST_MAX_ATTEMPTS) {
+        await sleep(GRAPH_REQUEST_RETRY_BASE_DELAY_MS * attempt);
+        continue;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error('Téléchargement pièce jointe Facebook impossible.');
+}
+
 async function persistFacebookHistoryAttachments(message) {
   const items=facebookHistoryAttachmentList(message);
   const messageId=safeString(message?.id).replace(/[^a-zA-Z0-9_-]/g,'').slice(-70) || crypto.randomUUID();
@@ -16223,8 +16248,13 @@ async function persistFacebookHistoryAttachments(message) {
     const remoteUrl=facebookHistoryAttachmentUrl(item);
     if(!remoteUrl) continue;
     try{
-      let response=await fetch(remoteUrl,{headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}});
-      if(!response.ok) response=await fetch(remoteUrl);
+      // V6.35.9 — Même protection réseau (timeout + retry) que les autres
+      // appels Meta : le téléchargement d'une pièce jointe historique
+      // (photo/vidéo) subissait le même "fetch failed" non protégé.
+      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, {
+        headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}
+      });
+      if(!response.ok) response = await fetchFacebookAttachmentWithRetry(remoteUrl);
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer=Buffer.from(await response.arrayBuffer());
       const mimetype=safeString(item?.mime_type || response.headers.get('content-type') || 'application/octet-stream').split(';')[0];
