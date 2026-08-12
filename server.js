@@ -4997,10 +4997,18 @@ setCommercialSendHandler(
 const SEND_MESSAGE_TIMEOUT_MS = 20000;
 
 function isPreflightNetworkFailure(error) {
-  // Ces codes signifient que la connexion n'a JAMAIS été établie avec
-  // Meta : aucun risque de double envoi à retenter une fois.
+  // V6.35.11 — Élargi : en pratique, quand fetch() lève une TypeError
+  // "fetch failed" (par opposition à un AbortError de timeout), c'est
+  // presque toujours parce que la connexion n'a jamais abouti (DNS,
+  // TCP, TLS) — Node/undici ne remplit pas toujours error.cause.code de
+  // façon fiable, donc se limiter à une liste étroite de codes faisait
+  // que la quasi-totalité des échecs réels ne déclenchait AUCUN retry.
+  // Seul un AbortError (timeout, cas ambigu où la requête a pu partir)
+  // reste exclu du retry.
+  if (error?.name === 'AbortError') return false;
+  if (error instanceof TypeError && /fetch failed/i.test(String(error.message || ''))) return true;
   const code = String(error?.cause?.code || error?.code || '');
-  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(code);
+  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET'].includes(code);
 }
 
 async function fetchWithSendTimeout(url, options) {
@@ -5009,19 +5017,41 @@ async function fetchWithSendTimeout(url, options) {
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
+    logSendNetworkErrorDetail(error, 'tentative 1');
     if (isPreflightNetworkFailure(error)) {
-      // Connexion jamais établie : un seul retry rapide, sans risque.
-      await new Promise(resolve => setTimeout(resolve, 700));
-      try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } catch (retryError) {
-        throw wrapSendNetworkError(retryError);
+      // V6.35.11 — Deux tentatives de rattrapage au lieu d'une seule,
+      // avec un court délai croissant entre chacune.
+      for (const delayMs of [700, 1500]) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } catch (retryError) {
+          logSendNetworkErrorDetail(retryError, `retry ${delayMs}ms`);
+          if (!isPreflightNetworkFailure(retryError)) throw wrapSendNetworkError(retryError);
+        }
       }
     }
     throw wrapSendNetworkError(error);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// V6.35.11 — Log le détail brut (nom, message, cause.code, cause.message)
+// de chaque échec réseau d'envoi. Le message générique "fetch failed"
+// masquait jusqu'ici la cause technique exacte (DNS ? TLS ? reset ?),
+// rendant impossible un diagnostic plus poussé si le problème persiste.
+function logSendNetworkErrorDetail(error, label) {
+  console.error(
+    `❌ Échec réseau envoi Meta (${label}) :`,
+    JSON.stringify({
+      name: error?.name || '',
+      message: error?.message || '',
+      causeCode: error?.cause?.code || '',
+      causeMessage: error?.cause?.message || '',
+      causeErrno: error?.cause?.errno ?? ''
+    })
+  );
 }
 
 function wrapSendNetworkError(error) {
