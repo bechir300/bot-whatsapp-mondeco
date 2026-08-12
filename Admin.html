@@ -4521,6 +4521,16 @@ tbody tr:hover{
 .inbox-ad-origin-text{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .inbox-ad-origin-link{flex:0 0 auto;text-decoration:none;font-size:10px;font-weight:900;padding:7px 9px;border-radius:10px;border:1px solid rgba(20,115,230,.22);background:#fff;color:#1473e6}
 .inbox-access-note{font-size:10px;color:var(--muted);margin-top:5px;font-weight:700}
+/* V6.35.19 — Indicateur "Vu par le client" (accusé de lecture Meta). */
+.inbox-seen-indicator{
+  font-size:10px;
+  color:var(--muted);
+  margin-top:4px;
+  font-weight:700;
+}
+.inbox-seen-indicator.seen{
+  color:#1473e6;
+}
 @media (max-width: 700px){
   .inbox-ad-origin-sticky{width:calc(100% - 12px);margin-bottom:6px;padding:7px 8px;border-radius:12px;gap:8px}
   .inbox-ad-origin-thumb{width:42px;height:42px;flex-basis:42px;border-radius:8px}
@@ -10900,6 +10910,26 @@ function renderConversationHeader(
       ? 'IA en pause'
       : 'IA active';
 
+  // V6.35.19 — Indicateur "Vu par le client" (accusé de lecture Meta),
+  // même principe que les coches WhatsApp. On compare l'horodatage du
+  // dernier message envoyé (humain, bot ou business) à celui du dernier
+  // accusé de lecture reçu de Meta.
+  const lastOutgoingMs = Math.max(
+    Date.parse(state?.lastHumanAt || '') || 0,
+    Date.parse(state?.lastBotAt || '') || 0,
+    Date.parse(state?.lastAnsweredAt || '') || 0,
+    Date.parse(state?.lastBusinessAt || '') || 0
+  );
+  const lastReadMs = Date.parse(state?.lastReadByCustomerAt || '') || 0;
+  const seenByCustomer = lastOutgoingMs > 0 && lastReadMs > 0 && lastReadMs >= lastOutgoingMs;
+  const seenIndicatorHtml = lastOutgoingMs > 0
+    ? `<div class="inbox-seen-indicator ${seenByCustomer ? 'seen' : ''}">
+        ${seenByCustomer
+          ? `✓✓ Vu par le client à ${escapeHtml(formatShortTime(state.lastReadByCustomerAt))}`
+          : '✓✓ Envoyé — pas encore vu'}
+      </div>`
+    : '';
+
   header.innerHTML = `
     <div class="inbox-header-left">
       <button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()">←</button>
@@ -10923,6 +10953,7 @@ function renderConversationHeader(
           ${Number.isFinite(selectedSlaRemaining) ? `<span class="inbox-header-state-sla">${escapeHtml(formatSlaHuman(selectedSlaRemaining))}</span>` : ''}
         </div>` : ''}
         ${state?.adReferral ? `<div class="inbox-access-note">📣 Pub Meta : ${escapeHtml(state.adReferral.productHint || state.adReferral.headline || 'origine publicitaire détectée')}</div>` : ''}
+        ${seenIndicatorHtml}
       </div>
     </div>
 
