@@ -17333,6 +17333,37 @@ router.get('/api/facebook-token-status', requireAuth, (req, res) => {
   });
 });
 
+// V6.35.1 — Résilience réseau Graph API.
+// "fetch failed" (TypeError Node/undici) est une erreur RÉSEAU transitoire
+// (DNS, TLS, coupure, timeout) : ni un token invalide ni une erreur Meta.
+// On la distingue clairement d'une vraie erreur Meta (4xx/5xx avec payload
+// JSON error.message) pour ne jamais ré-essayer inutilement une requête que
+// Meta a explicitement refusée (ex: token expiré, permission manquante).
+const GRAPH_REQUEST_TIMEOUT_MS = 20000;
+const GRAPH_REQUEST_MAX_ATTEMPTS = 3; // 1 essai initial + 2 retries
+const GRAPH_REQUEST_RETRY_BASE_DELAY_MS = 600;
+
+function isTransientGraphNetworkError(error) {
+  if (!error) return false;
+  if (error.name === 'AbortError') return true; // timeout local
+  // undici/Node encapsule les erreurs réseau (DNS, connexion refusée, TLS,
+  // reset) dans une TypeError "fetch failed" avec parfois error.cause.
+  if (error instanceof TypeError && /fetch failed/i.test(safeString(error.message))) return true;
+  const code = safeString(error?.cause?.code || error?.code);
+  if (['ECONNRESET','ETIMEDOUT','ENOTFOUND','EAI_AGAIN','ECONNREFUSED','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_SOCKET'].includes(code)) return true;
+  return false;
+}
+
+function isRetryableMetaHttpStatus(status) {
+  // Erreurs serveur Meta (temporaires) : on retente. Les 4xx (token,
+  // permissions, requête invalide) ne sont volontairement PAS retentées.
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function graphJsonRequest(url, token, options = {}) {
   if (!token) throw new Error('Token Meta manquant.');
   const method = safeString(options?.method || 'GET').toUpperCase();
@@ -17345,17 +17376,49 @@ async function graphJsonRequest(url, token, options = {}) {
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     body = new URLSearchParams(options.form).toString();
   }
-  const response = await fetch(url, { method, headers, body });
-  let data = {};
-  try { data = await response.json(); } catch { data = {}; }
-  if (!response.ok) {
-    const message = safeString(data?.error?.message) || `Meta HTTP ${response.status}`;
-    const error = new Error(message);
-    error.metaCode = data?.error?.code;
-    error.metaSubcode = data?.error?.error_subcode;
-    throw error;
+
+  let lastError;
+  for (let attempt = 1; attempt <= GRAPH_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GRAPH_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { method, headers, body, signal: controller.signal });
+      let data = {};
+      try { data = await response.json(); } catch { data = {}; }
+      if (!response.ok) {
+        const message = safeString(data?.error?.message) || `Meta HTTP ${response.status}`;
+        const error = new Error(message);
+        error.metaCode = data?.error?.code;
+        error.metaSubcode = data?.error?.error_subcode;
+        error.httpStatus = response.status;
+        if (attempt < GRAPH_REQUEST_MAX_ATTEMPTS && isRetryableMetaHttpStatus(response.status)) {
+          lastError = error;
+          await sleep(GRAPH_REQUEST_RETRY_BASE_DELAY_MS * attempt);
+          continue;
+        }
+        throw error;
+      }
+      return data;
+    } catch (error) {
+      const transient = isTransientGraphNetworkError(error);
+      if (transient && attempt < GRAPH_REQUEST_MAX_ATTEMPTS) {
+        lastError = error;
+        await sleep(GRAPH_REQUEST_RETRY_BASE_DELAY_MS * attempt);
+        continue;
+      }
+      if (transient) {
+        const timeoutError = new Error(
+          `Meta Graph API injoignable après ${GRAPH_REQUEST_MAX_ATTEMPTS} tentatives (réseau) : ${error.message}`
+        );
+        timeoutError.transientNetwork = true;
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  return data;
+  throw lastError || new Error('Requête Meta Graph API impossible.');
 }
 
 // V6.33.1 — Publications/commentaires Facebook doivent TOUJOURS être exécutés
