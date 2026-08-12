@@ -19617,7 +19617,25 @@ router.get('/api/conversations', requireAuth, (req, res) => {
 
     if (String(req.query?.paged || '') === '1') {
       const limit = Math.max(20, Math.min(200, Number(req.query?.limit || 80) || 80));
-      const offset = Math.max(0, Number(req.query?.offset || 0) || 0);
+      // V6.35.15 — La liste est retriée EN DIRECT à chaque requête (les
+      // conversations "à répondre" remontent en permanence). Un simple
+      // offset numérique suppose que l'ordre n'a pas bougé entre le
+      // premier chargement et le clic sur « Afficher plus » — faux la
+      // plupart du temps avec ce volume d'activité : le décalage renvoyait
+      // des conversations déjà affichées, filtrées comme doublons côté
+      // client, donnant l'impression que rien ne se passait.
+      // On ancre désormais la pagination sur la DERNIÈRE conversation
+      // réellement affichée (afterContact) : on la retrouve dans la liste
+      // fraîchement triée et on continue juste après elle, quelle que soit
+      // sa position exacte à cet instant. Repli sur l'offset numérique si
+      // aucun ancrage n'est fourni (première page) ou si cette conversation
+      // n'est plus dans la vue courante (cas rare).
+      const afterContact = safeString(req.query?.afterContact);
+      let offset = Math.max(0, Number(req.query?.offset || 0) || 0);
+      if (afterContact) {
+        const anchorIndex = visibleConversations.findIndex(item => item.contact === afterContact);
+        if (anchorIndex >= 0) offset = anchorIndex + 1;
+      }
       return res.json({
         items: visibleConversations.slice(offset, offset + limit),
         total: visibleConversations.length,
