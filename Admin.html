@@ -9126,6 +9126,12 @@ let quickReplies = [];
 let conversationFilter = 'all';
 let selectedConversationContact = '';
 let selectedConversationTargetMessageId = '';
+// V6.35.4 — Jeton anti-course : incrémenté à chaque navigation vers une
+// conversation. Toute réponse réseau (ouverture ou rafraîchissement auto)
+// qui arrive après qu'un jeton plus récent a été émis est silencieusement
+// ignorée, pour éviter qu'une réponse en retard n'écrase à l'écran la
+// conversation actuellement affichée avec les messages d'une autre.
+let conversationRequestToken = 0;
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
@@ -11456,6 +11462,13 @@ window.openConversation = async function(contact, targetMessageId = ''){
   selectedConversationTargetMessageId =
     String(targetMessageId || '');
 
+  // V6.35.4 — Ce jeton identifie CETTE navigation précise. Si une navigation
+  // plus récente démarre avant que celle-ci ne se termine, son jeton devient
+  // obsolète : on ignore alors silencieusement le résultat pour ne pas
+  // écraser la conversation réellement affichée.
+  const myRequestToken =
+    ++conversationRequestToken;
+
   document
     .getElementById(
       'page-conversations'
@@ -11490,6 +11503,10 @@ window.openConversation = async function(contact, targetMessageId = ''){
     localItem.unreadCount = 0;
   }
 
+  // Une navigation plus récente a démarré entre-temps : on n'écrase pas
+  // la liste ni la conversation qu'elle affiche déjà.
+  if(myRequestToken !== conversationRequestToken) return;
+
   renderConversationsList();
 
   const detailParams = new URLSearchParams({limit:'120'});
@@ -11499,6 +11516,10 @@ window.openConversation = async function(contact, targetMessageId = ''){
     await apiFetch(
       `${API}/conversations/${encodeURIComponent(contact)}?${detailParams.toString()}`
     );
+
+  // Idem après le deuxième appel réseau (le plus lent, donc le plus
+  // exposé au dépassement par une navigation suivante).
+  if(myRequestToken !== conversationRequestToken) return;
 
   selectedConversationData =
     data;
@@ -13644,6 +13665,15 @@ async function softRefreshSelectedConversation(){
     return;
   }
 
+  // V6.35.4 — On capture la conversation ET le jeton de navigation en
+  // cours. Si l'un des deux a changé quand la réponse réseau arrive (le
+  // commercial a cliqué ailleurs entre-temps), on abandonne le résultat :
+  // il ne concerne plus la conversation actuellement affichée.
+  const contactAtRefreshStart =
+    selectedConversationContact;
+  const tokenAtRefreshStart =
+    conversationRequestToken;
+
   const textarea =
     document.getElementById(
       'conversationQuickReply'
@@ -13678,6 +13708,16 @@ async function softRefreshSelectedConversation(){
       Array.isArray(data.entries)
         ? data.entries
         : [];
+
+    // V6.35.4 — Réponse en retard sur une conversation qui n'est plus
+    // affichée (ou qu'une navigation plus récente a remplacée) : on
+    // l'ignore silencieusement plutôt que de l'appliquer à l'écran.
+    if(
+      selectedConversationContact !== contactAtRefreshStart ||
+      conversationRequestToken !== tokenAtRefreshStart
+    ){
+      return;
+    }
 
     const changed =
       nextEntries.length !==
