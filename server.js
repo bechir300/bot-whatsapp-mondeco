@@ -38,6 +38,25 @@ const {
 
 const app = express();
 
+// V6.35.10 — Compression gzip des réponses (HTML/JSON/JS). Aucune
+// compression n'était activée : Admin.html (~630 Ko) et les réponses JSON
+// contenant la liste des conversations (1000+ éléments) partaient donc
+// systématiquement non compressées. Nécessite le paquet npm "compression"
+// (ajoutez-le à package.json : npm install compression). Si le paquet
+// n'est pas installé, ce require() ferait planter le démarrage — d'où la
+// vérification try/catch ci-dessous, qui permet à l'app de démarrer quand
+// même (sans compression) en attendant l'installation du paquet.
+try {
+  const compression = require('compression');
+  app.use(compression());
+  console.log('🗜️ Compression gzip activée.');
+} catch (error) {
+  console.warn(
+    '⚠️ Paquet "compression" non installé : réponses envoyées sans compression. ' +
+    'Exécutez `npm install compression` puis redéployez pour l’activer.'
+  );
+}
+
 app.use(
   express.json({
     limit: '5mb',
