@@ -6730,6 +6730,18 @@ function logFacebookStatusEvent({ event, entryPageId = '', stream = 'messaging' 
       facebook_stream: stream,
       time
     });
+    // V6.35.19 — Le watermark Meta indique que TOUS les messages envoyés
+    // avant cet horodatage ont été lus par le client. On l'enregistre sur
+    // l'état de la conversation pour afficher "Vu par le client" dans
+    // MONDECO (même principe que les coches bleues WhatsApp).
+    const watermarkMs = Number(event.read?.watermark);
+    const watermarkIso = Number.isFinite(watermarkMs) && watermarkMs > 0
+      ? new Date(watermarkMs).toISOString()
+      : time;
+    updateConversationState(contact, current => ({
+      ...current,
+      lastReadByCustomerAt: watermarkIso
+    }));
     return;
   }
 
@@ -6998,7 +7010,19 @@ async function processWhatsAppWebhook(body) {
           ? value.statuses
           : [];
 
+      // V6.35.19 — Ces statuts (sent/delivered/read) étaient reçus mais
+      // uniquement affichés dans les logs, jamais enregistrés. On les
+      // stocke maintenant sur l'état de la conversation, pour afficher un
+      // indicateur "Vu par le client" dans MONDECO (même principe que les
+      // coches bleues WhatsApp).
       for (const status of statuses) {
+        const statusPhone = normalizePhone(status?.recipient_id);
+        const statusKind = safeString(status?.status).toLowerCase();
+        const statusTimeRaw = Number(status?.timestamp);
+        const statusIso = Number.isFinite(statusTimeRaw) && statusTimeRaw > 0
+          ? new Date(statusTimeRaw * 1000).toISOString()
+          : new Date().toISOString();
+
         console.log(
           '📨 Statut WhatsApp :',
           status?.status ||
@@ -7007,6 +7031,15 @@ async function processWhatsAppWebhook(body) {
           status?.id ||
           'sans-id'
         );
+
+        if (!statusPhone || !['sent', 'delivered', 'read'].includes(statusKind)) continue;
+        const statusContact = makeConversationKey('whatsapp', statusPhone);
+        updateConversationState(statusContact, current => {
+          const patch = { ...current };
+          if (statusKind === 'read') patch.lastReadByCustomerAt = statusIso;
+          if (statusKind === 'delivered' || statusKind === 'read') patch.lastDeliveredAt = statusIso;
+          return patch;
+        });
       }
 
       const messages =
@@ -7338,6 +7371,24 @@ async function processSingleInstagramEvent(event) {
       event?.recipient?.id
     );
 
+  const eventTime = instagramEventIsoTime(event);
+
+  // V6.35.19 — Instagram partage le même format d'événement "read" que
+  // Messenger (jamais traité jusqu'ici). Le watermark indique que tous les
+  // messages envoyés avant cet horodatage ont été lus par le client.
+  if (event?.read && senderId) {
+    const contact = makeConversationKey('instagram', senderId);
+    const watermarkMs = Number(event.read?.watermark);
+    const watermarkIso = Number.isFinite(watermarkMs) && watermarkMs > 0
+      ? new Date(watermarkMs).toISOString()
+      : eventTime;
+    updateConversationState(contact, current => ({
+      ...current,
+      lastReadByCustomerAt: watermarkIso
+    }));
+    return;
+  }
+
   const message =
     event?.message ||
     null;
@@ -7345,8 +7396,6 @@ async function processSingleInstagramEvent(event) {
   const postback =
     event?.postback ||
     null;
-
-  const eventTime = instagramEventIsoTime(event);
 
   if (!senderId) {
     return;
