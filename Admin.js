@@ -1,7 +1,7 @@
 // ============================================================
 // MONDECO - ADMINISTRATION
 // Admin.js
-// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.34.3
+// Produits + Instructions + Personnalisation + Paramètres + Responsable commercial + SLA + Inbox commerciale omnicanale + commentaires sociaux + compteurs à répondre + avatars sociaux + temps équipe + récupération Facebook temps réel + favoris + rétention 15 jours — V6.35.0
 // Stockage persistant Railway via /data
 // ============================================================
 
@@ -140,6 +140,7 @@ const SLA_EVENTS_PATH = path.join(DATA_DIR, 'sla-events.json');
 const DAILY_REPORTS_PATH = path.join(DATA_DIR, 'daily-reports.json');
 const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
 const TEAM_ACTIVITY_PATH = path.join(DATA_DIR, 'team-activity.jsonl');
+const TEAM_ACTIVITY_DIR = path.join(DATA_DIR, 'team-activity-days');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const CUSTOMIZATIONS_DIR = path.join(DATA_DIR, 'customizations');
 const CONVERSATION_MEDIA_DIR = path.join(DATA_DIR, 'conversation-media');
@@ -347,6 +348,7 @@ fs.mkdirSync(CUSTOMIZATIONS_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_MEDIA_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true });
 fs.mkdirSync(CONVERSATION_EVENTS_DIR, { recursive: true });
+fs.mkdirSync(TEAM_ACTIVITY_DIR, { recursive: true });
 fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
@@ -2706,7 +2708,11 @@ function normalizeInstagramComment(comment = {}, mediaId = '', parentId = '') {
 function socialConversationProfileIndex() {
   const byId = new Map();
   const byUsername = new Map();
-  for (const entry of loadWhatsAppLog()) {
+  // Les états persistants sont la source principale des avatars. Le petit cache
+  // live (max 5000) complète l'index sans charger 15 jours d'historique.
+  const recentProfileEntries = [];
+  forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, item => recentProfileEntries.push(item));
+  for (const entry of recentProfileEntries) {
     const channel = safeString(entry?.channel).toLowerCase();
     if (!['facebook','instagram'].includes(channel)) continue;
     const picture = safeString(entry?.profile_picture || entry?.profilePicture);
@@ -6463,8 +6469,9 @@ function getCommercialDailyReport(
           'commercial'
     );
 
+  // V6.35.0 : rapport journalier ciblé sur la date, sans charger toute l'Inbox.
   const log =
-    loadWhatsAppLog();
+    loadPerformanceConversationEvents([date], timezone);
 
   const replies =
     log.filter(
@@ -7432,6 +7439,136 @@ function saveTasks(items) {
   writeJsonAtomic(TASKS_PATH, Array.isArray(items) ? items : []);
 }
 
+
+// V6.35.0 — lecteurs JSON mémoire-sûrs.
+// Les anciens fichiers peuvent devenir volumineux. On les parcourt par petits
+// blocs au lieu de faire readFileSync(...).split(...), qui duplique le contenu
+// complet plusieurs fois dans la RAM et peut provoquer un OOM Railway.
+function forEachJsonlRecordSync(filePath, visitor) {
+  if (!fs.existsSync(filePath) || typeof visitor !== 'function') return 0;
+  const fd = fs.openSync(filePath, 'r');
+  const decoder = new TextDecoder('utf-8');
+  const buffer = Buffer.allocUnsafe(128 * 1024);
+  let carry = '';
+  let count = 0;
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      const chunk = decoder.decode(buffer.subarray(0, bytesRead), { stream: bytesRead > 0 });
+      const text = carry + chunk;
+      const lines = text.split(/\r?\n/);
+      carry = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const item = JSON.parse(line);
+          if (item && typeof item === 'object' && !Array.isArray(item)) {
+            visitor(item);
+            count += 1;
+          }
+        } catch {}
+      }
+    } while (bytesRead > 0);
+    carry += decoder.decode();
+    if (carry.trim()) {
+      try {
+        const item = JSON.parse(carry);
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          visitor(item);
+          count += 1;
+        }
+      } catch {}
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return count;
+}
+
+function forEachJsonArrayObjectSync(filePath, visitor) {
+  if (!fs.existsSync(filePath) || typeof visitor !== 'function') return 0;
+  const fd = fs.openSync(filePath, 'r');
+  const decoder = new TextDecoder('utf-8');
+  const buffer = Buffer.allocUnsafe(128 * 1024);
+  let collecting = false;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let current = '';
+  let count = 0;
+
+  const feed = text => {
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (!collecting) {
+        if (ch === '{') {
+          collecting = true;
+          depth = 1;
+          inString = false;
+          escaped = false;
+          current = '{';
+        }
+        continue;
+      }
+
+      current += ch;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const item = JSON.parse(current);
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              visitor(item);
+              count += 1;
+            }
+          } catch {}
+          collecting = false;
+          current = '';
+        }
+      }
+    }
+  };
+
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      feed(decoder.decode(buffer.subarray(0, bytesRead), { stream: bytesRead > 0 }));
+    } while (bytesRead > 0);
+    feed(decoder.decode());
+  } finally {
+    fs.closeSync(fd);
+  }
+  return count;
+}
+
+function conversationEventFilesSince(cutoffAt = historyImportCutoffIso()) {
+  const cutoffMs = Date.parse(safeString(cutoffAt));
+  const cutoffDay = Number.isFinite(cutoffMs)
+    ? new Date(cutoffMs - 24 * 60 * 60 * 1000).toISOString().slice(0,10)
+    : '';
+  try {
+    return fs.readdirSync(CONVERSATION_EVENTS_DIR)
+      .filter(name => /^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
+      .filter(name => !cutoffDay || name.slice('conversation-events-'.length, 'conversation-events-'.length + 10) >= cutoffDay)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 function loadSlaEvents() {
   return readJsonArray(SLA_EVENTS_PATH, 'sla-events.json');
 }
@@ -7485,6 +7622,10 @@ function saveAttendance(items) {
 // conversation-log.json (ouverture d'une discussion, réponse à un commentaire,
 // réponse privée depuis un commentaire). Il permet d'attribuer les rapports à
 // un compte précis sans mesurer la présence comme KPI principal.
+function teamActivityDayPath(date) {
+  return path.join(TEAM_ACTIVITY_DIR, `team-activity-${safeString(date)}.jsonl`);
+}
+
 function appendTeamActivity(event = {}) {
   try {
     const item = {
@@ -7492,7 +7633,9 @@ function appendTeamActivity(event = {}) {
       ...event,
       time: safeString(event.time) || new Date().toISOString()
     };
-    fs.appendFileSync(TEAM_ACTIVITY_PATH, `${JSON.stringify(item)}\n`, 'utf8');
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const date = dateKeyInTimezone(item.time, timezone);
+    fs.appendFileSync(teamActivityDayPath(date), `${JSON.stringify(item)}\n`, 'utf8');
     return item;
   } catch (error) {
     console.warn('⚠️ Journal activité équipe :', error.message);
@@ -7500,25 +7643,49 @@ function appendTeamActivity(event = {}) {
   }
 }
 
+function ensureLegacyTeamActivityDay(date) {
+  const target = safeString(date);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) return '';
+  const targetPath = teamActivityDayPath(target);
+  if (fs.existsSync(targetPath)) return targetPath;
+  if (!fs.existsSync(TEAM_ACTIVITY_PATH)) return targetPath;
+
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+  let written = 0;
+  try {
+    const fd = fs.openSync(tempPath, 'w');
+    try {
+      forEachJsonlRecordSync(TEAM_ACTIVITY_PATH, item => {
+        if (dateKeyInTimezone(item?.time, timezone) !== target) return;
+        fs.writeSync(fd, `${JSON.stringify(item)}\n`, null, 'utf8');
+        written += 1;
+      });
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (written > 0) fs.renameSync(tempPath, targetPath);
+    else fs.unlinkSync(tempPath);
+  } catch (error) {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+    console.warn(`⚠️ Migration activité équipe ${target} :`, error.message);
+  }
+  return targetPath;
+}
+
 function loadTeamActivity(date = '') {
-  if (!fs.existsSync(TEAM_ACTIVITY_PATH)) return [];
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const target = safeString(date);
+  if (!target) return [];
+  const today = dateKeyInTimezone(new Date(), timezone);
+  if (target > teamDateAdd(today, 1)) return [];
+
+  const filePath = ensureLegacyTeamActivityDay(target);
+  if (!filePath || !fs.existsSync(filePath)) return [];
   const items = [];
-  try {
-    const lines = fs.readFileSync(TEAM_ACTIVITY_PATH, 'utf8').split(/\r?\n/);
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const item = JSON.parse(line);
-        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-        if (target && dateKeyInTimezone(item.time, timezone) !== target) continue;
-        items.push(item);
-      } catch {}
-    }
-  } catch (error) {
-    console.warn('⚠️ Lecture team-activity.jsonl :', error.message);
-  }
+  forEachJsonlRecordSync(filePath, item => {
+    if (dateKeyInTimezone(item?.time, timezone) === target) items.push(item);
+  });
   return items;
 }
 
@@ -7560,7 +7727,7 @@ function normalizeChannels(value) {
   // vraiment pas le champ channels et une sélection explicitement vide.
   // Une sélection vide signifie désormais : AUCUN accès réseau.
   if (value === undefined || value === null) {
-    return ['whatsapp_messages', 'instagram_messages', 'instagram_comments'];
+    return [...TEAM_ACCESS_CHANNELS];
   }
   const raw = Array.isArray(value) ? value : [value];
   const expanded = [];
@@ -8157,7 +8324,7 @@ function replyChannel(entry) {
 
 function userCommercialRepliesForDay(date, userId) {
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  return loadWhatsAppLog().filter(entry =>
+  return loadPerformanceConversationEvents([date], timezone).filter(entry =>
     safeString(entry?.action) === 'commercial_reply' &&
     safeString(entry?.commercial_user_id) === safeString(userId) &&
     dateKeyInTimezone(entry?.time, timezone) === date
@@ -8176,31 +8343,54 @@ function isNightTimeInTunis(value) {
 }
 
 function simpleScheduleForUserDate(date, userId) {
-  const shifts = getSchedulesForDate(date).filter(s => safeString(s.userId) === safeString(userId) && s.active !== false);
-  if (!shifts.length) return { planned:false, channels:[], startTime:'09:00', endTime:'18:00', mission:'' };
-  const channels = [...new Set(shifts.flatMap(s => normalizeChannels(s.channels)))];
-  const first = shifts[0];
+  const rows = getSchedulesForDate(date).filter(s => safeString(s.userId) === safeString(userId));
+  const accessRows = rows.filter(s =>
+    s.accessConfigured === true ||
+    (Object.prototype.hasOwnProperty.call(s || {}, 'channels') && normalizeChannels(s.channels).length > 0)
+  );
+  const activeShifts = rows.filter(s => s.active !== false);
+
+  // V6.35.0 — règle MONDECO : si l'Admin n'a encore rien configuré pour la
+  // journée, le commercial garde tous les canaux. L'Admin retire explicitement
+  // les réseaux non planifiés. Une sélection vide enregistrée reste bien vide.
+  if (!accessRows.length) {
+    return {
+      planned:false,
+      accessConfigured:false,
+      defaultAllAccess:true,
+      channels:[...TEAM_ACCESS_CHANNELS],
+      startTime:'09:00',
+      endTime:'18:00',
+      mission:''
+    };
+  }
+
+  const channels = [...new Set(accessRows.flatMap(s => normalizeChannels(s.channels)))];
+  const first = activeShifts[0] || accessRows[0] || {};
   return {
-    planned:true,
+    planned:activeShifts.length > 0,
+    accessConfigured:true,
+    defaultAllAccess:false,
     channels,
     startTime:safeString(first?.startTime) || '09:00',
     endTime:safeString(first?.endTime) || '18:00',
     mission:safeString(first?.mission),
     crossesMidnight:Boolean(scheduleWindowMs(first)?.crossesMidnight),
-    shiftIds:shifts.map(s=>s.id)
+    shiftIds:rows.map(s=>s.id).filter(Boolean)
   };
 }
 
 function plannedChannelSetForUser(user, date = '') {
   if (safeString(user?.role) !== 'commercial') return null;
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
-  const explicit = safeString(date);
-  const targetDate = explicit || dateKeyInTimezone(new Date(), timezone);
-  const scope = new Set(simpleScheduleForUserDate(targetDate, user.id).channels || []);
+  const explicitDate = safeString(date);
+  const targetDate = explicitDate || dateKeyInTimezone(new Date(), timezone);
+  const scheduleInfo = simpleScheduleForUserDate(targetDate, user.id);
+  const scope = new Set(scheduleInfo.channels || []);
 
   // Après minuit, une mission de nuit 22:00 → 02:00 créée la veille garde ses
-  // accès jusqu'à sa fin. En dehors de ce cas, l'absence de planning = aucun accès.
-  if (!explicit) {
+  // droits jusqu'à sa fin, même si les accès du nouveau jour ont été réduits.
+  if (!explicitDate) {
     const previousDate = teamDateAdd(targetDate, -1);
     for (const schedule of loadSchedules().filter(item =>
       safeString(item.userId) === safeString(user.id) &&
@@ -8371,13 +8561,7 @@ function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/T
     const filePath = path.join(CONVERSATION_EVENTS_DIR, `conversation-events-${fileDay}.jsonl`);
     if (!fs.existsSync(filePath)) continue;
     try {
-      // Un fichier journal ne contient qu'une journée, donc la mémoire reste
-      // bornée. On ne concatène jamais tous les fichiers de rétention.
-      const content = fs.readFileSync(filePath, 'utf8');
-      for (const line of content.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try { pushIfWanted(JSON.parse(line)); } catch {}
-      }
+      forEachJsonlRecordSync(filePath, pushIfWanted);
     } catch (error) {
       console.warn(`⚠️ Performance: lecture ${path.basename(filePath)} :`, error.message);
     }
@@ -8387,8 +8571,7 @@ function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/T
   // limité à 5000 entrées. On l'utilise uniquement comme petit filet de
   // sécurité, puis on déduplique avec le journal append-only.
   try {
-    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
-    for (const item of live) pushIfWanted(item);
+    forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, pushIfWanted);
   } catch {}
 
   const merged = new Map();
@@ -8628,27 +8811,43 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
   const user = loadUsers().find(item => item.id === userId && item.role === 'commercial');
   const date = safeString(req.body?.date);
   const rawChannels = Array.isArray(req.body?.channels) ? req.body.channels : [];
-  const channels = rawChannels.length ? normalizeChannels(rawChannels) : [];
+  const channels = normalizeChannels(rawChannels);
   const requestedActive = req.body?.active !== false && channels.length > 0;
   const startTime = safeString(req.body?.startTime || '09:00');
   const endTime = safeString(req.body?.endTime || '18:00');
   const mission = safeString(req.body?.mission).slice(0,1000);
   if (!user || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({error:'Commercial ou date invalide.'});
   if (requestedActive && (timeMinutes(startTime) === null || timeMinutes(endTime) === null || startTime === endTime)) return res.status(400).json({error:'Horaire invalide. Un service de nuit peut traverser minuit, par exemple 22:00 → 02:00.'});
+
   const items = loadSchedules();
   const existing = items.filter(item => safeString(item.userId) === userId && safeString(item.date) === date);
   const kept = items.filter(item => !(safeString(item.userId) === userId && safeString(item.date) === date));
-  if (requestedActive) {
-    const first = existing[0] || {};
-    kept.push({
-      ...first,
-      id:safeString(first.id)||crypto.randomUUID(), userId, userName:safeString(user.name), date, startTime, endTime,
-      breakStart:safeString(first.breakStart), breakEnd:safeString(first.breakEnd), channels,
-      mission:mission || safeString(first.mission || 'Mission commerciale'), priority:safeString(first.priority || 'normal'),
-      slaMinutes:Math.max(1,Math.min(120,Number(first.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),
-      active:true, createdBy:safeString(first.createdBy || req.user?.id), createdAt:safeString(first.createdAt)||new Date().toISOString(), updatedAt:new Date().toISOString()
-    });
-  }
+  const first = existing[0] || {};
+
+  // Toujours conserver une ligne d'accès, même si les 5 cases sont décochées.
+  // Ainsi "aucun réseau" reste une décision explicite et ne redevient jamais
+  // "tous les réseaux" au prochain chargement.
+  kept.push({
+    ...first,
+    id:safeString(first.id)||crypto.randomUUID(),
+    userId,
+    userName:safeString(user.name),
+    date,
+    startTime,
+    endTime,
+    breakStart:safeString(first.breakStart),
+    breakEnd:safeString(first.breakEnd),
+    channels,
+    accessConfigured:true,
+    mission:mission || safeString(first.mission || (channels.length ? 'Mission commerciale' : '')),
+    priority:safeString(first.priority || 'normal'),
+    slaMinutes:Math.max(1,Math.min(120,Number(first.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES)||DEFAULT_COMMERCIAL_SLA_MINUTES)),
+    active:requestedActive,
+    createdBy:safeString(first.createdBy || req.user?.id),
+    createdAt:safeString(first.createdAt)||new Date().toISOString(),
+    updatedAt:new Date().toISOString()
+  });
+
   saveSchedules(kept);
   return res.json({success:true, schedule:simpleScheduleForUserDate(date,userId)});
 });
@@ -14207,7 +14406,7 @@ function normalizeInstagramThreadEntries(rawEntries) {
 }
 
 let persistentConversationEventsCache = {
-  stamp: '',
+  stamp: 'v6.35-memory-safe',
   entries: []
 };
 
@@ -14229,43 +14428,76 @@ function conversationEventsDirectoryStamp() {
 }
 
 function loadPersistentConversationEvents() {
-  const stamp = conversationEventsDirectoryStamp();
-  if (persistentConversationEventsCache.stamp === stamp) {
-    return persistentConversationEventsCache.entries;
-  }
-
+  const cutoffAt = historyImportCutoffIso();
   const entries = [];
-
-  try {
-    const files = fs
-      .readdirSync(CONVERSATION_EVENTS_DIR)
-      .filter(name => /^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
-      .sort();
-
-    for (const name of files) {
-      const content = fs.readFileSync(path.join(CONVERSATION_EVENTS_DIR, name), 'utf8');
-      for (const line of content.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            entries.push(parsed);
-          }
-        } catch (error) {
-          console.warn(`⚠️ Ligne JSONL ignorée dans ${name} :`, error.message);
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('⚠️ Lecture conversation-events :', error.message);
+  for (const name of conversationEventFilesSince(cutoffAt)) {
+    const filePath = path.join(CONVERSATION_EVENTS_DIR, name);
+    forEachJsonlRecordSync(filePath, item => {
+      const time = safeString(item?.time || item?.event_time || item?.meta_created_time || item?.created_time || item?.timestamp);
+      if (!historyTimeIsRecent(time, cutoffAt)) return;
+      entries.push(item);
+    });
   }
-
-  persistentConversationEventsCache = { stamp, entries };
   return entries;
 }
 
+function addConversationMessageIdsToSet(entry, target) {
+  if (!entry || typeof entry !== 'object' || !target) return;
+  for (const id of conversationEntryMessageIds(entry)) {
+    if (id) target.add(id);
+  }
+}
+
+function collectKnownConversationMessageIdsMemorySafe({ includeInstagram = true, includeFacebook = true } = {}) {
+  const cutoffAt = historyImportCutoffIso();
+  const ids = new Set();
+  const add = entry => {
+    const time = safeString(entry?.time || entry?.event_time || entry?.meta_created_time || entry?.created_time || entry?.timestamp);
+    if (time && !historyTimeIsRecent(time, cutoffAt)) return;
+    addConversationMessageIdsToSet(entry, ids);
+  };
+
+  if (includeInstagram) forEachJsonArrayObjectSync(INSTAGRAM_HISTORY_PATH, add);
+  if (includeFacebook) forEachJsonArrayObjectSync(FACEBOOK_HISTORY_PATH, add);
+  for (const name of conversationEventFilesSince(cutoffAt)) {
+    forEachJsonlRecordSync(path.join(CONVERSATION_EVENTS_DIR, name), add);
+  }
+  forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, add);
+  return ids;
+}
+
+function loadConversationMapFromJsonArrayMemorySafe(filePath) {
+  const map = new Map();
+  forEachJsonArrayObjectSync(filePath, entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    map.set(conversationLogDedupeKey(entry), entry);
+  });
+  return map;
+}
+
+function writeJsonArrayIterableAtomic(filePath, iterable) {
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const fd = fs.openSync(tempPath, 'w');
+  try {
+    fs.writeSync(fd, '[\n');
+    let first = true;
+    for (const item of iterable) {
+      if (!first) fs.writeSync(fd, ',\n');
+      fs.writeSync(fd, JSON.stringify(item));
+      first = false;
+    }
+    fs.writeSync(fd, '\n]\n');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(tempPath, filePath);
+}
+
 let combinedConversationLogCache = {
-  liveStamp: '',
+  liveStamp: 'v6.35-memory-safe',
   historyStamp: '',
   facebookHistoryStamp: '',
   persistentStamp: '',
@@ -14281,83 +14513,48 @@ function fileChangeStamp(filePath) {
   }
 }
 
+// V6.35.0 — fusion mémoire-sûre de l'Inbox.
+// On ne charge plus simultanément instagram-history.json, facebook-history.json,
+// tous les JSONL puis conversation-log.json dans quatre grands tableaux.
+// Chaque source est parcourue séquentiellement et fusionnée directement dans
+// une seule Map dédupliquée, limitée à la fenêtre de rétention.
 function loadWhatsAppLog() {
-  const liveStamp =
-    fileChangeStamp(
-      CONVERSATIONS_LOG_PATH
-    );
-
-  const historyStamp =
-    fileChangeStamp(
-      INSTAGRAM_HISTORY_PATH
-    );
-
-  const facebookHistoryStamp =
-    fileChangeStamp(
-      FACEBOOK_HISTORY_PATH
-    );
-
-  const persistentStamp =
-    conversationEventsDirectoryStamp();
-
-  if (
-    combinedConversationLogCache.liveStamp === liveStamp &&
-    combinedConversationLogCache.historyStamp === historyStamp &&
-    combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
-    combinedConversationLogCache.persistentStamp === persistentStamp
-  ) {
-    return combinedConversationLogCache.entries;
-  }
-
-  const historical =
-    readJsonArray(
-      INSTAGRAM_HISTORY_PATH,
-      'instagram-history.json'
-    );
-
-  const facebookHistorical =
-    readJsonArray(
-      FACEBOOK_HISTORY_PATH,
-      'facebook-history.json'
-    );
-
-  const persistent =
-    loadPersistentConversationEvents();
-
-  const live =
-    readJsonArray(
-      CONVERSATIONS_LOG_PATH,
-      'conversation-log.json'
-    );
-
-  // L'historique est chargé en premier et les événements persistants puis le
-  // cache temps réel l'écrasent en cas de doublon.
-  // cas de doublon. Ainsi une conversation importée puis reçue par webhook
-  // ne s'affiche jamais deux fois.
+  const cutoffAt = historyImportCutoffIso();
   const merged = new Map();
-
-  for (const entry of [...historical, ...facebookHistorical, ...persistent, ...live]) {
+  const mergeIfRecent = entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    const time = safeString(entry?.time || entry?.event_time || entry?.meta_created_time || entry?.created_time || entry?.timestamp);
+    if (!historyTimeIsRecent(time, cutoffAt)) return;
     const key = conversationLogDedupeKey(entry);
-    merged.set(
-      key,
-      mergeConversationLogEntries(merged.get(key), entry)
-    );
-  }
-
-  const entries =
-    [...merged.values()]
-      .map(entry => applyConversationPurgeTombstones(entry))
-      .filter(Boolean)
-      .sort(conversationEntryComparator);
-
-  combinedConversationLogCache = {
-    liveStamp,
-    historyStamp,
-    facebookHistoryStamp,
-    persistentStamp,
-    entries
+    merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
   };
 
+  // Les fichiers historiques sont des tableaux JSON potentiellement gros :
+  // lecture objet par objet, jamais JSON.parse du fichier complet.
+  forEachJsonArrayObjectSync(INSTAGRAM_HISTORY_PATH, mergeIfRecent);
+  forEachJsonArrayObjectSync(FACEBOOK_HISTORY_PATH, mergeIfRecent);
+
+  // Les événements persistants sont déjà partitionnés par jour.
+  for (const name of conversationEventFilesSince(cutoffAt)) {
+    forEachJsonlRecordSync(path.join(CONVERSATION_EVENTS_DIR, name), mergeIfRecent);
+  }
+
+  // Le cache live est plafonné à 5000 entrées, mais on le parcourt lui aussi
+  // en streaming pour éviter un pic inutile au moment où l'Inbox s'ouvre.
+  forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, mergeIfRecent);
+
+  const entries = [];
+  for (const entry of merged.values()) {
+    const clean = applyConversationPurgeTombstones(entry);
+    if (clean) entries.push(clean);
+  }
+  entries.sort(conversationEntryComparator);
+
+  const memory = process.memoryUsage();
+  const rssMb = Math.round(Number(memory.rss || 0) / 1024 / 1024);
+  if (rssMb > 350) {
+    console.warn(`⚠️ Inbox mémoire: RSS ${rssMb} MB | ${entries.length} événement(s) fusionné(s)`);
+  }
   return entries;
 }
 
@@ -15601,7 +15798,7 @@ async function listAllFacebookConversations(onProgress = null, options = {}) {
   let cutoffReached = false;
   let nextUrl =
     `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
-    `?fields=${encodeURIComponent('id,link,updated_time')}&limit=50`;
+    `?fields=${encodeURIComponent('id,link,updated_time,participants{id,name}')}&limit=50`;
 
   while (nextUrl) {
     if (seenUrls.has(nextUrl)) {
@@ -15639,7 +15836,8 @@ async function listAllFacebookConversations(onProgress = null, options = {}) {
       conversations.push({
         id,
         link: safeString(item?.link),
-        updatedTime
+        updatedTime,
+        participants: item?.participants && typeof item.participants === 'object' ? item.participants : undefined
       });
     }
 
@@ -15969,14 +16167,41 @@ function facebookMessageParticipants(message) {
   return [...new Set(ids)];
 }
 
-function facebookConversationCustomerId(messages) {
-  for (const message of messages) {
-    const customer = facebookMessageParticipants(message).find(
-      id => id && id !== FACEBOOK_PAGE_ID
-    );
-    if (customer) return customer;
+function facebookConversationParticipantRows(conversation = {}) {
+  const participants = conversation?.participants;
+  if (Array.isArray(participants)) return participants.filter(Boolean);
+  if (Array.isArray(participants?.data)) return participants.data.filter(Boolean);
+  return [];
+}
+
+function facebookConversationCustomerIdentity(conversation = {}, messages = []) {
+  // La Conversation API expose directement participants.id + participants.name
+  // pour les conversations de Pages. C'est plus fiable que d'afficher le PSID.
+  for (const participant of facebookConversationParticipantRows(conversation)) {
+    const id = safeString(participant?.id);
+    if (!id || id === safeString(FACEBOOK_PAGE_ID)) continue;
+    return { id, name:safeString(participant?.name) };
   }
-  return '';
+
+  // Fallback : le champ from des messages contient souvent aussi le nom.
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const fromId = safeString(message?.from?.id);
+    if (fromId && fromId !== safeString(FACEBOOK_PAGE_ID)) {
+      return { id:fromId, name:safeString(message?.from?.name) };
+    }
+    const toData = Array.isArray(message?.to?.data) ? message.to.data : [];
+    for (const participant of toData) {
+      const id = safeString(participant?.id);
+      if (id && id !== safeString(FACEBOOK_PAGE_ID)) {
+        return { id, name:safeString(participant?.name) };
+      }
+    }
+  }
+  return { id:'', name:'' };
+}
+
+function facebookConversationCustomerId(messages, conversation = {}) {
+  return facebookConversationCustomerIdentity(conversation, messages).id;
 }
 
 async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
@@ -16026,6 +16251,7 @@ async function getFacebookHistoryProfile(customerId) {
     'first_name,last_name,profile_pic'
   ];
 
+  let best = {};
   for (const fields of fieldSets) {
     try {
       const url =
@@ -16034,19 +16260,38 @@ async function getFacebookHistoryProfile(customerId) {
       const data = await facebookGraphGet(url);
       if (!data || typeof data !== 'object') continue;
 
-      const profilePicture = await persistFacebookHistoryProfilePicture(
-        data?.profile_pic,
-        customerId
-      );
       const name = safeString(
         data?.name ||
         [safeString(data?.first_name), safeString(data?.last_name)].filter(Boolean).join(' ')
       );
-      return { ...data, name, profilePicture };
+      best = { ...best, ...data, name: name || safeString(best?.name) };
+      if (name && safeString(data?.profile_pic)) break;
     } catch {}
   }
 
-  return {};
+  // V6.35 : la User Profile API peut ne pas renvoyer profile_pic dans tous
+  // les contextes. Le /picture edge est tenté comme filet de sécurité.
+  let remotePicture = safeString(best?.profile_pic);
+  if (!remotePicture) {
+    try {
+      const pictureData = await facebookGraphGet(
+        `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(customerId)}/picture` +
+        `?redirect=0&type=normal`
+      );
+      if (pictureData?.data?.is_silhouette !== true) {
+        remotePicture = safeString(pictureData?.data?.url);
+      }
+    } catch {}
+  }
+
+  const profilePicture = remotePicture
+    ? await persistFacebookHistoryProfilePicture(remotePicture, customerId)
+    : '';
+
+  return {
+    ...best,
+    profilePicture
+  };
 }
 
 async function validateFacebookHistoryConfiguration() {
@@ -16143,39 +16388,27 @@ async function runFacebookHistorySync() {
       console.warn('⚠️ Facebook historique :', facebookHistorySyncJob.warning);
     }
 
-    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
-    const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
-    const persistent = loadPersistentConversationEvents();
-
-    const knownMessageIds = new Set(
-      [...live, ...existingHistory, ...persistent]
-        .flatMap(entry => conversationEntryMessageIds(entry))
-        .filter(Boolean)
-    );
-
-    const historyByKey = new Map();
-    for (const entry of existingHistory) {
-      historyByKey.set(conversationLogDedupeKey(entry), entry);
-    }
-    const liveByKey = new Map();
-    for (const entry of live) {
-      liveByKey.set(conversationLogDedupeKey(entry), entry);
-    }
+    // V6.35 : ne plus créer 3 gros tableaux simultanés pendant l'import.
+    const knownMessageIds = collectKnownConversationMessageIdsMemorySafe({ includeInstagram:false });
+    const historyByKey = loadConversationMapFromJsonArrayMemorySafe(FACEBOOK_HISTORY_PATH);
+    const liveByKey = loadConversationMapFromJsonArrayMemorySafe(CONVERSATIONS_LOG_PATH);
 
     const states = loadConversationStatesAdmin();
 
-    for (let start = 0; start < conversations.length; start += 4) {
-      const batch = conversations.slice(start, start + 4);
+    for (let start = 0; start < conversations.length; start += 2) {
+      const batch = conversations.slice(start, start + 2);
       const results = await Promise.all(
         batch.map(async conversation => {
           try {
             const messages = await getAllFacebookConversationMessages(conversation.id, cutoffAt);
-            const customerId = facebookConversationCustomerId(messages);
+            const identity = facebookConversationCustomerIdentity(conversation, messages);
+            const customerId = identity.id;
             if (!customerId) {
               return { conversation, messages, error: 'Client Facebook non identifiable.' };
             }
             const profile = await getFacebookHistoryProfile(customerId);
-            return { conversation, messages, customerId, profile };
+            if (!safeString(profile?.name) && safeString(identity.name)) profile.name = safeString(identity.name);
+            return { conversation, messages, customerId, profile, participantName:safeString(identity.name) };
           } catch (error) {
             return { conversation, messages: [], error: error.message };
           }
@@ -16328,10 +16561,8 @@ async function runFacebookHistorySync() {
         facebookHistorySyncJob.processedConversations >= conversations.length;
 
       if (shouldCheckpoint) {
-        const historyList = [...historyByKey.values()].sort(
-          (a, b) => new Date(a?.time || 0) - new Date(b?.time || 0)
-        );
-        writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
+        // Écriture progressive : pas de [...map.values()] + JSON.stringify géant.
+        writeJsonArrayIterableAtomic(FACEBOOK_HISTORY_PATH, historyByKey.values());
         saveConversationStatesAdmin(states);
       }
 
@@ -16584,7 +16815,7 @@ async function listRecentFacebookConversations(cutoffAt) {
   const seen = new Set();
   let nextUrl =
     `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(FACEBOOK_PAGE_ID)}/conversations` +
-    `?platform=messenger&fields=${encodeURIComponent('id,link,updated_time')}&limit=50`;
+    `?platform=messenger&fields=${encodeURIComponent('id,link,updated_time,participants{id,name}')}&limit=50`;
   let pageCount = 0;
   let latestUpdatedTime = '';
 
@@ -16614,7 +16845,8 @@ async function listRecentFacebookConversations(cutoffAt) {
       recent.push({
         id,
         link: safeString(row?.link),
-        updatedTime: updated
+        updatedTime: updated,
+        participants: row?.participants && typeof row.participants === 'object' ? row.participants : undefined
       });
     }
 
@@ -16727,20 +16959,14 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       };
     }
 
-    const live = readJsonArray(CONVERSATIONS_LOG_PATH, 'conversation-log.json');
-    const existingHistory = readJsonArray(FACEBOOK_HISTORY_PATH, 'facebook-history.json');
-    const persistentEvents = loadPersistentConversationEvents();
     const realtimeWriteToLive = facebookHistorySyncJob.running === true;
-    const knownMessageIds = new Set(
-      [...live, ...existingHistory, ...persistentEvents]
-        .flatMap(entry => conversationEntryMessageIds(entry))
-        .filter(Boolean)
-    );
-
-    const historyByKey = new Map();
-    for (const entry of existingHistory) {
-      historyByKey.set(conversationLogDedupeKey(entry), entry);
-    }
+    const knownMessageIds = collectKnownConversationMessageIdsMemorySafe({ includeInstagram:false });
+    const historyByKey = realtimeWriteToLive
+      ? new Map()
+      : loadConversationMapFromJsonArrayMemorySafe(FACEBOOK_HISTORY_PATH);
+    const liveByKey = realtimeWriteToLive
+      ? loadConversationMapFromJsonArrayMemorySafe(CONVERSATIONS_LOG_PATH)
+      : new Map();
 
     const states = loadConversationStatesAdmin();
     let changed = false;
@@ -16757,7 +16983,8 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         continue;
       }
 
-      const customerId = facebookConversationCustomerId(messages);
+      const identity = facebookConversationCustomerIdentity(conversation, messages);
+      const customerId = identity.id;
       if (!customerId) continue;
       const contact = `facebook:${customerId}`;
       let state = states[contact] && typeof states[contact] === 'object'
@@ -16765,9 +16992,16 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         : {};
 
       let profile = {};
-      if (!safeString(state?.profileName)) {
+      if (!safeString(state?.profileName) || !safeString(state?.profilePicture)) {
         try { profile = await getFacebookHistoryProfile(customerId); } catch {}
       }
+      if (!safeString(profile?.name) && safeString(identity.name)) {
+        profile.name = safeString(identity.name);
+      }
+      const profileChanged = Boolean(
+        (safeString(profile?.name) && safeString(profile?.name) !== safeString(state?.profileName)) ||
+        (safeString(profile?.profilePicture) && safeString(profile?.profilePicture) !== safeString(state?.profilePicture))
+      );
 
       let newInbound = 0;
       let conversationChanged = false;
@@ -16853,7 +17087,9 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         }
       }
 
-      if (!conversationChanged) continue;
+      // Même sans nouveau message, réparer les anciens Facebook affichés
+      // seulement avec leur PSID lorsque Meta donne désormais le nom/photo.
+      if (!conversationChanged && !profileChanged) continue;
 
       state = {
         ...state,
@@ -16882,6 +17118,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         facebookRealtimeRecoveredAt: startedAt
       };
       states[contact] = state;
+      if (profileChanged) changed = true;
 
       for (const entry of notifyEntries) {
         registerRecoveredFacebookNotification(entry, state);
@@ -16893,10 +17130,8 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         const liveList = [...liveByKey.values()]
           .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
         writeJsonAtomic(CONVERSATIONS_LOG_PATH, liveList);
-      } else {
-        const historyList = [...historyByKey.values()]
-          .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
-        writeJsonAtomic(FACEBOOK_HISTORY_PATH, historyList);
+      } else if (facebookRealtimeSyncJob.importedMessages > 0) {
+        writeJsonArrayIterableAtomic(FACEBOOK_HISTORY_PATH, historyByKey.values());
       }
       // Recharger l'état courant avant de sauvegarder afin de ne pas écraser
       // une affectation/favori effectuée pendant le rattrapage.
@@ -18586,11 +18821,13 @@ function conversationDirectionalEvidence(entries = [], state = {}) {
   const stateHumanMs = conversationTimeMs(state?.lastHumanAt);
   const stateBotMs = conversationTimeMs(state?.lastBotAt);
   const stateAnsweredMs = conversationTimeMs(state?.lastAnsweredAt);
+  const stateBusinessMs = conversationTimeMs(state?.lastBusinessAt);
   const answeredCustomerMs = conversationTimeMs(state?.lastAnsweredCustomerAt);
   const stateResponseMs = Math.max(
     Number.isFinite(stateHumanMs) ? stateHumanMs : 0,
     Number.isFinite(stateBotMs) ? stateBotMs : 0,
-    Number.isFinite(stateAnsweredMs) ? stateAnsweredMs : 0
+    Number.isFinite(stateAnsweredMs) ? stateAnsweredMs : 0,
+    Number.isFinite(stateBusinessMs) ? stateBusinessMs : 0
   );
 
   // Un lastCustomerAt plus récent que tout le journal n'est accepté comme
@@ -18618,7 +18855,7 @@ function conversationDirectionalEvidence(entries = [], state = {}) {
     latestInboundMs: effectiveInboundMs,
     latestInboundIso: effectiveInboundIso,
     latestOutboundMs: effectiveOutboundMs,
-    latestOutboundIso: latestOutboundIso || safeString(state?.lastAnsweredAt || state?.lastHumanAt || state?.lastBotAt),
+    latestOutboundIso: latestOutboundIso || safeString(state?.lastAnsweredAt || state?.lastBusinessAt || state?.lastHumanAt || state?.lastBotAt),
     latestHumanMs: Math.max(latestHumanMs, Number.isFinite(stateHumanMs) ? stateHumanMs : 0),
     latestHumanIso: latestHumanIso || safeString(state?.lastHumanAt),
     answeredCustomerMs: Number.isFinite(answeredCustomerMs) ? answeredCustomerMs : 0
@@ -18756,8 +18993,55 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
   return states;
 }
 
-function pendingMessageStatusByContact() {
-  const log = loadWhatsAppLog();
+function fastPendingMessageStatusFromStates() {
+  const states = loadConversationStatesAdmin();
+  const cutoffAt = historyImportCutoffIso();
+  const result = new Map();
+
+  for (const [contact, stateValue] of Object.entries(states || {})) {
+    const state = stateValue && typeof stateValue === 'object' ? stateValue : {};
+    const lastCustomerAt = safeString(state?.lastCustomerAt);
+    if (!lastCustomerAt || !historyTimeIsRecent(lastCustomerAt, cutoffAt)) continue;
+
+    const channelRaw = safeString(state?.channel).toLowerCase();
+    const channel = channelRaw === 'instagram' || contact.startsWith('instagram:')
+      ? 'instagram'
+      : channelRaw === 'facebook' || contact.startsWith('facebook:')
+        ? 'facebook'
+        : 'whatsapp';
+
+    const inboundMs = conversationTimeMs(lastCustomerAt);
+    const answeredCustomerMs = conversationTimeMs(state?.lastAnsweredCustomerAt);
+    const responseCandidates = [
+      conversationTimeMs(state?.lastAnsweredAt),
+      conversationTimeMs(state?.lastHumanAt),
+      conversationTimeMs(state?.lastBotAt),
+      conversationTimeMs(state?.lastBusinessAt)
+    ].filter(Number.isFinite);
+    const responseMs = responseCandidates.length ? Math.max(...responseCandidates) : NaN;
+
+    const acknowledged =
+      (Number.isFinite(answeredCustomerMs) && Number.isFinite(inboundMs) && answeredCustomerMs >= inboundMs) ||
+      (Number.isFinite(responseMs) && Number.isFinite(inboundMs) && responseMs >= inboundMs);
+
+    result.set(contact, {
+      contact,
+      channel,
+      pending: state?.resolved === true ? false : !acknowledged,
+      resolved: state?.resolved === true,
+      lastTime: lastCustomerAt
+    });
+  }
+  return result;
+}
+
+function pendingMessageStatusByContact(logInput = null) {
+  // Les badges/notifications sont rafraîchis fréquemment : utiliser l'état
+  // réconcilié, qui tient en mémoire en quelques Ko, au lieu de rescanner
+  // WhatsApp + Instagram + Facebook à chaque poll.
+  if (!Array.isArray(logInput)) return fastPendingMessageStatusFromStates();
+
+  const log = logInput;
   const states = reconcileAnsweredConversationStates(log, loadConversationStatesAdmin());
   const byContact = {};
   for (const entry of log) {
@@ -18792,8 +19076,8 @@ function pendingMessageStatusByContact() {
   return result;
 }
 
-function pendingInteractionCountsForUser(user) {
-  const messageStatus = pendingMessageStatusByContact();
+function pendingInteractionCountsForUser(user, logInput = null) {
+  const messageStatus = pendingMessageStatusByContact(logInput);
   const channelScope = plannedChannelSetForUser(user);
   let pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
   let scopedComments = loadSocialComments();
@@ -18832,7 +19116,7 @@ router.post('/api/interactions/reconcile', requireAuth, (req,res) => {
     lastAnsweredConversationReconcileAt = 0;
     const log = loadWhatsAppLog();
     reconcileAnsweredConversationStates(log, loadConversationStatesAdmin());
-    const counts = pendingInteractionCountsForUser(req.user);
+    const counts = pendingInteractionCountsForUser(req.user, log);
     return res.json({ success:true, counts, reconciledAt:new Date().toISOString() });
   } catch (error) {
     console.error('❌ Réconciliation compteurs interactions :', error);
