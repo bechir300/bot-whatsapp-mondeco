@@ -705,6 +705,15 @@ async function migrateCloudDirectory(directory, kind, budget) {
       fs.unlinkSync(filePath);
       result.migrated += 1;
       result.freedBytes += size;
+      // V6.35.7 — Petite pause entre chaque fichier migré. La migration
+      // tourne en tâche de fond EN MÊME TEMPS que la synchro temps réel
+      // Facebook/WhatsApp, sur la même connexion sortante du serveur.
+      // Sans pause, une rafale de fichiers (surtout des vidéos) peut
+      // saturer temporairement la bande passante disponible et provoquer
+      // des "fetch failed" sur les appels Meta concurrents. Ce délai est
+      // négligeable sur la durée totale de la migration (150 fichiers ×
+      // 300ms ≈ 45s ajoutées sur un cycle de 5 minutes).
+      await new Promise(resolve => setTimeout(resolve, 300));
     } catch (error) {
       result.failed += 1;
       console.warn(`⚠️ Migration Cloudinary ${kind}/${filename} :`, error.message);
