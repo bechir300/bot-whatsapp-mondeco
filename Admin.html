@@ -13335,6 +13335,17 @@ window.sendConversationCommercialReply = async function(contact){
     alert('Vous ne pouvez pas répondre à cette conversation.');
     return;
   }
+
+  // V6.35.12 — Le jeton anti-course doit être invalidé DÈS LE DÉBUT de
+  // l'envoi, pas seulement à la fin (dans l'appel openConversation() final).
+  // Sans ça, un rafraîchissement automatique (toutes les 5s) déjà en cours
+  // au moment du clic peut résoudre APRÈS que le champ ait été vidé mais
+  // AVANT que openConversation() ne soit rappelée en fin d'envoi — et
+  // réinjecter l'ancien texte dans le champ qu'on vient tout juste de
+  // vider. Ce bump immédiat ferme cette fenêtre : tout rafraîchissement
+  // déjà en vol sera automatiquement ignoré à sa résolution.
+  ++conversationRequestToken;
+
   const textEl =
     document.getElementById('conversationQuickReply');
 
