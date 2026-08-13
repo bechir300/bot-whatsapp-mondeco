@@ -1575,11 +1575,37 @@ const CONVERSATION_STATE_PATH =
     'conversation-state.json'
   );
 
+// V6.35.23 — Même cache mémoire que côté Admin.js (voir ce fichier pour le
+// diagnostic complet) : conversation-state.json (15+ Mo) était relu et
+// re-parsé intégralement à chaque appel, bloquant l'event loop Node.js
+// pendant 500ms à 2s à chaque fois — constaté en production par des pics
+// "EVENTLOOP-LAG" pendant l'envoi de messages.
+let conversationStatesCache = null;
+let conversationStatesCacheStamp = '';
+
+function conversationStateFileStamp() {
+  try {
+    const stat = fs.statSync(CONVERSATION_STATE_PATH);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+}
+
 function loadConversationStates() {
-  return readJsonObject(
+  const stamp = conversationStateFileStamp();
+  if (conversationStatesCache && stamp === conversationStatesCacheStamp) {
+    // Copie superficielle : protège le cache partagé d'une mutation
+    // accidentelle par un appelant qui ne sauvegarderait pas ensuite.
+    return { ...conversationStatesCache };
+  }
+  const result = readJsonObject(
     CONVERSATION_STATE_PATH,
     {}
   );
+  conversationStatesCache = result;
+  conversationStatesCacheStamp = stamp;
+  return { ...result };
 }
 
 function saveConversationStates(states) {
@@ -1587,6 +1613,10 @@ function saveConversationStates(states) {
     CONVERSATION_STATE_PATH,
     states
   );
+  // On sait déjà ce qui vient d'être écrit : on mémorise directement au
+  // lieu de forcer une relecture au prochain appel.
+  conversationStatesCache = states;
+  conversationStatesCacheStamp = conversationStateFileStamp();
 }
 
 function getConversationState(phone) {
