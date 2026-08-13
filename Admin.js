@@ -14534,7 +14534,35 @@ function addConversationMessageIdsToSet(entry, target) {
   }
 }
 
+// V6.35.24 — Cache mémoire pour collectKnownConversationMessageIdsMemorySafe.
+// Cette fonction scanne l'historique Facebook/Instagram + les événements +
+// le journal complet (~35 Mo cumulés) à chaque appel, pour savoir quels
+// messages sont déjà connus. Elle est appelée toutes les 60 secondes par
+// le rattrapage temps réel Facebook, MÊME quand aucun fichier n'a changé
+// depuis le dernier passage — diagnostiqué en production comme cause
+// majeure des pics EVENTLOOP-LAG répétés (500ms-2s) bloquant tout le
+// serveur, y compris l'envoi de messages, environ toutes les minutes.
+let knownMessageIdsCache = new Map();
+
+function knownMessageIdsCombinedStamp(includeInstagram, includeFacebook) {
+  const parts = [];
+  if (includeInstagram) parts.push(fileChangeStamp(INSTAGRAM_HISTORY_PATH));
+  if (includeFacebook) parts.push(fileChangeStamp(FACEBOOK_HISTORY_PATH));
+  parts.push(conversationEventsDirectoryStamp());
+  parts.push(fileChangeStamp(CONVERSATIONS_LOG_PATH));
+  return parts.join('||');
+}
+
 function collectKnownConversationMessageIdsMemorySafe({ includeInstagram = true, includeFacebook = true } = {}) {
+  const cacheKey = `${includeInstagram}:${includeFacebook}`;
+  const stamp = knownMessageIdsCombinedStamp(includeInstagram, includeFacebook);
+  const cached = knownMessageIdsCache.get(cacheKey);
+  if (cached && cached.stamp === stamp) {
+    // Copie du Set : coût négligeable comparé à rescanner ~35 Mo de fichiers,
+    // et protège le cache partagé d'une mutation accidentelle.
+    return new Set(cached.ids);
+  }
+
   const cutoffAt = historyImportCutoffIso();
   const ids = new Set();
   const add = entry => {
@@ -14549,16 +14577,29 @@ function collectKnownConversationMessageIdsMemorySafe({ includeInstagram = true,
     forEachJsonlRecordSync(path.join(CONVERSATION_EVENTS_DIR, name), add);
   }
   forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, add);
-  return ids;
+
+  knownMessageIdsCache.set(cacheKey, { stamp, ids });
+  return new Set(ids);
 }
 
+// V6.35.24 — Même principe de cache que ci-dessus, pour éviter de relire
+// facebook-history.json (5+ Mo) à chaque cycle de rattrapage temps réel
+// quand son contenu n'a pas changé depuis le dernier passage.
+let conversationMapFromJsonArrayCache = new Map();
+
 function loadConversationMapFromJsonArrayMemorySafe(filePath) {
+  const stamp = fileChangeStamp(filePath);
+  const cached = conversationMapFromJsonArrayCache.get(filePath);
+  if (cached && cached.stamp === stamp) {
+    return new Map(cached.map);
+  }
   const map = new Map();
   forEachJsonArrayObjectSync(filePath, entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
     map.set(conversationLogDedupeKey(entry), entry);
   });
-  return map;
+  conversationMapFromJsonArrayCache.set(filePath, { stamp, map });
+  return new Map(map);
 }
 
 function writeJsonArrayIterableAtomic(filePath, iterable) {
