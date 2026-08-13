@@ -2354,6 +2354,28 @@ function normalizeAdReferral(referral) {
   return normalized;
 }
 
+// V6.35.24 — Téléchargement (GET, rejouable sans risque) avec timeout +
+// retry, même faille que les autres appels réseau Meta déjà corrigés.
+async function fetchAdMediaWithRetry(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_MESSAGE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } catch {
+        throw error;
+      }
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '') {
   const normalized = normalizeAdReferral(referral);
   const remoteUrl = safeString(normalized?.mediaUrl);
@@ -2371,7 +2393,7 @@ async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '')
     let response = null;
 
     if (WHATSAPP_TOKEN) {
-      response = await fetch(remoteUrl, {
+      response = await fetchAdMediaWithRetry(remoteUrl, {
         headers: {
           Authorization: `Bearer ${WHATSAPP_TOKEN}`,
           Connection: 'close'
@@ -2382,7 +2404,7 @@ async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '')
     // Les URL de créatives Meta sont souvent déjà signées. Si l'en-tête
     // Authorization n'est pas accepté, retenter sans token.
     if (!response || !response.ok) {
-      response = await fetch(remoteUrl);
+      response = await fetchAdMediaWithRetry(remoteUrl);
     }
 
     if (!response.ok) {
