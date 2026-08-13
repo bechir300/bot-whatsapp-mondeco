@@ -14647,6 +14647,34 @@ function fileChangeStamp(filePath) {
 // une seule Map dédupliquée, limitée à la fenêtre de rétention.
 function loadWhatsAppLog() {
   const cutoffAt = historyImportCutoffIso();
+
+  // V6.35.25 — Cette fonction fusionnait INTÉGRALEMENT, À CHAQUE APPEL,
+  // tout l'historique Instagram/Facebook + événements + journal courant
+  // (potentiellement 30+ Mo), sans AUCUN cache, malgré la structure
+  // combinedConversationLogCache déjà déclarée juste au-dessus mais jamais
+  // réellement utilisée ici. Appelée à quasiment chaque requête API touchant
+  // une conversation (liste, détail...) — bien plus fréquemment que le
+  // rattrapage Facebook (60s) déjà corrigé en V6.35.24. Diagnostiqué en
+  // production comme cause majeure des pics EVENTLOOP-LAG persistants.
+  // Le cache est aussi invalidé toutes les 5 minutes (cutoffBucket), pour
+  // que la fenêtre glissante de rétention (48h) reste correcte même si
+  // aucun fichier ne change entre-temps.
+  const cutoffBucket = Math.floor(Date.now() / (5 * 60 * 1000));
+  const historyStamp = fileChangeStamp(INSTAGRAM_HISTORY_PATH);
+  const facebookHistoryStamp = fileChangeStamp(FACEBOOK_HISTORY_PATH);
+  const persistentStamp = conversationEventsDirectoryStamp();
+  const liveStamp = fileChangeStamp(CONVERSATIONS_LOG_PATH);
+
+  if (
+    combinedConversationLogCache.cutoffBucket === cutoffBucket &&
+    combinedConversationLogCache.historyStamp === historyStamp &&
+    combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
+    combinedConversationLogCache.persistentStamp === persistentStamp &&
+    combinedConversationLogCache.liveStamp === liveStamp
+  ) {
+    return [...combinedConversationLogCache.entries];
+  }
+
   const merged = new Map();
   const mergeIfRecent = entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
@@ -14682,7 +14710,17 @@ function loadWhatsAppLog() {
   if (rssMb > 350) {
     console.warn(`⚠️ Inbox mémoire: RSS ${rssMb} MB | ${entries.length} événement(s) fusionné(s)`);
   }
-  return entries;
+
+  combinedConversationLogCache = {
+    liveStamp,
+    historyStamp,
+    facebookHistoryStamp,
+    persistentStamp,
+    cutoffBucket,
+    entries
+  };
+
+  return [...entries];
 }
 
 // V6.35.23 — Cache mémoire pour conversation-state.json. Ce fichier a
