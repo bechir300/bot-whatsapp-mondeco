@@ -15886,7 +15886,15 @@ async function facebookGraphGet(url) {
     let response;
     try {
       response = await fetch(url, {
-        headers: { Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}` },
+        // V6.35.22 — "Connection: close" force une connexion TCP/TLS
+        // fraîche à chaque appel, au lieu de réutiliser une connexion
+        // "keep-alive" du pool. Sur certains hébergements (Railway inclus),
+        // le pare-feu/NAT peut fermer silencieusement une connexion inactive
+        // sans le signaler ; la requête suivante qui tente de la réutiliser
+        // échoue alors avec un "fetch failed" générique. C'est une cause
+        // fréquente d'échecs réseau intermittents distincte d'un vrai
+        // incident réseau — et non résolue par plus de tentatives.
+        headers: { Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`, Connection: 'close' },
         signal: controller.signal
       });
     } catch (error) {
@@ -16276,7 +16284,12 @@ async function fetchFacebookAttachmentWithRetry(url, options = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GRAPH_REQUEST_TIMEOUT_MS);
     try {
-      return await fetch(url, { ...options, signal: controller.signal });
+      // V6.35.22 — Connexion fraîche à chaque appel (voir facebookGraphGet).
+      return await fetch(url, {
+        ...options,
+        headers: { ...(options.headers || {}), Connection: 'close' },
+        signal: controller.signal
+      });
     } catch (error) {
       lastError = error;
       const transient = isTransientGraphNetworkError(error);
@@ -17539,7 +17552,8 @@ router.get('/api/facebook-token-status', requireAuth, (req, res) => {
 async function graphJsonRequest(url, token, options = {}) {
   if (!token) throw new Error('Token Meta manquant.');
   const method = safeString(options?.method || 'GET').toUpperCase();
-  const headers = { Authorization: `Bearer ${token}` };
+  // V6.35.22 — Connexion fraîche à chaque appel (voir facebookGraphGet).
+  const headers = { Authorization: `Bearer ${token}`, Connection: 'close' };
   let body;
   if (options?.json !== undefined) {
     headers['Content-Type'] = 'application/json';
