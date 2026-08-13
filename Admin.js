@@ -8482,8 +8482,14 @@ function plannedChannelSetForUser(user, date = '') {
   return scope;
 }
 
-function pendingAssignedForUser(user, date = '') {
-  const states = loadConversationStatesAdmin();
+function pendingAssignedForUser(user, date = '', statesOverride = null) {
+  // V6.35.21 — Accepte un jeu d'états déjà chargé pour éviter de relire et
+  // reparser tout conversation-state.json à chaque appel. Sans ça,
+  // buildTeamPerformanceDashboard() le relisait une fois PAR COMMERCIAL
+  // (donc autant de lectures disque complètes que de commerciaux dans
+  // l'équipe), ce qui pouvait dépasser le délai Railway et provoquer une
+  // erreur 502 sur la page Pilotage commercial.
+  const states = statesOverride || loadConversationStatesAdmin();
   const scope = plannedChannelSetForUser(user, date);
   let pending = 0, late = 0;
   for (const [contact, state] of Object.entries(states)) {
@@ -8670,6 +8676,9 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
   const performanceEvents = loadPerformanceConversationEvents([date, nextDate], timezone);
   const dayEntries = performanceEvents.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
   const activities = loadTeamActivity(date);
+  // V6.35.21 — Chargé UNE SEULE FOIS pour toute l'équipe (voir
+  // pendingAssignedForUser), au lieu d'une relecture disque par commercial.
+  const conversationStatesForPending = loadConversationStatesAdmin();
   const missionActivities = [...activities, ...loadTeamActivity(nextDate)];
   const slaEvents = loadSlaEvents();
   const today = dateKeyInTimezone(new Date(), timezone);
@@ -8732,7 +8741,7 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
     const onTime = resolved.filter(item => item.late !== true);
     const late = resolved.filter(item => item.late === true);
     const totalSla = Math.max(started.length, resolved.length + missed.length);
-    const pending = pendingAssignedForUser(user, date);
+    const pending = pendingAssignedForUser(user, date, conversationStatesForPending);
     const handledRate = started.length ? Math.min(100, (resolved.length / started.length) * 100) : (replies.length || commentActivities.length ? 100 : 0);
     const responseCompliance = totalSla ? Math.max(0, Math.min(100, (onTime.length / totalSla) * 100)) : (replies.length || commentActivities.length ? 100 : 0);
     const continuityDenom = Math.max(1, contacts.length + commentThreads);
