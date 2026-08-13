@@ -7047,10 +7047,23 @@ async function processWhatsAppWebhook(body) {
           ? value.messages
           : [];
 
+      // V6.35.20 — Meta envoie le nom affiché WhatsApp du client dans
+      // value.contacts[].profile.name, sur CHAQUE webhook de message. Ce
+      // champ n'était jamais lu : c'est la cause du nom manquant en
+      // WhatsApp (pas une histoire de permission, comme pour Facebook).
+      const contactsProfileByPhone = {};
+      const contactsList = Array.isArray(value.contacts) ? value.contacts : [];
+      for (const contactEntry of contactsList) {
+        const waId = normalizePhone(contactEntry?.wa_id);
+        const profileName = safeString(contactEntry?.profile?.name);
+        if (waId && profileName) contactsProfileByPhone[waId] = profileName;
+      }
+
       for (const message of messages) {
         try {
           await processSingleMessage(
-            message
+            message,
+            { profileName: contactsProfileByPhone[normalizePhone(message?.from)] || '' }
           );
         } catch (error) {
           console.error(
@@ -8203,7 +8216,7 @@ function handleHumanMessageEcho(value) {
 // MESSAGE CLIENT
 // ============================================================
 
-async function processSingleMessage(message) {
+async function processSingleMessage(message, webhookMeta = {}) {
   const messageId =
     safeString(message?.id);
 
@@ -8315,7 +8328,10 @@ async function processSingleMessage(message) {
     isAdReferral,
     {
       channel: 'whatsapp',
-      externalContact: from
+      externalContact: from,
+      // V6.35.20 — Nom affiché WhatsApp du client, envoyé par Meta avec
+      // chaque message (value.contacts[].profile.name).
+      profileName: safeString(webhookMeta?.profileName)
     }
   );
 
