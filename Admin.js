@@ -14644,13 +14644,36 @@ function loadWhatsAppLog() {
   return entries;
 }
 
+// V6.35.23 — Cache mémoire pour conversation-state.json. Ce fichier a
+// atteint 15+ Mo (1000+ conversations) et était relu + re-parsé
+// INTÉGRALEMENT ET DE FAÇON BLOQUANTE à quasiment chaque webhook et chaque
+// requête API touchant une conversation. Diagnostiqué en production via
+// des pics "EVENTLOOP-LAG" de 500ms à 2s, bloquant tout le serveur pendant
+// ce temps (y compris l'envoi de messages, d'où la lenteur constatée).
+// fs.statSync (taille + date de modif) est quasi instantané, contrairement
+// à un JSON.parse complet du fichier : on ne relit vraiment le fichier que
+// si son contenu a changé depuis le dernier chargement.
+let conversationStatesCacheAdmin = null;
+let conversationStatesCacheStampAdmin = '';
+
 function loadConversationStatesAdmin() {
   try {
     if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return {};
+    const stamp = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
+    if (conversationStatesCacheAdmin && stamp === conversationStatesCacheStampAdmin) {
+      // Copie superficielle : rapide (proportionnelle au nombre de
+      // conversations, pas à la taille du fichier), et protège le cache
+      // partagé contre une mutation accidentelle par un appelant qui ne
+      // sauvegarderait pas ensuite.
+      return { ...conversationStatesCacheAdmin };
+    }
     const parsed = JSON.parse(
       fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
     );
-    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    conversationStatesCacheAdmin = result;
+    conversationStatesCacheStampAdmin = stamp;
+    return { ...result };
   } catch (error) {
     console.warn('⚠️ Lecture conversation-state.json :', error.message);
     return {};
@@ -14659,14 +14682,20 @@ function loadConversationStatesAdmin() {
 
 
 function saveConversationStatesAdmin(states) {
-  writeJsonAtomic(
-    CONVERSATION_STATE_PATH_ADMIN,
+  const safeStates =
     states &&
     typeof states === 'object' &&
     !Array.isArray(states)
       ? states
-      : {}
+      : {};
+  writeJsonAtomic(
+    CONVERSATION_STATE_PATH_ADMIN,
+    safeStates
   );
+  // On sait déjà exactement ce qui vient d'être écrit sur disque : on met
+  // à jour le cache directement, sans avoir besoin de relire le fichier.
+  conversationStatesCacheAdmin = safeStates;
+  conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
 }
 
 function updateConversationStateAdmin(
