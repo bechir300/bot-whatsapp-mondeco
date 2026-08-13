@@ -1112,7 +1112,8 @@ async function fetchFacebookMediaUrl(remoteUrl) {
       remoteUrl,
       {
         headers: {
-          Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`
+          Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
+          Connection: 'close'
         }
       }
     );
@@ -2342,7 +2343,8 @@ async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '')
     if (WHATSAPP_TOKEN) {
       response = await fetch(remoteUrl, {
         headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          Connection: 'close'
         }
       });
     }
@@ -4580,7 +4582,8 @@ async function metaWhatsAppCallRequest(body) {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        Connection: 'close'
       },
       body: JSON.stringify(body)
     }
@@ -5132,7 +5135,10 @@ async function sendWhatsAppMessage(
             `Bearer ${WHATSAPP_TOKEN}`,
 
           'Content-Type':
-            'application/json'
+            'application/json',
+
+          Connection:
+            'close'
         },
 
         body:
@@ -5439,7 +5445,8 @@ async function sendFacebookMessage(to, text, { useHumanAgentTag = false } = {}) 
     method: 'POST',
     headers: {
       Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      Connection: 'close'
     },
     body: JSON.stringify({
       recipient: { id: cleanRecipient },
@@ -5527,7 +5534,9 @@ async function sendInstagramMessage(
           Authorization:
             `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
           'Content-Type':
-            'application/json'
+            'application/json',
+          Connection:
+            'close'
         },
         body:
           JSON.stringify({
@@ -5877,7 +5886,7 @@ async function getFacebookProfile(psid) {
       `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(psid)}` +
       `?fields=${encodeURIComponent(fields)}`;
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}` }
+      headers: { Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`, Connection: 'close' }
     });
     if (!response.ok) return null;
     const data = await response.json();
