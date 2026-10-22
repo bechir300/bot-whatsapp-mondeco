@@ -262,6 +262,17 @@ const GEMINI_MODEL =
     'gemini-3.6-flash'
   ).trim();
 
+// V6.38.2 — Niveau de réflexion des modèles Gemini 3 (minimal, low,
+// medium, high). Vide = réglage par défaut de Google (réflexion poussée,
+// donc plus lente). Un niveau bas réduit nettement le temps de réponse.
+const GEMINI_THINKING_LEVEL =
+  safeEnvThinkingLevel(process.env.GEMINI_THINKING_LEVEL);
+
+function safeEnvThinkingLevel(value) {
+  const level = String(value || '').trim().toLowerCase();
+  return ['minimal', 'low', 'medium', 'high'].includes(level) ? level : '';
+}
+
 // V6.37 — Délai maximal d'un appel IA. Sans limite, un appel bloqué figeait
 // la conversation et le secours Groq ne se déclenchait jamais.
 const AI_REQUEST_TIMEOUT_MS =
@@ -4063,7 +4074,10 @@ function buildGeminiRequest(
   const request = {
     contents,
     generationConfig: {
-      maxOutputTokens
+      maxOutputTokens,
+      ...(GEMINI_THINKING_LEVEL
+        ? { thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL } }
+        : {})
     }
   };
 
@@ -4487,6 +4501,7 @@ async function callAIChat(
 
 
   if (GEMINI_API_KEY) {
+    const geminiStarted = Date.now();
     try {
       const reply =
         await callGeminiChat(
@@ -4494,7 +4509,7 @@ async function callAIChat(
         );
 
       console.log(
-        `✅ IA : Gemini (${GEMINI_MODEL})`
+        `✅ IA : Gemini (${GEMINI_MODEL}) en ${Date.now() - geminiStarted}ms`
       );
 
       return appendCategoryLink(stripReasoningLeak(reply));
@@ -4503,7 +4518,7 @@ async function callAIChat(
       geminiError = error;
 
       console.warn(
-        '⚠️ Gemini indisponible, tentative Groq backup :',
+        `⚠️ Gemini indisponible après ${Date.now() - geminiStarted}ms, tentative Groq backup :`,
         error.message
       );
     }
@@ -4521,13 +4536,14 @@ async function callAIChat(
         fallbackModel
     };
 
+    const groqStarted = Date.now();
     const reply =
       await callGroqChat(
         groqPayload
       );
 
     console.log(
-      `✅ IA backup : Groq (${fallbackModel})`
+      `✅ IA backup : Groq (${fallbackModel}) en ${Date.now() - groqStarted}ms`
     );
 
     return appendCategoryLink(stripReasoningLeak(reply));
