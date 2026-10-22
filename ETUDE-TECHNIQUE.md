@@ -1,4 +1,4 @@
-# Étude technique — MONDECO V6.38.0
+# Étude technique — MONDECO V6.39.0
 
 Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de pilotage, réalisé en octobre 2026. Cette étude couvre la sécurité, la fiabilité, la performance, la confidentialité, la maintenabilité et l'expérience utilisateur. Elle sépare **ce qui est corrigé dans cette version** de **ce qui reste à faire**, par priorité.
 
@@ -91,11 +91,19 @@ Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de p
 - Poursuivre le découpage (`channels/`, `routes/`).
 - Migrer vers SQLite après une copie des données de production pour tester.
 
-### Priorité 3 — évolution produit
-12. **Tableau de bord KPI** : temps de première réponse, taux de résolution par l'IA, conversions vers un showroom, satisfaction.
-13. **Messages modèles WhatsApp (templates)** pour relancer au-delà de la fenêtre de 24 h, avec suivi des commandes et des livraisons.
-14. **Évaluation de la qualité IA** : jeu de questions de référence (prix, livraison, showrooms) rejoué à chaque changement de prompt ou de modèle.
-15. **Accessibilité** : tailles de police d'au moins 11 px (environ 40 styles sont entre 7 et 8,5 px), focus visible, cartes de commentaires utilisables au clavier.
+### Priorité 3 — ✅ réalisée en V6.39.0
+| # | Point | Réalisation |
+| --- | --- | --- |
+| 12 | Tableau de bord KPI | Nouvelle page **Indicateurs** (administrateur et responsable commercial) : conversations, part réglée par l'IA, délai de première réponse (moyenne et P90), délai de réponse commerciale, conversations restées sans réponse, intentions showroom et prix, conversations issues de publicités, répartition par canal et motifs de transfert. Période de 7 à 90 jours, graphique avec infobulles (souris et clavier) et tableau par jour. Chaque journée terminée est figée dans `kpi-daily.json` (chiffres seulement, aucune donnée client) avant la purge des journaux. Les délais de réponse de l'IA sont mesurés à partir de cette version (`incoming_at`). |
+| 13 | Messages modèles WhatsApp | **Échecs de remise visibles** : hors fenêtre de 24 h, Meta accepte un message libre puis le rejette plus tard (statut `failed`, code 131047). Ce statut était ignoré et le commercial croyait avoir répondu ; il est désormais affiché dans la conversation. Un bandeau prévient dès que la fenêtre est fermée. Les modèles approuvés s'envoient depuis la conversation (choix du modèle, variables, aperçu), avec les mêmes contrôles d'accès que les réponses habituelles. Il faut renseigner `WHATSAPP_BUSINESS_ACCOUNT_ID`. |
+| 14 | Évaluation de la qualité IA | Section dans **Discussion de test**. L'évaluation rejoue les questions de `evals/ai-reference-questions.json` (modifiables) et 3 questions de prix tirées du catalogue, puis vérifie : réponse ou transfert attendu, éléments obligatoires, éléments interdits (prix inventé, remise accordée sous manipulation, fuite des instructions). Elle donne un score, conserve l'historique des 20 derniers passages et signale quand les instructions, le catalogue ou le modèle ont changé depuis le dernier passage. |
+| 15 | Accessibilité | 194 tailles de police sous 11 px (jusqu'à 7 px) passées à 11 px, sans débordement constaté sur ordinateur ni sur mobile. Contour de focus visible pour la navigation au clavier, cartes de commentaires activables avec Entrée/Espace, boîtes de dialogue utilisables au clavier. |
+
+**Non réalisé, à décider :**
+- **Satisfaction client (CSAT)** : aucune donnée n'existe aujourd'hui. Il faudrait envoyer automatiquement une question aux clients (par exemple après la clôture d'une conversation). C'est un message sortant de plus, qui doit utiliser un modèle approuvé hors fenêtre de 24 h : à valider avant de l'activer.
+- **Suivi automatique des commandes et livraisons** : il faut l'accès aux commandes WooCommerce (API orders) et un modèle « suivi de commande » approuvé. Les modèles peuvent déjà servir à l'envoyer à la main.
+- **Conversions showroom réelles** : seule l'intention est mesurée. Une visite confirmée demande une saisie en showroom, ou un code promo/rendez-vous à rapprocher.
+- Les 115 `alert()` natifs restants : les rendre non bloquants changerait l'ordre d'exécution du code qui les suit, il faut les migrer un par un.
 
 ## 4. Variables à vérifier dans Railway après déploiement
 

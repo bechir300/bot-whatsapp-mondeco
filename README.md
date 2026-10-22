@@ -9,7 +9,8 @@ Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**
 | `server.js` | Serveur Express : webhooks Meta, logique de conversation, appels IA (Gemini, secours Groq), envoi des messages, relances automatiques. |
 | `Admin.js` | Routeur `/admin` : authentification, comptes et rôles, catalogue produits, instructions IA, paramètres, inbox commerciale, commentaires, sauvegardes, WooCommerce. |
 | `Admin.html` | Interface du centre de pilotage (page unique, JS/CSS inline). |
-| `lib/` | Modules partagés et testés : stockage JSON groupé, file par conversation, réseau, quotas IA, logs, confidentialité, prompt. |
+| `lib/` | Modules partagés et testés : stockage JSON groupé, file par conversation, réseau, quotas IA, logs, confidentialité, prompt, indicateurs, évaluation IA. |
+| `evals/` | Questions de référence de l'évaluation qualité IA (modifiables). |
 | `business-info.txt` | Informations entreprise importées au premier démarrage comme instructions IA. |
 | `tests/`, `test_*.js` | Tests automatisés (`npm test`). |
 | `scripts/` | Vérification syntaxique d'Admin.html et lanceur de tests. |
@@ -74,6 +75,12 @@ La CI GitHub Actions (`.github/workflows/ci.yml`) lance `npm test` et `npm audit
 - **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`).
 - **Stockage** : l'état des conversations est partagé en mémoire et écrit sur disque au plus toutes les 5 s (et immédiatement à l'arrêt, avant une sauvegarde ou un export).
 - **Logs** : chaque requête reçoit un identifiant (`X-Request-Id`) repris dans tous ses logs. `LOG_FORMAT=json` pour des logs structurés, `ALERT_WEBHOOK_URL` pour recevoir les erreurs sur Slack, Discord, Google Chat ou Teams.
+
+## Pilotage
+
+- **Indicateurs** (menu 📊) : délais de réponse, part réglée par l'IA, transferts, intentions des clients, canaux. Les journées passées sont conservées dans `kpi-daily.json` (chiffres seulement).
+- **Modèles WhatsApp** : renseigner `WHATSAPP_BUSINESS_ACCOUNT_ID` pour envoyer des modèles approuvés quand la fenêtre de 24 h est fermée. Les échecs de remise signalés par Meta s'affichent dans la conversation.
+- **Évaluation de la qualité IA** (page Discussion de test, administrateurs) : rejoue `evals/ai-reference-questions.json` et des questions de prix du catalogue. À relancer après chaque modification des instructions, du catalogue ou du modèle.
 
 ## Confidentialité
 
