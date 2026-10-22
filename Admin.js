@@ -10,6 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
+// V6.36.45 — Lecture asynchrone ligne par ligne des fichiers JSONL, pour
+// le générateur de rapport WhatsApp personnalisé (jamais de blocage du
+// thread principal, contrairement à un JSON.parse complet du fichier).
+const readline = require('readline');
 
 const router = express.Router();
 
@@ -19,6 +23,60 @@ const DATA_DIR = (
   process.env.RAILWAY_VOLUME_MOUNT_PATH ||
   APP_DIR
 ).trim();
+
+// V6.36.73 — usersCache/usersCacheStamp DOIVENT être déclarées ici, tout
+// en haut, pas près de loadUsers() plus bas dans le fichier. Bug critique
+// du 30/08 : initializeUsers() est appelée au chargement du module AVANT
+// que le moteur JS n'exécute la ligne de déclaration "let usersCache"
+// située plus bas (temporal dead zone) — loadUsers() plantait alors avec
+// "Cannot access 'usersCache' before initialization", retombait dans son
+// catch, retournait [], et initializeUsers() croyait la base vide :
+// résultat, les 16 comptes réels étaient écrasés par un unique compte
+// admin par défaut à CHAQUE redémarrage du serveur. Incident réel,
+// rattrapé via les snapshots automatiques — voir CHANGELOG.
+let usersCache = null;
+let usersCacheStamp = null;
+
+// V6.36.2 — Toutes les variables de cache mémoire (ajoutées au fil de la
+// nuit : V6.35.23/24/25/27/28) regroupées ICI, tout en haut du fichier,
+// juste après DATA_DIR. Certaines étaient déclarées beaucoup plus loin
+// dans le fichier (au même endroit que la fonction qui les utilise) : si
+// un chemin de code très matinal (au chargement du module, avant que le
+// fichier n'ait fini de s'exécuter jusqu'à cette ligne plus lointaine)
+// appelait la fonction correspondante, ça déclenchait une vraie erreur
+// JavaScript "Cannot access '...' before initialization" — constatée en
+// production. Grave car les fonctions concernées attrapent cette erreur
+// silencieusement et renvoient alors une liste VIDE (ex : conversations,
+// événements SLA), ce qui pouvait donner l'impression de données
+// "disparues". Les regrouper tout en haut élimine ce risque définitivement,
+// quel que soit l'endroit du fichier qui les appelle en premier.
+let conversationStatesCacheAdmin = null;
+let conversationStatesCacheStampAdmin = '';
+let slaEventsCache = null;
+let slaEventsCacheStamp = '';
+let performanceConversationsLogCache = null;
+let performanceConversationsLogCacheStamp = '';
+let knownMessageIdsCache = new Map();
+let conversationMapFromJsonArrayCache = new Map();
+let combinedConversationLogCache = {
+  liveStamp: 'v6.35-memory-safe',
+  historyStamp: '',
+  facebookHistoryStamp: '',
+  persistentStamp: '',
+  entries: []
+};
+let conversationDetailFilterCache = { sourceEntries: null, byContact: new Map() };
+let conversationListGroupCache = { sourceEntries: null, byContact: null };
+function conversationEntriesGroupedForList(log) {
+  const src = Array.isArray(log) ? log : [];
+  if (conversationListGroupCache.sourceEntries === src && conversationListGroupCache.byContact) return conversationListGroupCache.byContact;
+  const byContact = {};
+  for (const entry of src) { const contact = safeString(entry?.contact); if (!contact) continue; if (!byContact[contact]) byContact[contact] = []; byContact[contact].push(entry); }
+  for (const contact of Object.keys(byContact)) byContact[contact] = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(byContact[contact]) : byContact[contact].sort(conversationEntryComparator);
+  conversationListGroupCache = { sourceEntries: src, byContact };
+  return byContact;
+}
+function conversationEntriesForDetail(log, contact) { const src = Array.isArray(log) ? log : []; if (conversationDetailFilterCache.sourceEntries !== src) conversationDetailFilterCache = { sourceEntries: src, byContact: new Map() }; const key = safeString(contact); if (!conversationDetailFilterCache.byContact.has(key)) conversationDetailFilterCache.byContact.set(key, src.filter(e => safeString(e?.contact) === key)); return conversationDetailFilterCache.byContact.get(key) || []; }
 
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const INSTRUCTIONS_PATH = path.join(DATA_DIR, 'instructions.json');
@@ -47,6 +105,79 @@ const SOCIAL_COMMENTS_PATH = path.join(DATA_DIR, 'social-comments.json');
 const SOCIAL_POSTS_PATH = path.join(DATA_DIR, 'social-posts.json');
 const SOCIAL_COMMENTS_SYNC_STATE_PATH = path.join(DATA_DIR, 'social-comments-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
+
+// V6.36.63 — Migration progressive de conversation-state.json vers SQLite.
+// Le fichier JSON a dépassé 24 Mo / 9700+ conversations ; chaque lecture/
+// écriture complète devenait de plus en plus coûteuse avec le volume,
+// quel que soit le format. SQLite (better-sqlite3) offre des accès
+// indexés par contact en ~1ms, indépendamment du nombre total de
+// conversations stockées — testé et confirmé le 29/08 (385ms → 2ms en
+// lecture, 356ms → 3ms en écriture avec les bons pragmas).
+// Migration progressive : le JSON reste la source de vérité pour
+// loadConversationStatesAdmin/saveConversationStatesAdmin (compatibilité),
+// tandis que les nouvelles fonctions ciblées ci-dessous (getConversationStateSingle/
+// setConversationStateSingle) utilisent SQLite directement pour les accès
+// à une seule conversation — le vrai point chaud de performance.
+const SQLITE_DB_PATH = path.join(DATA_DIR, 'mondeco.db');
+let sqliteDb = null;
+
+function getSqliteDb() {
+  if (sqliteDb) return sqliteDb;
+  try {
+    const Database = require('better-sqlite3');
+    sqliteDb = new Database(SQLITE_DB_PATH);
+    sqliteDb.pragma('journal_mode = WAL');
+    sqliteDb.pragma('synchronous = NORMAL');
+    sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_states (
+        contact TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversation_states_updated_at ON conversation_states(updated_at);
+    `);
+    console.log('✅ SQLite (mondeco.db) initialisé.');
+  } catch (error) {
+    console.error('❌ Initialisation SQLite échouée :', error.message);
+    sqliteDb = null;
+  }
+  return sqliteDb;
+}
+
+function getConversationStateSingle(contact) {
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return null;
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    const row = db.prepare('SELECT data FROM conversation_states WHERE contact = ?').get(cleanContact);
+    if (!row) return null;
+    return JSON.parse(row.data);
+  } catch (error) {
+    console.error(`❌ getConversationStateSingle(${cleanContact}) :`, error.message);
+    return null;
+  }
+}
+
+function setConversationStateSingle(contact, state) {
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return;
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    db.prepare(`
+      INSERT INTO conversation_states (contact, data, updated_at)
+      VALUES (@contact, @data, @updated_at)
+      ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+    `).run({
+      contact: cleanContact,
+      data: JSON.stringify(state),
+      updated_at: Date.now()
+    });
+  } catch (error) {
+    console.error(`❌ setConversationStateSingle(${cleanContact}) :`, error.message);
+  }
+}
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
 const MESSAGE_ID_INDEX_PATH = path.join(DATA_DIR, 'conversation-message-ids.jsonl');
@@ -94,6 +225,18 @@ const FACEBOOK_COMMENTS_TOKEN = (
 const META_API_VERSION = (
   process.env.META_API_VERSION ||
   'v26.0'
+).trim();
+
+// V6.36.17 — Même configuration que server.js, utilisée ici uniquement
+// pour informer l'interface si la relance hors 24 h est prête.
+const WHATSAPP_REENGAGEMENT_TEMPLATE_NAME = (
+  process.env.WHATSAPP_REENGAGEMENT_TEMPLATE_NAME ||
+  ''
+).trim();
+
+const WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE = (
+  process.env.WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE ||
+  'fr'
 ).trim();
 
 // V6.35.13 — Rétention réduite à 48h par défaut (au lieu de 15 jours), sur
@@ -144,9 +287,21 @@ function historyTimeIsRecent(value, cutoffAt) {
 }
 const WOOCOMMERCE_SYNC_PATH = path.join(DATA_DIR, 'woocommerce-sync.json');
 const SCHEDULES_PATH = path.join(DATA_DIR, 'schedules.json');
+// V6.36.9 — Accès "permanent" par commercial : quand l'admin enregistre un
+// planning pour aujourd'hui, ce même réglage s'applique désormais aussi à
+// tous les jours suivants, jusqu'à ce qu'il soit modifié à nouveau — au
+// lieu de redevenir "tous les réseaux actifs" par défaut chaque nouveau
+// jour. Un enregistrement explicite pour une date PRÉCISE (schedules.json)
+// reste prioritaire sur ce réglage permanent, permettant toujours une
+// exception ponctuelle sans perturber le réglage de fond.
+const STANDING_COMMERCIAL_ACCESS_PATH = path.join(DATA_DIR, 'standing-commercial-access.json');
 const TASKS_PATH = path.join(DATA_DIR, 'tasks.json');
 const SLA_EVENTS_PATH = path.join(DATA_DIR, 'sla-events.json');
 const DAILY_REPORTS_PATH = path.join(DATA_DIR, 'daily-reports.json');
+
+// V6.36.45 — Rapports WhatsApp personnalisés (dates au choix), générés en
+// tâche de fond pour ne jamais bloquer le serveur. Voir generateWhatsAppCustomReport.
+const WHATSAPP_CUSTOM_REPORTS_PATH = path.join(DATA_DIR, 'whatsapp-custom-reports.json');
 const ATTENDANCE_PATH = path.join(DATA_DIR, 'attendance-log.json');
 const TEAM_ACTIVITY_PATH = path.join(DATA_DIR, 'team-activity.jsonl');
 const TEAM_ACTIVITY_DIR = path.join(DATA_DIR, 'team-activity-days');
@@ -198,10 +353,24 @@ const IS_RAILWAY = Boolean(
 // Sur Railway Free, le Volume est limité et les snapshots binaires complets
 // peuvent dupliquer plusieurs fois les mêmes médias. Le mode compact conserve
 // les données actives mais réduit fortement les copies de sauvegarde redondantes.
+// V6.35.35 — Ce mode ne doit PAS dépendre de "suis-je sur Railway ?", mais
+// de "ai-je de gros fichiers écrits très fréquemment ?" — vrai sur
+// n'importe quel hébergeur. Avant ce correctif, migrer hors de Railway
+// (donc IS_RAILWAY=false) faisait basculer silencieusement en mode
+// "standard" : jusqu'à 50 copies complètes versionnées de CHAQUE fichier à
+// CHAQUE écriture, sans aucun plafond de taille. Pour conversation-state.json
+// (15+ Mo), ça signifiait une copie complète du fichier à chaque envoi de
+// message — constaté en production comme la cause principale d'un envoi
+// prenant 5+ secondes alors que l'appel réseau réel à Meta ne prend que
+// ~250ms. Le mode "compact" (plafonné, peu de versions conservées) est
+// maintenant le comportement par défaut PARTOUT, y compris sur un VPS.
+// MONDECO_STORAGE_MODE=standard reste disponible pour repasser en mode
+// détaillé volontairement, sur un serveur avec beaucoup d'espace et peu
+// d'écritures fréquentes.
 const COMPACT_STORAGE_MODE =
   String(
     process.env.MONDECO_STORAGE_MODE ||
-    (IS_RAILWAY ? 'compact' : 'standard')
+    'compact'
   )
     .trim()
     .toLowerCase() !== 'standard';
@@ -1210,6 +1379,27 @@ function collectFavoriteConversationMediaBasenames(favoriteContacts) {
   return output;
 }
 
+// V6.36.88 — Nettoyage agressif dédié à la VITESSE, à 48h plutôt que
+// HISTORY_IMPORT_DAYS (90 jours, trop risqué à modifier globalement, voir
+// commentaire ligne ~230). Réduit réellement la taille physique des gros
+// fichiers (conversation-log.json 16 Mo, facebook-history.json 8.9 Mo
+// observés le 01/09) que loadWhatsAppLog() doit lire intégralement avant
+// de filtrer par date en mémoire — contrairement aux conversation-events
+// journaliers, déjà filtrés par nom de fichier avant lecture. Réutilise
+// pruneConversationJsonArrayFile(), qui protège déjà les favoris et les
+// conversations non répondues.
+function pruneConversationHistoryForSpeed() {
+  const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+  const favorites = retentionProtectedConversationContacts();
+  let freed = 0;
+  freed += pruneConversationJsonArrayFile(CONVERSATIONS_LOG_PATH, 'conversation-log.json', favorites, cutoffMs);
+  freed += pruneConversationJsonArrayFile(INSTAGRAM_HISTORY_PATH, 'instagram-history.json', favorites, cutoffMs);
+  freed += pruneConversationJsonArrayFile(FACEBOOK_HISTORY_PATH, 'facebook-history.json', favorites, cutoffMs);
+  freed += pruneConversationEventsByRetention(favorites);
+  invalidateWhatsAppLogCache();
+  return { freed, favorites, cutoffMs };
+}
+
 function pruneConversationHistoryByRetention() {
   const cutoffMs = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
   const favorites = retentionProtectedConversationContacts();
@@ -1221,6 +1411,8 @@ function pruneConversationHistoryByRetention() {
 }
 
 function pruneConversationEventsByRetention(favoriteContacts = retentionProtectedConversationContacts()) {
+  // Historique permanent : les journaux append-only ne sont jamais purgés automatiquement.
+  return 0;
   let freed = 0;
   try {
     if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
@@ -1281,13 +1473,8 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
 
   // Les médias anciens sont supprimés, sauf s'ils sont encore référencés par
   // une conversation favorite.
-  const favoriteMedia = collectFavoriteConversationMediaBasenames(favoriteContacts);
-  freed += pruneFilesOlderThan(
-    CONVERSATION_MEDIA_DIR,
-    retentionCutoff,
-    'conversation-media',
-    { recursive: true, preserveBasenames: favoriteMedia }
-  );
+  // Historique permanent : conserver aussi les médias.
+  // La purge média reste possible uniquement via le nettoyage d'urgence disque.
 
   // Les photos de profil sont un cache cosmétique. En manque d'espace, on peut
   // retirer les anciennes sans supprimer les conversations ni les données métier.
@@ -2298,7 +2485,19 @@ function writeJsonAtomic(filePath, data) {
   // et sauvegardes régénérables puis on retente une seule fois.
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   const backupPath = `${filePath}.bak`;
-  const serialized = JSON.stringify(data, null, 2);
+  // V6.36.10 — Pour les gros fichiers fréquemment écrits (au-delà du même
+  // seuil déjà utilisé pour sauter les sauvegardes complètes), on génère
+  // un JSON compact (sans indentation) au lieu du JSON "joli" habituel :
+  // plus rapide à produire ET nettement plus léger à écrire sur disque
+  // (l'indentation peut représenter un tiers du poids total sur un gros
+  // fichier), sans changer la moindre donnée réelle. Basé sur la taille du
+  // fichier déjà présent sur disque (pas besoin de sérialiser deux fois
+  // pour connaître la taille). Les petits fichiers de configuration
+  // restent en JSON lisible pour un humain qui les ouvrirait à la main.
+  let existingSizeHint = 0;
+  try { existingSizeHint = fs.statSync(filePath).size; } catch {}
+  const useCompactJson = existingSizeHint > VERSIONED_BACKUP_MAX_BYTES;
+  const serialized = useCompactJson ? JSON.stringify(data) : JSON.stringify(data, null, 2);
   const serializedBytes = Buffer.byteLength(serialized, 'utf8');
   const spaceBefore = storageSpaceInfo();
   const lowHeadroom = Boolean(
@@ -3627,6 +3826,7 @@ function normalizeAvailabilityCorrection(value) {
 
 const DEFAULT_SETTINGS = {
   aiEnabled: true,
+  aiEnabledChannels: { whatsapp: true, facebook: false, instagram: false },
 
   audience: 'all',
 
@@ -3815,6 +4015,21 @@ function normalizeSettings(input = {}) {
       DEFAULT_SETTINGS.aiEnabled
     ),
 
+    aiEnabledChannels: {
+      whatsapp: parseBoolean(
+        source?.aiEnabledChannels?.whatsapp,
+        DEFAULT_SETTINGS.aiEnabledChannels.whatsapp
+      ),
+      facebook: parseBoolean(
+        source?.aiEnabledChannels?.facebook,
+        DEFAULT_SETTINGS.aiEnabledChannels.facebook
+      ),
+      instagram: parseBoolean(
+        source?.aiEnabledChannels?.instagram,
+        DEFAULT_SETTINGS.aiEnabledChannels.instagram
+      )
+    },
+
     audience,
 
     timezone:
@@ -3955,17 +4170,25 @@ function migrateSecureImageModeV676() {
   }
 }
 
+let botSettingsCache = null;
+let botSettingsCacheStamp = '';
+
 function getBotSettings() {
   try {
     if (!fs.existsSync(SETTINGS_PATH)) {
       initializeSettings();
     }
 
+    const stamp = fileChangeStamp(SETTINGS_PATH);
+    if (botSettingsCache && stamp === botSettingsCacheStamp) return botSettingsCache;
+
     const parsed = JSON.parse(
       fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
     );
 
-    return normalizeSettings(parsed);
+    botSettingsCache = normalizeSettings(parsed);
+    botSettingsCacheStamp = stamp;
+    return botSettingsCache;
   } catch (error) {
     console.error(
       '❌ Lecture settings.json :',
@@ -4001,25 +4224,8 @@ console.log('☁️ MONDECO Cloud Storage :', CLOUD_STORAGE_ENABLED
 
 runStartupStorageRescue();
 
-
-// V6.33.1 — migration progressive des octets locaux vers Cloudinary.
-// Elle s'exécute après le Storage Rescue afin d'avoir assez de marge pour
-// écrire le petit manifeste avant de supprimer chaque fichier local migré.
-if (CLOUD_STORAGE_ENABLED) {
-  const cloudStartupTimer = setTimeout(() => {
-    runCloudStorageMigration({ maxFiles: CLOUD_MIGRATION_BATCH_FILES })
-      .catch(error => console.warn('⚠️ Migration Cloudinary démarrage :', error.message));
-  }, 12000);
-  if (typeof cloudStartupTimer.unref === 'function') cloudStartupTimer.unref();
-
-  const cloudMigrationTimer = setInterval(() => {
-    const stats = cloudStorageStats();
-    if (stats.localMediaBytes <= 0 && stats.localProfileBytes <= 0) return;
-    runCloudStorageMigration({ maxFiles: CLOUD_MIGRATION_BATCH_FILES })
-      .catch(error => console.warn('⚠️ Migration Cloudinary périodique :', error.message));
-  }, CLOUD_MIGRATION_INTERVAL_MS);
-  if (typeof cloudMigrationTimer.unref === 'function') cloudMigrationTimer.unref();
-}
+// V6.36.76 — Bloc migration Cloudinary retiré (jamais actif en
+// production, CLOUD_STORAGE_ENABLED toujours false).
 ensurePersistenceSafety();
 migrateLegacyData();
 initializePersistentInstructions();
@@ -4487,6 +4693,14 @@ function sanitizeUserForClient(user) {
   };
 }
 
+// V6.36.73 — Cache mémoire pour users.json, même principe que le cache
+// conversation-state.json (V6.35.23). Diagnostiqué le 30/08 : la route
+// /api/conversations appelle commercialReplyLockInfo() pour chaque
+// conversation non assignée (potentiellement des milliers), qui appelait
+// elle-même loadUsers() à chaque fois SANS AUCUN CACHE — fs.readFileSync
+// + JSON.parse répétés des milliers de fois, mesuré à 1.4s sur cette
+// route à elle seule (sur un total de ~1.5-2s pour ouvrir une conversation,
+// expliquant la lenteur perçue en changeant de client après une clôture).
 function loadUsers() {
   try {
     if (
@@ -4495,6 +4709,11 @@ function loadUsers() {
       )
     ) {
       return [];
+    }
+
+    const stamp = fileChangeStamp(USERS_PATH);
+    if (usersCache && stamp === usersCacheStamp) {
+      return usersCache;
     }
 
     const parsed =
@@ -4506,11 +4725,16 @@ function loadUsers() {
         '[]'
       );
 
-    return Array.isArray(
+    const result = Array.isArray(
       parsed
     )
       ? parsed
       : [];
+
+    usersCache = result;
+    usersCacheStamp = stamp;
+
+    return result;
   } catch (error) {
     console.warn(
       '⚠️ Lecture users.json :',
@@ -5097,7 +5321,9 @@ function roleCanAccess(
     '/api/quick-replies',
     '/api/social-comments',
     '/api/tasks',
-    '/api/my-workday'
+    '/api/my-workday',
+    '/api/presence',
+    '/api/ai-replies'
   ];
 
   if (
@@ -5317,31 +5543,23 @@ function commercialReplyLockInfo(user, state = {}, contact = '', nowMs = Date.no
     };
   }
 
-  const configuredMinutes = Math.max(
-    1,
-    Math.min(
-      120,
-      Number(state?.sla?.minutes || state?.slaMinutes || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES) || DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES
-    )
-  );
-  const ownerActivityCandidates = [
-    state?.replyOwnerActivityAt,
-    state?.assignedAt,
-    state?.takeoverAt
-  ]
-    .map(value => Date.parse(safeString(value)))
-    .filter(Number.isFinite);
-  const ownerActivityMs = ownerActivityCandidates.length ? Math.max(...ownerActivityCandidates) : 0;
-  const lockStartedAtMs = Math.max(lastCustomerMs, ownerActivityMs || 0);
-  const unlockAtMs = lockStartedAtMs + configuredMinutes * 60 * 1000;
-  const expired = Number(nowMs) >= unlockAtMs;
+  // V6.36.48 — Verrou temporel retiré sur demande explicite : dès qu'un
+  // client attend une réponse (customerWaiting ci-dessus), n'importe quel
+  // commercial peut immédiatement reprendre la conversation, sans attendre
+  // DEFAULT_CONVERSATION_REPLY_LOCK_MINUTES. Risque assumé : deux
+  // commerciaux peuvent répondre au même client en même temps si les deux
+  // agissent au même moment ; aucune protection anti-doublon supplémentaire
+  // n'est appliquée ici.
+  const configuredMinutes = 0;
+  const unlockAtMs = Number(nowMs);
+  const expired = true;
 
   return {
     canReply:expired,
     assignedToMe:false,
     canTakeover:expired,
     locked:!expired,
-    reason:expired ? 'owner_timeout' : 'owner_active',
+    reason:'owner_timeout',
     channel,
     ownerId,
     ownerName,
@@ -5412,7 +5630,7 @@ function acquireCommercialConversationReply(req, res, contact, channel = '') {
 function requireCommercialConversationWriteAccess(req, res, contact) {
   if (safeString(req.user?.role) !== 'commercial') return true;
   const normalizedContact = safeString(contact);
-  const state = loadConversationStatesAdmin()[normalizedContact] || {};
+  const state = getConversationStateSingle(normalizedContact) || {};
   const channel = safeString(state?.channel).toLowerCase() ||
     (normalizedContact.startsWith('instagram:') ? 'instagram' :
       normalizedContact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
@@ -5428,6 +5646,31 @@ function requireCommercialConversationWriteAccess(req, res, contact) {
     error: 'Lecture seule : cette conversation n’est pas affectée à votre compte.'
   });
   return false;
+}
+
+// V6.36.6 — Même vérification que ci-dessus, MAIS sans exiger que la
+// conversation soit affectée à ce commercial précis : seul l'accès au
+// canal (planning du jour) est requis. Utilisée uniquement pour
+// "Terminer" une conversation, sur demande explicite : n'importe quel
+// commercial ayant accès au canal doit pouvoir terminer n'importe quelle
+// conversation, même non affectée — contrairement aux autres actions de
+// gestion (priorité, prise en main, réactivation IA) qui restent
+// réservées au commercial affecté.
+function requireCommercialConversationChannelAccess(req, res, contact) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const normalizedContact = safeString(contact);
+  const state = getConversationStateSingle(normalizedContact) || {};
+  const channel = safeString(state?.channel).toLowerCase() ||
+    (normalizedContact.startsWith('instagram:') ? 'instagram' :
+      normalizedContact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+  const scope = plannedChannelSetForUser(req.user);
+  if (!channelScopeAllowsMessage(scope, channel)) {
+    res.status(403).json({
+      error: 'Accès refusé : ce canal de messages ne fait pas partie de votre planning du jour.'
+    });
+    return false;
+  }
+  return true;
 }
 
 function requireAuth(
@@ -5551,6 +5794,37 @@ function requireAdminOrCommercialManager(
     return res
       .status(403)
       .json({ error: 'Responsable commercial ou administrateur requis.' });
+  }
+
+  req.user = user;
+  return next();
+}
+
+// V6.36.32 — Autorise en plus le rôle "commercial" simple (pas seulement
+// admin / responsable_commercial), pour des actions comme la suppression
+// d'un message que l'équipe commerciale doit pouvoir faire elle-même.
+function requireCommercialAccess(
+  req,
+  res,
+  next
+) {
+  const user =
+    getAuthenticatedUser(req);
+
+  if (!user) {
+    return res
+      .status(401)
+      .json({ error: 'Non authentifié' });
+  }
+
+  if (
+    user.role !== 'admin' &&
+    user.role !== 'responsable_commercial' &&
+    user.role !== 'commercial'
+  ) {
+    return res
+      .status(403)
+      .json({ error: 'Accès commercial requis.' });
   }
 
   req.user = user;
@@ -6030,6 +6304,95 @@ router.post('/logout', (req, res) => {
   });
 });
 
+// V6.36.5 — Fichiers de l'application installable (PWA) : accessibles SANS
+// connexion (le navigateur les demande automatiquement, parfois avant même
+// que l'utilisateur soit authentifié — c'est normal et sans risque, ce
+// sont uniquement le nom/l'icône de l'app, aucune donnée client).
+const PWA_ASSETS_DIR = path.join(APP_DIR, 'pwa-assets');
+
+router.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/manifest+json');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'manifest.json'));
+});
+
+router.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Service-Worker-Allowed', '/');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'sw.js'));
+});
+
+router.get('/icon-192.png', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'icon-192.png'));
+});
+
+router.get('/icon-512.png', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'icon-512.png'));
+});
+
+router.get('/icon-maskable-512.png', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'icon-maskable-512.png'));
+});
+
+router.get('/icon-apple-touch.png', (req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  return res.sendFile(path.join(PWA_ASSETS_DIR, 'icon-apple-touch.png'));
+});
+
+// V6.36.8 — Aperçus des stickers pour le sélecteur (interface, utilisateurs
+// connectés uniquement). La même liste blanche que côté serveur d'envoi
+// (server.js) : uniquement ces identifiants connus, jamais un chemin
+// arbitraire.
+const STICKER_ASSETS_DIR = path.join(APP_DIR, 'sticker-assets');
+const STICKER_PREVIEW_FILES = {
+  thumbsup: 'sticker_thumbsup.webp',
+  heart: 'sticker_heart.webp',
+  check: 'sticker_check.webp',
+  wait: 'sticker_wait.webp',
+  smile: 'sticker_smile.webp',
+  thanks: 'sticker_thanks.webp',
+  party: 'sticker_party.webp',
+  question: 'sticker_question.webp',
+  wave: 'sticker_wave.webp',
+  soon: 'sticker_soon.webp'
+};
+
+router.get('/sticker-preview/:id', requireAuth, (req, res) => {
+  const filename = STICKER_PREVIEW_FILES[safeString(req.params.id)];
+  if (!filename) return res.status(404).end();
+  res.setHeader('Content-Type', 'image/webp');
+  res.setHeader('Cache-Control', 'public, max-age=604800');
+  return res.sendFile(path.join(STICKER_ASSETS_DIR, filename));
+});
+
+router.get('/api/stickers', requireAuth, (req, res) => {
+  return res.json({
+    stickers: Object.keys(STICKER_PREVIEW_FILES).map(id => ({
+      id,
+      url: `/admin/sticker-preview/${id}`
+    }))
+  });
+});
+
+// V6.36.5 — Service worker minimal, requis par les navigateurs Android/
+// Chrome pour autoriser l'installation ("Ajouter à l'écran d'accueil").
+// Ne met rien en cache pour l'instant (MONDECO doit toujours afficher des
+// données fraîches) — juste ce qu'il faut pour être reconnu comme
+// installable, sans changer le comportement réseau existant.
+router.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(
+    "self.addEventListener('install', () => self.skipWaiting());\n" +
+    "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n" +
+    "self.addEventListener('fetch', () => {});\n"
+  );
+});
+
 router.get('/', requireAuth, (req, res) => {
   if (!fs.existsSync(ADMIN_HTML_PATH)) {
     return res
@@ -6424,6 +6787,17 @@ function safeTimezone(
   }
 }
 
+// V6.36.12 — Cache des formateurs Intl.DateTimeFormat, réutilisés au lieu
+// d'être reconstruits à chaque appel. La construction d'un Intl.DateTimeFormat
+// est coûteuse en JavaScript (recherche des données de fuseau horaire à
+// chaque fois) ; dateKeyInTimezone() et timeInTimezone() sont appelées des
+// milliers de fois par requête dans les boucles de traitement d'événements
+// — reconstruire l'objet à chaque appel au lieu de le réutiliser expliquait
+// une part significative des temps de traitement encore élevés malgré tous
+// les correctifs de cache disque déjà faits cette nuit.
+const dateKeyFormatterCache = new Map();
+const timeFormatterCache = new Map();
+
 function dateKeyInTimezone(
   value,
   timezone =
@@ -6444,24 +6818,19 @@ function dateKeyInTimezone(
     return '';
   }
 
-  const parts =
-    new Intl.DateTimeFormat(
-      'en-GB',
-      {
-        timeZone:
-          safeTimezone(
-            timezone
-          ),
-        year:
-          'numeric',
-        month:
-          '2-digit',
-        day:
-          '2-digit'
-      }
-    ).formatToParts(
-      date
-    );
+  const tz = safeTimezone(timezone);
+  let formatter = dateKeyFormatterCache.get(tz);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    dateKeyFormatterCache.set(tz, formatter);
+  }
+
+  const parts = formatter.formatToParts(date);
 
   const get =
     type =>
@@ -6495,19 +6864,18 @@ function timeInTimezone(
     return '';
   }
 
-  return new Intl.DateTimeFormat(
-    'fr-FR',
-    {
-      timeZone:
-        safeTimezone(
-          timezone
-        ),
-      hour:
-        '2-digit',
-      minute:
-        '2-digit'
-    }
-  ).format(
+  const tz = safeTimezone(timezone);
+  let formatter = timeFormatterCache.get(tz);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('fr-FR', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    timeFormatterCache.set(tz, formatter);
+  }
+
+  return formatter.format(
     date
   );
 }
@@ -7483,12 +7851,39 @@ const DEFAULT_COMMERCIAL_SLA_MINUTES = 5;
 const DAILY_REPORT_HOUR_TUNIS = 20;
 const attendanceWriteThrottle = new Map();
 
+let schedulesCache = null;
+let schedulesCacheStamp = '';
+
 function loadSchedules() {
-  return readJsonArray(SCHEDULES_PATH, 'schedules.json');
+  const stamp = fileChangeStamp(SCHEDULES_PATH);
+  if (schedulesCache && stamp === schedulesCacheStamp) return schedulesCache;
+  const items = readJsonArray(SCHEDULES_PATH, 'schedules.json');
+  schedulesCache = items;
+  schedulesCacheStamp = stamp;
+  return items;
 }
 
 function saveSchedules(items) {
   writeJsonAtomic(SCHEDULES_PATH, Array.isArray(items) ? items : []);
+}
+
+// V6.36.9 — Accès permanent par commercial (indépendant de la date).
+function loadStandingCommercialAccess() {
+  try {
+    if (!fs.existsSync(STANDING_COMMERCIAL_ACCESS_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(STANDING_COMMERCIAL_ACCESS_PATH, 'utf8') || '{}');
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch (error) {
+    console.warn('⚠️ Lecture standing-commercial-access.json :', error.message);
+    return {};
+  }
+}
+
+function saveStandingCommercialAccess(map) {
+  writeJsonAtomic(
+    STANDING_COMMERCIAL_ACCESS_PATH,
+    map && typeof map === 'object' && !Array.isArray(map) ? map : {}
+  );
 }
 
 function taskEffectiveStatus(item) {
@@ -7631,6 +8026,100 @@ function forEachJsonArrayObjectSync(filePath, visitor) {
   return count;
 }
 
+// V6.36.66 — Versions ASYNCHRONES de forEachJsonlRecordSync/
+// forEachJsonArrayObjectSync, créées UNIQUEMENT pour loadWhatsAppLog()
+// (voir plus bas), sans toucher aux versions Sync existantes ni à leurs
+// 16 autres appelants. Cède l'event loop via setImmediate toutes les
+// ~200 objets traités, pour que l'envoi WhatsApp en cours (callback HTTP
+// déjà arrivé, en attente d'exécution) ne soit plus retardé par la fusion
+// de l'historique. Diagnostiqué en production le 30/08 : fusion complète
+// bloquant l'event loop ~2 à 2.5s, causant des envois mesurés à
+// 2100-4600ms au lieu de 500-850ms quand une collision se produisait.
+async function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+async function forEachJsonArrayObjectAsync(filePath, visitor) {
+  if (!fs.existsSync(filePath) || typeof visitor !== 'function') return 0;
+  const fd = fs.openSync(filePath, 'r');
+  const decoder = new TextDecoder('utf-8');
+  const buffer = Buffer.allocUnsafe(128 * 1024);
+  let collecting = false;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let current = '';
+  let count = 0;
+  let sinceYield = 0;
+  const pending = [];
+
+  const feed = text => {
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (!collecting) {
+        if (ch === '{') {
+          collecting = true;
+          depth = 1;
+          inString = false;
+          escaped = false;
+          current = '{';
+        }
+        continue;
+      }
+
+      current += ch;
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          try {
+            const item = JSON.parse(current);
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              pending.push(item);
+              count += 1;
+            }
+          } catch {}
+          collecting = false;
+          current = '';
+        }
+      }
+    }
+  };
+
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      feed(decoder.decode(buffer.subarray(0, bytesRead), { stream: bytesRead > 0 }));
+      while (pending.length) {
+        visitor(pending.shift());
+        sinceYield += 1;
+        if (sinceYield >= 200) {
+          sinceYield = 0;
+          await yieldToEventLoop();
+        }
+      }
+    } while (bytesRead > 0);
+    feed(decoder.decode());
+    while (pending.length) {
+      visitor(pending.shift());
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return count;
+}
+
 function conversationEventFilesSince(cutoffAt = historyImportCutoffIso()) {
   const cutoffMs = Date.parse(safeString(cutoffAt));
   const cutoffDay = Number.isFinite(cutoffMs)
@@ -7646,8 +8135,22 @@ function conversationEventFilesSince(cutoffAt = historyImportCutoffIso()) {
   }
 }
 
+// V6.35.28 — Cache mémoire pour loadSlaEvents(). Le rapport commercial
+// (/api/team/commercial-report) appelle buildTeamPerformanceDashboard()
+// 8 fois de suite (jour + historique sur 7 jours) ; chaque appel relisait
+// sla-events.json (1,6 Mo) sans aucun cache — constaté en production
+// jusqu'à 130 secondes et 2,5 Go de RSS pour un seul rapport.
+// (variables déclarées tout en haut du fichier, voir juste après DATA_DIR)
+
 function loadSlaEvents() {
-  return readJsonArray(SLA_EVENTS_PATH, 'sla-events.json');
+  const stamp = fileChangeStamp(SLA_EVENTS_PATH);
+  if (slaEventsCache && stamp === slaEventsCacheStamp) {
+    return [...slaEventsCache];
+  }
+  const items = readJsonArray(SLA_EVENTS_PATH, 'sla-events.json');
+  slaEventsCache = items;
+  slaEventsCacheStamp = stamp;
+  return [...items];
 }
 
 function saveSlaEvents(items) {
@@ -7676,15 +8179,416 @@ function loadDailyReports() {
   }
 }
 
+function loadWhatsAppCustomReports() {
+  try {
+    if (!fs.existsSync(WHATSAPP_CUSTOM_REPORTS_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(WHATSAPP_CUSTOM_REPORTS_PATH, 'utf8') || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    console.warn('⚠️ Lecture whatsapp-custom-reports.json :', error.message);
+    return {};
+  }
+}
+
+function saveWhatsAppCustomReports(items) {
+  const safe = items && typeof items === 'object' ? items : {};
+  // Garde seulement les 20 rapports les plus récents pour ne jamais laisser
+  // ce fichier grossir indéfiniment.
+  const keys = Object.keys(safe).sort().slice(-20);
+  const compact = {};
+  for (const key of keys) compact[key] = safe[key];
+  writeJsonAtomic(WHATSAPP_CUSTOM_REPORTS_PATH, compact);
+}
+
+// V6.36.45 — Lit un fichier JSONL ligne par ligne, en streaming, avec une
+// petite pause (setImmediate) tous les 500 lignes pour rendre la main à
+// l'event loop et ne jamais bloquer le serveur pendant la lecture — même
+// principe que forEachJsonlRecordSync, en version non-bloquante.
+async function forEachJsonlRecordAsync(filePath, onRecord) {
+  if (!fs.existsSync(filePath)) return;
+  const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let count = 0;
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const record = JSON.parse(trimmed);
+      onRecord(record);
+    } catch {
+      // Ligne corrompue : ignorée sans interrompre la lecture.
+    }
+    count += 1;
+    if (count % 500 === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+}
+
+
+async function loadArchivedConversationPage(targetContact, beforeTime, requestedLimit = 120) {
+  const contact = safeString(targetContact);
+  const limit = Math.max(20, Math.min(300, Number(requestedLimit) || 120));
+  if (!contact || !Number.isFinite(beforeTime)) return { entries:[], hasMore:false };
+  const files = [];
+  const addFile = (filePath, name) => {
+    const m = /^conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+    if (m && Date.parse(`${m[1]}T00:00:00Z`) < beforeTime) files.push({ filePath, day:m[1] });
+  };
+  try {
+    for (const e of fs.readdirSync(CONVERSATION_EVENTS_DIR,{withFileTypes:true}))
+      if (e.isFile()) addFile(path.join(CONVERSATION_EVENTS_DIR,e.name),e.name);
+  } catch {}
+  const visit = dir => {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir,{withFileTypes:true})) {
+      const f=path.join(dir,e.name);
+      if (e.isDirectory()) visit(f); else if (e.isFile()) addFile(f,e.name);
+    }
+  };
+  visit(path.join(DATA_DIR,'conversation-archive-recovered'));
+  files.sort((a,b)=>b.day.localeCompare(a.day));
+  const merged=new Map();
+  let scanned=0;
+  for (const item of files) {
+    await forEachJsonlRecordAsync(item.filePath, entry => {
+      if (safeString(entry?.contact)!==contact) return;
+      const ms=normalizedConversationTime(entry);
+      if (!Number.isFinite(ms) || ms>=beforeTime) return;
+      const clean=applyConversationPurgeTombstones(entry);
+      if (!clean) return;
+      const key=conversationLogDedupeKey(clean);
+      merged.set(key,mergeConversationLogEntries(merged.get(key),clean));
+    });
+    scanned++;
+    if (merged.size>limit) break;
+  }
+  const all=[...merged.values()].sort(conversationEntryComparator);
+  return { entries:all.slice(-limit), hasMore:all.length>limit || scanned<files.length };
+}
+
+
+async function findArchivedConversationEntryForPurge(targetContact, purgeKey, part) {
+  const contact = safeString(targetContact);
+  const key = safeString(purgeKey);
+  if (!contact || !key) return null;
+
+  const files = [];
+  const visit = dir => {
+    if (!fs.existsSync(dir)) return;
+    for (const e of fs.readdirSync(dir,{withFileTypes:true})) {
+      const f=path.join(dir,e.name);
+      if (e.isDirectory()) visit(f);
+      else if (e.isFile() && /^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(e.name))
+        files.push(f);
+    }
+  };
+
+  visit(CONVERSATION_EVENTS_DIR);
+  visit(path.join(DATA_DIR,'conversation-archive-recovered'));
+  files.sort().reverse();
+
+  for (const filePath of files) {
+    let found=null;
+    await forEachJsonlRecordAsync(filePath, entry => {
+      if (found) return;
+      if (
+        safeString(entry?.contact) === contact &&
+        conversationEntryPartPurgeHash(entry,part) === key
+      ) found=entry;
+    });
+    if (found) return found;
+  }
+  return null;
+}
+
+// V6.36.45 — Génère le rapport WhatsApp (4 sections) pour une période
+// personnalisée, en tâche de fond. Jamais appelé de façon synchrone
+// depuis une requête HTTP : voir la route /api/reports/whatsapp-custom
+// qui déclenche cette fonction sans l'attendre (fire-and-forget).
+let whatsappReportGenerationInProgress = false;
+
+async function generateWhatsAppCustomReport(reportId, startDate, endDate) {
+  if (whatsappReportGenerationInProgress) {
+    throw new Error('Une génération de rapport est déjà en cours. Réessayez dans quelques instants.');
+  }
+  whatsappReportGenerationInProgress = true;
+
+  try {
+    const reports = loadWhatsAppCustomReports();
+    reports[reportId] = {
+      id: reportId,
+      status: 'generating',
+      startDate,
+      endDate,
+      startedAt: new Date().toISOString()
+    };
+    saveWhatsAppCustomReports(reports);
+
+    // V6.36.55 — Nécessaire pour ne pas compter comme "sans réponse" une
+    // conversation en fait déjà resolved=true ou prise en charge par un
+    // commercial (assignedUserId non vide). Repéré le 28/08 : le rapport
+    // signalait des conversations comme abandonnées depuis plusieurs
+    // jours alors qu'elles étaient déjà traitées, faussant la Priorité 3
+    // du plan d'action (diagnostic sur les retards).
+    const currentConversationStates = loadConversationStatesAdmin();
+
+    const cutoffStart = new Date(`${startDate}T00:00:00.000Z`);
+    const cutoffEnd = new Date(`${endDate}T23:59:59.999Z`);
+
+    if (!Number.isFinite(cutoffStart.getTime()) || !Number.isFinite(cutoffEnd.getTime())) {
+      throw new Error('Dates invalides.');
+    }
+
+    const maxRangeMs = 31 * 24 * 60 * 60 * 1000;
+    if (cutoffEnd.getTime() - cutoffStart.getTime() > maxRangeMs) {
+      throw new Error('Période maximale autorisée : 31 jours.');
+    }
+
+    const seenKeys = new Set();
+    const threads = new Map();
+
+    const dedupeKey = e => [
+      safeString(e.message_id || e.meta_message_id || ''),
+      safeString(e.contact || ''),
+      safeString(e.time || ''),
+      safeString(e.action || '')
+    ].join('|');
+
+    const isWithinRange = e => {
+      const t = Date.parse(safeString(e.time) || '');
+      return Number.isFinite(t) && t >= cutoffStart.getTime() && t <= cutoffEnd.getTime();
+    };
+
+    const consider = e => {
+      if (safeString(e.channel).toLowerCase() !== 'whatsapp') return;
+      if (!isWithinRange(e)) return;
+      const key = dedupeKey(e);
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      const contact = safeString(e.contact);
+      if (!threads.has(contact)) threads.set(contact, []);
+      threads.get(contact).push(e);
+    };
+
+    // Fichiers JSONL couvrant la période demandée.
+    if (fs.existsSync(CONVERSATION_EVENTS_DIR)) {
+      const files = fs.readdirSync(CONVERSATION_EVENTS_DIR)
+        .filter(name => name.endsWith('.jsonl'))
+        .sort();
+      for (const fname of files) {
+        const datestr = fname.replace('conversation-events-', '').replace('.jsonl', '');
+        const fday = new Date(`${datestr}T00:00:00.000Z`);
+        if (!Number.isFinite(fday.getTime())) continue;
+        // Marge d'un jour pour ne rater aucun événement proche des bornes.
+        if (fday.getTime() < cutoffStart.getTime() - 86400000) continue;
+        if (fday.getTime() > cutoffEnd.getTime() + 86400000) continue;
+        await forEachJsonlRecordAsync(path.join(CONVERSATION_EVENTS_DIR, fname), consider);
+      }
+    }
+
+    // Cache JSON courant (événements très récents).
+    if (fs.existsSync(CONVERSATIONS_LOG_PATH)) {
+      try {
+        const current = JSON.parse(fs.readFileSync(CONVERSATIONS_LOG_PATH, 'utf8') || '[]');
+        if (Array.isArray(current)) {
+          for (const e of current) consider(e);
+        }
+      } catch {
+        // Fichier illisible : on continue avec ce qu'on a déjà.
+      }
+    }
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    // --- Construction des 4 sections, sur le même principe que le script
+    // d'analyse manuel déjà validé. ---
+    const now = Date.now();
+
+    const anonPhone = contact => {
+      const digits = safeString(contact).replace(/\D/g, '');
+      return digits.length >= 3 ? `***${digits.slice(-3)}` : '***';
+    };
+
+    const isAiReply = e => Boolean(e.reply) && e.reply_sent === true;
+    const isCommercialRequired = e =>
+      /\[COMMERCIAL_REQUIRED\]/i.test(safeString(e.reply)) || e.action === 'ai_needs_commercial';
+
+    const QUALIF_KEYWORDS = ['ville', 'showroom', 'soukra', 'ezzahra', 'sfax', 'sousse', 'nabeul',
+      'livraison', 'dimension', 'cm', 'taille', 'commande', 'achat', 'disponib', 'stock', 'délai', 'jours', 'semaine'];
+    const hasQualificationQuestion = text => {
+      const t = safeString(text).toLowerCase();
+      if (!t.includes('?')) return false;
+      return QUALIF_KEYWORDS.some(kw => t.includes(kw));
+    };
+
+    const REASONING_PATTERN = /\bwe (cannot|can't)\b|\brefer to\b|<think>|##\s|\*\*Description/i;
+
+    let totalConversations = threads.size;
+    let conversationsWithReply = 0;
+    let conversationsNoReply15min = 0;
+    let qualificationCount = 0;
+    const responseTimes = [];
+
+    const bySource = new Map();
+    const anomaliesReasoning = [];
+    const anomalies15min = [];
+    const sampleCandidates = [];
+
+    for (const [contact, events] of threads.entries()) {
+      const sorted = events.slice().sort((a, b) => (Date.parse(a.time) || 0) - (Date.parse(b.time) || 0));
+      const hasValidReply = sorted.some(isAiReply);
+      if (hasValidReply) conversationsWithReply += 1;
+      if (sorted.some(e => isAiReply(e) && hasQualificationQuestion(e.reply))) qualificationCount += 1;
+
+      let lastIncomingTime = null;
+      for (const e of sorted) {
+        const t = Date.parse(e.time);
+        if (e.incoming && Number.isFinite(t)) lastIncomingTime = t;
+        if (e.reply && e.reply_sent) {
+          if (lastIncomingTime && Number.isFinite(t)) {
+            const delta = (t - lastIncomingTime) / 1000;
+            if (delta >= 0) responseTimes.push(delta);
+          }
+          lastIncomingTime = null;
+        }
+      }
+      if (lastIncomingTime && (now - lastIncomingTime) / 1000 > 900) {
+        const liveState = currentConversationStates[contact] || {};
+        const alreadyHandled = liveState.resolved === true || Boolean(safeString(liveState.assignedUserId));
+        if (!alreadyHandled) {
+          conversationsNoReply15min += 1;
+          anomalies15min.push({ contact: anonPhone(contact), lastIncoming: new Date(lastIncomingTime).toISOString() });
+        }
+      }
+
+      let adRef = null;
+      for (const e of events) {
+        if (e.ad_referral) { adRef = e.ad_referral; break; }
+      }
+      const sourceName = (adRef && (adRef.productHint || adRef.headline)) || 'non disponible (pas de référence pub)';
+      if (!bySource.has(sourceName)) bySource.set(sourceName, { total: 0, qualified: 0, devis: 0 });
+      const stat = bySource.get(sourceName);
+      stat.total += 1;
+      // V6.36.69 — "Qualifiée" redéfinie : l'ancien critère (juste une
+      // question de qualification dans UNE réponse IA) comptait à tort
+      // comme "non qualifiée" des conversations où le client n'avait
+      // envoyé qu'un seul message ("bonjour") — la conversation n'avait
+      // simplement pas encore eu l'occasion de progresser, ce n'est pas
+      // un échec de l'IA. Diagnostiqué le 30/08 sur "Découvrez la chambre
+      // ZINA" : le produit était bien identifié, mais le taux restait à
+      // 1/42 à cause de cette mesure trop stricte. Nouveau critère : au
+      // moins 2 messages clients (signe que la conversation progresse),
+      // OU une question de qualification explicite si un seul échange.
+      const customerMessageCount = sorted.filter(e => e.incoming).length;
+      const conversationProgressed = customerMessageCount >= 2;
+      const hasQualifQuestion = sorted.some(e => isAiReply(e) && hasQualificationQuestion(e.reply));
+      if (conversationProgressed || hasQualifQuestion) stat.qualified += 1;
+      if (sorted.some(e => isAiReply(e) && /\d+\s*dt/i.test(safeString(e.reply)))) stat.devis += 1;
+
+      for (const e of sorted) {
+        const reply = safeString(e.reply);
+        if (!reply) continue;
+        if (REASONING_PATTERN.test(reply)) {
+          anomaliesReasoning.push({ contact: anonPhone(contact), time: e.time, reply: reply.slice(0, 300) });
+        }
+        if (e.incoming && isAiReply(e)) {
+          sampleCandidates.push({
+            contact: anonPhone(contact),
+            produit: sourceName,
+            clientMsg: e.incoming,
+            aiReply: reply,
+            commercialRequired: false
+          });
+        }
+        if (e.incoming && isCommercialRequired(e)) {
+          sampleCandidates.push({
+            contact: anonPhone(contact),
+            produit: sourceName,
+            clientMsg: e.incoming,
+            aiReply: null,
+            commercialRequired: true
+          });
+        }
+      }
+    }
+
+    const avgResponseSeconds = responseTimes.length
+      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+      : null;
+
+    const sourceBreakdown = [...bySource.entries()]
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, 20)
+      .map(([name, stat]) => ({ name, ...stat }));
+
+    // Échantillon : 6 avec devis, 4 transférées, mélangées.
+    const priced = sampleCandidates.filter(s => !s.commercialRequired && /\d+\s*dt/i.test(safeString(s.aiReply)));
+    const transferred = sampleCandidates.filter(s => s.commercialRequired);
+    const sample = [...priced.slice(0, 6), ...transferred.slice(0, 4)];
+
+    const report = {
+      id: reportId,
+      status: 'ready',
+      startDate,
+      endDate,
+      generatedAt: new Date().toISOString(),
+      totalEventsScanned: seenKeys.size,
+      section1: {
+        totalConversations,
+        conversationsWithReply,
+        conversationsNoReply15min,
+        avgResponseSeconds,
+        qualificationCount
+      },
+      section2: sourceBreakdown,
+      section3: sample,
+      section4: {
+        reasoningLeaks: anomaliesReasoning.slice(0, 20),
+        noReply15min: anomalies15min.slice(0, 50)
+      }
+    };
+
+    const finalReports = loadWhatsAppCustomReports();
+    finalReports[reportId] = report;
+    saveWhatsAppCustomReports(finalReports);
+
+    console.log(`✅ Rapport WhatsApp ${reportId} généré : ${totalConversations} conversation(s) sur ${startDate} → ${endDate}.`);
+    return report;
+  } catch (error) {
+    const reports = loadWhatsAppCustomReports();
+    reports[reportId] = {
+      id: reportId,
+      status: 'error',
+      startDate,
+      endDate,
+      error: error.message,
+      generatedAt: new Date().toISOString()
+    };
+    saveWhatsAppCustomReports(reports);
+    console.error(`❌ Erreur génération rapport WhatsApp ${reportId} :`, error.message);
+    throw error;
+  } finally {
+    whatsappReportGenerationInProgress = false;
+  }
+}
+
 function saveDailyReports(items) {
   writeJsonAtomic(DAILY_REPORTS_PATH, items && typeof items === 'object' ? items : {});
 }
 
+let attendanceCache = null;
+let attendanceCacheStamp = '';
+
 function loadAttendance() {
   try {
     if (!fs.existsSync(ATTENDANCE_PATH)) return {};
+    const stamp = fileChangeStamp(ATTENDANCE_PATH);
+    if (attendanceCache && stamp === attendanceCacheStamp) return attendanceCache;
     const parsed = JSON.parse(fs.readFileSync(ATTENDANCE_PATH, 'utf8') || '{}');
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    attendanceCache = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    attendanceCacheStamp = stamp;
+    return attendanceCache;
   } catch (error) {
     console.warn('⚠️ Lecture attendance-log.json :', error.message);
     return {};
@@ -7692,7 +8596,10 @@ function loadAttendance() {
 }
 
 function saveAttendance(items) {
-  writeJsonAtomic(ATTENDANCE_PATH, items && typeof items === 'object' ? items : {});
+  const normalized = items && typeof items === 'object' ? items : {};
+  writeJsonAtomic(ATTENDANCE_PATH, normalized);
+  attendanceCache = normalized;
+  attendanceCacheStamp = fileChangeStamp(ATTENDANCE_PATH);
 }
 
 // V6.34 — journal d'activité léger pour les actions qui ne passent pas par
@@ -7703,7 +8610,9 @@ function teamActivityDayPath(date) {
   return path.join(TEAM_ACTIVITY_DIR, `team-activity-${safeString(date)}.jsonl`);
 }
 
+const recentConversationOpenActivity = new Map();
 function appendTeamActivity(event = {}) {
+    if (safeString(event.type) === "conversation_open") { const k = `${safeString(event.userId)}|${safeString(event.contact)}`; const now = Date.now(); const last = recentConversationOpenActivity.get(k) || 0; if (now - last < 60000) return null; recentConversationOpenActivity.set(k, now); }
   try {
     const item = {
       id: safeString(event.id) || crypto.randomUUID(),
@@ -7720,14 +8629,47 @@ function appendTeamActivity(event = {}) {
   }
 }
 
+// V6.35.34 — Cache des tentatives de migration "à vide". Sans ça, chaque
+// appel à loadTeamActivity(nextDate) — le LENDEMAIN, utilisé pour couvrir
+// les missions de nuit 22:00→02:00 — déclenchait un scan COMPLET de
+// team-activity.jsonl (5,8+ Mo), car le fichier du jour suivant n'existe
+// jamais encore (il n'a pas eu lieu). Diagnostiqué en production comme
+// LA cause dominante de la lenteur du tableau de bord commercial (plus de
+// 15 des 19,6 secondes totales sur un test réel), largement devant tout ce
+// qui avait été optimisé jusqu'ici sur cette page.
+const legacyTeamActivityEmptyCache = new Map();
+
 function ensureLegacyTeamActivityDay(date) {
   const target = safeString(date);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) return '';
   const targetPath = teamActivityDayPath(target);
   if (fs.existsSync(targetPath)) return targetPath;
+
+  // V6.36.11 — Le cache "rien trouvé" basé sur l'état du fichier (V6.35.34)
+  // s'invalidait presque en continu en usage réel : team-activity.jsonl est
+  // réécrit à CHAQUE action commerciale, donc son "empreinte" change sans
+  // arrêt, annulant l'effet du cache. Constaté en production : le temps de
+  // cette fonction est remonté à 9+ secondes malgré ce premier correctif.
+  // Solution bien plus robuste : une date STRICTEMENT DANS LE FUTUR (le
+  // cas réel qui posait problème — le lendemain, utilisé pour couvrir les
+  // missions de nuit) ne peut, par définition, contenir aucune activité
+  // enregistrée : impossible qu'un événement porte une date future. On
+  // saute alors le scan entièrement, sans même toucher au fichier.
+  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const today = dateKeyInTimezone(new Date(), timezone);
+  if (target > today) {
+    return targetPath;
+  }
+
   if (!fs.existsSync(TEAM_ACTIVITY_PATH)) return targetPath;
 
-  const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  const legacyStamp = fileChangeStamp(TEAM_ACTIVITY_PATH);
+  if (legacyTeamActivityEmptyCache.get(target) === legacyStamp) {
+    // Déjà scanné pour cette date avec cette version du fichier legacy :
+    // aucune donnée trouvée à l'époque, et le fichier n'a pas changé depuis.
+    return targetPath;
+  }
+
   const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
   let written = 0;
   try {
@@ -7741,8 +8683,13 @@ function ensureLegacyTeamActivityDay(date) {
     } finally {
       fs.closeSync(fd);
     }
-    if (written > 0) fs.renameSync(tempPath, targetPath);
-    else fs.unlinkSync(tempPath);
+    if (written > 0) {
+      fs.renameSync(tempPath, targetPath);
+      legacyTeamActivityEmptyCache.delete(target);
+    } else {
+      fs.unlinkSync(tempPath);
+      legacyTeamActivityEmptyCache.set(target, legacyStamp);
+    }
   } catch (error) {
     try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
     console.warn(`⚠️ Migration activité équipe ${target} :`, error.message);
@@ -8430,7 +9377,23 @@ function simpleScheduleForUserDate(date, userId) {
   // V6.35.0 — règle MONDECO : si l'Admin n'a encore rien configuré pour la
   // journée, le commercial garde tous les canaux. L'Admin retire explicitement
   // les réseaux non planifiés. Une sélection vide enregistrée reste bien vide.
+  // V6.36.9 — MAIS on vérifie d'abord s'il existe un réglage PERMANENT pour
+  // ce commercial (enregistré une fois, valable pour tous les jours sans
+  // exception explicite) avant de retomber sur "tous les réseaux".
   if (!accessRows.length) {
+    const standing = loadStandingCommercialAccess()[safeString(userId)];
+    if (standing && Array.isArray(standing.channels)) {
+      return {
+        planned:true,
+        accessConfigured:true,
+        defaultAllAccess:false,
+        standing:true,
+        channels:normalizeChannels(standing.channels),
+        startTime:safeString(standing.startTime) || '09:00',
+        endTime:safeString(standing.endTime) || '18:00',
+        mission:safeString(standing.mission)
+      };
+    }
     return {
       planned:false,
       accessConfigured:false,
@@ -8482,18 +9445,22 @@ function plannedChannelSetForUser(user, date = '') {
   return scope;
 }
 
-function pendingAssignedForUser(user, date = '', statesOverride = null) {
+function pendingAssignedForUser(user, date = '', statesOverride = null, entriesOverride = null) {
   // V6.35.21 — Accepte un jeu d'états déjà chargé pour éviter de relire et
-  // reparser tout conversation-state.json à chaque appel. Sans ça,
-  // buildTeamPerformanceDashboard() le relisait une fois PAR COMMERCIAL
-  // (donc autant de lectures disque complètes que de commerciaux dans
-  // l'équipe), ce qui pouvait dépasser le délai Railway et provoquer une
-  // erreur 502 sur la page Pilotage commercial.
-  const states = statesOverride || loadConversationStatesAdmin();
+  // reparser tout conversation-state.json à chaque appel.
+  // V6.35.30 — Accepte aussi directement la liste [contact, state] déjà
+  // filtrée pour CE commercial (voir buildTeamPerformanceDashboard) : sans
+  // ça, cette fonction reparcourait TOUTES les conversations (potentiellement
+  // plusieurs milliers) pour chaque commercial, 9 fois de suite — un
+  // deuxième goulot d'étranglement algorithmique, distinct de la lecture
+  // disque déjà réglée en V6.35.21, qui expliquait le temps toujours élevé
+  // (~16s) malgré les correctifs précédents.
   const scope = plannedChannelSetForUser(user, date);
   let pending = 0, late = 0;
-  for (const [contact, state] of Object.entries(states)) {
-    if (safeString(state?.assignedUserId) !== safeString(user?.id) || state?.resolved === true) continue;
+  const entries = entriesOverride || Object.entries(statesOverride || loadConversationStatesAdmin());
+  for (const [contact, state] of entries) {
+    if (!entriesOverride && (safeString(state?.assignedUserId) !== safeString(user?.id) || state?.resolved === true)) continue;
+    if (entriesOverride && state?.resolved === true) continue;
     const channel = safeString(state?.channel).toLowerCase() ||
       (safeString(contact).startsWith('instagram:') ? 'instagram' : safeString(contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
     if (!channelScopeAllowsMessage(scope, channel)) continue;
@@ -8614,6 +9581,30 @@ function commercialMissionMetrics(schedule, userId, messageReplies, activities, 
 // suivante pour les missions qui traversent minuit). Il ne doit surtout pas
 // appeler loadWhatsAppLog(), qui fusionne et met en cache jusqu'à 90 jours
 // d'historique Instagram/Facebook/WhatsApp en RAM.
+// V6.35.27 — Cache mémoire pour la lecture de CONVERSATIONS_LOG_PATH dans
+// loadPerformanceConversationEvents(), utilisée par la page "Pilotage
+// commercial". Ce fichier (13+ Mo) était relu intégralement à chaque
+// chargement de la page, sans aucun cache — même faille que celles
+// corrigées en V6.35.23/24/25 sur d'autres fonctions, ici spécifique au
+// tableau de bord commercial (explique sa lenteur signalée séparément).
+// (variables déclarées tout en haut du fichier, voir juste après DATA_DIR)
+
+function loadPerformanceConversationsLogCached() {
+  const stamp = fileChangeStamp(CONVERSATIONS_LOG_PATH);
+  if (performanceConversationsLogCache && stamp === performanceConversationsLogCacheStamp) {
+    return performanceConversationsLogCache;
+  }
+  const items = [];
+  try {
+    forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, item => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) items.push(item);
+    });
+  } catch {}
+  performanceConversationsLogCache = items;
+  performanceConversationsLogCacheStamp = stamp;
+  return items;
+}
+
 function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/Tunis') {
   const wantedDates = new Set((Array.isArray(localDates) ? localDates : [localDates])
     .map(safeString)
@@ -8653,9 +9644,7 @@ function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/T
   // Compatibilité avec d'anciens déploiements : conversation-log.json est déjà
   // limité à 5000 entrées. On l'utilise uniquement comme petit filet de
   // sécurité, puis on déduplique avec le journal append-only.
-  try {
-    forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, pushIfWanted);
-  } catch {}
+  for (const item of loadPerformanceConversationsLogCached()) pushIfWanted(item);
 
   const merged = new Map();
   for (const entry of entries) {
@@ -8665,41 +9654,129 @@ function loadPerformanceConversationEvents(localDates = [], timezone = 'Africa/T
   return [...merged.values()].sort(conversationEntryComparator);
 }
 
+const teamPerformanceDashboardCache = new Map();
+const TEAM_PERFORMANCE_CACHE_TTL_MS = 60 * 1000;
 function buildTeamPerformanceDashboard(date, onlyUserId = '') {
+  // V6.36.15 — Cache court (60s) pour l'appel NON filtré (classement complet).
+  // Le rapport individuel (route /commercial-report) demande désormais ce
+  // classement complet puis y cherche l'utilisateur, au lieu de recalculer
+  // tout le pipeline (scan disque de plusieurs Mo) une fois par personne —
+  // cause directe des erreurs 502 constatées avec l'historique 7 jours.
+  const requestedUserIdEarly = safeString(onlyUserId);
+  if (!requestedUserIdEarly) {
+    const cached = teamPerformanceDashboardCache.get(date);
+    if (cached && Date.now() - cached.computedAt < TEAM_PERFORMANCE_CACHE_TTL_MS) {
+      return cached.result;
+    }
+  }
+  // V6.35.33 — Instrumentation temporaire, phase par phase. La fonction
+  // reste beaucoup plus lente qu'attendu (100+ secondes constatées en
+  // production) malgré les optimisations déjà faites (V6.35.29/30) et le
+  // cache de résultat (V6.35.32). Plutôt que de continuer à deviner quelle
+  // partie est responsable, on chronomètre chaque étape précisément : le
+  // prochain extrait de logs dira EXACTEMENT où le temps disparaît.
+  const __t0 = Date.now();
+  const __phases = [];
+  const __mark = label => { __phases.push(`${label}:${Date.now() - __t0}ms`); };
+
   const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
   const requestedUserId = safeString(onlyUserId);
+  // V6.36.14 — Élargi de "commercial" uniquement à tous les rôles actifs
+  // traitant des conversations clients (commercial, responsable_commercial,
+  // admin), à la demande : le pilotage doit refléter toute l'équipe active.
   const users = loadUsers().filter(user =>
-    user.role === 'commercial' &&
+    ['commercial', 'responsable_commercial', 'admin'].includes(safeString(user.role)) &&
+    user.active !== false &&
     (!requestedUserId || safeString(user.id) === requestedUserId)
   );
+  __mark('loadUsers');
   const nextDate = teamDateAdd(date, 1);
   const performanceEvents = loadPerformanceConversationEvents([date, nextDate], timezone);
+  __mark('loadPerformanceConversationEvents');
   const dayEntries = performanceEvents.filter(entry => dateKeyInTimezone(entry?.time, timezone) === date);
+  __mark('filterDayEntries');
   const activities = loadTeamActivity(date);
+  __mark('loadTeamActivity');
   // V6.35.21 — Chargé UNE SEULE FOIS pour toute l'équipe (voir
   // pendingAssignedForUser), au lieu d'une relecture disque par commercial.
   const conversationStatesForPending = loadConversationStatesAdmin();
+  __mark('loadConversationStatesAdmin');
+  // V6.35.30 — Regroupé UNE SEULE FOIS par commercial assigné : évite de
+  // reparcourir TOUTES les conversations (potentiellement plusieurs
+  // milliers) pour chaque commercial dans pendingAssignedForUser().
+  const stateEntriesByAssignedUser = new Map();
+  for (const entry of Object.entries(conversationStatesForPending)) {
+    const uid = safeString(entry[1]?.assignedUserId);
+    if (!uid) continue;
+    if (!stateEntriesByAssignedUser.has(uid)) stateEntriesByAssignedUser.set(uid, []);
+    stateEntriesByAssignedUser.get(uid).push(entry);
+  }
   const missionActivities = [...activities, ...loadTeamActivity(nextDate)];
+  __mark('groupStatesByUser+missionActivities');
   const slaEvents = loadSlaEvents();
+  __mark('loadSlaEvents');
   const today = dateKeyInTimezone(new Date(), timezone);
+
+  // V6.35.29 — Index calculés UNE SEULE FOIS pour toute l'équipe, au lieu
+  // de reparcourir dayEntries/performanceEvents/activities en entier pour
+  // CHAQUE commercial (et, pire, pour CHAQUE conversation de chaque
+  // commercial dans la boucle plus bas). Avec 9 commerciaux et un volume
+  // de messages réel, ce O(utilisateurs × contacts × événements) était la
+  // cause du temps de chargement resté élevé (~13s) malgré les correctifs
+  // de cache disque précédents — ici le problème n'était pas la lecture
+  // fichier, mais le nombre de fois où les mêmes données étaient
+  // reparcourues en mémoire.
+  const dayEntriesByContact = new Map();
+  for (const entry of dayEntries) {
+    const contact = safeString(entry?.contact);
+    if (!contact) continue;
+    if (!dayEntriesByContact.has(contact)) dayEntriesByContact.set(contact, []);
+    dayEntriesByContact.get(contact).push(entry);
+  }
+  const dayRepliesByUser = new Map();
+  for (const entry of dayEntries) {
+    if (safeString(entry?.action) !== 'commercial_reply') continue;
+    const uid = safeString(entry?.commercial_user_id);
+    if (!uid) continue;
+    if (!dayRepliesByUser.has(uid)) dayRepliesByUser.set(uid, []);
+    dayRepliesByUser.get(uid).push(entry);
+  }
+  const allRepliesByUser = new Map();
+  for (const entry of performanceEvents) {
+    if (safeString(entry?.action) !== 'commercial_reply') continue;
+    const uid = safeString(entry?.commercial_user_id);
+    if (!uid) continue;
+    if (!allRepliesByUser.has(uid)) allRepliesByUser.set(uid, []);
+    allRepliesByUser.get(uid).push(entry);
+  }
+  const commentActivitiesByUser = new Map();
+  const openedContactsByUser = new Map();
+  for (const item of activities) {
+    const uid = safeString(item?.userId);
+    if (!uid) continue;
+    if (['comment_reply', 'comment_private_reply'].includes(safeString(item.type))) {
+      if (!commentActivitiesByUser.has(uid)) commentActivitiesByUser.set(uid, []);
+      commentActivitiesByUser.get(uid).push(item);
+    }
+    if (item.type === 'conversation_open') {
+      const contact = safeString(item.contact);
+      if (contact) {
+        if (!openedContactsByUser.has(uid)) openedContactsByUser.set(uid, new Set());
+        openedContactsByUser.get(uid).add(contact);
+      }
+    }
+  }
+
+  __mark('buildIndexes');
 
   const raw = users.map(user => {
     const userId = safeString(user.id);
-    const replies = dayEntries.filter(entry =>
-      safeString(entry?.action) === 'commercial_reply' &&
-      safeString(entry?.commercial_user_id) === userId
-    );
+    const replies = dayRepliesByUser.get(userId) || [];
     // Seulement la journée demandée + le lendemain local pour couvrir une
     // mission 22:00 → 02:00. Aucun historique 90 jours n'est dupliqué en RAM.
-    const allUserReplies = performanceEvents.filter(entry =>
-      safeString(entry?.action) === 'commercial_reply' &&
-      safeString(entry?.commercial_user_id) === userId
-    );
-    const commentActivities = activities.filter(item =>
-      safeString(item.userId) === userId &&
-      ['comment_reply','comment_private_reply'].includes(safeString(item.type))
-    );
-    const openedContacts = new Set(activities.filter(item => safeString(item.userId) === userId && item.type === 'conversation_open').map(item => safeString(item.contact)).filter(Boolean));
+    const allUserReplies = allRepliesByUser.get(userId) || [];
+    const commentActivities = commentActivitiesByUser.get(userId) || [];
+    const openedContacts = openedContactsByUser.get(userId) || new Set();
     const contacts = [...new Set(replies.map(entry => safeString(entry.contact)).filter(Boolean))];
     let developedConversations = 0;
     let completeConversations = 0;
@@ -8707,7 +9784,7 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
     let priceContinuedConversations = 0;
 
     for (const contact of contacts) {
-      const thread = dayEntries.filter(entry => safeString(entry.contact) === contact).sort((a,b)=>(Date.parse(a.time)||0)-(Date.parse(b.time)||0));
+      const thread = (dayEntriesByContact.get(contact) || []).slice().sort((a,b)=>(Date.parse(a.time)||0)-(Date.parse(b.time)||0));
       const clientMessages = thread.filter(teamEntryIsClientMessage);
       const ownReplies = thread.filter(entry => safeString(entry?.action) === 'commercial_reply' && safeString(entry?.commercial_user_id) === userId);
       const ownTexts = ownReplies.map(entry => safeString(entry.reply)).filter(Boolean);
@@ -8741,7 +9818,7 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
     const onTime = resolved.filter(item => item.late !== true);
     const late = resolved.filter(item => item.late === true);
     const totalSla = Math.max(started.length, resolved.length + missed.length);
-    const pending = pendingAssignedForUser(user, date, conversationStatesForPending);
+    const pending = pendingAssignedForUser(user, date, conversationStatesForPending, stateEntriesByAssignedUser.get(userId) || []);
     const handledRate = started.length ? Math.min(100, (resolved.length / started.length) * 100) : (replies.length || commentActivities.length ? 100 : 0);
     const responseCompliance = totalSla ? Math.max(0, Math.min(100, (onTime.length / totalSla) * 100)) : (replies.length || commentActivities.length ? 100 : 0);
     const continuityDenom = Math.max(1, contacts.length + commentThreads);
@@ -8802,6 +9879,7 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
       nightMissions
     };
   });
+  __mark('perUserLoop');
 
   const maxClients = Math.max(1, ...raw.map(item => Number(item.clientsTreated || 0)));
   const ranking = raw.map(item => {
@@ -8826,7 +9904,12 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
   }).sort((a,b)=>Number(b.score ?? -1)-Number(a.score ?? -1) || b.clientsTreated-a.clientsTreated || b.completeConversations-a.completeConversations || b.totalReplies-a.totalReplies)
     .map((item,index)=>({...item,rank:index+1}));
 
-  return {
+  __mark('ranking');
+  if (Date.now() - __t0 > 3000) {
+    console.warn(`⏱️ buildTeamPerformanceDashboard phases : ${__phases.join(' | ')}`);
+  }
+
+  const __result = {
     ranking,
     summary:{
       clientsTreated:ranking.reduce((sum,item)=>sum+Number(item.clientsTreated||0),0),
@@ -8847,13 +9930,36 @@ function buildTeamPerformanceDashboard(date, onlyUserId = '') {
       priceOnly:'Une seule réponse commerciale courte contenant principalement un prix, sans relance détectée.'
     }
   };
+  if (!requestedUserIdEarly) {
+    teamPerformanceDashboardCache.set(date, { result: __result, computedAt: Date.now() });
+  }
+  return __result;
 }
+
+// V6.35.32 — Cache court (45s) du résultat COMPLET de ce tableau de bord,
+// par date. Même après les optimisations d'algorithme (V6.35.29/30), un
+// calcul complet pour 9 commerciaux reste coûteux (17-20s constatés en
+// production, avec un pic mémoire important). Beaucoup de rechargements de
+// cette page arrivent rapprochés dans le temps (retour sur l'onglet,
+// actualisation manuelle) : sans ce cache, chacun redéclenchait le calcul
+// complet. Avec, seul le premier appel dans la fenêtre de 45s est coûteux ;
+// les suivants sont instantanés. Le prix payé sur le tout premier appel
+// n'est pas éliminé par ce correctif — voir la note affichée à l'utilisateur.
+const simpleDashboardResultCache = new Map();
+const SIMPLE_DASHBOARD_CACHE_TTL_MS = 45000;
 
 router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,res) => {
   const startedAt = Date.now();
   try {
     const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
     const date = /^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date)) ? safeString(req.query.date) : dateKeyInTimezone(new Date(),timezone);
+
+    const forceRefresh = safeString(req.query?.force) === '1';
+    const cached = simpleDashboardResultCache.get(date);
+    if (!forceRefresh && cached && (Date.now() - cached.ts) < SIMPLE_DASHBOARD_CACHE_TTL_MS) {
+      return res.json({ ...cached.payload, fromCache: true });
+    }
+
     const performance = buildTeamPerformanceDashboard(date);
     const performanceByUser = new Map((performance.ranking || []).map(item => [safeString(item.userId), item]));
 
@@ -8862,7 +9968,7 @@ router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,r
     // que la vue Équipe n'utilise que planning + charge + présence. Cette fonction
     // relisait/reparcourait conversation-log, attendance, SLA et états plusieurs
     // fois par utilisateur et pouvait faire dépasser le timeout Railway (HTTP 502).
-    const users = loadUsers().filter(user => user.role === 'commercial').map(user => {
+    const users = loadUsers().filter(user => ['commercial','responsable_commercial','admin'].includes(safeString(user.role))).map(user => {
       const userPerformance = performanceByUser.get(safeString(user.id)) || null;
       const schedule = simpleScheduleForUserDate(date, user.id);
       return {
@@ -8882,7 +9988,9 @@ router.get('/api/team/simple-dashboard', requireAdminOrCommercialManager, (req,r
     if (elapsedMs > 1500 || rssMb > 350) {
       console.warn(`⚠️ Team simple-dashboard: ${elapsedMs} ms | RSS ${rssMb} MB | heap ${heapMb} MB | ${users.length} commerciaux`);
     }
-    return res.json({ date, generatedAt:new Date().toISOString(), elapsedMs, users, performance });
+    const payload = { date, generatedAt:new Date().toISOString(), elapsedMs, users, performance };
+    simpleDashboardResultCache.set(date, { ts: Date.now(), payload });
+    return res.json(payload);
   } catch (error) {
     console.error('❌ Team simple-dashboard :', error);
     return res.status(500).json({
@@ -8935,15 +10043,42 @@ router.put('/api/team/simple-schedule/:userId', requireAdminOrCommercialManager,
   });
 
   saveSchedules(kept);
+
+  // V6.36.9 — Si l'enregistrement concerne AUJOURD'HUI précisément, on met
+  // aussi à jour le réglage permanent de ce commercial : c'est ce réglage
+  // qui sera repris automatiquement les jours suivants, tant qu'aucune
+  // exception ponctuelle n'est enregistrée pour une date différente. Un
+  // enregistrement pour une AUTRE date (via le sélecteur "Journée") reste
+  // une exception ponctuelle et ne touche pas ce réglage de fond.
+  const timezoneForStanding = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+  if (date === dateKeyInTimezone(new Date(), timezoneForStanding)) {
+    const standingMap = loadStandingCommercialAccess();
+    standingMap[userId] = {
+      channels,
+      startTime,
+      endTime,
+      mission: mission || safeString(standingMap[userId]?.mission || ''),
+      updatedBy: safeString(req.user?.id),
+      updatedAt: new Date().toISOString()
+    };
+    saveStandingCommercialAccess(standingMap);
+  }
+
   return res.json({success:true, schedule:simpleScheduleForUserDate(date,userId)});
 });
 
+const commercialReportHistoryCache = new Map();
 router.get('/api/team/commercial-report/:userId', requireAdminOrCommercialManager, (req,res) => {
+  // V6.36.17 — Temporairement désactivé : ce calcul (jusqu'à 65s, plusieurs
+  // scans de fichiers volumineux) a provoqué des erreurs 502 et un pic de
+  // mémoire (RSS 2.3 Go). Réactivation prévue après optimisation complète.
+  return res.status(503).json({ error: 'Rapport temporairement indisponible — optimisation en cours. Réessayez plus tard.' });
   const startedAt = Date.now();
   try {
     const timezone=safeTimezone(getBotSettings()?.timezone||'Africa/Tunis');
     const date=/^\d{4}-\d{2}-\d{2}$/.test(safeString(req.query?.date))?safeString(req.query.date):dateKeyInTimezone(new Date(),timezone);
-    const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&item.role==='commercial');
+    const today=dateKeyInTimezone(new Date(),timezone);
+    const user=loadUsers().find(item=>item.id===safeString(req.params.userId)&&['commercial','responsable_commercial','admin'].includes(safeString(item.role)));
     if(!user)return res.status(404).json({error:'Commercial introuvable.'});
 
     // Le détail de présence n'est calculé qu'une seule fois pour la journée ouverte.
@@ -8954,7 +10089,18 @@ router.get('/api/team/commercial-report/:userId', requireAdminOrCommercialManage
       const d=teamDateAdd(date,-i);
       // V6.34.3 — historique ciblé sur un seul commercial. On ne recalcule plus
       // simpleTeamDayForUser() ni les performances de toute l'équipe 7 fois.
-      const px=buildTeamPerformanceDashboard(d,user.id).ranking.find(item=>safeString(item.userId)===safeString(user.id))||{};
+      const cacheKey = `${d}:${user.id}`;
+      let px;
+      if (d < today && commercialReportHistoryCache.has(cacheKey)) {
+        px = commercialReportHistoryCache.get(cacheKey);
+      } else {
+        // V6.36.16 — Demande le classement COMPLET (mis en cache 60s dans
+        // buildTeamPerformanceDashboard) au lieu d'un calcul par personne :
+        // 16+ appels individuels sur 7 jours ne déclenchent plus qu'un seul
+        // vrai calcul par jour, partagé entre tous les commerciaux/rapports.
+        px=buildTeamPerformanceDashboard(d).ranking.find(item=>safeString(item.userId)===safeString(user.id))||{};
+        if (d < today) commercialReportHistoryCache.set(cacheKey, px);
+      }
       history.push({
         date:d,
         replies:Number(px.totalReplies||0),
@@ -8981,6 +10127,58 @@ router.get('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
   const date = safeString(req.query?.date);
   const items = date ? getSchedulesForDate(date) : loadSchedules();
   return res.json(items);
+});
+
+// V6.36.45 — Routes du rapport WhatsApp personnalisé. Réservées à l'admin
+// (données analytiques sensibles). La génération est TOUJOURS lancée en
+// fire-and-forget (jamais awaité dans la réponse HTTP), pour ne jamais
+// bloquer le serveur pendant potentiellement plusieurs dizaines de secondes.
+router.post('/api/reports/whatsapp-custom', requireAdmin, (req, res) => {
+  // DEBUG TEMPORAIRE — à retirer une fois le bug de dates résolu.
+  console.log('🔍 DEBUG rapport whatsapp-custom — req.body brut :', JSON.stringify(req.body));
+  const startDate = safeString(req.body?.startDate);
+  const endDate = safeString(req.body?.endDate);
+  console.log('🔍 DEBUG startDate:', JSON.stringify(startDate), '- endDate:', JSON.stringify(endDate));
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+    return res.status(400).json({ error: 'Dates invalides (format attendu AAAA-MM-JJ).' });
+  }
+  if (startDate > endDate) {
+    return res.status(400).json({ error: 'La date de début doit précéder la date de fin.' });
+  }
+  if (whatsappReportGenerationInProgress) {
+    return res.status(429).json({ error: 'Une génération de rapport est déjà en cours. Réessayez dans quelques instants.' });
+  }
+
+  const reportId = crypto.randomUUID();
+
+  // Fire-and-forget : la génération continue en arrière-plan, la réponse
+  // HTTP part immédiatement avec juste l'ID à consulter ensuite.
+  generateWhatsAppCustomReport(reportId, startDate, endDate).catch(() => {
+    // Erreur déjà journalisée et sauvegardée dans le rapport lui-même
+    // par generateWhatsAppCustomReport ; rien à faire de plus ici.
+  });
+
+  return res.status(202).json({ success: true, reportId, status: 'generating' });
+});
+
+router.get('/api/reports/whatsapp-custom/:id', requireAdmin, (req, res) => {
+  const reports = loadWhatsAppCustomReports();
+  const report = reports[safeString(req.params.id)];
+  if (!report) return res.status(404).json({ error: 'Rapport introuvable.' });
+  return res.json(report);
+});
+
+router.get('/api/reports/whatsapp-custom', requireAdmin, (req, res) => {
+  const reports = loadWhatsAppCustomReports();
+  const list = Object.values(reports)
+    .sort((a, b) => safeString(b.startedAt || b.generatedAt).localeCompare(safeString(a.startedAt || a.generatedAt)))
+    .map(r => ({
+      id: r.id, status: r.status, startDate: r.startDate, endDate: r.endDate,
+      generatedAt: r.generatedAt || null, startedAt: r.startedAt || null,
+      totalConversations: r.section1?.totalConversations ?? null
+    }));
+  return res.json({ items: list });
 });
 
 router.post('/api/schedules', requireAdminOrCommercialManager, (req,res) => {
@@ -11319,7 +12517,7 @@ router.post(
 
       if (req.user?.role === 'commercial') {
         const conversationKey = normalizePhone(externalContact);
-        const state = loadConversationStatesAdmin()[conversationKey] || {};
+        const state = getConversationStateSingle(conversationKey) || {};
         if (safeString(state.assignedUserId) !== safeString(req.user.id)) {
           return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
         }
@@ -11961,7 +13159,7 @@ router.post(
         const conversationKey = channel === 'instagram'
           ? `instagram:${externalContact}`
           : normalizePhone(externalContact);
-        const state = loadConversationStatesAdmin()[conversationKey] || {};
+        const state = getConversationStateSingle(conversationKey) || {};
         if (safeString(state.assignedUserId) !== safeString(req.user.id)) {
           return res.status(403).json({ error: 'Cette conversation n’est pas affectée à votre compte.' });
         }
@@ -13297,6 +14495,10 @@ router.post(
   '/api/commercial/send',
   requireAuth,
   async (req, res) => {
+    const __routeSendStart = Date.now();
+    res.once('finish', () => {
+      console.log(`⏱️ ROUTE commercial/send TOTAL ${Date.now() - __routeSendStart}ms`);
+    });
     try {
       if (!commercialSendHandler) {
         return res
@@ -13348,6 +14550,9 @@ router.post(
       const question =
         safeString(req.body?.question);
 
+      const sendMode =
+        safeString(req.body?.sendMode).toLowerCase();
+
       if (!externalContact) {
         return res
           .status(400)
@@ -13357,7 +14562,7 @@ router.post(
           });
       }
 
-      if (!text) {
+      if (!text && sendMode !== 'whatsapp_reengage') {
         return res
           .status(400)
           .json({
@@ -13366,6 +14571,18 @@ router.post(
           });
       }
 
+      if (sendMode === 'whatsapp_reengage' && channel !== 'whatsapp') {
+        return res.status(400).json({
+          error:'La relance hors 24 h est disponible uniquement pour WhatsApp.',
+          errorCode:'WHATSAPP_REENGAGEMENT_CHANNEL_INVALID'
+        });
+      }
+
+      // V6.35.36 — Chronométrage systématique de CHAQUE envoi commercial (pas
+      // seulement les lents), pour pouvoir vérifier la vitesse d'envoi
+      // directement dans les logs, sans avoir besoin des outils développeur
+      // du navigateur (pratique notamment depuis un téléphone).
+      const __sendStart = Date.now();
       const result =
         await commercialSendHandler({
           phone,
@@ -13374,6 +14591,7 @@ router.post(
           externalContact,
           text,
           question,
+          sendMode,
           actor: {
             id:
               safeString(
@@ -13393,6 +14611,7 @@ router.post(
               )
           }
         });
+      console.log(`⏱️ Envoi commercial (${channel}) terminé en ${Date.now() - __sendStart}ms`);
 
       // V6.33.1 — une réponse envoyée avec succès remet aussi le petit badge
       // non-lu de la ligne client à zéro, de façon persistante.
@@ -13592,6 +14811,72 @@ router.post(
             error.message ||
             'Impossible d’envoyer le fichier au client.'
         });
+    }
+  }
+);
+
+router.post(
+  '/api/commercial/send-sticker',
+  requireAuth,
+  async (req, res) => {
+    try {
+      if (!commercialSendHandler) {
+        return res
+          .status(503)
+          .json({
+            error: 'L’envoi commercial omnicanal n’est pas encore connecté.'
+          });
+      }
+
+      const contact = safeString(req.body?.contact || req.body?.phone);
+      // V6.36.8 — Stickers WhatsApp uniquement pour l'instant.
+      const channel = 'whatsapp';
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
+
+      const externalContact =
+        safeString(req.body?.externalContact) || normalizePhone(contact);
+      const phone = normalizePhone(externalContact);
+      const stickerId = safeString(req.body?.stickerId);
+
+      if (!phone) {
+        return res.status(400).json({ error: 'Numéro client obligatoire.' });
+      }
+      if (!stickerId) {
+        return res.status(400).json({ error: 'Sticker non sélectionné.' });
+      }
+
+      const result = await commercialSendHandler({
+        phone,
+        contact,
+        channel,
+        externalContact,
+        stickerId,
+        actor: {
+          id: safeString(req.user?.id),
+          name: safeString(req.user?.name),
+          email: safeString(req.user?.email),
+          role: safeString(req.user?.role)
+        }
+      });
+
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        unreadCount: 0,
+        lastUnreadMessageId: '',
+        lastReadAt: new Date().toISOString()
+      }));
+      markNotificationsReadForContact(contact, req.user);
+
+      return res.json({
+        success: true,
+        ...(result && typeof result === 'object' ? result : {})
+      });
+    } catch (error) {
+      console.error('❌ Envoi sticker commercial :', error);
+      return res.status(500).json({
+        error: error.message || 'Impossible d’envoyer le sticker au client.'
+      });
     }
   }
 );
@@ -14534,7 +15819,35 @@ function addConversationMessageIdsToSet(entry, target) {
   }
 }
 
+// V6.35.24 — Cache mémoire pour collectKnownConversationMessageIdsMemorySafe.
+// Cette fonction scanne l'historique Facebook/Instagram + les événements +
+// le journal complet (~35 Mo cumulés) à chaque appel, pour savoir quels
+// messages sont déjà connus. Elle est appelée toutes les 60 secondes par
+// le rattrapage temps réel Facebook, MÊME quand aucun fichier n'a changé
+// depuis le dernier passage — diagnostiqué en production comme cause
+// majeure des pics EVENTLOOP-LAG répétés (500ms-2s) bloquant tout le
+// serveur, y compris l'envoi de messages, environ toutes les minutes.
+// (variable déclarée tout en haut du fichier, voir juste après DATA_DIR)
+
+function knownMessageIdsCombinedStamp(includeInstagram, includeFacebook) {
+  const parts = [];
+  if (includeInstagram) parts.push(fileChangeStamp(INSTAGRAM_HISTORY_PATH));
+  if (includeFacebook) parts.push(fileChangeStamp(FACEBOOK_HISTORY_PATH));
+  parts.push(conversationEventsDirectoryStamp());
+  parts.push(fileChangeStamp(CONVERSATIONS_LOG_PATH));
+  return parts.join('||');
+}
+
 function collectKnownConversationMessageIdsMemorySafe({ includeInstagram = true, includeFacebook = true } = {}) {
+  const cacheKey = `${includeInstagram}:${includeFacebook}`;
+  const stamp = knownMessageIdsCombinedStamp(includeInstagram, includeFacebook);
+  const cached = knownMessageIdsCache.get(cacheKey);
+  if (cached && cached.stamp === stamp) {
+    // Copie du Set : coût négligeable comparé à rescanner ~35 Mo de fichiers,
+    // et protège le cache partagé d'une mutation accidentelle.
+    return new Set(cached.ids);
+  }
+
   const cutoffAt = historyImportCutoffIso();
   const ids = new Set();
   const add = entry => {
@@ -14549,16 +15862,62 @@ function collectKnownConversationMessageIdsMemorySafe({ includeInstagram = true,
     forEachJsonlRecordSync(path.join(CONVERSATION_EVENTS_DIR, name), add);
   }
   forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, add);
-  return ids;
+
+  knownMessageIdsCache.set(cacheKey, { stamp, ids });
+  return new Set(ids);
 }
 
+// V6.36.98 (patch session) - Version ASYNC de collectKnownConversationMessageIdsMemorySafe.
+// Cette fonction scannait ~35 Mo de fichiers de facon SYNCHRONE et
+// BLOQUANTE, appelee toutes les 5 minutes par le job Facebook temps reel
+// (runFacebookRealtimeRecovery) et par runFacebookHistorySync. Diagnostique
+// comme cause probable de pics de latence WhatsApp de 4 a 7 secondes
+// (HTTPS-META HEADERS avec REUSED=yes, donc pas un probleme reseau).
+// Utilise forEachJsonArrayObjectAsync/forEachJsonlRecordAsync (deja
+// existantes, creees pour loadWhatsAppLog en V6.36.66) pour ceder
+// periodiquement la main a l'event loop pendant le scan.
+async function collectKnownConversationMessageIdsMemorySafeAsync({ includeInstagram = true, includeFacebook = true } = {}) {
+  const cacheKey = `${includeInstagram}:${includeFacebook}`;
+  const stamp = knownMessageIdsCombinedStamp(includeInstagram, includeFacebook);
+  const cached = knownMessageIdsCache.get(cacheKey);
+  if (cached && cached.stamp === stamp) {
+    return new Set(cached.ids);
+  }
+  const cutoffAt = historyImportCutoffIso();
+  const ids = new Set();
+  const add = entry => {
+    const time = safeString(entry?.time || entry?.event_time || entry?.meta_created_time || entry?.created_time || entry?.timestamp);
+    if (time && !historyTimeIsRecent(time, cutoffAt)) return;
+    addConversationMessageIdsToSet(entry, ids);
+  };
+  if (includeInstagram) await forEachJsonArrayObjectAsync(INSTAGRAM_HISTORY_PATH, add);
+  if (includeFacebook) await forEachJsonArrayObjectAsync(FACEBOOK_HISTORY_PATH, add);
+  for (const name of conversationEventFilesSince(cutoffAt)) {
+    await forEachJsonlRecordAsync(path.join(CONVERSATION_EVENTS_DIR, name), add);
+  }
+  await forEachJsonArrayObjectAsync(CONVERSATIONS_LOG_PATH, add);
+  knownMessageIdsCache.set(cacheKey, { stamp, ids });
+  return new Set(ids);
+}
+
+// V6.35.24 — Même principe de cache que ci-dessus, pour éviter de relire
+// facebook-history.json (5+ Mo) à chaque cycle de rattrapage temps réel
+// quand son contenu n'a pas changé depuis le dernier passage.
+// (variable déclarée tout en haut du fichier, voir juste après DATA_DIR)
+
 function loadConversationMapFromJsonArrayMemorySafe(filePath) {
+  const stamp = fileChangeStamp(filePath);
+  const cached = conversationMapFromJsonArrayCache.get(filePath);
+  if (cached && cached.stamp === stamp) {
+    return new Map(cached.map);
+  }
   const map = new Map();
   forEachJsonArrayObjectSync(filePath, entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
     map.set(conversationLogDedupeKey(entry), entry);
   });
-  return map;
+  conversationMapFromJsonArrayCache.set(filePath, { stamp, map });
+  return new Map(map);
 }
 
 function writeJsonArrayIterableAtomic(filePath, iterable) {
@@ -14582,13 +15941,8 @@ function writeJsonArrayIterableAtomic(filePath, iterable) {
   fs.renameSync(tempPath, filePath);
 }
 
-let combinedConversationLogCache = {
-  liveStamp: 'v6.35-memory-safe',
-  historyStamp: '',
-  facebookHistoryStamp: '',
-  persistentStamp: '',
-  entries: []
-};
+// (combinedConversationLogCache déclaré tout en haut du fichier, voir juste
+// après DATA_DIR)
 
 function fileChangeStamp(filePath) {
   try {
@@ -14604,8 +15958,176 @@ function fileChangeStamp(filePath) {
 // tous les JSONL puis conversation-log.json dans quatre grands tableaux.
 // Chaque source est parcourue séquentiellement et fusionnée directement dans
 // une seule Map dédupliquée, limitée à la fenêtre de rétention.
-function loadWhatsAppLog() {
-  const cutoffAt = historyImportCutoffIso();
+// V6.36.74 — Invalide le cache de fusion de l'Inbox (loadWhatsAppLog),
+// à appeler juste après un envoi commercial pour garantir que le message
+// qu'on vient d'envoyer apparaît immédiatement, sans attendre la fin du
+// throttle de 120s (V6.36.65 à .68). Sans ça, le commercial ne voyait pas
+// son propre message dans l'écran de conversation tant que le throttle
+// n'avait pas expiré, malgré un envoi et une écriture disque réussis en
+// moins d'une seconde. Diagnostiqué en production le 30/08.
+function invalidateWhatsAppLogCache(freshEntry = null) {
+  // V6.36.99 — Un envoi commercial ne doit plus jeter les milliers
+  // d'entrées déjà fusionnées : on injecte seulement le nouveau message.
+  if (
+    freshEntry &&
+    typeof freshEntry === 'object' &&
+    Array.isArray(combinedConversationLogCache.entries) &&
+    combinedConversationLogCache.entries.length > 0
+  ) {
+    const entries = [...combinedConversationLogCache.entries];
+    const key = conversationLogDedupeKey(freshEntry);
+    const index = entries.findIndex(item => conversationLogDedupeKey(item) === key);
+    if (index >= 0) {
+      entries[index] = mergeConversationLogEntries(entries[index], freshEntry);
+    } else {
+      entries.push(freshEntry);
+    }
+    if (index >= 0 || conversationEntryComparator(entries[entries.length - 2], freshEntry) > 0) entries.sort(conversationEntryComparator);
+    combinedConversationLogCache = {
+      ...combinedConversationLogCache,
+      liveStamp: fileChangeStamp(CONVERSATIONS_LOG_PATH),
+      entries
+    };
+    return;
+  }
+  combinedConversationLogCache = {
+    liveStamp: '',
+    historyStamp: '',
+    facebookHistoryStamp: '',
+    persistentStamp: '',
+    entries: []
+  };
+}
+
+// V6.36.95 — Lecture de l'historique COMPLET d'UN SEUL contact, sans
+// limite de temps (contrairement à loadWhatsAppLog(), limitée à 12h pour
+// la vitesse de la liste). Reste rapide car on ne traite qu'un contact,
+// pas toute la base. Corrige un vrai problème métier signalé le 03/09 :
+// un client qui revient après plus de 48h ne voyait plus l'historique de
+// ses échanges précédents avec le commercial dans la conversation ouverte
+// (la fenêtre courte, pensée pour la LISTE, s'appliquait aussi par erreur
+// à l'affichage du DÉTAIL d'une conversation précise).
+async function loadWhatsAppLogForContact(targetContact) {
+  const merged = new Map();
+  const cutoffAt = new Date(0).toISOString();
+  const mergeIfMatching = entry => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    if (safeString(entry?.contact) !== targetContact) return;
+    const key = conversationLogDedupeKey(entry);
+    merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
+  };
+
+  await forEachJsonArrayObjectAsync(INSTAGRAM_HISTORY_PATH, mergeIfMatching);
+  await forEachJsonArrayObjectAsync(FACEBOOK_HISTORY_PATH, mergeIfMatching);
+  for (const name of conversationEventFilesSince(cutoffAt)) {
+    await forEachJsonlRecordAsync(path.join(CONVERSATION_EVENTS_DIR, name), mergeIfMatching);
+  }
+  await forEachJsonArrayObjectAsync(CONVERSATIONS_LOG_PATH, mergeIfMatching);
+
+  const entries = [];
+  for (const entry of merged.values()) {
+    const clean = applyConversationPurgeTombstones(entry);
+    if (clean) entries.push(clean);
+  }
+  entries.sort(conversationEntryComparator);
+  return entries;
+}
+
+async function loadWhatsAppLog() {
+  // V6.36.78 — Fenêtre réduite à 48h UNIQUEMENT pour cette fonction
+  // (l'affichage de la conversation dans l'admin), au lieu des 90 jours
+  // de historyImportCutoffIso() utilisée ailleurs (42 usages, trop risqué
+  // à modifier globalement). La clôture automatique des conversations se
+  // fait déjà à 15 minutes d'inactivité (V6.35.x) : un historique de 90
+  // jours n'apporte rien à l'affichage courant d'une conversation active,
+  // mais coûte la quasi-totalité du temps de fusion (~11000 événements).
+  // Diagnostiqué en production le 30/08 : pipeline d'envoi rapide (<1s),
+  // mais rechargement de la conversation lent (5-15s) à cause du volume
+  // traité par cette fusion.
+  // Patch session (29/09), ROLLBACK (05/10) - L'historique illimite
+  // (new Date(0)) a provoque un CPU bloque a 80-110% en continu, avec
+  // conversation-state.json a 121 Mo. Retour a une fenetre large de
+  // 90 jours, qui couvre le besoin reel sans scanner tout l'historique
+  // a chaque ouverture de conversation.
+  const cutoffAt = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  // V6.35.25 — Cette fonction fusionnait INTÉGRALEMENT, À CHAQUE APPEL,
+  // tout l'historique Instagram/Facebook + événements + journal courant
+  // (potentiellement 30+ Mo), sans AUCUN cache, malgré la structure
+  // combinedConversationLogCache déjà déclarée juste au-dessus mais jamais
+  // réellement utilisée ici. Appelée à quasiment chaque requête API touchant
+  // une conversation (liste, détail...) — bien plus fréquemment que le
+  // rattrapage Facebook (60s) déjà corrigé en V6.35.24. Diagnostiqué en
+  // production comme cause majeure des pics EVENTLOOP-LAG persistants.
+  // Le cache est aussi invalidé toutes les 5 minutes (cutoffBucket), pour
+  // que la fenêtre glissante de rétention (48h) reste correcte même si
+  // aucun fichier ne change entre-temps.
+  // V6.36.95 — Ordre des verifications INVERSE. Bug identifie le 09/09 :
+  // le throttle anti-EVENTLOOP-LAG (V6.36.65, 120s) etait verifie APRES
+  // les stamps precis (historyStamp/persistentStamp/liveStamp), or
+  // liveStamp change a CHAQUE nouveau message WhatsApp -- avec le trafic
+  // reel, un nouveau message arrive presque toujours avant les 120s,
+  // donc la verification de stamp echouait en premier et cassait le
+  // throttle avant qu'il ait la moindre chance de s'appliquer. Mesure en
+  // production : 1537 reconstructions completes sur 2000 lignes de log,
+  // RSS memoire jusqu'a 1.6 Go. Le throttle doit primer : on accepte des
+  // entrees vieilles de quelques secondes plutot que de refaire la fusion
+  // complete (10000+ evenements, ~2-2.5s bloquant) a chaque message.
+  const __lastFullRebuildAt = combinedConversationLogCache.__rebuiltAt || 0;
+  const __cacheHasEntries = Array.isArray(combinedConversationLogCache.entries) &&
+    combinedConversationLogCache.entries.length > 0;
+  // Patch session (05/10) - Plancher de reconstruction passe de 120s a
+  // 5 min : pendant un batch Facebook actif (reecriture frequente de
+  // facebook-history.json), le plancher de 120s laissait la fusion
+  // complete (24+ Mo Facebook + 90j d'evenements + journal) se relancer
+  // toutes les ~2 min en continu, bloquant le CPU a 80-110% de facon
+  // soutenue. Diagnostique le 05/10 : "Inbox memoire" se redeclenchait
+  // en boucle rapprochee pendant la recuperation temps reel Facebook.
+  if (__cacheHasEntries && Date.now() - __lastFullRebuildAt < 300000) {
+    return combinedConversationLogCache.entries;
+  }
+
+  const cutoffBucket = Math.floor(Date.now() / (5 * 60 * 1000));
+  const historyStamp = fileChangeStamp(INSTAGRAM_HISTORY_PATH);
+  const facebookHistoryStamp = fileChangeStamp(FACEBOOK_HISTORY_PATH);
+  const persistentStamp = conversationEventsDirectoryStamp();
+  const liveStamp = fileChangeStamp(CONVERSATIONS_LOG_PATH);
+  if (
+    combinedConversationLogCache.cutoffBucket === cutoffBucket &&
+    combinedConversationLogCache.historyStamp === historyStamp &&
+    combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
+    combinedConversationLogCache.persistentStamp === persistentStamp &&
+    combinedConversationLogCache.liveStamp === liveStamp
+  ) {
+    return combinedConversationLogCache.entries;
+  }
+  // V6.36.87 — Verrou anti-concurrence : si plusieurs appels arrivent en
+  // même temps (plusieurs commerciaux, webhooks simultanés), sans ce
+  // verrou ils passaient TOUS les vérifications ci-dessus avant qu'aucun
+  // n'ait fini d'écrire le nouveau cache, et lançaient chacun leur propre
+  // fusion complète en parallèle. Diagnostiqué en production le 01/09 :
+  // CPU à 42.9% en continu, plusieurs fusions consécutives avec un nombre
+  // d'événements identique dans les logs (preuve de fusions simultanées
+  // sur le même état). Les appels suivants attendent maintenant le
+  // résultat de la fusion déjà en cours au lieu d'en relancer une.
+  if (loadWhatsAppLogInFlight) {
+    return loadWhatsAppLogInFlight;
+  }
+
+  loadWhatsAppLogInFlight = (async () => {
+    try {
+      return await loadWhatsAppLogUncached(cutoffAt, cutoffBucket, historyStamp, facebookHistoryStamp, persistentStamp, liveStamp);
+    } finally {
+      loadWhatsAppLogInFlight = null;
+    }
+  })();
+
+  return loadWhatsAppLogInFlight;
+}
+
+let loadWhatsAppLogInFlight = null;
+
+async function loadWhatsAppLogUncached(cutoffAt, cutoffBucket, historyStamp, facebookHistoryStamp, persistentStamp, liveStamp) {
   const merged = new Map();
   const mergeIfRecent = entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
@@ -14615,19 +16137,20 @@ function loadWhatsAppLog() {
     merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
   };
 
-  // Les fichiers historiques sont des tableaux JSON potentiellement gros :
-  // lecture objet par objet, jamais JSON.parse du fichier complet.
-  forEachJsonArrayObjectSync(INSTAGRAM_HISTORY_PATH, mergeIfRecent);
-  forEachJsonArrayObjectSync(FACEBOOK_HISTORY_PATH, mergeIfRecent);
+  // V6.36.66 — Versions ASYNC (cession d'event loop périodique) au lieu
+  // des versions Sync, pour ne plus jamais bloquer un envoi WhatsApp en
+  // cours pendant la fusion complète de l'historique.
+  await forEachJsonArrayObjectAsync(INSTAGRAM_HISTORY_PATH, mergeIfRecent);
+  await forEachJsonArrayObjectAsync(FACEBOOK_HISTORY_PATH, mergeIfRecent);
 
   // Les événements persistants sont déjà partitionnés par jour.
   for (const name of conversationEventFilesSince(cutoffAt)) {
-    forEachJsonlRecordSync(path.join(CONVERSATION_EVENTS_DIR, name), mergeIfRecent);
+    await forEachJsonlRecordAsync(path.join(CONVERSATION_EVENTS_DIR, name), mergeIfRecent);
   }
 
   // Le cache live est plafonné à 5000 entrées, mais on le parcourt lui aussi
   // en streaming pour éviter un pic inutile au moment où l'Inbox s'ouvre.
-  forEachJsonArrayObjectSync(CONVERSATIONS_LOG_PATH, mergeIfRecent);
+  await forEachJsonArrayObjectAsync(CONVERSATIONS_LOG_PATH, mergeIfRecent);
 
   const entries = [];
   for (const entry of merged.values()) {
@@ -14641,16 +16164,55 @@ function loadWhatsAppLog() {
   if (rssMb > 350) {
     console.warn(`⚠️ Inbox mémoire: RSS ${rssMb} MB | ${entries.length} événement(s) fusionné(s)`);
   }
-  return entries;
+
+  combinedConversationLogCache = {
+    liveStamp,
+    historyStamp,
+    facebookHistoryStamp,
+    persistentStamp,
+    cutoffBucket,
+    entries,
+    __rebuiltAt: Date.now()
+  };
+
+  return [...entries];
+}
+
+// V6.35.23 — Cache mémoire pour conversation-state.json. Ce fichier a
+// atteint 15+ Mo (1000+ conversations) et était relu + re-parsé
+// INTÉGRALEMENT ET DE FAÇON BLOQUANTE à quasiment chaque webhook et chaque
+// requête API touchant une conversation. Diagnostiqué en production via
+// des pics "EVENTLOOP-LAG" de 500ms à 2s, bloquant tout le serveur pendant
+// ce temps (y compris l'envoi de messages, d'où la lenteur constatée).
+// fs.statSync (taille + date de modif) est quasi instantané, contrairement
+// à un JSON.parse complet du fichier : on ne relit vraiment le fichier que
+// si son contenu a changé depuis le dernier chargement.
+// (variables déclarées tout en haut du fichier, voir juste après DATA_DIR)
+
+function readConversationStatesAdminCached() {
+  if (conversationStatesCacheAdmin) return conversationStatesCacheAdmin;
+  loadConversationStatesAdmin();
+  return conversationStatesCacheAdmin || {};
 }
 
 function loadConversationStatesAdmin() {
   try {
     if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return {};
+    const stamp = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
+    if (conversationStatesCacheAdmin && stamp === conversationStatesCacheStampAdmin) {
+      // Copie superficielle : rapide (proportionnelle au nombre de
+      // conversations, pas à la taille du fichier), et protège le cache
+      // partagé contre une mutation accidentelle par un appelant qui ne
+      // sauvegarderait pas ensuite.
+      return { ...conversationStatesCacheAdmin };
+    }
     const parsed = JSON.parse(
       fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
     );
-    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    conversationStatesCacheAdmin = result;
+    conversationStatesCacheStampAdmin = stamp;
+    return { ...result };
   } catch (error) {
     console.warn('⚠️ Lecture conversation-state.json :', error.message);
     return {};
@@ -14658,16 +16220,91 @@ function loadConversationStatesAdmin() {
 }
 
 
+// V6.36.62 — Écriture différée et regroupée : conversation-state.json a
+// dépassé 24 Mo / 9700+ conversations, et fs.writeFileSync (bloquant)
+// prenait 600ms à plus d'1s à chaque appel, mesuré directement sur les
+// phases d'envoi WhatsApp (updateConversationState). Réécrire le fichier
+// entier à CHAQUE message devient de plus en plus coûteux avec le volume,
+// peu importe le format JSON. Au lieu d'écrire immédiatement, on met à
+// jour le cache mémoire tout de suite (rapide, non-bloquant pour le
+// commercial) et on programme une seule écriture disque groupée
+// STATE_WRITE_DEBOUNCE_MS après la dernière modification — plusieurs
+// messages rapprochés ne déclenchent qu'une seule écriture physique.
+const STATE_WRITE_DEBOUNCE_MS = 8000;
+let pendingStateWriteTimer = null;
+let pendingStateToWrite = null;
+
+function flushConversationStatesWrite() {
+  if (!pendingStateToWrite) return;
+  const toWrite = pendingStateToWrite;
+  pendingStateToWrite = null;
+  pendingStateWriteTimer = null;
+  try {
+    writeJsonAtomic(CONVERSATION_STATE_PATH_ADMIN, toWrite);
+    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
+  } catch (error) {
+    console.error('❌ Écriture différée conversation-state.json :', error.message);
+  }
+
+  // V6.36.70 — Synchronisation SQLite à chaque flush groupé. Nécessaire
+  // car 40+ endroits du code (assigner, prioriser, terminer une
+  // conversation, etc.) modifient encore SEULEMENT le JSON via
+  // saveConversationStatesAdmin, sans jamais écrire dans SQLite —
+  // seul le chemin updateConversationState (envoi de message WhatsApp,
+  // V6.36.63) écrivait dans les deux. Sans cette synchronisation, un
+  // admin assignant une conversation risquait de voir son changement
+  // écrasé au message suivant, qui lisait SQLite en priorité (obsolète).
+  // On resynchronise TOUTE la table en une seule transaction groupée
+  // (rapide même sur des milliers de lignes), pas par conversation
+  // individuelle — le flush JSON étant déjà lui-même groupé/différé,
+  // ce coût supplémentaire reste rare et non-bloquant pour un commercial.
+  try {
+    const db = getSqliteDb();
+    if (db) {
+      const upsert = db.prepare(`
+        INSERT INTO conversation_states (contact, data, updated_at)
+        VALUES (@contact, @data, @updated_at)
+        ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+      `);
+      const now = Date.now();
+      const syncAll = db.transaction((entries) => {
+        for (const [contact, state] of entries) {
+          if (!contact) continue;
+          upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
+        }
+      });
+      syncAll(Object.entries(toWrite));
+    }
+  } catch (error) {
+    console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
+  }
+}
+
 function saveConversationStatesAdmin(states) {
-  writeJsonAtomic(
-    CONVERSATION_STATE_PATH_ADMIN,
+  const safeStates =
     states &&
     typeof states === 'object' &&
     !Array.isArray(states)
       ? states
-      : {}
-  );
+      : {};
+
+  // Le cache mémoire est mis à jour immédiatement : toute lecture
+  // ultérieure (même avant l'écriture disque réelle) voit déjà les bons
+  // états. Seule l'écriture physique sur disque est différée.
+  conversationStatesCacheAdmin = safeStates;
+  pendingStateToWrite = safeStates;
+
+  if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
+  pendingStateWriteTimer = setTimeout(flushConversationStatesWrite, STATE_WRITE_DEBOUNCE_MS);
+  if (typeof pendingStateWriteTimer.unref === 'function') pendingStateWriteTimer.unref();
 }
+
+// Sécurité : si le process s'arrête proprement (redémarrage pm2, déploiement),
+// on force une dernière écriture pour ne jamais perdre les derniers
+// changements restés en mémoire uniquement.
+process.on('SIGTERM', flushConversationStatesWrite);
+process.on('SIGINT', flushConversationStatesWrite);
+process.on('beforeExit', flushConversationStatesWrite);
 
 function updateConversationStateAdmin(
   contact,
@@ -16441,8 +18078,42 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
   }
 }
 
+// V6.35.26 — Coupe-circuit pour l'API Profil Facebook. Cette permission est
+// refusée par Meta pour TOUTE l'app (App Review en attente), donc chaque
+// nouvelle conversation continuait de retenter l'appel en pure perte —
+// jusqu'à déclencher un vrai rate-limit Meta ("(#4) Application request
+// limit reached"), constaté en production. Une fois l'échec par permission
+// ou par limite détecté, on arrête complètement d'essayer pendant 6h au
+// lieu de retenter à chaque conversation — ça se réactive automatiquement,
+// sans action requise, dès que l'App Review Meta aboutira.
+let facebookProfileApiBlockedUntil = 0;
+let facebookProfileApiBlockedLogged = false;
+const FACEBOOK_PROFILE_API_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+function facebookProfileApiShouldSkip() {
+  if (Date.now() >= facebookProfileApiBlockedUntil) {
+    facebookProfileApiBlockedLogged = false;
+    return false;
+  }
+  if (!facebookProfileApiBlockedLogged) {
+    facebookProfileApiBlockedLogged = true;
+    console.warn(
+      `⏸️ API Profil Facebook mise en pause (permission Meta refusée ou limite atteinte) jusqu'à ${new Date(facebookProfileApiBlockedUntil).toISOString()}.`
+    );
+  }
+  return true;
+}
+
+function facebookProfileApiNoteFailure(message) {
+  const text = safeString(message);
+  if (/missing permissions|does not exist|request limit reached/i.test(text)) {
+    facebookProfileApiBlockedUntil = Date.now() + FACEBOOK_PROFILE_API_COOLDOWN_MS;
+  }
+}
+
 async function getFacebookHistoryProfile(customerId) {
   if (!customerId) return {};
+  if (facebookProfileApiShouldSkip()) return {};
 
   const fieldSets = [
     'first_name,last_name,name,profile_pic',
@@ -16470,6 +18141,7 @@ async function getFacebookHistoryProfile(customerId) {
       // deux jeux de champs n'a réussi (sinon on masquerait un simple champ
       // en trop refusé par une ancienne version de l'API).
       profileFetchError = error.message;
+      facebookProfileApiNoteFailure(error.message);
     }
   }
   if (!safeString(best?.name) && profileFetchError) {
@@ -16479,7 +18151,7 @@ async function getFacebookHistoryProfile(customerId) {
   // V6.35 : la User Profile API peut ne pas renvoyer profile_pic dans tous
   // les contextes. Le /picture edge est tenté comme filet de sécurité.
   let remotePicture = safeString(best?.profile_pic);
-  if (!remotePicture) {
+  if (!remotePicture && !facebookProfileApiShouldSkip()) {
     try {
       const pictureData = await facebookGraphGet(
         `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(customerId)}/picture` +
@@ -16490,6 +18162,7 @@ async function getFacebookHistoryProfile(customerId) {
       }
     } catch (error) {
       console.warn(`⚠️ Photo profil Facebook ${safeString(customerId)} :`, error.message);
+      facebookProfileApiNoteFailure(error.message);
     }
   }
 
@@ -16598,7 +18271,7 @@ async function runFacebookHistorySync() {
     }
 
     // V6.35 : ne plus créer 3 gros tableaux simultanés pendant l'import.
-    const knownMessageIds = collectKnownConversationMessageIdsMemorySafe({ includeInstagram:false });
+    const knownMessageIds = await collectKnownConversationMessageIdsMemorySafeAsync({ includeInstagram:false });
     const historyByKey = loadConversationMapFromJsonArrayMemorySafe(FACEBOOK_HISTORY_PATH);
     const liveByKey = loadConversationMapFromJsonArrayMemorySafe(CONVERSATIONS_LOG_PATH);
 
@@ -16839,9 +18512,14 @@ const FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES = Math.max(
   3,
   Math.min(40, Number(process.env.FACEBOOK_REALTIME_MAX_CONVERSATION_PAGES || 20) || 20)
 );
+// V6.36.75 — Fréquence réduite de 60s à 5 min, pour libérer des
+// ressources CPU/event-loop au profit des envois WhatsApp et de l'IA.
+// Ce rattrapage reste un filet de sécurité (les webhooks Facebook en
+// temps réel restent le canal principal) — 5 min de délai supplémentaire
+// sur le pire cas n'a pas d'impact commercial critique.
 const FACEBOOK_REALTIME_POLL_MS = Math.max(
   30000,
-  Math.min(10 * 60 * 1000, Number(process.env.FACEBOOK_REALTIME_POLL_MS || 60000) || 60000)
+  Math.min(10 * 60 * 1000, Number(process.env.FACEBOOK_REALTIME_POLL_MS || (5 * 60 * 1000)) || (5 * 60 * 1000))
 );
 const FACEBOOK_REALTIME_MIN_GAP_MS = 25000;
 
@@ -17012,6 +18690,14 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
         result.error = `Réabonnement webhook messages : ${error.message}`;
       }
     }
+    if (!result.fields.includes('feed')) {
+      try {
+        await subscribeFields([...result.fields, 'feed']);
+        result.fields = await readFields();
+      } catch (feedError) {
+        console.debug('Facebook webhook feed:', feedError.message);
+      }
+    }
   } catch (error) {
     result.error = `Lecture abonnement webhook : ${error.message}`;
   }
@@ -17169,7 +18855,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
     }
 
     const realtimeWriteToLive = facebookHistorySyncJob.running === true;
-    const knownMessageIds = collectKnownConversationMessageIdsMemorySafe({ includeInstagram:false });
+    const knownMessageIds = await collectKnownConversationMessageIdsMemorySafeAsync({ includeInstagram:false });
     const historyByKey = realtimeWriteToLive
       ? new Map()
       : loadConversationMapFromJsonArrayMemorySafe(FACEBOOK_HISTORY_PATH);
@@ -17371,9 +19057,11 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         const lastCustomerMs = Date.parse(safeString(merged.lastCustomerAt));
         const lastReadMs = Date.parse(safeString(merged.lastReadAt));
         const lastAnsweredMs = Date.parse(safeString(merged.lastAnsweredAt));
+        const lastBusinessMs = Date.parse(safeString(merged.lastBusinessAt));
         const acknowledgedMs = Math.max(
           Number.isFinite(lastReadMs) ? lastReadMs : 0,
-          Number.isFinite(lastAnsweredMs) ? lastAnsweredMs : 0
+          Number.isFinite(lastAnsweredMs) ? lastAnsweredMs : 0,
+          Number.isFinite(lastBusinessMs) ? lastBusinessMs : 0
         );
 
         if (Number.isFinite(lastCustomerMs) && acknowledgedMs >= lastCustomerMs) {
@@ -17389,14 +19077,24 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         freshestStates[contact] = merged;
       }
       saveConversationStatesAdmin(freshestStates);
-      // Forcer la reconstruction du cache combiné au prochain appel Inbox.
-      combinedConversationLogCache = {
-        liveStamp: '',
-        historyStamp: '',
-        facebookHistoryStamp: '',
-        persistentStamp: '',
-        entries: []
-      };
+      // PERFORMANCE — ne plus détruire le cache Inbox après le rattrapage
+      // Facebook. Le fichier facebook-history.json a déjà été mis à jour.
+      // loadWhatsAppLog() reconstruira naturellement son cache au plus tard
+      // à l'expiration de son throttle de 5 minutes.
+      //
+      // Avant : entries=[] provoquait une reconstruction complète au prochain
+      // appel /api/conversations, avec des dizaines de milliers d'événements.
+      // Cela générait de fortes allocations mémoire et des pics CPU.
+      //
+      // Le webhook reste la voie temps réel principale ; ce rattrapage est
+      // uniquement un filet de sécurité.
+      if (Array.isArray(combinedConversationLogCache.entries) &&
+          combinedConversationLogCache.entries.length > 0) {
+        // Ne pas modifier __rebuiltAt : le rebuild normal de 5 minutes
+        // reste donc garanti.
+        combinedConversationLogCache.facebookHistoryStamp =
+          combinedConversationLogCache.facebookHistoryStamp || '';
+      }
     }
 
     facebookRealtimeSyncJob.running = false;
@@ -17453,9 +19151,16 @@ router.post('/api/facebook-realtime/sync', requireAuth, async (req, res) => {
   return res.status(result?.error ? 502 : 200).json(result);
 });
 
-// Le serveur Railway effectue aussi le rattrapage même si aucun navigateur
-// n'est ouvert. Le timer est "unref" pour ne pas empêcher l'arrêt propre Node.
-if (FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
+// V6.36.94 — Réactivé (02/09) : testé désactivé pendant ~30 min, CPU
+// resté à 84% (contre 83-88% avant) — confirmé, Facebook N'EST PAS la
+// cause principale du CPU élevé. Vrai coupable identifié et corrigé
+// séparément : bug cloudEntry (V6.36.93). Fréquence conservée à 5 min
+// (V6.36.91) pour rester raisonnable.
+// Patch session (13/10) - job serveur Facebook temps reel desactive
+// (application WhatsApp uniquement). C'etait la VRAIE source des
+// messages Facebook continuant d'arriver malgre la suppression des
+// donnees et le blocage du webhook.
+if (false && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
   const initialFacebookRealtimeTimer = setTimeout(() => {
     runFacebookRealtimeRecovery({ force: true }).catch(() => {});
   }, 12000);
@@ -17469,6 +19174,55 @@ if (FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
   if (typeof facebookRealtimeTimer.unref === 'function') {
     facebookRealtimeTimer.unref();
   }
+}
+// V6.33.2 — Synchronisation périodique des commentaires Facebook/Instagram,
+// toutes les 15 minutes, sur le modèle du rattrapage messages ci-dessus.
+const SOCIAL_COMMENTS_POLL_MS = 15 * 60 * 1000;
+// Patch session (13/10) - job serveur commentaires Facebook/Instagram
+// desactive (application WhatsApp uniquement).
+if (false && FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) {
+  const initialSocialCommentsTimer = setTimeout(() => {
+    runSocialCommentsSync('all').catch(() => {});
+  }, 20000);
+  if (typeof initialSocialCommentsTimer.unref === 'function') {
+    initialSocialCommentsTimer.unref();
+  }
+  const socialCommentsTimer = setInterval(() => {
+    runSocialCommentsSync('all').catch(() => {});
+  }, SOCIAL_COMMENTS_POLL_MS);
+  if (typeof socialCommentsTimer.unref === 'function') {
+    socialCommentsTimer.unref();
+  }
+}
+// V6.36.12 — Pré-chauffage périodique du fichier journalier d'activité
+// équipe : team-activity.jsonl est réécrit à chaque action commerciale, ce
+// qui invalidait le cache de migration et forçait un rescan complet (10-14s,
+// cause de 502 sur "Rapport"/calendrier). On régénère ici le fichier du jour
+// en tâche de fond, pour que les clics utilisateurs restent quasi instantanés.
+const TEAM_ACTIVITY_REFRESH_MS = 5 * 60 * 1000;
+const initialTeamActivityTimer = setTimeout(() => {
+  try {
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const today = dateKeyInTimezone(new Date(), timezone);
+    ensureLegacyTeamActivityDay(today);
+  } catch (error) {
+    console.warn('⚠️ Pré-chauffage activité équipe :', error.message);
+  }
+}, 25000);
+if (typeof initialTeamActivityTimer.unref === 'function') {
+  initialTeamActivityTimer.unref();
+}
+const teamActivityRefreshTimer = setInterval(() => {
+  try {
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const today = dateKeyInTimezone(new Date(), timezone);
+    ensureLegacyTeamActivityDay(today);
+  } catch (error) {
+    console.warn('⚠️ Pré-chauffage activité équipe :', error.message);
+  }
+}, TEAM_ACTIVITY_REFRESH_MS);
+if (typeof teamActivityRefreshTimer.unref === 'function') {
+  teamActivityRefreshTimer.unref();
 }
 
 router.get('/api/facebook-history/status', requireAuth, (req, res) => {
@@ -19030,7 +20784,7 @@ function conversationEntryNeedsDirection(entry) {
 // On privilégie l'ordre réel des événements du journal. Un ancien lastCustomerAt
 // importé ne doit plus remettre une discussion en rouge si le dernier échange
 // visible est déjà une réponse MONDECO / Meta / IA.
-function conversationDirectionalEvidence(entries = [], state = {}) {
+function conversationDirectionalEvidence(entries = [], state = {}, entriesAlreadySorted = false) {
   let latestInboundMs = 0;
   let latestInboundIso = '';
   let latestOutboundMs = 0;
@@ -19038,7 +20792,7 @@ function conversationDirectionalEvidence(entries = [], state = {}) {
   let latestHumanMs = 0;
   let latestHumanIso = '';
 
-  const ordered = [...(Array.isArray(entries) ? entries : [])].sort(conversationEntryComparator);
+  const ordered = entriesAlreadySorted ? (Array.isArray(entries) ? entries : []) : [...(Array.isArray(entries) ? entries : [])].sort(conversationEntryComparator);
   for (const entry of ordered) {
     let ms = normalizedConversationTime(entry);
     if (!Number.isFinite(ms) || ms <= 0) continue;
@@ -19111,9 +20865,9 @@ function conversationDirectionalEvidence(entries = [], state = {}) {
   };
 }
 
-function conversationNeedsReplyFromEntries(entries = [], state = {}) {
+function conversationNeedsReplyFromEntries(entries = [], state = {}, entriesAlreadySorted = false) {
   if (state?.resolved === true) return false;
-  return conversationDirectionalEvidence(entries, state).pending;
+  return conversationDirectionalEvidence(entries, state, entriesAlreadySorted).pending;
 }
 
 function conversationEntryIsBusinessReply(entry) {
@@ -19147,15 +20901,10 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
   const nowMs = Date.now();
   // V6.33.1 : le recalcul est léger et doit corriger rapidement l'écran après
   // une synchro Meta. 1,5 s évite les réécritures excessives tout en restant instantané.
-  if (nowMs - lastAnsweredConversationReconcileAt < 1500) return states;
+  if (nowMs - lastAnsweredConversationReconcileAt < 15000) return states;
   lastAnsweredConversationReconcileAt = nowMs;
 
-  const byContact = {};
-  for (const entry of Array.isArray(log) ? log : []) {
-    const contact = safeString(entry?.contact);
-    if (!contact) continue;
-    (byContact[contact] ||= []).push(entry);
-  }
+  const byContact = conversationEntriesGroupedForList(log);
 
   let changed = false;
   for (const [contact, rawEntries] of Object.entries(byContact)) {
@@ -19165,10 +20914,8 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
       : contact.startsWith('facebook:')
         ? 'facebook'
         : safeString(current?.channel).toLowerCase() || 'whatsapp';
-    const entries = channel === 'instagram'
-      ? normalizeInstagramThreadEntries(rawEntries)
-      : [...rawEntries].sort(conversationEntryComparator);
-    const evidence = conversationDirectionalEvidence(entries, current);
+    const entries = rawEntries;
+    const evidence = conversationDirectionalEvidence(entries, current, true);
 
     // Aucun message client prouvé : ne pas toucher à l'état métier.
     if (!evidence.latestInboundMs) continue;
@@ -19242,8 +20989,15 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
   return states;
 }
 
+// Patch session (05/10) - Cache court (4s) ajoute car cette fonction scanne toutes les conversations actives (40000+) a chaque appel ; elle est appelee par GET /api/notifications polle toutes les 5s par chaque onglet admin ouvert, identifie via profiling CPU (--prof) comme source principale de charge continue.
+let fastPendingStatusCache = null;
+let fastPendingStatusCacheAt = 0;
+const FAST_PENDING_STATUS_CACHE_MS = 30000;
 function fastPendingMessageStatusFromStates() {
-  const states = loadConversationStatesAdmin();
+  if (fastPendingStatusCache && (Date.now() - fastPendingStatusCacheAt) < FAST_PENDING_STATUS_CACHE_MS) {
+    return fastPendingStatusCache;
+  }
+  const states = readConversationStatesAdminCached();
   const cutoffAt = historyImportCutoffIso();
   const result = new Map();
 
@@ -19281,6 +21035,8 @@ function fastPendingMessageStatusFromStates() {
       lastTime: lastCustomerAt
     });
   }
+  fastPendingStatusCache = result;
+  fastPendingStatusCacheAt = Date.now();
   return result;
 }
 
@@ -19360,10 +21116,10 @@ router.get('/api/interactions/pending-counts', requireAuth, (req,res) => {
 // V6.33.1 — réparation explicite des anciens états importés. Appelé une fois
 // après ouverture de l'interface afin que les badges historiques 1/2/3/4
 // disparaissent immédiatement si la discussion a déjà une réponse postérieure.
-router.post('/api/interactions/reconcile', requireAuth, (req,res) => {
+router.post('/api/interactions/reconcile', requireAuth, async (req,res) => {
   try {
     lastAnsweredConversationReconcileAt = 0;
-    const log = loadWhatsAppLog();
+    const log = await loadWhatsAppLog();
     reconcileAnsweredConversationStates(log, loadConversationStatesAdmin());
     const counts = pendingInteractionCountsForUser(req.user, log);
     return res.json({ success:true, counts, reconciledAt:new Date().toISOString() });
@@ -19373,36 +21129,157 @@ router.post('/api/interactions/reconcile', requireAuth, (req,res) => {
   }
 });
 
-router.get('/api/conversations', requireAuth, (req, res) => {
+
+async function loadArchivedConversationList(user) {
+  const cutoffMs = Date.parse(historyImportCutoffIso());
+  const cutoffDay = Number.isFinite(cutoffMs)
+    ? new Date(cutoffMs).toISOString().slice(0,10)
+    : '';
+  const states = loadConversationStatesAdmin();
+  const latest = new Map();
+  const files = [];
+
+  const addFile = (filePath,name) => {
+    const m=/^conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(name);
+    if(m && (!cutoffDay || m[1] <= cutoffDay)) files.push(filePath);
+  };
+
   try {
-    const log = loadWhatsAppLog();
-    const states = reconcileAnsweredConversationStates(log, loadConversationStatesAdmin());
+    for(const e of fs.readdirSync(CONVERSATION_EVENTS_DIR,{withFileTypes:true}))
+      if(e.isFile()) addFile(path.join(CONVERSATION_EVENTS_DIR,e.name),e.name);
+  } catch {}
 
-    const byContact = {};
+  const visit = dir => {
+    if(!fs.existsSync(dir)) return;
+    for(const e of fs.readdirSync(dir,{withFileTypes:true})){
+      const f=path.join(dir,e.name);
+      if(e.isDirectory()) visit(f);
+      else if(e.isFile()) addFile(f,e.name);
+    }
+  };
+  visit(path.join(DATA_DIR,'conversation-archive-recovered'));
 
-    for (const entry of log) {
-      const contact = safeString(entry.contact);
-      if (!contact) continue;
-      if (!byContact[contact]) byContact[contact] = [];
-      byContact[contact].push(entry);
+  for(const filePath of files){
+    await forEachJsonlRecordAsync(filePath, original => {
+      const contact=safeString(original?.contact);
+      if(!contact || contact.startsWith('instagram:') || contact.startsWith('facebook:')) return;
+
+      const rawChannel=safeString(original?.channel).toLowerCase();
+      if(rawChannel && rawChannel!=='whatsapp') return;
+
+      const ms=normalizedConversationTime(original);
+      if(!Number.isFinite(ms) || (Number.isFinite(cutoffMs) && ms>=cutoffMs)) return;
+
+      const entry=applyConversationPurgeTombstones(original);
+      if(!entry) return;
+
+      const previous=latest.get(contact);
+      if(!previous || ms>previous.ms) latest.set(contact,{entry,ms});
+    });
+  }
+
+  const items=[];
+  for(const [contact,value] of latest){
+    const entry=value.entry;
+    const state=states[contact] || {};
+
+    if(safeString(user?.role)==='commercial'){
+      const assignedUserId=safeString(state?.assignedUserId);
+      if(assignedUserId && assignedUserId!==safeString(user?.id)){
+        const lock=commercialReplyLockInfo(user,state,contact,Date.now());
+        if(lock.canTakeover!==true) continue;
+      }
     }
 
-    const conversations = Object.keys(byContact).map(contact => {
-      const entries = contact.startsWith('instagram:')
-        ? normalizeInstagramThreadEntries(byContact[contact])
-        : byContact[contact].sort(conversationEntryComparator);
+    items.push({
+      contact,
+      archived:true,
+      archiveBefore:new Date(value.ms+1).toISOString(),
+      channel:'whatsapp',
+      lastTime:safeString(entry?.time || entry?.created_time || entry?.timestamp),
+      lastIncoming:safeString(entry?.incoming),
+      lastReply:safeString(entry?.reply),
+      lastAction:safeString(entry?.action),
+      lastSource:safeString(entry?.source),
+      lastMessagePreview:conversationEntryPreview(entry),
+      lastMessageId:safeString(entry?.message_id || entry?.meta_message_id),
+      externalContact:safeString(entry?.external_contact || state?.externalContact || contact),
+      profileName:safeString(state?.profileName),
+      profilePicture:safeString(state?.profilePicture),
+      assignedTo:safeString(state?.assignedTo),
+      assignedUserId:safeString(state?.assignedUserId),
+      activeProductName:safeString(state?.activeProductName),
+      favorite:Boolean(state?.favorite),
+      priority:false,
+      resolved:Boolean(state?.resolved),
+      unreadCount:0,
+      pendingReply:false,
+      commercialAttention:false,
+      imageNeedsCommercial:false,
+      hasAdReferral:Boolean(state?.cameFromAd || state?.adReferral)
+    });
+  }
+
+  return items.sort((a,b)=>conversationTimeMs(b.lastTime)-conversationTimeMs(a.lastTime));
+}
+
+router.get('/api/conversations/archives', requireAuth, async (req,res) => {
+  try {
+    if(!requireCommercialMessageChannelAccess(req,res,'whatsapp')) return;
+
+    let items=await loadArchivedConversationList(req.user);
+    const q=safeString(req.query?.q).toLowerCase();
+
+    if(q){
+      items=items.filter(item => [
+        item.contact,
+        item.externalContact,
+        item.profileName,
+        item.lastMessagePreview,
+        item.assignedTo,
+        item.activeProductName
+      ].map(v=>safeString(v).toLowerCase()).join(' ').includes(q));
+    }
+
+    const offset=Math.max(0,Number(req.query?.offset || 0) || 0);
+    const limit=Math.max(20,Math.min(200,Number(req.query?.limit || 80) || 80));
+
+    return res.json({
+      items:items.slice(offset,offset+limit),
+      total:items.length,
+      offset,
+      limit,
+      hasMore:offset+limit<items.length
+    });
+  } catch(error) {
+    console.error('❌ Archives conversations :',error);
+    return res.status(500).json({error:'Impossible de lire les archives.'});
+  }
+});
+
+router.get('/api/conversations', requireAuth, async (req, res) => {
+  const __perfStart = Date.now();
+  res.once('finish', () => console.log('[PERF conversations]', Date.now() - __perfStart, 'ms', req.originalUrl));
+  try {
+    const log = await loadWhatsAppLog();
+    const states = reconcileAnsweredConversationStates(log, loadConversationStatesAdmin());
+
+    const byContact = conversationEntriesGroupedForList(log);
+    let conversations = Object.keys(byContact).map(contact => {
+      const entries = byContact[contact];
       const lastActivity = entries[entries.length - 1];
-      const last = [...entries].reverse().find(item => {
+      let last = lastActivity;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const item = entries[i];
         const attachments = Array.isArray(item?.attachments) ? item.attachments.filter(Boolean) : [];
         const mediaType = safeString(item?.attachment_type || item?.type).toLowerCase();
-        return Boolean(
-          safeString(item?.incoming) ||
-          safeString(item?.reply) ||
-          attachments.length ||
-          ['image','video','audio','file','document','attachment'].includes(mediaType)
-        );
-      }) || lastActivity;
+        if (safeString(item?.incoming) || safeString(item?.reply) || attachments.length || ['image','video','audio','file','document','attachment'].includes(mediaType)) {
+          last = item;
+          break;
+        }
+      }
       const state = states[contact] || {};
+      const liveSla = computeLiveSla(state);
 
       return {
         contact,
@@ -19484,10 +21361,10 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         favoriteAt: safeString(state?.favoriteAt),
         assignedTo: safeString(state?.assignedTo),
         assignedUserId: safeString(state?.assignedUserId),
-        sla: computeLiveSla(state),
-        slaStatus: safeString(computeLiveSla(state)?.status),
-        slaDueAt: safeString(computeLiveSla(state)?.dueAt),
-        slaRemainingMs: computeLiveSla(state)?.remainingMs ?? null,
+        sla: liveSla,
+        slaStatus: safeString(liveSla?.status),
+        slaDueAt: safeString(liveSla?.dueAt),
+        slaRemainingMs: liveSla?.remainingMs ?? null,
         resolved: Boolean(state.resolved),
         resolvedAt: safeString(state?.resolvedAt),
         activeProductName: safeString(state?.activeProductName),
@@ -19495,7 +21372,7 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         humanPaused: Boolean(state.humanPaused),
         pausedUntil: safeString(state?.pausedUntil),
         awaitingResponse: Boolean(state.awaitingResponse),
-        pendingReply: conversationNeedsReplyFromEntries(entries, state),
+        pendingReply: conversationNeedsReplyFromEntries(entries, state, true),
         followUpsSent: Number(state.followUpsSent || 0)
       };
     }).sort((a, b) => {
@@ -19510,24 +21387,71 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       return (Number.isFinite(bMs) ? bMs : 0) - (Number.isFinite(aMs) ? aMs : 0);
     });
 
+    // Patch session (13/10) - Application WhatsApp uniquement : filtre
+    // definitif a la racine de l'API, apres le tri. Peu importe par quelle
+    // voie des donnees Facebook/Instagram continuent d'entrer (webhook,
+    // job serveur, import manuel), elles ne seront plus jamais retournees
+    // au client. C'est la barriere la plus fiable car elle ne depend
+    // d'aucun point d'entree specifique.
+    const __conversationsBeforeChannelFilter = conversations.length;
+    conversations = conversations.filter(item => item.channel === 'whatsapp');
+    if (__conversationsBeforeChannelFilter !== conversations.length) {
+      console.log(`[WhatsApp uniquement] ${__conversationsBeforeChannelFilter - conversations.length} conversation(s) Facebook/Instagram filtree(s) sur ${__conversationsBeforeChannelFilter}.`);
+    }
     const retentionCutoff = historyImportCutoffIso();
     const activeCutoff = activeInboxCutoffIso();
 
     // V6.33.1 : appliquer la rétention de 15 jours à TOUS les rôles, y compris
     // Admin/Responsable. Avant, seuls les commerciaux étaient filtrés, ce qui
     // laissait des milliers d'anciennes conversations dans l'interface admin.
+    // V6.36.36 — Boîtes de messagerie privées par commercial. Un commercial
+    // ne voit plus les conversations assignées à un AUTRE commercial (avant,
+    // elles restaient visibles en lecture seule). Il continue de voir :
+    // - ses propres conversations assignées ;
+    // - la file d'attente commune (assignedUserId vide), pour pouvoir en
+    //   prendre de nouvelles.
+    // admin et responsable_commercial continuent de tout voir, sans
+    // changement, pour garder une vue d'ensemble sur toutes les boîtes.
+    // V6.36.47 — La visibilité tient maintenant compte du verrou temporaire
+    // (commercialReplyLockInfo, même mécanisme déjà utilisé pour l'écriture) :
+    // une conversation assignée à un commercial dont le verrou a expiré
+    // (absent, hors mission, ou simplement sans réponse depuis trop
+    // longtemps) redevient visible aux autres, pas seulement reprenable
+    // s'ils la retrouvent par un autre moyen. Avant ce correctif, le filtre
+    // ne regardait que assignedUserId brut, sans jamais expirer.
     let retainedConversations = conversations
-      .filter(item => item.favorite === true || historyTimeIsRecent(item.lastTime, retentionCutoff))
+      .filter(item => item.favorite === true || Number(item.unreadCount || 0) > 0 || historyTimeIsRecent(item.lastTime, retentionCutoff))
+      .filter(item => {
+        const isCommercial = req.user?.role === 'commercial';
+        if (!isCommercial) return true;
+        const assignedUserId = safeString(item.assignedUserId);
+        if (!assignedUserId) return true;
+        if (assignedUserId === safeString(req.user.id)) return true;
+        const state = states[item.contact] || {};
+        const lock = commercialReplyLockInfo(req.user, state, item.contact, Date.now());
+        return lock.canTakeover === true;
+      })
       .map(item => {
         const isCommercial = req.user?.role === 'commercial';
         const assignedToMe = isCommercial && safeString(item.assignedUserId) === safeString(req.user.id);
+        const isUnassigned = !safeString(item.assignedUserId);
+        let canManage = !isCommercial || assignedToMe || isUnassigned;
+        let readOnly = isCommercial && !assignedToMe && !isUnassigned;
+        if (isCommercial && !assignedToMe && !isUnassigned) {
+          const state = states[item.contact] || {};
+          const lock = commercialReplyLockInfo(req.user, state, item.contact, Date.now());
+          if (lock.canTakeover === true) {
+            canManage = true;
+            readOnly = false;
+          }
+        }
         return {
           ...item,
           assignedToMe,
           canWrite: true,
           canReply: true,
-          canManage: !isCommercial || assignedToMe,
-          readOnly: isCommercial && !assignedToMe
+          canManage,
+          readOnly
         };
       });
 
@@ -19550,28 +21474,48 @@ router.get('/api/conversations', requireAuth, (req, res) => {
       historyTimeIsRecent(item.lastTime, activeCutoff)
     );
 
-    const countBase = activeConversations;
+    const requestedChannelForCounts = safeString(req.query?.channel).toLowerCase();
+    const countBase = ['whatsapp','instagram','facebook'].includes(requestedChannelForCounts)
+      ? activeConversations.filter(item => item.channel === requestedChannelForCounts)
+      : activeConversations;
     const counts = {
       all: countBase.filter(item => !item.resolved).length,
       whatsapp: countBase.filter(item => !item.resolved && item.channel === 'whatsapp').length,
       instagram: countBase.filter(item => !item.resolved && item.channel === 'instagram').length,
       facebook: countBase.filter(item => !item.resolved && item.channel === 'facebook').length,
       unread: countBase.filter(item => !item.resolved && Number(item.unreadCount || 0) > 0).length,
+      // V6.36.81 — Déclinaisons par canal du compteur non-lu, pour que le
+      // badge "À répondre" affiche le vrai nombre de messages non lus
+      // (au lieu de "personne n'a encore répondu", qui incluait des
+      // conversations déjà lues mais pas encore closes).
+      unreadWhatsApp: countBase.filter(item => !item.resolved && item.channel === 'whatsapp' && Number(item.unreadCount || 0) > 0).length,
+      unreadInstagram: countBase.filter(item => !item.resolved && item.channel === 'instagram' && Number(item.unreadCount || 0) > 0).length,
+      unreadFacebook: countBase.filter(item => !item.resolved && item.channel === 'facebook' && Number(item.unreadCount || 0) > 0).length,
       pendingReply: countBase.filter(item => !item.resolved && item.pendingReply === true).length,
       pendingWhatsApp: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'whatsapp').length,
       pendingInstagram: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'instagram').length,
       pendingFacebook: countBase.filter(item => !item.resolved && item.pendingReply === true && item.channel === 'facebook').length,
       priority: countBase.filter(item => !item.resolved && item.priority).length,
-      favorites: retainedConversations.filter(item => item.favorite === true).length,
+      favorites: (['whatsapp','instagram','facebook'].includes(requestedChannelForCounts) ? retainedConversations.filter(item => item.channel === requestedChannelForCounts) : retainedConversations).filter(item => item.favorite === true).length,
       commercial: countBase.filter(item => !item.resolved && (item.commercialAttention || item.imageNeedsCommercial)).length,
       sla: countBase.filter(item => !item.resolved && ['pending','late'].includes(safeString(item?.slaStatus))).length,
       ads: countBase.filter(item => !item.resolved && item.hasAdReferral).length,
-      resolved: retainedConversations.filter(item => item.resolved).length,
-      history15: retainedConversations.filter(item => !item.resolved).length,
+      resolved: (['whatsapp','instagram','facebook'].includes(requestedChannelForCounts) ? retainedConversations.filter(item => item.channel === requestedChannelForCounts) : retainedConversations).filter(item => item.resolved).length,
+      history15: (['whatsapp','instagram','facebook'].includes(requestedChannelForCounts) ? retainedConversations.filter(item => item.channel === requestedChannelForCounts) : retainedConversations).filter(item => !item.resolved).length,
+      // V6.36.25 — Somme totale des messages non lus (pas juste le nombre de
+      // conversations qui en ont), toutes conversations actives confondues,
+      // pour une vraie vue d'ensemble du volume a traiter.
+      totalUnreadMessages: countBase.reduce((sum, item) => sum + Number(item.unreadCount || 0), 0),
       activeHours: ACTIVE_INBOX_HOURS
     };
 
     const requestedFilter = safeString(req.query?.filter).toLowerCase();
+    // V6.36.7 — Filtre de canal désormais séparé du filtre de statut (avant,
+    // "filter=whatsapp" et "filter=pending" étaient mutuellement exclusifs ;
+    // impossible de voir "WhatsApp + À répondre" en même temps). Rétro-
+    // compatible : un ancien appel avec filter=whatsapp/instagram/facebook
+    // continue de fonctionner comme avant si ?channel n'est pas fourni.
+    const requestedChannel = safeString(req.query?.channel).toLowerCase();
     let visibleConversations;
     if (requestedFilter === 'resolved') {
       visibleConversations = retainedConversations.filter(item => item.resolved === true);
@@ -19593,19 +21537,55 @@ router.get('/api/conversations', requireAuth, (req, res) => {
         visibleConversations = visibleConversations.filter(item => item.commercialAttention || item.imageNeedsCommercial);
       } else if (requestedFilter === 'sla') {
         visibleConversations = visibleConversations.filter(item => ['pending','late'].includes(safeString(item?.slaStatus)));
+      } else if (requestedFilter === 'urgent') {
+        // V6.36.59 — Fusion "Commercial requis" + "SLA" : en pratique, les
+        // deux listes se chevauchaient presque totalement (une conversation
+        // transférée par l'IA a quasi toujours aussi un SLA qui expire
+        // vite), donnant l'impression de 2 boutons redondants. Un seul
+        // bouton "urgent" montre l'union des deux critères.
+        visibleConversations = visibleConversations.filter(item =>
+          item.commercialAttention ||
+          item.imageNeedsCommercial ||
+          ['pending','late'].includes(safeString(item?.slaStatus))
+        );
       } else if (requestedFilter === 'ads') {
         visibleConversations = visibleConversations.filter(item => item.hasAdReferral === true);
+      } else if (requestedFilter === 'mine') {
+        // V6.36.38 — "Mes conversations" : suivi des clients déjà pris en
+        // charge par ce commercial, qu'il attende ou non une réponse
+        // (contrairement à "pending", qui ne montre que les conversations
+        // où le client attend). Utile pour vérifier si un client est
+        // revenu, ou simplement garder un œil sur ses dossiers en cours.
+        const userId = safeString(req.user?.id);
+        visibleConversations = visibleConversations.filter(item => safeString(item.assignedUserId) === userId);
       }
+    }
+
+    // V6.36.7 — Applique le canal comme contrainte SUPPLÉMENTAIRE (ET
+    // logique), en plus du statut déjà appliqué ci-dessus.
+    if (['whatsapp','instagram','facebook'].includes(requestedChannel)) {
+      visibleConversations = visibleConversations.filter(item => item.channel === requestedChannel);
     }
 
     const search = safeString(req.query?.q).toLowerCase();
     if (search) {
       // La recherche couvre tout l'historique conservé 15 jours, même si la
       // conversation est sortie de la boîte active.
+      // V6.36.97 — filter='all' inclut désormais aussi les conversations
+      // résolues pendant une recherche (auparavant exclues via !item.resolved
+      // même en filtre "all", rendant une conversation déjà traitée
+      // introuvable par recherche, même par numéro exact — signalé le
+      // 03/09, cas "Ali Khlif").
       if (!['resolved','favorites'].includes(requestedFilter)) {
-        visibleConversations = retainedConversations.filter(item => !item.resolved);
+        visibleConversations = requestedFilter === 'all'
+          ? [...retainedConversations]
+          : retainedConversations.filter(item => !item.resolved);
         if (['whatsapp','instagram','facebook'].includes(requestedFilter)) {
           visibleConversations = visibleConversations.filter(item => item.channel === requestedFilter);
+        }
+        // V6.36.7 — Même contrainte de canal supplémentaire pendant la recherche.
+        if (['whatsapp','instagram','facebook'].includes(requestedChannel)) {
+          visibleConversations = visibleConversations.filter(item => item.channel === requestedChannel);
         }
       }
       visibleConversations = visibleConversations.filter(item => {
@@ -19713,29 +21693,37 @@ function rewriteConversationArrayFileForPurge(filePath, targetHash, part) {
 }
 
 function rewritePersistentConversationEventsForPurge(targetHash, part) {
-  if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
   let removed = 0;
-  for (const name of fs.readdirSync(CONVERSATION_EVENTS_DIR)) {
-    if (!/^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)) continue;
-    const filePath = path.join(CONVERSATION_EVENTS_DIR,name);
-    const output = [];
-    let changed = false;
-    for (const line of fs.readFileSync(filePath,'utf8').split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      try {
-        const original = JSON.parse(line);
-        if (conversationEntryPartPurgeHash(original, part) === targetHash) {
-          removed += 1; changed = true;
-          const transformed = applyConversationPurgeTombstones(original);
-          if (transformed) output.push(JSON.stringify(transformed));
-        } else output.push(line);
-      } catch { output.push(line); }
+  const roots = [
+    CONVERSATION_EVENTS_DIR,
+    path.join(DATA_DIR, 'conversation-archive-recovered')
+  ];
+  const visit = directory => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes:true })) {
+      const filePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) { visit(filePath); continue; }
+      if (!entry.isFile() || !/^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
+      const output = [];
+      let changed = false;
+      for (const line of fs.readFileSync(filePath,'utf8').split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        try {
+          const original = JSON.parse(line);
+          if (conversationEntryPartPurgeHash(original, part) === targetHash) {
+            removed += 1;
+            changed = true;
+            const transformed = applyConversationPurgeTombstones(original);
+            if (transformed) output.push(JSON.stringify(transformed));
+          } else output.push(line);
+        } catch { output.push(line); }
+      }
+      if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
     }
-    if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
-  }
+  };
+  for (const root of roots) visit(root);
   return removed;
 }
-
 function purgeMessageIdsFromIndex(entry = {}) {
   const ids = new Set([safeString(entry?.message_id),safeString(entry?.meta_message_id)].filter(Boolean));
   if (!ids.size || !fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
@@ -19762,10 +21750,10 @@ function purgeNotificationsForConversationEntry(entry = {}) {
   return before - store.items.length;
 }
 
-function rebuildConversationStateAfterPurge(contact) {
+async function rebuildConversationStateAfterPurge(contact) {
   const states = loadConversationStatesAdmin();
   const current = states[contact] && typeof states[contact] === 'object' ? states[contact] : {};
-  let entries = loadWhatsAppLog().filter(item => safeString(item?.contact) === safeString(contact));
+  let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === safeString(contact));
   entries = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
   if (!entries.length) {
     delete states[contact];
@@ -19795,7 +21783,7 @@ function rebuildConversationStateAfterPurge(contact) {
   return states[contact];
 }
 
-function purgeConversationMessagePart(target, part) {
+async function purgeConversationMessagePart(target, part) {
   const targetHash = conversationEntryPartPurgeHash(target, part);
   if (!targetHash) throw new Error('Empreinte de message invalide.');
   rememberPurgedHashes([targetHash]);
@@ -19808,14 +21796,230 @@ function purgeConversationMessagePart(target, part) {
   purgeNotificationsForConversationEntry(target);
   combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
   persistentConversationEventsCache = { stamp:'', entries:[] };
-  const state = rebuildConversationStateAfterPurge(safeString(target?.contact));
+  const state = await rebuildConversationStateAfterPurge(safeString(target?.contact));
   return { targetHash, removed, state };
 }
 
-router.get('/api/conversations/:contact', requireAuth, (req, res) => {
+router.post('/api/ai-replies/resolve-alert', requireAuth, (req, res) => {
+  // V6.36.33 — Marque une alerte commerciale comme resolue (le commercial
+  // a traite le cas), pour qu'elle disparaisse de la section "A traiter".
+  try {
+    const messageId = safeString(req.body?.messageId);
+    const time = safeString(req.body?.time);
+    if (!messageId && !time) {
+      return res.status(400).json({ error: 'messageId ou time requis.' });
+    }
+    const logPath = path.join(DATA_DIR, 'conversation-log.json');
+    if (!fs.existsSync(logPath)) {
+      return res.status(404).json({ error: 'Journal introuvable.' });
+    }
+    const raw = JSON.parse(fs.readFileSync(logPath, 'utf8') || '[]');
+    const entries = Array.isArray(raw) ? raw : [];
+    let found = false;
+    for (const entry of entries) {
+      const matchesId = messageId && safeString(entry?.message_id) === messageId;
+      const matchesTime = !messageId && time && safeString(entry?.time) === time;
+      if (matchesId || matchesTime) {
+        entry.alertResolved = true;
+        entry.alertResolvedAt = new Date().toISOString();
+        entry.alertResolvedBy = safeString(req.user?.name || req.user?.email || 'Équipe MONDECO');
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return res.status(404).json({ error: 'Entrée introuvable.' });
+    }
+    fs.writeFileSync(logPath, JSON.stringify(entries), 'utf8');
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('❌ /api/ai-replies/resolve-alert :', error.message);
+    return res.status(500).json({ error: 'Impossible de marquer l\'alerte comme résolue.' });
+  }
+});
+router.get('/api/ai-replies/alert-count', requireAuth, (req, res) => {
+  // V6.36.32 — Compteur leger, sans charger toute la liste, pour le badge
+  // du menu principal.
+  try {
+    const logPath = path.join(DATA_DIR, 'conversation-log.json');
+    if (!fs.existsSync(logPath)) {
+      return res.json({ count: 0 });
+    }
+    // V6.36.99 — Réutilise le cache mémoire existant du journal live.
+    // Évite de relire + JSON.parse ~16 Mo à chaque polling du badge.
+    // Le cache est automatiquement rechargé lorsque le stamp du fichier change.
+    const entries = loadPerformanceConversationsLogCached();
+    let count = 0;
+    for (const entry of entries) {
+      if (
+        Array.isArray(entry?.alertFlags) &&
+        entry.alertFlags.length > 0 &&
+        !entry?.alertResolved
+      ) {
+        count += 1;
+      }
+    }
+    return res.json({ count });
+  } catch (error) {
+    console.error('❌ /api/ai-replies/alert-count :', error.message);
+    return res.status(500).json({ count: 0 });
+  }
+});
+router.get('/api/ai-replies', requireAuth, (req, res) => {
+  // V6.36.26 — Consultation dediee de toutes les reponses envoyees par l'IA,
+  // toutes conversations confondues, pour audit/suivi qualite.
+  // V6.36.29 — Ajout filtres (canal, periode, recherche texte) + statistiques.
+  try {
+    const limit = Math.min(500, Math.max(1, Number(req.query?.limit) || 100));
+    const channelFilter = safeString(req.query?.channel).toLowerCase();
+    const periodFilter = safeString(req.query?.period).toLowerCase();
+    const searchQuery = safeString(req.query?.search).toLowerCase();
+    const alertOnlyFilter = safeString(req.query?.alertOnly) === '1';
+
+    const logPath = path.join(DATA_DIR, 'conversation-log.json');
+    if (!fs.existsSync(logPath)) {
+      return res.json({ replies: [], stats: { total: 0, byChannel: {}, transferRate: 0, alerts: 0 } });
+    }
+    const raw = JSON.parse(fs.readFileSync(logPath, 'utf8') || '[]');
+    const entries = Array.isArray(raw) ? raw : [];
+
+    const isRealAiReply = entry => safeString(entry?.action) === 'ai_reply' && safeString(entry?.reply);
+    const hasAlert = entry => Array.isArray(entry?.alertFlags) && entry.alertFlags.length > 0 && !entry?.alertResolved;
+    const isTransfer = entry => ['ai_needs_commercial','commercial_required'].includes(safeString(entry?.action));
+
+    const now = Date.now();
+    const periodCutoff = (() => {
+      if (periodFilter === 'today') return now - 24 * 60 * 60 * 1000;
+      if (periodFilter === 'week') return now - 7 * 24 * 60 * 60 * 1000;
+      return 0;
+    })();
+
+    let relevant = entries.filter(entry => isRealAiReply(entry) || hasAlert(entry) || isTransfer(entry));
+
+    if (periodCutoff) {
+      relevant = relevant.filter(entry => {
+        const t = Date.parse(entry?.time || '');
+        return Number.isFinite(t) && t >= periodCutoff;
+      });
+    }
+
+    // Stats calculees sur l'ensemble filtre par periode (avant filtre canal/recherche),
+    // pour donner une vue d'ensemble fiable.
+    const statsBase = relevant;
+    const byChannel = {};
+    let transferCount = 0;
+    let alertCount = 0;
+    for (const entry of statsBase) {
+      const ch = safeString(entry?.channel) || 'whatsapp';
+      byChannel[ch] = (byChannel[ch] || 0) + 1;
+      if (isTransfer(entry)) transferCount += 1;
+      if (hasAlert(entry)) alertCount += 1;
+    }
+    const stats = {
+      total: statsBase.length,
+      byChannel,
+      transferRate: statsBase.length ? Math.round((transferCount / statsBase.length) * 100) : 0,
+      alerts: alertCount
+    };
+
+    // Filtre d'affichage : canal + recherche (les transferts purs sans reponse
+    // ni alerte ne sont affiches que pour le calcul des stats, pas la liste).
+    let displayable = relevant.filter(entry => isRealAiReply(entry) || hasAlert(entry));
+
+    if (['whatsapp','instagram','facebook'].includes(channelFilter)) {
+      displayable = displayable.filter(entry => (safeString(entry?.channel) || 'whatsapp') === channelFilter);
+    }
+
+    if (searchQuery) {
+      displayable = displayable.filter(entry => {
+        const contact = safeString(entry?.contact || entry?.external_contact).toLowerCase();
+        const incoming = safeString(entry?.incoming).toLowerCase();
+        return contact.includes(searchQuery) || incoming.includes(searchQuery);
+      });
+    }
+
+    if (alertOnlyFilter) {
+      displayable = displayable.filter(entry => Array.isArray(entry?.alertFlags) && entry.alertFlags.length > 0);
+    }
+
+    const aiReplies = displayable
+      .sort((a, b) => Date.parse(b?.time || 0) - Date.parse(a?.time || 0))
+      .slice(0, limit)
+      .map(entry => ({
+        time: safeString(entry?.time),
+        messageId: safeString(entry?.message_id),
+        channel: safeString(entry?.channel) || 'whatsapp',
+        contact: safeString(entry?.contact || entry?.external_contact),
+        incoming: safeString(entry?.incoming),
+        reply: safeString(entry?.reply),
+        alertFlags: Array.isArray(entry?.alertFlags) ? entry.alertFlags : []
+      }));
+
+    return res.json({ replies: aiReplies, total: aiReplies.length, stats });
+  } catch (error) {
+    console.error('❌ /api/ai-replies :', error.message);
+    return res.status(500).json({ error: 'Impossible de charger les reponses IA.' });
+  }
+});
+// V6.36.17 — État général de la fenêtre WhatsApp exposé au frontend.
+// Le calcul reste côté serveur pour éviter les différences d'horloge entre PC/téléphones.
+function whatsappWindowInfoForState(contact, state = {}) {
+  const channelRaw = safeString(state?.channel).toLowerCase();
+  const channel = channelRaw || (safeString(contact).startsWith('instagram:')
+    ? 'instagram'
+    : safeString(contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
+  if (channel !== 'whatsapp') {
+    return { applicable:false, open:false, expired:false, known:false };
+  }
+
+  const lastCustomerAt = safeString(state?.lastCustomerAt);
+  const lastCustomerMs = Date.parse(lastCustomerAt);
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  if (!lastCustomerAt || !Number.isFinite(lastCustomerMs)) {
+    return {
+      applicable:true, known:false, open:true, expired:false,
+      lastCustomerAt:'', expiresAt:'', remainingMs:null,
+      templateConfigured:Boolean(WHATSAPP_REENGAGEMENT_TEMPLATE_NAME),
+      templateName:WHATSAPP_REENGAGEMENT_TEMPLATE_NAME,
+      templateLanguage:WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE
+    };
+  }
+
+  const expiresMs = lastCustomerMs + oneDayMs;
+  const remainingMs = expiresMs - Date.now();
+  const reengagementSent =
+    safeString(state?.lastWhatsAppReengagementCustomerAt) === lastCustomerAt &&
+    Boolean(safeString(state?.lastWhatsAppReengagementAt));
+  return {
+    applicable:true,
+    known:true,
+    open:remainingMs > 0,
+    expired:remainingMs <= 0,
+    lastCustomerAt,
+    expiresAt:new Date(expiresMs).toISOString(),
+    remainingMs:Math.max(0, remainingMs),
+    templateConfigured:Boolean(WHATSAPP_REENGAGEMENT_TEMPLATE_NAME),
+    templateName:WHATSAPP_REENGAGEMENT_TEMPLATE_NAME,
+    templateLanguage:WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE,
+    reengagementSent,
+    reengagementSentAt:reengagementSent ? safeString(state?.lastWhatsAppReengagementAt) : ''
+  };
+}
+
+router.get('/api/conversations/:contact', requireAuth, async (req, res) => {
+  const __detailStart = Date.now();
+  res.once('finish', () => {
+    console.log(`⏱️ ROUTE conversation/detail TOTAL ${Date.now() - __detailStart}ms ${safeString(req.params.contact)}`);
+  });
   try {
     const contact = safeString(req.params.contact);
-    const log = loadWhatsAppLog();
+    // V6.36.98 — Retour URGENT à loadWhatsAppLog() (rapide, throttlée
+    // 12h) : loadWhatsAppLogForContact() (V6.36.95, historique complet
+    // sans limite) s'est révélée bien trop lente en production (10 à 55
+    // secondes mesurées le 03/09, bloquant complètement le travail des
+    // commerciaux). Solution correcte à retravailler dans une prochaine
+    // session (cache par contact, index dédié, ou fenêtre progressive).
+    const log = await loadWhatsAppLog();
     const states = loadConversationStatesAdmin();
 
     const state = states[contact] || {};
@@ -19825,13 +22029,23 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     const isCommercial = safeString(req.user?.role) === 'commercial';
     const replyLock = commercialReplyLockInfo(req.user, state, contact);
     const assignedToMe = isCommercial && replyLock.assignedToMe === true;
+    // V6.36.67 — Même correctif que la route de liste /api/conversations
+    // (28/08) : une conversation non assignée à personne doit rester
+    // gérable par n'importe quel commercial, pas seulement "assignedToMe".
+    // Ces deux routes dupliquaient chacune leur propre logique canManage
+    // sans jamais être synchronisées — cette route de DÉTAIL (utilisée
+    // pour l'en-tête d'une conversation ouverte) n'avait jamais reçu le
+    // correctif du 28/08, expliquant pourquoi le bouton Terminer restait
+    // caché malgré la liste elle-même étant corrigée.
+    const isUnassigned = !safeString(state?.assignedUserId);
+    const canManageDetail = !isCommercial || assignedToMe || isUnassigned;
     const access = {
       assignedToMe,
       canWrite: !isCommercial || replyLock.canReply === true,
       canReply: !isCommercial || replyLock.canReply === true,
       canTakeover: !isCommercial || replyLock.canTakeover === true,
-      canManage: !isCommercial || assignedToMe,
-      readOnly: isCommercial && replyLock.canReply !== true,
+      canManage: canManageDetail,
+      readOnly: isCommercial && replyLock.canReply !== true && !canManageDetail,
       lockOwnerUserId: safeString(replyLock.ownerId),
       lockOwnerName: safeString(replyLock.ownerName),
       lockReason: safeString(replyLock.reason),
@@ -19842,7 +22056,7 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     };
 
     let entries = normalizeInstagramThreadEntries(
-      log.filter(entry => safeString(entry.contact) === contact)
+      conversationEntriesForDetail(log, contact)
     );
 
     const targetMessageId = safeString(req.query?.messageId);
@@ -19860,23 +22074,56 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
     }
 
     const beforeTime = Date.parse(safeString(req.query?.before));
-    if (!targetWindowApplied && Number.isFinite(beforeTime)) {
-      entries = entries.filter(entry => {
-        const ms = normalizedConversationTime(entry);
-        return Number.isFinite(ms) && ms < beforeTime;
-      });
-    }
-
     const requestedLimit = Number(req.query?.limit || 0);
     let hasMore = false;
     let nextBefore = '';
-    if (!targetWindowApplied && Number.isFinite(requestedLimit) && requestedLimit > 0) {
+
+    if (!targetWindowApplied && Number.isFinite(beforeTime)) {
+      if (accessChannel === 'whatsapp') {
+        const page = await loadArchivedConversationPage(
+          contact,
+          beforeTime,
+          requestedLimit || 120
+        );
+        entries = normalizeInstagramThreadEntries(page.entries || []);
+        hasMore = page.hasMore === true;
+        nextBefore = hasMore && entries.length
+          ? safeString(entries[0]?.time || entries[0]?.created_time || entries[0]?.timestamp)
+          : '';
+      } else {
+        entries = entries.filter(entry => {
+          const ms = normalizedConversationTime(entry);
+          return Number.isFinite(ms) && ms < beforeTime;
+        });
+        if (Number.isFinite(requestedLimit) && requestedLimit > 0) {
+          const limit = Math.max(20, Math.min(300, requestedLimit));
+          hasMore = entries.length > limit;
+          entries = entries.slice(-limit);
+          nextBefore = hasMore && entries.length
+            ? safeString(entries[0]?.time || entries[0]?.created_time || entries[0]?.timestamp)
+            : '';
+        }
+      }
+    } else if (
+      !targetWindowApplied &&
+      Number.isFinite(requestedLimit) &&
+      requestedLimit > 0
+    ) {
       const limit = Math.max(20, Math.min(300, requestedLimit));
       hasMore = entries.length > limit;
       entries = entries.slice(-limit);
-      nextBefore = hasMore ? safeString(entries[0]?.time) : '';
-    }
 
+      const oldest = entries.length
+        ? safeString(entries[0]?.time || entries[0]?.created_time || entries[0]?.timestamp)
+        : '';
+
+      if (accessChannel === 'whatsapp' && oldest) {
+        hasMore = true;
+        nextBefore = oldest;
+      } else {
+        nextBefore = hasMore ? oldest : '';
+      }
+    }
     const adReferral =
       state?.adReferral &&
       typeof state.adReferral === 'object'
@@ -19916,7 +22163,8 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
       })),
       hasMore,
       nextBefore,
-      access
+      access,
+      whatsappWindow: whatsappWindowInfoForState(contact, state)
     });
   } catch (error) {
     console.error('❌ Détail conversation :', error);
@@ -19925,7 +22173,7 @@ router.get('/api/conversations/:contact', requireAuth, (req, res) => {
 });
 
 
-router.delete('/api/conversations/:contact/messages/:purgeKey', requireAdmin, (req,res) => {
+router.delete('/api/conversations/:contact/messages/:purgeKey', requireCommercialAccess, async (req,res) => {
   try {
     const contact = safeString(req.params.contact);
     const purgeKey = safeString(req.params.purgeKey);
@@ -19933,11 +22181,14 @@ router.delete('/api/conversations/:contact/messages/:purgeKey', requireAdmin, (r
     if (!contact || !purgeKey || !['incoming','reply'].includes(part)) {
       return res.status(400).json({ error:'Message ou type de suppression invalide.' });
     }
-    const target = loadWhatsAppLog().find(entry =>
+    let target = (await loadWhatsAppLog()).find(entry =>
       safeString(entry?.contact) === contact && conversationEntryPartPurgeHash(entry,part) === purgeKey
     );
+    if (!target) {
+      target = await findArchivedConversationEntryForPurge(contact,purgeKey,part);
+    }
     if (!target) return res.status(404).json({ error:'Message introuvable ou déjà supprimé.' });
-    const result = purgeConversationMessagePart(target,part);
+    const result = await purgeConversationMessagePart(target,part);
     return res.json({
       success:true,
       permanentlyDeleted:true,
@@ -19971,7 +22222,7 @@ router.post(
         });
     }
 
-    const existingState = loadConversationStatesAdmin()[contact] || {};
+    const existingState = getConversationStateSingle(contact) || {};
     const readChannel = safeString(existingState?.channel).toLowerCase() ||
       (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
     if (!requireCommercialMessageChannelAccess(req, res, readChannel)) return;
@@ -20007,7 +22258,7 @@ router.post(
       return res.status(400).json({ error: 'Contact invalide.' });
     }
 
-    const existingState = loadConversationStatesAdmin()[contact] || {};
+    const existingState = getConversationStateSingle(contact) || {};
     const favoriteChannel = safeString(existingState?.channel).toLowerCase() ||
       (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
     if (!requireCommercialMessageChannelAccess(req, res, favoriteChannel)) return;
@@ -20138,7 +22389,7 @@ router.post(
 
     if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
 
-    const existingState = loadConversationStatesAdmin()?.[contact] || {};
+    const existingState = getConversationStateSingle(contact) || {};
     const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
     if(existingChannel === 'facebook'){
       return res.status(409).json({ error:'Facebook est en mode supervision : les réponses restent gérées par Meta Business AI / Business Suite.' });
@@ -20219,7 +22470,7 @@ router.post(
 
     if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
 
-    const existingState = loadConversationStatesAdmin()?.[contact] || {};
+    const existingState = getConversationStateSingle(contact) || {};
     const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
     if(existingChannel === 'facebook'){
       return res.status(409).json({ error:'L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.' });
@@ -20233,6 +22484,11 @@ router.post(
           manualTakeover: false,
           humanPaused: false,
           pausedUntil: null,
+          // V6.36.51 — Même correctif que le timer SLA auto-résume côté
+          // server.js : quand l'IA reprend la main, plus aucun commercial
+          // n'est responsable de cette conversation.
+          assignedUserId: '',
+          assignedTo: '',
           aiModePreference: 'ai',
           aiModeChoicePending: false,
           aiModeSelectedAt: new Date().toISOString(),
@@ -20260,7 +22516,9 @@ router.post(
         req.params.contact
       );
 
-    if (!requireCommercialConversationWriteAccess(req, res, contact)) return;
+    // V6.36.6 — Vérification élargie (canal uniquement, pas d'affectation
+    // requise) : tout commercial ayant accès au canal peut Terminer.
+    if (!requireCommercialConversationChannelAccess(req, res, contact)) return;
 
     const resolved =
       req.body?.resolved === true;
@@ -20288,6 +22546,117 @@ router.post(
     return res.json({
       success: true,
       state
+    });
+  }
+);
+
+// V6.36.6 — Terminaison groupée : marque plusieurs conversations comme
+// terminées en un seul appel, pour la sélection multiple côté interface.
+// Chaque conversation est vérifiée individuellement (canal autorisé) ;
+// celles refusées sont simplement ignorées et listées à part, sans faire
+// échouer les autres.
+// V6.36.82 — Réactivation groupée de l'IA, sur le même modèle que
+// bulk-resolve. Ne fait que lever la pause (comme reactivate-ai
+// individuelle) — ne déclenche PAS de réponse immédiate, l'IA répondra
+// normalement au prochain message du client. Facebook exclu (IA
+// désactivée sur ce canal, voir reactivate-ai individuelle).
+router.post(
+  '/api/conversations/bulk-reactivate-ai',
+  requireAuth,
+  (req, res) => {
+    const contacts =
+      Array.isArray(req.body?.contacts)
+        ? [...new Set(req.body.contacts.map(c => safeString(c)).filter(Boolean))]
+        : [];
+    if (!contacts.length) {
+      return res.status(400).json({ error: 'Aucune conversation sélectionnée.' });
+    }
+    if (contacts.length > 200) {
+      return res.status(400).json({ error: 'Trop de conversations sélectionnées en une fois (200 maximum).' });
+    }
+    const reactivatedAt = new Date().toISOString();
+    const succeeded = [];
+    const refused = [];
+    for (const contact of contacts) {
+      let allowed = true;
+      const fakeRes = { status: () => ({ json: () => { allowed = false; } }) };
+      if (!requireCommercialConversationWriteAccess(req, fakeRes, contact)) {
+        refused.push(contact);
+        continue;
+      }
+      const existingState = getConversationStateSingle(contact) || {};
+      const existingChannel = safeString(existingState.channel || (contact.startsWith('facebook:') ? 'facebook' : '')).toLowerCase();
+      if (existingChannel === 'facebook') {
+        refused.push(contact);
+        continue;
+      }
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        manualTakeover: false,
+        humanPaused: false,
+        pausedUntil: null,
+        assignedUserId: '',
+        assignedTo: '',
+        aiModePreference: 'ai',
+        aiModeChoicePending: false,
+        aiModeSelectedAt: reactivatedAt,
+        commercialAttention: false,
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
+        aiReactivatedAt: reactivatedAt
+      }));
+      succeeded.push(contact);
+    }
+    return res.json({
+      success: true,
+      reactivatedCount: succeeded.length,
+      refusedCount: refused.length,
+      refused
+    });
+  }
+);
+
+router.post(
+  '/api/conversations/bulk-resolve',
+  requireAuth,
+  (req, res) => {
+    const contacts =
+      Array.isArray(req.body?.contacts)
+        ? [...new Set(req.body.contacts.map(c => safeString(c)).filter(Boolean))]
+        : [];
+
+    if (!contacts.length) {
+      return res.status(400).json({ error: 'Aucune conversation sélectionnée.' });
+    }
+    if (contacts.length > 200) {
+      return res.status(400).json({ error: 'Trop de conversations sélectionnées en une fois (200 maximum).' });
+    }
+
+    const resolvedAt = new Date().toISOString();
+    const succeeded = [];
+    const refused = [];
+
+    for (const contact of contacts) {
+      let allowed = true;
+      const fakeRes = { status: () => ({ json: () => { allowed = false; } }) };
+      if (!requireCommercialConversationChannelAccess(req, fakeRes, contact)) {
+        refused.push(contact);
+        continue;
+      }
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        resolved: true,
+        resolvedAt,
+        unreadCount: 0
+      }));
+      succeeded.push(contact);
+    }
+
+    return res.json({
+      success: true,
+      resolvedCount: succeeded.length,
+      refusedCount: refused.length,
+      refused
     });
   }
 );
@@ -20422,6 +22791,10 @@ router.get(
         else if (remaining <= 60 * 1000) threshold = 'one_minute';
         else if (remaining <= (Number(sla.minutes || DEFAULT_COMMERCIAL_SLA_MINUTES) * 60 * 1000) / 2) threshold = 'half';
         if (!threshold) continue;
+        const dueMs = Date.parse(sla.dueAt || '');
+        const durationMs = Number(sla.minutes || DEFAULT_COMMERCIAL_SLA_MINUTES) * 60 * 1000;
+        const thresholdMs = threshold === 'breached' ? dueMs : threshold === 'one_minute' ? dueMs - 60000 : dueMs - durationMs / 2;
+        if (!Number.isFinite(thresholdMs) || !Number.isFinite(sinceMs) || thresholdMs <= sinceMs) continue;
         liveSlaEvents.push({
           id: `sla-${safeString(sla.id)}-${threshold}`,
           contact,
@@ -20482,7 +22855,7 @@ router.get(
         unreadMessageCount,
         unreadCommentCount,
         pendingCounts,
-        items: items.slice(0, 250),
+        items: Number.isFinite(sinceMs) ? [] : items.slice(0, 250),
         events: [...messageEvents, ...commentEvents, ...liveSlaEvents, ...taskEvents, ...reportEvents]
       });
     } catch (error) {
@@ -20509,7 +22882,7 @@ router.post(
     const store = loadNotificationsStore();
     const targetNotification = store.items.find(item => safeString(item?.id) === id);
     if (targetNotification) {
-      const targetState = loadConversationStatesAdmin()[safeString(targetNotification?.contact)] || {};
+      const targetState = getConversationStateSingle(safeString(targetNotification?.contact)) || {};
       const targetChannel = safeString(targetNotification?.channel || targetState?.channel).toLowerCase() ||
         (safeString(targetNotification?.contact).startsWith('instagram:') ? 'instagram' :
           safeString(targetNotification?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp');
@@ -20742,7 +23115,24 @@ router.post(
   }
 );
 
-
+// V6.36.88 — Nettoyage dédié à la vitesse (48h), voir
+// pruneConversationHistoryForSpeed().
+router.post(
+  '/api/speed-cleanup',
+  requireAdmin,
+  (req, res) => {
+    try {
+      const result = pruneConversationHistoryForSpeed();
+      return res.json({
+        success: true,
+        freedBytes: result.freed
+      });
+    } catch (error) {
+      console.error('❌ Nettoyage vitesse :', error);
+      return res.status(500).json({ error: error.message || 'Nettoyage vitesse impossible.' });
+    }
+  }
+);
 
 router.post(
   '/api/storage-cloud-migrate',
@@ -20850,5 +23240,34 @@ module.exports = {
   processSocialCommentWebhookEntry,
   ensureStorageHeadroom,
   storeCloudAssetBuffer,
-  cloudManifestEntry
+  cloudManifestEntry,
+  // V6.36.13 — Exportées pour que server.js partage le MÊME cache mémoire
+  // de conversation-state.json au lieu d'en maintenir une copie séparée.
+  // Avant ce correctif, une écriture d'un côté forçait l'autre côté à
+  // relire et re-parser le fichier entier (16+ Mo) à l'appel suivant, même
+  // juste après une écriture — coût difficilement compressible, indépendant
+  // des optimisations de format JSON déjà faites (V6.36.10/12).
+  loadConversationStatesAdmin,
+  // V6.36.63 — Fonctions ciblées SQLite pour l'accès à UNE SEULE
+  // conversation (lecture/écriture), bien plus rapides que le cycle
+  // complet loadConversationStatesAdmin/saveConversationStatesAdmin sur
+  // le fichier JSON entier. Voir commentaire détaillé sur getSqliteDb.
+  getConversationStateSingle,
+  setConversationStateSingle,
+  saveConversationStatesAdmin,
+  // V6.36.14 — Exportée pour que server.js applique le même cache
+  // mémoire (évite de relire/parser conversation-log.json en entier,
+  // 18+ Mo, à chaque message) au fichier HISTORY_PATH.
+  fileChangeStamp,
+  // V6.36.74 — Exportée pour que server.js force le rafraîchissement de
+  // l'Inbox (loadWhatsAppLog) juste après un envoi commercial, sans
+  // attendre l'expiration du throttle de 120s (V6.36.65-68).
+  invalidateWhatsAppLogCache,
+  // V6.36.84 — Exportées pour la route ai-respond-all-unread (server.js).
+  updateConversationStateAdmin,
+  requireAuth,
+  // Patch session - Exportee pour que server.js puisse chercher une
+  // reponse rapide correspondant a une publicite Meta, avant d'appeler
+  // l'IA, pour un nouveau message client issu d'une pub.
+  loadQuickReplies
 };
