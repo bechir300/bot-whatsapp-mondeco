@@ -1,6 +1,6 @@
-// Tests des garde-fous ajoutés en V6.36 : les fonctions sont extraites
-// directement des fichiers sources (server.js démarre un serveur au
-// chargement, Admin.html n'est pas un module) puis évaluées isolément.
+// Tests des garde-fous ajoutés en V6.36. Admin.html n'est pas un module : ses
+// fonctions sont extraites du fichier puis évaluées isolément. Les helpers
+// serveur sont importés depuis lib/.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -56,11 +56,14 @@ async function test(label, fn) {
     assert.strictEqual(html.safeHttpUrl('https://facebook.com/p/1'), 'https://facebook.com/p/1');
   });
 
-  const server = loadFunctions(
-    'server.js',
-    ['safeString', 'maskPhoneForLog', 'messageContentForLog', 'runInConversationQueue'],
-    'const LOG_MESSAGE_CONTENT = false; const conversationProcessingQueues = new Map(); const inFlightConversationJobs = new Set();\n'
-  );
+  const privacy = require('../lib/log-privacy').createLogPrivacy({ logMessageContent: false });
+  const { createConversationQueue } = require('../lib/conversation-queue');
+  const queue = createConversationQueue();
+  const server = {
+    maskPhoneForLog: privacy.maskPhoneForLog,
+    messageContentForLog: privacy.messageContentForLog,
+    runInConversationQueue: queue.run
+  };
 
   await test('maskPhoneForLog ne garde que les 4 derniers chiffres', () => {
     assert.strictEqual(server.maskPhoneForLog('+216 50 123 456'), '***3456');

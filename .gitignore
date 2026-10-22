@@ -36,3 +36,4 @@ Thumbs.db
 admin-sessions.json
 users.json.bak
 *.jsonl
+ai-history.json

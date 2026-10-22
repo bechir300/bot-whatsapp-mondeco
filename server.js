@@ -19,6 +19,16 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createJsonObjectStore } = require('./lib/json-object-store');
+const { maskPhoneForLog, messageContentForLog } = require('./lib/log-privacy');
+const { promptDataField } = require('./lib/prompt-safety');
+const { createAiQuota } = require('./lib/ai-quota');
+const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
+const {
+  MEDIA_FETCH_TIMEOUT_MS,
+  fetchReadWithRetry,
+  readResponseBufferWithLimit
+} = require('./lib/http');
 
 const {
   adminRouter,
@@ -34,7 +44,9 @@ const {
   processSocialCommentWebhookEntry,
   ensureStorageHeadroom,
   storeCloudAssetBuffer,
-  requireAdmin
+  requireAdmin,
+  conversationStateStore,
+  flushAllJsonStores
 } = require('./Admin');
 
 const app = express();
@@ -408,25 +420,6 @@ console.log('');
 // ============================================================
 // HELPERS
 // ============================================================
-
-// Données personnelles dans les logs Railway : par défaut, les numéros sont
-// masqués et le contenu des messages n'est pas écrit. LOG_MESSAGE_CONTENT=true
-// réactive le contenu complet pour un débogage ponctuel.
-const LOG_MESSAGE_CONTENT =
-  String(process.env.LOG_MESSAGE_CONTENT || '').trim().toLowerCase() === 'true';
-
-function maskPhoneForLog(value) {
-  const digits = String(value ?? '').replace(/\D/g, '');
-  if (!digits) return String(value ?? '');
-  if (LOG_MESSAGE_CONTENT) return digits;
-  return `***${digits.slice(-4)}`;
-}
-
-function messageContentForLog(value) {
-  const text = String(value ?? '');
-  if (LOG_MESSAGE_CONTENT) return text;
-  return `[${text.length} caractère(s) masqué(s)]`;
-}
 
 function safeString(value) {
   return String(value ?? '').trim();
@@ -1279,6 +1272,45 @@ const HISTORY_PATH =
     'conversation-log.json'
   );
 
+// Cache du journal récent (5 000 entrées) : il était relu et re-parsé
+// intégralement à chaque message. On ne le relit que si le fichier a changé
+// (taille + date), par exemple après une purge ou une synchro côté Admin.js.
+// Le tableau renvoyé est partagé : ne pas le modifier sans le recopier.
+let conversationLogCache = null;
+let conversationLogCacheStamp = '';
+
+function conversationLogFileStamp() {
+  try {
+    const stat = fs.statSync(HISTORY_PATH);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+}
+
+function readConversationLogCached() {
+  const stamp = conversationLogFileStamp();
+  if (conversationLogCache && stamp === conversationLogCacheStamp) {
+    return conversationLogCache;
+  }
+
+  let logs = [];
+  if (stamp !== 'missing') {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8') || '[]');
+      if (Array.isArray(parsed)) logs = parsed;
+    } catch (error) {
+      console.error('❌ Lecture conversation-log.json :', error.message);
+      // Pas de mise en cache : on retentera la lecture au prochain appel.
+      return [];
+    }
+  }
+
+  conversationLogCache = logs;
+  conversationLogCacheStamp = stamp;
+  return logs;
+}
+
 // Les webhooks Instagram renvoient aussi les messages envoyés par le compte.
 // On mémorise les IDs envoyés par l'API pour ne pas les confondre avec une
 // vraie réponse humaine tapée directement dans Instagram.
@@ -1362,20 +1394,10 @@ function wasInstagramApiMessageLogged(
     safeString(text);
 
   try {
-    if (!fs.existsSync(HISTORY_PATH)) {
-      return false;
-    }
-
     const parsed =
-      JSON.parse(
-        fs.readFileSync(
-          HISTORY_PATH,
-          'utf8'
-        ) ||
-        '[]'
-      );
+      readConversationLogCached();
 
-    if (!Array.isArray(parsed)) {
+    if (!parsed.length) {
       return false;
     }
 
@@ -1568,22 +1590,9 @@ function logConversation(entry) {
       unread_at_ingest: Boolean(incoming)
     };
 
-    let logs = [];
-
-    if (fs.existsSync(HISTORY_PATH)) {
-      try {
-        const parsed = JSON.parse(
-          fs.readFileSync(HISTORY_PATH, 'utf8') ||
-          '[]'
-        );
-
-        if (Array.isArray(parsed)) {
-          logs = parsed;
-        }
-      } catch {
-        logs = [];
-      }
-    }
+    // Copie (références seulement) : le cache n'est remplacé qu'après une
+    // écriture réussie.
+    let logs = readConversationLogCached().slice();
 
     // V6.19.6 : l'événement complet est conservé en append-only AVANT
     // d'actualiser le cache JSON récent. Un déploiement ne touche jamais
@@ -1606,6 +1615,9 @@ function logConversation(entry) {
       logs
     );
 
+    conversationLogCache = logs;
+    conversationLogCacheStamp = conversationLogFileStamp();
+
     registerConversationNotification(entry);
   } catch (error) {
     console.error(
@@ -1619,91 +1631,29 @@ function logConversation(entry) {
 // ÉTAT PERSISTANT DES CLIENTS
 // ============================================================
 
-const CONVERSATION_STATE_PATH =
-  path.join(
-    DATA_DIR,
-    'conversation-state.json'
-  );
-
-// V6.35.23 — Même cache mémoire que côté Admin.js (voir ce fichier pour le
-// diagnostic complet) : conversation-state.json (15+ Mo) était relu et
-// re-parsé intégralement à chaque appel, bloquant l'event loop Node.js
-// pendant 500ms à 2s à chaque fois — constaté en production par des pics
-// "EVENTLOOP-LAG" pendant l'envoi de messages.
-let conversationStatesCache = null;
-let conversationStatesCacheStamp = '';
-
-function conversationStateFileStamp() {
-  try {
-    const stat = fs.statSync(CONVERSATION_STATE_PATH);
-    return `${stat.size}:${stat.mtimeMs}`;
-  } catch {
-    return 'missing';
-  }
-}
-
+// V6.38 — conversation-state.json est désormais géré par le magasin
+// partagé conversationStateStore (Admin.js / lib/json-object-store.js) :
+// même exemplaire en mémoire des deux côtés, écriture disque groupée.
 function loadConversationStates() {
-  const stamp = conversationStateFileStamp();
-  if (conversationStatesCache && stamp === conversationStatesCacheStamp) {
-    // Copie superficielle : protège le cache partagé d'une mutation
-    // accidentelle par un appelant qui ne sauvegarderait pas ensuite.
-    return { ...conversationStatesCache };
-  }
-  const result = readJsonObject(
-    CONVERSATION_STATE_PATH,
-    {}
-  );
-  conversationStatesCache = result;
-  conversationStatesCacheStamp = stamp;
-  return { ...result };
+  return conversationStateStore.getAll();
 }
 
 function saveConversationStates(states) {
-  writeJsonAtomic(
-    CONVERSATION_STATE_PATH,
-    states
-  );
-  // On sait déjà ce qui vient d'être écrit : on mémorise directement au
-  // lieu de forcer une relecture au prochain appel.
-  conversationStatesCache = states;
-  conversationStatesCacheStamp = conversationStateFileStamp();
+  conversationStateStore.replaceAll(states);
 }
 
 function getConversationState(phone) {
-  const states =
-    loadConversationStates();
-
-  return (
-    states[phone] &&
-    typeof states[phone] === 'object'
-      ? states[phone]
-      : null
-  );
+  return conversationStateStore.get(phone);
 }
 
 function updateConversationState(
   phone,
   updater
 ) {
-  const states =
-    loadConversationStates();
-
-  const current =
-    states[phone] &&
-    typeof states[phone] === 'object'
-      ? states[phone]
-      : {};
-
-  const updated =
-    updater({
-      ...current
-    }) || current;
-
-  states[phone] = updated;
-
-  saveConversationStates(states);
-
-  return updated;
+  return conversationStateStore.update(
+    phone,
+    updater
+  );
 }
 
 function markCustomerMessage(
@@ -1959,11 +1909,12 @@ function isHumanPaused(phone) {
 }
 
 // ============================================================
-// HISTORIQUE IA EN MÉMOIRE
+// HISTORIQUE IA (persistant)
 // ============================================================
-
-const conversationHistory =
-  new Map();
+// V6.38 — L'historique court envoyé à l'IA (8 derniers échanges) était
+// uniquement en mémoire : chaque redéploiement faisait « oublier » au bot le
+// début de la conversation. Il est désormais conservé dans
+// /data/ai-history.json (écriture groupée) et purgé après 48 h sans message.
 
 const MAX_HISTORY_MESSAGES =
   8;
@@ -1971,22 +1922,35 @@ const MAX_HISTORY_MESSAGES =
 const MAX_HISTORY_CHARS =
   6000;
 
-// Historique IA en mémoire : purgé après 48 h d'inactivité pour que la Map
-// ne grossisse pas indéfiniment (une entrée par client jamais supprimée).
 const HISTORY_IDLE_TTL_MS =
   48 * 60 * 60 * 1000;
 
-const conversationHistoryTouchedAt =
-  new Map();
+const aiHistoryStore =
+  createJsonObjectStore({
+    filePath: path.join(DATA_DIR, 'ai-history.json'),
+    label: 'ai-history.json',
+    write: (filePath, data) => writeJsonAtomic(filePath, data)
+  });
+
+function pruneExpiredAiHistory(now = Date.now()) {
+  const all = aiHistoryStore.getAll();
+  let removed = 0;
+  for (const [userId, item] of Object.entries(all)) {
+    if (!(Number(item?.touchedAt) > now - HISTORY_IDLE_TTL_MS)) {
+      delete all[userId];
+      removed++;
+    }
+  }
+  if (removed) aiHistoryStore.replaceAll(all);
+  return removed;
+}
 
 const historySweepTimer =
   setInterval(() => {
-    const cutoff = Date.now() - HISTORY_IDLE_TTL_MS;
-    for (const [userId, touchedAt] of conversationHistoryTouchedAt.entries()) {
-      if (touchedAt < cutoff) {
-        conversationHistoryTouchedAt.delete(userId);
-        conversationHistory.delete(userId);
-      }
+    try {
+      pruneExpiredAiHistory();
+    } catch (error) {
+      console.warn('⚠️ Purge historique IA :', error.message);
     }
   }, 60 * 60 * 1000);
 
@@ -1995,16 +1959,11 @@ if (typeof historySweepTimer.unref === 'function') {
 }
 
 function getUserHistory(userId) {
-  conversationHistoryTouchedAt.set(userId, Date.now());
-
-  if (!conversationHistory.has(userId)) {
-    conversationHistory.set(
-      userId,
-      []
-    );
+  const item = aiHistoryStore.get(safeString(userId));
+  if (!item || !(Number(item.touchedAt) > Date.now() - HISTORY_IDLE_TTL_MS)) {
+    return [];
   }
-
-  return conversationHistory.get(userId);
+  return Array.isArray(item.messages) ? item.messages : [];
 }
 
 function addHistoryMessage(
@@ -2012,25 +1971,31 @@ function addHistoryMessage(
   role,
   content
 ) {
-  const history =
-    getUserHistory(userId);
+  aiHistoryStore.update(safeString(userId), item => {
+    const previous =
+      Array.isArray(item?.messages) &&
+      Number(item?.touchedAt) > Date.now() - HISTORY_IDLE_TTL_MS
+        ? item.messages
+        : [];
 
-  history.push({
-    role,
-    content
+    return {
+      messages: [
+        ...previous,
+        {
+          role,
+          content
+        }
+      ].slice(-MAX_HISTORY_MESSAGES),
+      touchedAt: Date.now()
+    };
   });
+}
 
-  if (
-    history.length >
-    MAX_HISTORY_MESSAGES
-  ) {
-    conversationHistory.set(
-      userId,
-      history.slice(
-        -MAX_HISTORY_MESSAGES
-      )
-    );
-  }
+function clearUserHistory(userId) {
+  const all = aiHistoryStore.getAll();
+  if (!(safeString(userId) in all)) return;
+  delete all[safeString(userId)];
+  aiHistoryStore.replaceAll(all);
 }
 
 
@@ -2107,103 +2072,18 @@ function cleanupProcessedMessageIds() {
   }
 }
 
-// File d'attente par conversation : Meta envoie chaque message dans un
-// webhook séparé. Sans sérialisation, deux messages rapprochés d'un même
-// client étaient traités en parallèle (historique entremêlé, double réponse
-// IA, état de conversation écrasé). Les conversations différentes restent
-// traitées en parallèle.
-const conversationProcessingQueues = new Map();
-const inFlightConversationJobs = new Set();
-
-function runInConversationQueue(key, task) {
-  const queueKey = safeString(key) || 'unknown';
-  const previous = conversationProcessingQueues.get(queueKey) || Promise.resolve();
-  const job = previous
-    .catch(() => {})
-    .then(task);
-  // `tracked` ne rejette jamais : l'erreur est déjà remontée à l'appelant
-  // via `job`, on évite ainsi un « Unhandled Promise Rejection ».
-  const tracked = job.catch(() => {}).finally(() => {
-    inFlightConversationJobs.delete(tracked);
-    if (conversationProcessingQueues.get(queueKey) === tracked) {
-      conversationProcessingQueues.delete(queueKey);
-    }
+// File par conversation + reprise des messages en échec
+// (voir lib/conversation-queue.js). Un message est considéré comme abouti
+// dès qu'il est journalisé (persistMessageId).
+const conversationQueue =
+  createConversationQueue({
+    isMessageLogged: id => persistentMessageIds.has(safeString(id)),
+    releaseMessageId: id => processedMessageIds.delete(safeString(id))
   });
-  inFlightConversationJobs.add(tracked);
-  conversationProcessingQueues.set(queueKey, tracked);
-  return job;
-}
 
-// Reprise des messages en échec. Meta reçoit 200 avant le traitement et ne
-// renvoie donc jamais un message dont le traitement a planté : sans reprise,
-// ce message était perdu (et son ID restait marqué « déjà traité »).
-// Un message est considéré comme abouti dès qu'il est journalisé
-// (persistMessageId) : il n'est alors jamais rejoué, ce qui évite une double
-// réponse si l'erreur survient après l'envoi.
-const MESSAGE_RETRY_DELAYS_MS = [15 * 1000, 60 * 1000];
-const pendingMessageRetryTimers = new Set();
-
-function releaseUnloggedMessageIds(messageIds = []) {
-  let released = 0;
-  for (const value of messageIds) {
-    const id = safeString(value);
-    if (!id || persistentMessageIds.has(id)) continue;
-    processedMessageIds.delete(id);
-    released++;
-  }
-  return released;
-}
-
-function runConversationJobWithRetry({
-  queueKey,
-  messageIds = [],
-  label = 'message',
-  task,
-  attempt = 0
-}) {
-  const ids = messageIds.map(safeString).filter(Boolean);
-
-  return runInConversationQueue(queueKey, task).catch(error => {
-    const delayMs = MESSAGE_RETRY_DELAYS_MS[attempt];
-    const retryable =
-      !shuttingDownForRetries &&
-      delayMs !== undefined &&
-      ids.length > 0 &&
-      releaseUnloggedMessageIds(ids) === ids.length;
-
-    if (!retryable) throw error;
-
-    console.warn(
-      `🔁 Échec ${label} (${error?.message || error}) : nouvelle tentative dans ${Math.round(delayMs / 1000)} s (${attempt + 1}/${MESSAGE_RETRY_DELAYS_MS.length}).`
-    );
-
-    const timer = setTimeout(() => {
-      pendingMessageRetryTimers.delete(timer);
-      runConversationJobWithRetry({
-        queueKey,
-        messageIds: ids,
-        label,
-        task,
-        attempt: attempt + 1
-      }).catch(finalError => {
-        console.error(`❌ Échec définitif ${label} :`, finalError?.message || finalError);
-      });
-    }, delayMs);
-
-    if (typeof timer.unref === 'function') timer.unref();
-    pendingMessageRetryTimers.add(timer);
-  });
-}
-
-let shuttingDownForRetries = false;
-
-function metaEventQueueKey(channel, event) {
-  const ids = [
-    safeString(event?.sender?.id),
-    safeString(event?.recipient?.id)
-  ].sort();
-  return `${channel}:${ids.join('|')}`;
-}
+const runInConversationQueue = conversationQueue.run;
+const runConversationJobWithRetry = conversationQueue.runWithRetry;
+const inFlightConversationJobs = conversationQueue.inFlightJobs;
 
 function isDuplicateMessage(messageId) {
   if (!messageId) return false;
@@ -2525,77 +2405,6 @@ function normalizeAdReferral(referral) {
   }
 
   return normalized;
-}
-
-// Lecture réseau (GET, rejouable sans risque) : délai maximal par tentative
-// et nouvelle tentative sur erreur réseau, 429 et 5xx, en respectant
-// Retry-After (plafonné). Chaque tentative a son propre délai : avant, les
-// reprises partageaient le même AbortController et héritaient d'un délai
-// déjà en partie consommé.
-const READ_FETCH_TIMEOUT_MS = 15000;
-const MEDIA_FETCH_TIMEOUT_MS = 45000;
-const READ_FETCH_MAX_RETRY_WAIT_MS = 10000;
-
-function readRetryDelayMs(response, attempt) {
-  const retryAfter = Number(response?.headers?.get?.('retry-after'));
-  if (Number.isFinite(retryAfter) && retryAfter >= 0) {
-    return Math.min(retryAfter * 1000, READ_FETCH_MAX_RETRY_WAIT_MS);
-  }
-  return Math.min(700 * 2 ** attempt + Math.floor(Math.random() * 300), READ_FETCH_MAX_RETRY_WAIT_MS);
-}
-
-async function fetchReadWithRetry(
-  url,
-  options = {},
-  { timeoutMs = READ_FETCH_TIMEOUT_MS, retries = 2 } = {}
-) {
-  for (let attempt = 0; ; attempt++) {
-    let response;
-    try {
-      response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-    } catch (error) {
-      if (attempt >= retries) throw error;
-      await new Promise(resolve => setTimeout(resolve, readRetryDelayMs(null, attempt)));
-      continue;
-    }
-
-    const retryableStatus = response.status === 429 || response.status >= 500;
-    if (!retryableStatus || attempt >= retries) return response;
-
-    try { await response.arrayBuffer(); } catch {}
-    await new Promise(resolve => setTimeout(resolve, readRetryDelayMs(response, attempt)));
-  }
-}
-
-// Lit le corps d'une réponse en s'arrêtant dès que la limite est dépassée.
-// content-length n'est pas fiable (absent en transfert « chunked »).
-async function readResponseBufferWithLimit(response, maxBytes) {
-  const declared = Number(response.headers.get('content-length') || 0);
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    try { await response.body?.cancel(); } catch {}
-    throw new Error(`Fichier trop volumineux (${declared} octets, limite ${maxBytes}).`);
-  }
-
-  if (!response.body?.getReader) {
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.length > maxBytes) throw new Error(`Fichier trop volumineux (limite ${maxBytes} octets).`);
-    return buffer;
-  }
-
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      try { await reader.cancel(); } catch {}
-      throw new Error(`Fichier trop volumineux (limite ${maxBytes} octets).`);
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks, total);
 }
 
 // V6.35.24 — Téléchargement du média d'une publicité.
@@ -3849,19 +3658,6 @@ function buildGeminiRequest(
   return request;
 }
 
-// Neutralise un texte externe avant insertion dans le prompt système :
-// une seule ligne, sans séparateurs de section ni guillemets de bornage,
-// longueur plafonnée.
-function promptDataField(value, maxLength = 300) {
-  const text = safeString(value)
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[=]{3,}|[-]{3,}|[#]{2,}/g, ' ')
-    .replace(/[«»]/g, '"')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
-}
-
 async function callGeminiChat(
   payload
 ) {
@@ -4118,78 +3914,20 @@ async function callAIChat(
 // canal applique alors son transfert habituel vers un commercial, sans appel
 // IA payant. 0 désactive la limite correspondante.
 
-const AI_MAX_REPLIES_PER_CONTACT_PER_HOUR =
-  Math.max(0, Number(process.env.AI_MAX_REPLIES_PER_CONTACT_PER_HOUR ?? 30) || 0);
+const aiQuota =
+  createAiQuota({
+    maxPerContactPerHour:
+      Math.max(0, Number(process.env.AI_MAX_REPLIES_PER_CONTACT_PER_HOUR ?? 30) || 0),
+    maxPerDay:
+      Math.max(0, Number(process.env.AI_MAX_CALLS_PER_DAY ?? 5000) || 0),
+    exemptIds: ['test-browser', 'admin-test-session'],
+    maskId: maskPhoneForLog
+  });
 
-const AI_MAX_CALLS_PER_DAY =
-  Math.max(0, Number(process.env.AI_MAX_CALLS_PER_DAY ?? 5000) || 0);
+const reserveAiCall = aiQuota.reserve;
+const getAiQuotaStats = aiQuota.stats;
 
-const AI_QUOTA_EXEMPT_IDS = new Set(['test-browser', 'admin-test-session']);
-const aiCallsByContact = new Map();
-const aiQuotaWarnedContacts = new Set();
-let aiDailyUsage = { day: '', count: 0 };
-
-function aiQuotaDayKey(now = Date.now()) {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
-function getAiQuotaStats() {
-  const day = aiQuotaDayKey();
-  return {
-    day,
-    callsToday: aiDailyUsage.day === day ? aiDailyUsage.count : 0,
-    maxCallsPerDay: AI_MAX_CALLS_PER_DAY,
-    maxRepliesPerContactPerHour: AI_MAX_REPLIES_PER_CONTACT_PER_HOUR,
-    trackedContacts: aiCallsByContact.size
-  };
-}
-
-// Vérifie le quota et, s'il reste de la marge, réserve un appel.
-// Renvoie null si l'appel est autorisé, sinon la raison du refus.
-function reserveAiCall(userId, now = Date.now()) {
-  const day = aiQuotaDayKey(now);
-  if (aiDailyUsage.day !== day) {
-    aiDailyUsage = { day, count: 0 };
-    aiQuotaWarnedContacts.clear();
-  }
-
-  if (AI_MAX_CALLS_PER_DAY && aiDailyUsage.count >= AI_MAX_CALLS_PER_DAY) {
-    if (aiDailyUsage.count === AI_MAX_CALLS_PER_DAY) {
-      aiDailyUsage.count++;
-      console.error(`🚨 Plafond IA quotidien atteint (${AI_MAX_CALLS_PER_DAY} appels) : transfert systématique aux commerciaux jusqu'à minuit UTC.`);
-    }
-    return 'daily_cap';
-  }
-
-  const key = safeString(userId);
-  if (AI_MAX_REPLIES_PER_CONTACT_PER_HOUR && key && !AI_QUOTA_EXEMPT_IDS.has(key)) {
-    const windowStart = now - 60 * 60 * 1000;
-    const recent = (aiCallsByContact.get(key) || []).filter(time => time > windowStart);
-
-    if (recent.length >= AI_MAX_REPLIES_PER_CONTACT_PER_HOUR) {
-      aiCallsByContact.set(key, recent);
-      if (!aiQuotaWarnedContacts.has(key)) {
-        aiQuotaWarnedContacts.add(key);
-        console.warn(`⚠️ Quota IA atteint pour ${maskPhoneForLog(key)} (${AI_MAX_REPLIES_PER_CONTACT_PER_HOUR}/h) : transfert au commercial.`);
-      }
-      return 'contact_cap';
-    }
-
-    recent.push(now);
-    aiCallsByContact.set(key, recent);
-    aiQuotaWarnedContacts.delete(key);
-  }
-
-  aiDailyUsage.count++;
-  return null;
-}
-
-const aiQuotaSweepTimer = setInterval(() => {
-  const windowStart = Date.now() - 60 * 60 * 1000;
-  for (const [key, times] of aiCallsByContact.entries()) {
-    if (!times.some(time => time > windowStart)) aiCallsByContact.delete(key);
-  }
-}, 10 * 60 * 1000);
+const aiQuotaSweepTimer = setInterval(() => aiQuota.sweep(), 10 * 60 * 1000);
 
 if (typeof aiQuotaSweepTimer.unref === 'function') {
   aiQuotaSweepTimer.unref();
@@ -9856,11 +9594,11 @@ app.post(
   '/reset-test-history',
   requireAdmin,
   (req, res) => {
-    conversationHistory.delete(
+    clearUserHistory(
       'test-browser'
     );
 
-    conversationHistory.delete(
+    clearUserHistory(
       'admin-test-session'
     );
 
@@ -9977,23 +9715,23 @@ async function gracefulShutdown(signal) {
   );
 
   clearInterval(followUpTimer);
-  shuttingDownForRetries = true;
-  for (const timer of pendingMessageRetryTimers) clearTimeout(timer);
-  if (pendingMessageRetryTimers.size) {
-    console.warn(`⚠️ ${pendingMessageRetryTimers.size} reprise(s) de message annulée(s) par l'arrêt.`);
+  const cancelledRetries = conversationQueue.stopRetries();
+  if (cancelledRetries) {
+    console.warn(`⚠️ ${cancelledRetries} reprise(s) de message annulée(s) par l'arrêt.`);
   }
-  pendingMessageRetryTimers.clear();
   httpServer.close();
 
   const forceExit = setTimeout(() => {
     console.warn('⚠️ Délai d’arrêt dépassé : sortie forcée.');
+    flushAllJsonStores();
     process.exit(0);
   }, SHUTDOWN_GRACE_MS);
   forceExit.unref();
 
-  await Promise.allSettled([...inFlightConversationJobs]);
+  await conversationQueue.waitForIdle();
 
-  console.log('✅ Traitements terminés, arrêt du serveur.');
+  const flushed = flushAllJsonStores();
+  console.log(`✅ Traitements terminés (${flushed} fichier(s) enregistré(s)), arrêt du serveur.`);
   process.exit(0);
 }
 

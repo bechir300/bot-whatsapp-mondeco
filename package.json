@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check Admin.js && node scripts/check-admin-html.js",
+    "check": "node scripts/check-syntax.js",
     "test": "npm run check && node scripts/run-tests.js"
   },
   "dependencies": {

@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
+const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 
 const router = express.Router();
 
@@ -47,6 +48,13 @@ const SOCIAL_COMMENTS_PATH = path.join(DATA_DIR, 'social-comments.json');
 const SOCIAL_POSTS_PATH = path.join(DATA_DIR, 'social-posts.json');
 const SOCIAL_COMMENTS_SYNC_STATE_PATH = path.join(DATA_DIR, 'social-comments-sync.json');
 const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.json');
+// V6.38 — état des conversations : un seul exemplaire en mémoire, partagé
+// avec server.js, écrit sur disque de façon groupée (voir lib/json-object-store.js).
+const conversationStateStore = createJsonObjectStore({
+  filePath: CONVERSATION_STATE_PATH_ADMIN,
+  label: 'conversation-state.json',
+  write: (filePath, data) => writeJsonAtomic(filePath, data)
+});
 const CONVERSATION_EVENTS_DIR = path.join(DATA_DIR, 'conversation-events');
 const NOTIFICATIONS_PATH = path.join(DATA_DIR, 'notifications.json');
 const MESSAGE_ID_INDEX_PATH = path.join(DATA_DIR, 'conversation-message-ids.jsonl');
@@ -1932,6 +1940,9 @@ function pruneFullSnapshots() {
 }
 
 function createFullSnapshot(reason = 'manual') {
+  // Les modifications en mémoire doivent figurer dans le snapshot.
+  flushAllJsonStores();
+
   const id =
     `snapshot-${timestampId()}`;
 
@@ -2131,6 +2142,9 @@ function restoreFullSnapshot(snapshotId) {
     }
   }
 
+  // Le fichier restauré remplace l'état en mémoire.
+  conversationStateStore.reload();
+
   const snapshotUploads =
     path.join(
       snapshotDir,
@@ -2244,6 +2258,8 @@ function restoreFullSnapshot(snapshotId) {
 }
 
 function createExternalDataExport() {
+  flushAllJsonStores();
+
   return {
     exportVersion: 1,
     createdAt:
@@ -14852,86 +14868,27 @@ function loadWhatsAppLog() {
   return [...entries];
 }
 
-// V6.35.23 — Cache mémoire pour conversation-state.json. Ce fichier a
-// atteint 15+ Mo (1000+ conversations) et était relu + re-parsé
-// INTÉGRALEMENT ET DE FAÇON BLOQUANTE à quasiment chaque webhook et chaque
-// requête API touchant une conversation. Diagnostiqué en production via
-// des pics "EVENTLOOP-LAG" de 500ms à 2s, bloquant tout le serveur pendant
-// ce temps (y compris l'envoi de messages, d'où la lenteur constatée).
-// fs.statSync (taille + date de modif) est quasi instantané, contrairement
-// à un JSON.parse complet du fichier : on ne relit vraiment le fichier que
-// si son contenu a changé depuis le dernier chargement.
-let conversationStatesCacheAdmin = null;
-let conversationStatesCacheStampAdmin = '';
-
+// V6.35.23 puis V6.38 — conversation-state.json (15+ Mo) n'est plus relu
+// ni réécrit intégralement à chaque appel : il vit dans conversationStateStore
+// (mémoire partagée avec server.js) et n'est écrit sur disque que de façon
+// groupée. La copie superficielle protège le magasin d'une mutation par un
+// appelant qui ne sauvegarderait pas ensuite.
 function loadConversationStatesAdmin() {
-  try {
-    if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return {};
-    const stamp = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-    if (conversationStatesCacheAdmin && stamp === conversationStatesCacheStampAdmin) {
-      // Copie superficielle : rapide (proportionnelle au nombre de
-      // conversations, pas à la taille du fichier), et protège le cache
-      // partagé contre une mutation accidentelle par un appelant qui ne
-      // sauvegarderait pas ensuite.
-      return { ...conversationStatesCacheAdmin };
-    }
-    const parsed = JSON.parse(
-      fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
-    );
-    const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    conversationStatesCacheAdmin = result;
-    conversationStatesCacheStampAdmin = stamp;
-    return { ...result };
-  } catch (error) {
-    console.warn('⚠️ Lecture conversation-state.json :', error.message);
-    return {};
-  }
+  return conversationStateStore.getAll();
 }
 
-
 function saveConversationStatesAdmin(states) {
-  const safeStates =
-    states &&
-    typeof states === 'object' &&
-    !Array.isArray(states)
-      ? states
-      : {};
-  writeJsonAtomic(
-    CONVERSATION_STATE_PATH_ADMIN,
-    safeStates
-  );
-  // On sait déjà exactement ce qui vient d'être écrit sur disque : on met
-  // à jour le cache directement, sans avoir besoin de relire le fichier.
-  conversationStatesCacheAdmin = safeStates;
-  conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
+  conversationStateStore.replaceAll(states);
 }
 
 function updateConversationStateAdmin(
   contact,
   updater
 ) {
-  const states =
-    loadConversationStatesAdmin();
-
-  const current =
-    states[contact] &&
-    typeof states[contact] === 'object'
-      ? states[contact]
-      : {};
-
-  const updated =
-    updater({
-      ...current
-    }) || current;
-
-  states[contact] =
-    updated;
-
-  saveConversationStatesAdmin(
-    states
+  return conversationStateStore.update(
+    contact,
+    updater
   );
-
-  return updated;
 }
 
 // ============================================================
@@ -21090,5 +21047,7 @@ module.exports = {
   ensureStorageHeadroom,
   storeCloudAssetBuffer,
   cloudManifestEntry,
-  requireAdmin
+  requireAdmin,
+  conversationStateStore,
+  flushAllJsonStores
 };
