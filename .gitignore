@@ -37,3 +37,4 @@ admin-sessions.json
 users.json.bak
 *.jsonl
 ai-history.json
+kpi-daily.json

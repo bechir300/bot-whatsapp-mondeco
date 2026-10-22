@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
+const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 
 const router = express.Router();
 
@@ -21024,6 +21025,96 @@ router.get(
           storageIsWritable()
       }
     });
+  }
+);
+
+// ============================================================
+// V6.39 — INDICATEURS (KPI)
+// ============================================================
+// Les journaux conversation-events ne sont conservés que quelques jours
+// (HISTORY_IMPORT_DAYS). Chaque journée terminée est donc résumée dans
+// kpi-daily.json : uniquement des chiffres agrégés, aucune donnée client.
+
+const kpiDailyStore = createJsonObjectStore({
+  filePath: path.join(DATA_DIR, 'kpi-daily.json'),
+  label: 'kpi-daily.json',
+  write: (filePath, data) => writeJsonAtomic(filePath, data)
+});
+
+function kpiTimezone() {
+  return safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+}
+
+function kpiTodayKey() {
+  return dateKeyInTimezone(new Date(), kpiTimezone());
+}
+
+function computeKpisForDate(date) {
+  const entries = loadPerformanceConversationEvents([date], kpiTimezone());
+  return entries.length ? computeDailyKpis(entries, { date }) : null;
+}
+
+// Renvoie les KPI d'une journée : instantané stocké pour une journée
+// terminée, calcul en direct pour aujourd'hui.
+function kpisForDate(date, today = kpiTodayKey()) {
+  if (date === today) return computeKpisForDate(date);
+
+  const stored = kpiDailyStore.get(date);
+  if (stored && stored.schema === KPI_SCHEMA_VERSION) return stored;
+
+  const computed = computeKpisForDate(date);
+  if (computed) {
+    kpiDailyStore.update(date, () => ({ ...computed, snapshotAt: new Date().toISOString() }));
+  }
+  return computed || stored || null;
+}
+
+// Fige les journées récentes avant que leurs journaux soient purgés.
+function ensureRecentKpiSnapshots(daysBack = 7) {
+  const today = kpiTodayKey();
+  for (let offset = 1; offset <= daysBack; offset++) {
+    try {
+      kpisForDate(teamDateAdd(today, -offset), today);
+    } catch (error) {
+      console.warn('⚠️ KPI : instantané journalier impossible :', error.message);
+    }
+  }
+}
+
+const kpiSnapshotTimer = setInterval(ensureRecentKpiSnapshots, 60 * 60 * 1000);
+if (typeof kpiSnapshotTimer.unref === 'function') kpiSnapshotTimer.unref();
+const kpiStartupTimer = setTimeout(ensureRecentKpiSnapshots, 60 * 1000);
+if (typeof kpiStartupTimer.unref === 'function') kpiStartupTimer.unref();
+
+router.get(
+  '/api/kpi',
+  requireAdminOrCommercialManager,
+  (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(90, Number(req.query?.days) || 7));
+      const today = kpiTodayKey();
+      const daily = [];
+
+      for (let offset = days - 1; offset >= 0; offset--) {
+        const date = teamDateAdd(today, -offset);
+        const kpis = kpisForDate(date, today);
+        daily.push(kpis ? { ...kpis, date } : { date, conversations: 0, missing: true });
+      }
+
+      const available = daily.filter(day => !day.missing);
+
+      return res.json({
+        timezone: kpiTimezone(),
+        today,
+        days,
+        summary: combineKpis(available),
+        daily,
+        missingDays: daily.filter(day => day.missing).map(day => day.date)
+      });
+    } catch (error) {
+      console.error('❌ KPI :', error.message);
+      return res.status(500).json({ error: 'Impossible de calculer les indicateurs.' });
+    }
   }
 );
 

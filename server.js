@@ -1598,7 +1598,15 @@ function logConversation(entry) {
       facebook_page_id: safeString(entry?.facebook_page_id || state?.facebookPageId),
       facebook_response_mode: safeString(entry?.facebook_response_mode || state?.facebookResponseMode),
       mondeco_ai_enabled: state?.mondecoAiEnabled !== false,
-      unread_at_ingest: Boolean(incoming)
+      unread_at_ingest: Boolean(incoming),
+      // V6.39 — heure de réception du message client. Une réponse IA est
+      // journalisée avec le message dans une seule entrée horodatée à
+      // l'envoi : sans ce champ, le délai de réponse n'était pas mesurable.
+      // Le traitement étant sérialisé par conversation, lastCustomerAt est
+      // bien l'heure du message en cours.
+      incoming_at: incoming
+        ? safeString(entry?.incoming_at || state?.lastCustomerAt) || undefined
+        : undefined
     };
 
     // Copie (références seulement) : le cache n'est remplacé qu'après une
