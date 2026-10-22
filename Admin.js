@@ -13,6 +13,7 @@ const multer = require('multer');
 const { createJsonObjectStore } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
+const { slimConversationState } = require('./lib/ad-referral');
 // V6.36.45 — Lecture asynchrone ligne par ligne des fichiers JSONL, pour
 // le générateur de rapport WhatsApp personnalisé (jamais de blocage du
 // thread principal, contrairement à un JSON.parse complet du fichier).
@@ -4734,7 +4735,7 @@ function sanitizeUserForClient(user) {
 // sauvegarde .bak aussi). Toute écriture est alors bloquée : réécrire la
 // liste à partir d'un tableau vide effacerait définitivement tous les
 // comptes. `var` : loadUsers() est appelé au démarrage avant cette ligne.
-var usersStoreUnreadable = false;
+var usersStoreUnreadable;
 
 function loadUsers() {
   if (!fs.existsSync(USERS_PATH)) {
@@ -16346,9 +16347,14 @@ function loadConversationStatesAdmin() {
     const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     conversationStatesCacheAdmin = result;
     conversationStatesCacheStampAdmin = stamp;
+    conversationStatesUnreadable = false;
     return { ...result };
   } catch (error) {
-    console.warn('⚠️ Lecture conversation-state.json :', error.message);
+    // V6.37.2 — Fichier présent mais illisible : on bloque toute écriture
+    // (voir flushConversationStatesWrite) pour ne jamais remplacer les
+    // conversations existantes par une liste vide.
+    conversationStatesUnreadable = true;
+    console.error('❌ Lecture conversation-state.json impossible (écritures suspendues) :', error.message);
     return {};
   }
 }
@@ -16368,8 +16374,27 @@ const STATE_WRITE_DEBOUNCE_MS = 8000;
 let pendingStateWriteTimer = null;
 let pendingStateToWrite = null;
 
+// V6.37.2 — Dernier objet d'état écrit dans SQLite pour chaque conversation.
+// Le code remplace toujours l'objet d'une conversation modifiée
+// ({ ...current, ... }) au lieu de le modifier sur place : comparer les
+// références suffit pour savoir quelles conversations ont changé, sans
+// rien re-sérialiser. Avant, CHAQUE écriture groupée réécrivait les
+// ~38 000 conversations dans SQLite (JSON.stringify de chacune), ce qui
+// bloquait le serveur plusieurs secondes. Au premier flush après un
+// démarrage, la Map est vide : tout est synchronisé une fois, comme avant.
+const sqliteSyncedStateRefs = new Map();
+// `var` sans valeur initiale : loadConversationStatesAdmin() peut être
+// appelé avant cette ligne, il ne faut pas réinitialiser l'indicateur ici.
+var conversationStatesUnreadable;
+
 function flushConversationStatesWrite() {
   if (!pendingStateToWrite) return;
+  if (conversationStatesUnreadable) {
+    console.error('🚨 conversation-state.json non écrit : le fichier existant est illisible. Restaurez une sauvegarde puis redémarrez.');
+    pendingStateToWrite = null;
+    pendingStateWriteTimer = null;
+    return;
+  }
   const toWrite = pendingStateToWrite;
   pendingStateToWrite = null;
   pendingStateWriteTimer = null;
@@ -16401,13 +16426,24 @@ function flushConversationStatesWrite() {
         ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
       `);
       const now = Date.now();
-      const syncAll = db.transaction((entries) => {
+      const changed = [];
+      for (const [contact, state] of Object.entries(toWrite)) {
+        if (!contact) continue;
+        if (sqliteSyncedStateRefs.get(contact) !== state) changed.push([contact, state]);
+      }
+      const syncChanged = db.transaction((entries) => {
         for (const [contact, state] of entries) {
-          if (!contact) continue;
           upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
         }
       });
-      syncAll(Object.entries(toWrite));
+      syncChanged(changed);
+      for (const [contact, state] of changed) sqliteSyncedStateRefs.set(contact, state);
+      // Nettoyage des conversations supprimées du JSON (références obsolètes).
+      if (sqliteSyncedStateRefs.size > Object.keys(toWrite).length * 1.2 + 100) {
+        for (const contact of sqliteSyncedStateRefs.keys()) {
+          if (!(contact in toWrite)) sqliteSyncedStateRefs.delete(contact);
+        }
+      }
     }
   } catch (error) {
     console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
@@ -16439,6 +16475,62 @@ function saveConversationStatesAdmin(states) {
 process.on('SIGTERM', flushConversationStatesWrite);
 process.on('SIGINT', flushConversationStatesWrite);
 process.on('beforeExit', flushConversationStatesWrite);
+
+// V6.37.2 — Migration unique : allège adReferral dans toutes les
+// conversations existantes (raw, mediaUrl déjà copiée localement ; voir
+// lib/ad-referral.js). Une copie complète de conversation-state.json est
+// faite avant, dans backups/. Lancée 60 s après le démarrage pour ne pas
+// ralentir celui-ci ; un marqueur empêche de la rejouer.
+const AD_REFERRAL_SLIM_MARKER = path.join(DATA_DIR, '.v6372-adreferral-slim-done');
+
+function migrateSlimAdReferrals() {
+  if (fs.existsSync(AD_REFERRAL_SLIM_MARKER)) return;
+  if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return;
+
+  const startedAt = Date.now();
+  const sizeBefore = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size;
+  const backupPath = path.join(BACKUPS_DIR, `conversation-state-avant-allegement-${timestampId()}.json`);
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  fs.copyFileSync(CONVERSATION_STATE_PATH_ADMIN, backupPath);
+
+  const states = loadConversationStatesAdmin();
+  let changed = 0;
+  for (const [contact, state] of Object.entries(states)) {
+    const slim = slimConversationState(state);
+    if (slim !== state) {
+      states[contact] = slim;
+      changed++;
+    }
+  }
+
+  if (changed) {
+    saveConversationStatesAdmin(states);
+    flushConversationStatesWrite();
+  }
+
+  fs.writeFileSync(AD_REFERRAL_SLIM_MARKER, JSON.stringify({
+    doneAt: new Date().toISOString(),
+    changed,
+    sizeBefore,
+    sizeAfter: fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size,
+    backupPath
+  }, null, 2));
+
+  console.log(
+    `🧹 adReferral allégé : ${changed} conversation(s), conversation-state.json ` +
+    `${(sizeBefore / 1e6).toFixed(1)} Mo → ${(fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size / 1e6).toFixed(1)} Mo ` +
+    `en ${Date.now() - startedAt} ms (sauvegarde : ${path.basename(backupPath)}).`
+  );
+}
+
+const adReferralSlimTimer = setTimeout(() => {
+  try {
+    migrateSlimAdReferrals();
+  } catch (error) {
+    console.error('❌ Allègement adReferral :', error.message);
+  }
+}, 60 * 1000);
+if (typeof adReferralSlimTimer.unref === 'function') adReferralSlimTimer.unref();
 
 function updateConversationStateAdmin(
   contact,

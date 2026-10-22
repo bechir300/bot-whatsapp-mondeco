@@ -30,6 +30,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { maskPhoneForLog, messageContentForLog } = require('./lib/log-privacy');
 const { promptDataField } = require('./lib/prompt-safety');
+const { slimAdReferral, slimConversationState } = require('./lib/ad-referral');
 const { createAiQuota } = require('./lib/ai-quota');
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
@@ -1686,7 +1687,7 @@ function logConversation(entry) {
       commercial_attention: Boolean(state?.commercialAttention),
       sla_snapshot: state?.sla && typeof state.sla === 'object' ? state.sla : undefined,
       source_context: entry?.source_context || (state?.sourceContext && typeof state.sourceContext === 'object' ? state.sourceContext : undefined),
-      ad_referral: entry?.ad_referral || (state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : undefined),
+      ad_referral: slimAdReferral(entry?.ad_referral || (state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : undefined)),
       instagram_conversation_id: safeString(entry?.instagram_conversation_id || state?.instagramHistoryConversationId),
       facebook_conversation_id: safeString(entry?.facebook_conversation_id || state?.facebookHistoryConversationId),
       facebook_page_id: safeString(entry?.facebook_page_id || state?.facebookPageId),
@@ -1832,10 +1833,13 @@ function updateConversationState(
   const current =
     getConversationStateSingle(phone) || {};
 
+  // V6.37.2 — adReferral allégé (voir lib/ad-referral.js).
   const updated =
-    updater({
-      ...current
-    }) || current;
+    slimConversationState(
+      updater({
+        ...current
+      }) || current
+    );
 
   setConversationStateSingle(phone, updated);
 
@@ -2663,9 +2667,9 @@ function normalizeAdReferral(referral) {
         adsContext?.photo_url
       ),
     productHint:
-      inferAdProductHint(referral),
-    raw:
-      referral
+      inferAdProductHint(referral)
+    // V6.37.2 — `raw` (copie brute du referral Meta, ~1,3 Ko) n'est plus
+    // stocké : jamais relu, il représentait 44,6 Mo de conversation-state.json.
   };
 
   if (
