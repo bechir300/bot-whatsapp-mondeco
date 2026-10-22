@@ -13439,6 +13439,96 @@ router.post(
   }
 );
 
+// ============================================================
+// V6.39 — MODÈLES WHATSAPP (TEMPLATES)
+// ============================================================
+// Liste des modèles approuvés du compte WhatsApp Business. Nécessite
+// WHATSAPP_BUSINESS_ACCOUNT_ID (WhatsApp Manager > Paramètres du compte).
+const WHATSAPP_BUSINESS_ACCOUNT_ID = safeString(process.env.WHATSAPP_BUSINESS_ACCOUNT_ID);
+const WHATSAPP_TEMPLATES_TTL_MS = 5 * 60 * 1000;
+let whatsappTemplatesCache = { at: 0, items: [] };
+
+function whatsappTemplateBodyText(template) {
+  const body = (Array.isArray(template?.components) ? template.components : [])
+    .find(component => safeString(component?.type).toUpperCase() === 'BODY');
+  return safeString(body?.text);
+}
+
+function whatsappTemplatePlaceholderCount(bodyText) {
+  const numbers = [...safeString(bodyText).matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(match => Number(match[1]));
+  return numbers.length ? Math.max(...numbers) : 0;
+}
+
+// Les modèles avec en-tête média, en-tête variable ou bouton à URL variable
+// demandent des paramètres que le formulaire ne gère pas encore.
+function whatsappTemplateSupported(template) {
+  return !(Array.isArray(template?.components) ? template.components : []).some(component => {
+    const type = safeString(component?.type).toUpperCase();
+    if (type === 'HEADER') {
+      return safeString(component?.format).toUpperCase() !== 'TEXT' || /\{\{/.test(safeString(component?.text));
+    }
+    if (type === 'BUTTONS') {
+      return (Array.isArray(component?.buttons) ? component.buttons : []).some(button => /\{\{/.test(safeString(button?.url)));
+    }
+    return false;
+  });
+}
+
+router.get(
+  '/api/whatsapp/templates',
+  requireAuth,
+  async (req, res) => {
+    const token = safeString(process.env.WHATSAPP_TOKEN);
+    if (!WHATSAPP_BUSINESS_ACCOUNT_ID || !token) {
+      return res.json({
+        configured: false,
+        items: [],
+        message: 'Ajoutez WHATSAPP_BUSINESS_ACCOUNT_ID dans Railway pour utiliser les modèles WhatsApp.'
+      });
+    }
+
+    try {
+      const force = safeString(req.query?.refresh) === '1';
+      if (force || Date.now() - whatsappTemplatesCache.at > WHATSAPP_TEMPLATES_TTL_MS) {
+        const url =
+          `https://graph.facebook.com/${META_API_VERSION}/${encodeURIComponent(WHATSAPP_BUSINESS_ACCOUNT_ID)}/message_templates` +
+          '?fields=name,language,status,category,components&limit=200';
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(15000)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(safeString(data?.error?.message) || `HTTP ${response.status}`);
+        }
+
+        whatsappTemplatesCache = {
+          at: Date.now(),
+          items: (Array.isArray(data?.data) ? data.data : [])
+            .filter(item => safeString(item?.status).toUpperCase() === 'APPROVED')
+            .map(item => {
+              const body = whatsappTemplateBodyText(item);
+              return {
+                name: safeString(item.name),
+                language: safeString(item.language),
+                category: safeString(item.category),
+                body,
+                placeholderCount: whatsappTemplatePlaceholderCount(body),
+                supported: whatsappTemplateSupported(item)
+              };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name))
+        };
+      }
+
+      return res.json({ configured: true, items: whatsappTemplatesCache.items });
+    } catch (error) {
+      console.error('❌ Modèles WhatsApp :', error.message);
+      return res.status(502).json({ configured: true, items: [], error: `Meta : ${error.message}` });
+    }
+  }
+);
+
 router.post(
   '/api/commercial/send',
   requireAuth,
@@ -13488,8 +13578,25 @@ router.post(
           ? normalizePhone(externalContact)
           : '';
 
+      // V6.39 — Message modèle WhatsApp (hors fenêtre de 24 h).
+      const templateRequest =
+        req.body?.template && typeof req.body.template === 'object'
+          ? {
+              name: safeString(req.body.template.name),
+              language: safeString(req.body.template.language) || 'fr',
+              parameters: (Array.isArray(req.body.template.parameters) ? req.body.template.parameters : [])
+                .slice(0, 20)
+                .map(value => safeString(value).slice(0, 1000))
+            }
+          : null;
+
+      if (templateRequest && channel !== 'whatsapp') {
+        return res.status(400).json({ error: 'Les modèles ne sont disponibles que sur WhatsApp.' });
+      }
+
       const text =
-        safeString(req.body?.text);
+        safeString(req.body?.text) ||
+        (templateRequest ? `[Modèle WhatsApp : ${templateRequest.name}]` : '');
 
       const question =
         safeString(req.body?.question);
@@ -13520,6 +13627,7 @@ router.post(
           externalContact,
           text,
           question,
+          template: templateRequest,
           actor: {
             id:
               safeString(

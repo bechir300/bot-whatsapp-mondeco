@@ -6696,6 +6696,17 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .kpi-note{font-size:13px;line-height:1.6;color:var(--muted);max-width:960px}
 .kpi-empty{padding:18px;color:var(--muted);font-size:14px}
 @media(max-width:800px){.kpi-columns{grid-template-columns:1fr}.kpi-tile strong{font-size:24px}}
+
+/* V6.39 — fenêtre WhatsApp 24 h et modèles */
+.wa-window-notice{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:0 0 8px;padding:10px 12px;border-radius:12px;border:1px solid #f0d9a8;background:#fff8e8;color:#5c4512;font-size:13.5px;line-height:1.45}
+.wa-window-notice.failure{border-color:#f1c4bf;background:#fff1ef;color:#7d2a22}
+.wa-window-notice .btn{min-height:40px;white-space:nowrap}
+.wa-template-dialog{max-width:560px}
+.wa-template-dialog .ui-dialog-body{white-space:normal}
+.wa-template-field{display:grid;gap:5px;margin:0 22px 12px;font-size:13.5px;font-weight:700}
+.wa-template-field select,.wa-template-field input{min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font:inherit;font-weight:400;background:#fff;color:var(--text)}
+.wa-template-preview{margin:4px 22px 0;padding:12px;border-radius:12px;background:#e7f7ec;color:#163b25;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+.wa-template-error{margin:8px 22px 0;color:var(--red);font-size:13.5px}
 </style>
 </head>
 
@@ -8365,7 +8376,7 @@ const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
 // navigateur (peu lisibles, bloquantes et mal adaptées au mobile).
 // uiConfirm() résout true/false ; uiPrompt() résout le texte ou null
 // (annulation), exactement comme les fonctions natives.
-function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLabel='OK',cancelLabel='Annuler'}={}){
+function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLabel='OK',cancelLabel='Annuler',alertOnly=false}={}){
   return new Promise(resolve=>{
     const previousFocus=document.activeElement;
     const backdrop=document.createElement('div');
@@ -8374,12 +8385,13 @@ function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLa
       <div class="ui-dialog-body ${danger?'danger':''}" id="uiDialogMessage"></div>
       ${input?'<input class="ui-dialog-input" type="text" aria-labelledby="uiDialogMessage">':''}
       <div class="ui-dialog-actions">
-        <button type="button" class="btn" data-ui-dialog="cancel"></button>
+        ${alertOnly?'':'<button type="button" class="btn" data-ui-dialog="cancel"></button>'}
         <button type="button" class="btn ${danger?'danger':'primary'}" data-ui-dialog="ok"></button>
       </div>
     </div>`;
     backdrop.querySelector('.ui-dialog-body').textContent=String(message??'');
-    backdrop.querySelector('[data-ui-dialog="cancel"]').textContent=cancelLabel;
+    const cancelButton=backdrop.querySelector('[data-ui-dialog="cancel"]');
+    if(cancelButton) cancelButton.textContent=cancelLabel;
     backdrop.querySelector('[data-ui-dialog="ok"]').textContent=confirmLabel;
     const field=backdrop.querySelector('.ui-dialog-input');
     if(field) field.value=String(defaultValue??'');
@@ -8419,6 +8431,10 @@ function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLa
 function uiConfirm(message,options={}){
   const danger=options.danger ?? /supprim|définiti|irréversible|SUPPRESSION|désactiv/i.test(String(message));
   return uiDialog({message,danger,confirmLabel:danger?'Confirmer':'OK',...options});
+}
+
+function uiAlert(message){
+  return uiDialog({message,alertOnly:true,confirmLabel:'OK'});
 }
 
 function uiPrompt(message,defaultValue=''){
@@ -8612,6 +8628,150 @@ function applyRoleAccess(){
     roleSelect.disabled = true;
   }
 }
+
+// ============================================================
+// V6.39 — FENÊTRE WHATSAPP 24 H ET MODÈLES (TEMPLATES)
+// ============================================================
+// Plus de 24 h après le dernier message du client, WhatsApp n'accepte
+// qu'un modèle approuvé. Meta accepte d'abord l'envoi d'un texte libre puis
+// signale l'échec (code 131047) : on prévient donc le commercial avant
+// l'envoi, et on affiche l'échec s'il survient.
+const WHATSAPP_WINDOW_MS=24*60*60*1000;
+let whatsappTemplatesList=null;
+
+function whatsappWindowNoticeHtml(contact,state={},channel=''){
+  const resolvedChannel=channel||conversationChannel(conversations.find(item=>item.contact===contact)||{contact,channel:state?.channel});
+  if(resolvedChannel!=='whatsapp') return '';
+  const failure=state?.lastDeliveryFailure;
+  const lastCustomerMs=Date.parse(String(state?.lastCustomerAt||''));
+  const windowClosed=Number.isFinite(lastCustomerMs)&&Date.now()-lastCustomerMs>WHATSAPP_WINDOW_MS;
+  const button=`<button class="btn" type="button" onclick="openWhatsAppTemplateDialog(${jsArg(contact)})">📋 Envoyer un modèle</button>`;
+  if(failure){
+    const reason=failure.windowClosed
+      ?'le client n’a pas écrit depuis plus de 24 h'
+      :(failure.title||`code ${failure.code||'inconnu'}`);
+    return `<div class="wa-window-notice failure" role="alert"><span>⚠️ <strong>Dernier message non remis</strong> (${escapeHtml(formatShortTime(failure.at))}) : ${escapeHtml(reason)}.${failure.windowClosed?' Utilisez un modèle WhatsApp approuvé.':''}</span>${failure.windowClosed?button:''}</div>`;
+  }
+  if(windowClosed){
+    return `<div class="wa-window-notice"><span>🕒 <strong>Fenêtre de 24 h fermée</strong> : un message libre ne sera pas remis. Envoyez un modèle approuvé ; la conversation se rouvre quand le client répond.</span>${button}</div>`;
+  }
+  return '';
+}
+
+function refreshWhatsAppWindowNotice(contact,state){
+  const host=document.getElementById('waWindowNotice');
+  if(!host||contact!==selectedConversationContact) return;
+  const html=whatsappWindowNoticeHtml(contact,state||{});
+  if(host.innerHTML!==html) host.innerHTML=html;
+}
+
+function renderWhatsAppTemplateText(body,values){
+  return String(body||'').replace(/\{\{\s*(\d+)\s*\}\}/g,(match,number)=>{
+    const value=values[Number(number)-1];
+    return value?value:match;
+  });
+}
+
+window.openWhatsAppTemplateDialog=async function(contact){
+  let data;
+  try{
+    data=whatsappTemplatesList||await apiFetch(`${API}/whatsapp/templates`);
+  }catch(error){
+    await uiAlert(`Impossible de charger les modèles WhatsApp : ${error.message||error}`);
+    return;
+  }
+  if(!data?.configured){
+    await uiAlert(data?.message||'Les modèles WhatsApp ne sont pas configurés.');
+    return;
+  }
+  const templates=(data.items||[]).filter(item=>item.supported);
+  if(!templates.length){
+    await uiAlert('Aucun modèle approuvé utilisable. Créez un modèle (texte simple) dans WhatsApp Manager puis attendez son approbation par Meta.');
+    return;
+  }
+  whatsappTemplatesList=data;
+
+  const previousFocus=document.activeElement;
+  const backdrop=document.createElement('div');
+  backdrop.className='ui-dialog-backdrop';
+  backdrop.innerHTML=`<div class="ui-dialog wa-template-dialog" role="dialog" aria-modal="true" aria-labelledby="waTemplateTitle">
+    <div class="ui-dialog-body"><strong id="waTemplateTitle">Envoyer un modèle WhatsApp</strong><br>Seuls les modèles approuvés par Meta peuvent être envoyés hors de la fenêtre de 24 h.</div>
+    <label class="wa-template-field">Modèle
+      <select data-wa-template>${templates.map((item,index)=>`<option value="${index}">${escapeHtml(item.name)} (${escapeHtml(item.language)})</option>`).join('')}</select>
+    </label>
+    <div data-wa-params></div>
+    <div class="wa-template-preview" data-wa-preview aria-live="polite"></div>
+    <div class="wa-template-error hidden" data-wa-error role="alert"></div>
+    <div class="ui-dialog-actions">
+      <button type="button" class="btn" data-wa-cancel>Annuler</button>
+      <button type="button" class="btn primary" data-wa-send>Envoyer le modèle</button>
+    </div>
+  </div>`;
+  document.body.appendChild(backdrop);
+
+  const select=backdrop.querySelector('[data-wa-template]');
+  const paramsHost=backdrop.querySelector('[data-wa-params]');
+  const preview=backdrop.querySelector('[data-wa-preview]');
+  const errorBox=backdrop.querySelector('[data-wa-error]');
+  const sendButton=backdrop.querySelector('[data-wa-send]');
+  const current=()=>templates[Number(select.value)||0];
+  const values=()=>[...paramsHost.querySelectorAll('input')].map(input=>input.value.trim());
+  const updatePreview=()=>{preview.textContent=renderWhatsAppTemplateText(current().body,values());errorBox.classList.add('hidden');};
+  const renderParams=()=>{
+    const template=current();
+    paramsHost.innerHTML=Array.from({length:template.placeholderCount},(_,index)=>
+      `<label class="wa-template-field">Variable {{${index+1}}}<input type="text" maxlength="1000" autocomplete="off"></label>`).join('');
+    paramsHost.querySelectorAll('input').forEach(input=>input.addEventListener('input',updatePreview));
+    updatePreview();
+  };
+  const close=()=>{
+    document.removeEventListener('keydown',onKey,true);
+    backdrop.remove();
+    try{previousFocus?.focus?.();}catch{}
+  };
+  const onKey=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}};
+
+  select.addEventListener('change',renderParams);
+  backdrop.querySelector('[data-wa-cancel]').addEventListener('click',close);
+  backdrop.addEventListener('click',event=>{if(event.target===backdrop)close();});
+  document.addEventListener('keydown',onKey,true);
+  sendButton.addEventListener('click',async()=>{
+    const template=current();
+    const parameters=values();
+    if(parameters.some(value=>!value)){
+      errorBox.textContent='Remplissez toutes les variables du modèle.';
+      errorBox.classList.remove('hidden');
+      return;
+    }
+    const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:'whatsapp',externalContact:selectedConversationData?.state?.externalContact};
+    const externalContact=conversationExternalContact(item);
+    sendButton.disabled=true;
+    sendButton.textContent='Envoi…';
+    try{
+      await apiFetch(`${API}/commercial/send`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          phone:externalContact,
+          contact,
+          channel:'whatsapp',
+          externalContact,
+          text:renderWhatsAppTemplateText(template.body,parameters),
+          template:{name:template.name,language:template.language,parameters}
+        })
+      });
+      close();
+      if(typeof softRefreshSelectedConversation==='function') softRefreshSelectedConversation();
+    }catch(error){
+      errorBox.textContent=error.message||'Envoi impossible.';
+      errorBox.classList.remove('hidden');
+      sendButton.disabled=false;
+      sendButton.textContent='Envoyer le modèle';
+    }
+  });
+  renderParams();
+  select.focus();
+};
 
 // ============================================================
 // V6.39 — PAGE INDICATEURS (KPI)
@@ -11220,6 +11380,7 @@ function renderConversationHeader(
   contact,
   state
 ){
+  refreshWhatsAppWindowNotice(contact, state);
   const item =
     conversations.find(
       entry =>
@@ -11729,6 +11890,7 @@ function buildConversationComposer(
 
   return `
     <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer">
+      <div id="waWindowNotice" aria-live="polite">${whatsappWindowNoticeHtml(contact, selectedConversationData?.state || {}, composerChannel)}</div>
       <div
         id="conversationQuickReplyPanel"
         class="quick-reply-box wa-quick-reply-panel hidden"

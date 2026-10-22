@@ -4933,7 +4933,8 @@ setCommercialSendHandler(
     text,
     actor,
     mediaKind,
-    file
+    file,
+    template
   }) => {
     const resolvedChannel =
       normalizeChannel(
@@ -5034,11 +5035,26 @@ setCommercialSendHandler(
             safeString(result?.messages?.[0]?.id)
         };
       }
+    } else if (template) {
+      result = await sendWhatsAppTemplate(
+        resolvedExternal,
+        template
+      );
     } else {
       result = await sendWhatsAppMessage(
         resolvedExternal,
         text
       );
+    }
+
+    if (resolvedChannel === 'whatsapp') {
+      // Un nouvel envoi efface l'alerte d'échec de remise précédente.
+      updateConversationState(conversationKey, current => {
+        if (!current?.lastDeliveryFailure) return current;
+        const next = { ...current };
+        delete next.lastDeliveryFailure;
+        return next;
+      });
     }
 
     pauseAiForCommercial(
@@ -5249,6 +5265,75 @@ function wrapSendNetworkError(error) {
 // ENVOI WHATSAPP
 // ============================================================
 
+// V6.39 — Message modèle (template) WhatsApp. Seul type de message autorisé
+// par Meta plus de 24 h après le dernier message du client. Le modèle doit
+// être approuvé dans WhatsApp Manager ; `parameters` remplit {{1}}, {{2}}…
+// du corps du modèle, dans l'ordre.
+async function sendWhatsAppTemplate(
+  to,
+  { name, language, parameters = [] } = {}
+) {
+  if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
+    throw new Error('WHATSAPP_TOKEN ou PHONE_NUMBER_ID manquant.');
+  }
+
+  const cleanRecipient = normalizePhone(to);
+  const templateName = safeString(name);
+  const languageCode = safeString(language) || 'fr';
+
+  if (!cleanRecipient) throw new Error('Destinataire WhatsApp manquant.');
+  if (!/^[a-z0-9_]{1,512}$/.test(templateName)) throw new Error('Nom de modèle WhatsApp invalide.');
+
+  const bodyParameters = (Array.isArray(parameters) ? parameters : [])
+    .map(value => safeString(value).replace(/[\r\n\t]+/g, ' ').replace(/ {4,}/g, '   '))
+    .map(value => ({ type: 'text', text: value }));
+
+  if (bodyParameters.some(item => !item.text)) {
+    throw new Error('Tous les champs du modèle doivent être remplis.');
+  }
+
+  console.log('📤 ENVOI MODÈLE WHATSAPP', templateName, 'VERS :', maskPhoneForLog(cleanRecipient));
+
+  const response = await fetchWithSendTimeout(
+    `https://graph.facebook.com/${META_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json',
+        Connection: 'close'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanRecipient,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          ...(bodyParameters.length
+            ? { components: [{ type: 'body', parameters: bodyParameters }] }
+            : {})
+        }
+      })
+    }
+  );
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error('❌ Meta WhatsApp API (modèle) :', safeString(data?.error?.message) || response.status);
+    throw new Error(data?.error?.message || `Erreur WhatsApp HTTP ${response.status}`);
+  }
+
+  return data;
+}
+
 async function sendWhatsAppMessage(
   to,
   text
@@ -5285,7 +5370,7 @@ async function sendWhatsAppMessage(
 
   console.log(
     '📤 ENVOI WHATSAPP VERS :',
-    cleanRecipient
+    maskPhoneForLog(cleanRecipient)
   );
 
   const url =
@@ -7249,6 +7334,29 @@ async function processWhatsAppWebhook(body) {
           status?.id ||
           'sans-id'
         );
+
+        // V6.39 — Statut « failed » : Meta a accepté l'envoi puis ne l'a pas
+        // remis (le plus souvent, fenêtre de 24 h fermée : code 131047).
+        // Il était ignoré : le commercial croyait avoir répondu. On l'enregistre
+        // pour l'afficher dans la conversation avec la marche à suivre.
+        if (statusPhone && statusKind === 'failed') {
+          const failure = Array.isArray(status?.errors) ? status.errors[0] || {} : {};
+          const code = Number(failure?.code) || 0;
+          console.warn(
+            `⚠️ Message WhatsApp non remis à ${maskPhoneForLog(statusPhone)} : code ${code || 'inconnu'} — ${safeString(failure?.title || failure?.message) || 'sans détail'}`
+          );
+          updateConversationState(makeConversationKey('whatsapp', statusPhone), current => ({
+            ...current,
+            lastDeliveryFailure: {
+              at: statusIso,
+              messageId: safeString(status?.id),
+              code,
+              title: safeString(failure?.title || failure?.message).slice(0, 200),
+              windowClosed: code === 131047
+            }
+          }));
+          continue;
+        }
 
         if (!statusPhone || !['sent', 'delivered', 'read'].includes(statusKind)) continue;
         const statusContact = makeConversationKey('whatsapp', statusPhone);
