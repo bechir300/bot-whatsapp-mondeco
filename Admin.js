@@ -2123,6 +2123,10 @@ function pruneFullSnapshots() {
 }
 
 function createFullSnapshot(reason = 'manual') {
+  // V6.37.3 — Le JSON d'état n'étant écrit qu'une fois par minute, on
+  // l'écrit avant de le copier dans le snapshot.
+  try { flushConversationStatesWrite(); } catch (error) { console.warn('⚠️ Snapshot : état non écrit :', error.message); }
+
   const id =
     `snapshot-${timestampId()}`;
 
@@ -2435,6 +2439,8 @@ function restoreFullSnapshot(snapshotId) {
 }
 
 function createExternalDataExport() {
+  try { flushConversationStatesWrite(); } catch {}
+
   return {
     exportVersion: 1,
     createdAt:
@@ -16168,90 +16174,270 @@ async function loadWhatsAppLogForContact(targetContact) {
   return entries;
 }
 
+// ============================================================
+// V6.37.3 — BOÎTE DE RÉCEPTION INCRÉMENTALE
+// ============================================================
+// Mesuré en production (octobre 2026) : la fusion complète relisait toutes
+// les 5 minutes l'historique Instagram, l'historique Facebook, 90 jours
+// d'événements (~186 Mo de JSONL) et le journal, soit ~54 600 événements,
+// avec une mémoire montant jusqu'à 2 Go sur un serveur à 2 vCPU partagé.
+//
+// Désormais, chaque source est gardée en mémoire séparément :
+// - conversation-events/*.jsonl (ajout seul) : seules les NOUVELLES lignes
+//   sont lues (position mémorisée par fichier). Relecture complète seulement
+//   si un fichier rétrécit (purge, rétention), après une réinitialisation
+//   du cache, ou toutes les 6 h (glissement de la fenêtre de 90 jours) ;
+// - instagram-history.json, facebook-history.json, conversation-log.json :
+//   relus uniquement si le fichier a changé, au plus toutes les 5 minutes
+//   (les nouveaux messages arrivent déjà en direct par les événements et
+//   par invalidateWhatsAppLogCache(entry)).
+// La liste finale est recombinée en mémoire, sans relire les fichiers.
+
+const INBOX_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+const INBOX_EVENTS_REFRESH_MIN_MS = 15 * 1000;
+const INBOX_ARRAY_SOURCES_REFRESH_MIN_MS = 5 * 60 * 1000;
+const INBOX_EVENTS_FULL_REBUILD_MS = 6 * 60 * 60 * 1000;
+const INBOX_SLOW_LOG_MS = 500;
+
+let inboxSources = null;
+let inboxGeneration = 0;
+
+// Mémoïsation du filtre des messages supprimés (2 empreintes par
+// événement) : recalculé seulement si la liste des suppressions change.
+let inboxTombstoneMemo = new WeakMap();
+let inboxTombstoneStamp = '';
+
+function inboxCleanEntry(entry) {
+  const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
+  if (stamp !== inboxTombstoneStamp) {
+    inboxTombstoneMemo = new WeakMap();
+    inboxTombstoneStamp = stamp;
+  }
+  if (entry && typeof entry === 'object' && inboxTombstoneMemo.has(entry)) {
+    return inboxTombstoneMemo.get(entry);
+  }
+  const clean = applyConversationPurgeTombstones(entry);
+  if (entry && typeof entry === 'object') inboxTombstoneMemo.set(entry, clean);
+  return clean;
+}
+
+function inboxEntryTime(entry) {
+  return safeString(entry?.time || entry?.event_time || entry?.meta_created_time || entry?.created_time || entry?.timestamp);
+}
+
+function inboxMergeInto(map, entry, cutoffAt, collected = null) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+  if (!historyTimeIsRecent(inboxEntryTime(entry), cutoffAt)) return;
+  const key = conversationLogDedupeKey(entry);
+  map.set(key, mergeConversationLogEntries(map.get(key), entry));
+  if (collected) collected.push(entry);
+}
+
+async function inboxLoadArraySource(filePath, cutoffAt) {
+  const map = new Map();
+  await forEachJsonArrayObjectAsync(filePath, entry => inboxMergeInto(map, entry, cutoffAt));
+  return map;
+}
+
+// Lit un fichier JSONL à partir d'une position (en octets) et renvoie la
+// nouvelle position, placée juste après le dernier saut de ligne : une
+// ligne en cours d'écriture n'est jamais lue à moitié.
+async function inboxReadJsonlFrom(filePath, startOffset, onRecord) {
+  let handle;
+  try {
+    handle = await fs.promises.open(filePath, 'r');
+  } catch {
+    return startOffset;
+  }
+  try {
+    const { size } = await handle.stat();
+    let position = startOffset;
+    let consumed = startOffset;
+    let pending = Buffer.alloc(0);
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let lines = 0;
+    while (position < size) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, size - position), position);
+      if (!bytesRead) break;
+      position += bytesRead;
+      pending = pending.length ? Buffer.concat([pending, chunk.subarray(0, bytesRead)]) : Buffer.from(chunk.subarray(0, bytesRead));
+      let newline;
+      while ((newline = pending.indexOf(10)) !== -1) {
+        const line = pending.subarray(0, newline).toString('utf8').trim();
+        consumed += newline + 1;
+        pending = pending.subarray(newline + 1);
+        if (line) {
+          try {
+            onRecord(JSON.parse(line));
+          } catch {
+            // Ligne corrompue : ignorée sans interrompre la lecture.
+          }
+        }
+        if (++lines % 500 === 0) await new Promise(resolve => setImmediate(resolve));
+      }
+    }
+    return consumed;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function inboxRefresh(forceAll) {
+  const startedAt = Date.now();
+  const cutoffAt = new Date(Date.now() - INBOX_WINDOW_MS).toISOString();
+  const now = Date.now();
+
+  if (!inboxSources || forceAll) {
+    inboxSources = {
+      arrays: {
+        instagram: { path: INSTAGRAM_HISTORY_PATH, stamp: null, map: new Map() },
+        facebook: { path: FACEBOOK_HISTORY_PATH, stamp: null, map: new Map() },
+        live: { path: CONVERSATIONS_LOG_PATH, stamp: null, map: new Map() }
+      },
+      arraysCheckedAt: 0,
+      events: { files: new Map(), map: new Map(), builtAt: 0 },
+      checkedAt: 0
+    };
+    forceAll = true;
+  }
+
+  const sources = inboxSources;
+  let recombine = forceAll;
+  const reasons = [];
+
+  // 1. Sources « tableau JSON » : rechargées seulement si elles ont changé.
+  if (forceAll || now - sources.arraysCheckedAt >= INBOX_ARRAY_SOURCES_REFRESH_MIN_MS) {
+    sources.arraysCheckedAt = now;
+    for (const [name, source] of Object.entries(sources.arrays)) {
+      const stamp = fileChangeStamp(source.path);
+      if (forceAll || stamp !== source.stamp) {
+        source.map = await inboxLoadArraySource(source.path, cutoffAt);
+        source.stamp = stamp;
+        recombine = true;
+        reasons.push(name);
+      }
+    }
+  }
+
+  // 2. Événements (ajout seul) : nouvelles lignes uniquement.
+  const events = sources.events;
+  const files = conversationEventFilesSince(cutoffAt);
+  let fullEvents = forceAll || now - events.builtAt >= INBOX_EVENTS_FULL_REBUILD_MS;
+  const sizes = new Map();
+  for (const name of files) {
+    let size = 0;
+    try { size = fs.statSync(path.join(CONVERSATION_EVENTS_DIR, name)).size; } catch {}
+    sizes.set(name, size);
+    const known = events.files.get(name);
+    if (known && size < known.offset) fullEvents = true;
+  }
+  for (const name of events.files.keys()) {
+    if (!sizes.has(name)) fullEvents = true;
+  }
+
+  const delta = [];
+  if (fullEvents) {
+    events.map = new Map();
+    events.files = new Map();
+    for (const name of files) {
+      const offset = await inboxReadJsonlFrom(path.join(CONVERSATION_EVENTS_DIR, name), 0, entry => inboxMergeInto(events.map, entry, cutoffAt));
+      events.files.set(name, { offset });
+    }
+    events.builtAt = now;
+    recombine = true;
+    reasons.push('événements (complet)');
+  } else {
+    for (const name of files) {
+      const known = events.files.get(name) || { offset: 0 };
+      if (sizes.get(name) > known.offset) {
+        const offset = await inboxReadJsonlFrom(path.join(CONVERSATION_EVENTS_DIR, name), known.offset, entry => inboxMergeInto(events.map, entry, cutoffAt, delta));
+        events.files.set(name, { offset });
+      }
+    }
+  }
+  sources.checkedAt = now;
+
+  let entries;
+  if (recombine) {
+    // Recombinaison complète en mémoire, dans l'ordre historique des
+    // sources (Instagram, Facebook, événements, journal).
+    const merged = new Map();
+    for (const map of [sources.arrays.instagram.map, sources.arrays.facebook.map, events.map, sources.arrays.live.map]) {
+      for (const [key, entry] of map) merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
+    }
+    entries = [];
+    for (const entry of merged.values()) {
+      const clean = inboxCleanEntry(entry);
+      if (clean) entries.push(clean);
+    }
+    entries.sort(conversationEntryComparator);
+  } else if (delta.length) {
+    // Quelques nouveaux événements : on complète la liste existante.
+    entries = [...(combinedConversationLogCache.entries || [])];
+    const indexByKey = new Map();
+    entries.forEach((entry, index) => indexByKey.set(conversationLogDedupeKey(entry), index));
+    for (const entry of delta) {
+      const key = conversationLogDedupeKey(entry);
+      const index = indexByKey.get(key);
+      const merged = mergeConversationLogEntries(index === undefined ? undefined : entries[index], entry);
+      const clean = inboxCleanEntry(merged);
+      if (index === undefined) {
+        if (clean) {
+          indexByKey.set(key, entries.length);
+          entries.push(clean);
+        }
+      } else if (clean) {
+        entries[index] = clean;
+      }
+    }
+    entries.sort(conversationEntryComparator);
+    reasons.push(`${delta.length} nouvel(s) événement(s)`);
+  } else {
+    return combinedConversationLogCache.entries;
+  }
+
+  combinedConversationLogCache = {
+    liveStamp: sources.arrays.live.stamp,
+    historyStamp: sources.arrays.instagram.stamp,
+    facebookHistoryStamp: sources.arrays.facebook.stamp,
+    persistentStamp: 'incremental',
+    entries,
+    __rebuiltAt: Date.now(),
+    __inboxGeneration: inboxGeneration
+  };
+
+  const elapsedMs = Date.now() - startedAt;
+  if (recombine || elapsedMs >= INBOX_SLOW_LOG_MS) {
+    const rssMb = Math.round(Number(process.memoryUsage().rss || 0) / 1024 / 1024);
+    const log = elapsedMs >= INBOX_SLOW_LOG_MS ? console.warn : console.log;
+    log(`⏱️ Inbox : ${recombine ? 'recombinée' : 'complétée'} en ${elapsedMs} ms (${reasons.join(', ') || 'aucun changement'}) | ${entries.length} événement(s) | RSS ${rssMb} MB`);
+  }
+
+  return entries;
+}
+
 async function loadWhatsAppLog() {
-  // V6.36.78 — Fenêtre réduite à 48h UNIQUEMENT pour cette fonction
-  // (l'affichage de la conversation dans l'admin), au lieu des 90 jours
-  // de historyImportCutoffIso() utilisée ailleurs (42 usages, trop risqué
-  // à modifier globalement). La clôture automatique des conversations se
-  // fait déjà à 15 minutes d'inactivité (V6.35.x) : un historique de 90
-  // jours n'apporte rien à l'affichage courant d'une conversation active,
-  // mais coûte la quasi-totalité du temps de fusion (~11000 événements).
-  // Diagnostiqué en production le 30/08 : pipeline d'envoi rapide (<1s),
-  // mais rechargement de la conversation lent (5-15s) à cause du volume
-  // traité par cette fusion.
-  // Patch session (29/09), ROLLBACK (05/10) - L'historique illimite
-  // (new Date(0)) a provoque un CPU bloque a 80-110% en continu, avec
-  // conversation-state.json a 121 Mo. Retour a une fenetre large de
-  // 90 jours, qui couvre le besoin reel sans scanner tout l'historique
-  // a chaque ouverture de conversation.
-  const cutoffAt = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const cache = combinedConversationLogCache;
+  // Le cache a été vidé ailleurs (purge, nettoyage, réinitialisation) :
+  // tout est relu une fois depuis les fichiers.
+  const reset =
+    !inboxSources ||
+    !Array.isArray(cache.entries) ||
+    cache.entries.length === 0 ||
+    cache.__inboxGeneration !== inboxGeneration;
 
-  // V6.35.25 — Cette fonction fusionnait INTÉGRALEMENT, À CHAQUE APPEL,
-  // tout l'historique Instagram/Facebook + événements + journal courant
-  // (potentiellement 30+ Mo), sans AUCUN cache, malgré la structure
-  // combinedConversationLogCache déjà déclarée juste au-dessus mais jamais
-  // réellement utilisée ici. Appelée à quasiment chaque requête API touchant
-  // une conversation (liste, détail...) — bien plus fréquemment que le
-  // rattrapage Facebook (60s) déjà corrigé en V6.35.24. Diagnostiqué en
-  // production comme cause majeure des pics EVENTLOOP-LAG persistants.
-  // Le cache est aussi invalidé toutes les 5 minutes (cutoffBucket), pour
-  // que la fenêtre glissante de rétention (48h) reste correcte même si
-  // aucun fichier ne change entre-temps.
-  // V6.36.95 — Ordre des verifications INVERSE. Bug identifie le 09/09 :
-  // le throttle anti-EVENTLOOP-LAG (V6.36.65, 120s) etait verifie APRES
-  // les stamps precis (historyStamp/persistentStamp/liveStamp), or
-  // liveStamp change a CHAQUE nouveau message WhatsApp -- avec le trafic
-  // reel, un nouveau message arrive presque toujours avant les 120s,
-  // donc la verification de stamp echouait en premier et cassait le
-  // throttle avant qu'il ait la moindre chance de s'appliquer. Mesure en
-  // production : 1537 reconstructions completes sur 2000 lignes de log,
-  // RSS memoire jusqu'a 1.6 Go. Le throttle doit primer : on accepte des
-  // entrees vieilles de quelques secondes plutot que de refaire la fusion
-  // complete (10000+ evenements, ~2-2.5s bloquant) a chaque message.
-  const __lastFullRebuildAt = combinedConversationLogCache.__rebuiltAt || 0;
-  const __cacheHasEntries = Array.isArray(combinedConversationLogCache.entries) &&
-    combinedConversationLogCache.entries.length > 0;
-  // Patch session (05/10) - Plancher de reconstruction passe de 120s a
-  // 5 min : pendant un batch Facebook actif (reecriture frequente de
-  // facebook-history.json), le plancher de 120s laissait la fusion
-  // complete (24+ Mo Facebook + 90j d'evenements + journal) se relancer
-  // toutes les ~2 min en continu, bloquant le CPU a 80-110% de facon
-  // soutenue. Diagnostique le 05/10 : "Inbox memoire" se redeclenchait
-  // en boucle rapprochee pendant la recuperation temps reel Facebook.
-  if (__cacheHasEntries && Date.now() - __lastFullRebuildAt < 300000) {
-    return combinedConversationLogCache.entries;
+  if (!reset && Date.now() - (inboxSources.checkedAt || 0) < INBOX_EVENTS_REFRESH_MIN_MS) {
+    return cache.entries;
   }
 
-  const cutoffBucket = Math.floor(Date.now() / (5 * 60 * 1000));
-  const historyStamp = fileChangeStamp(INSTAGRAM_HISTORY_PATH);
-  const facebookHistoryStamp = fileChangeStamp(FACEBOOK_HISTORY_PATH);
-  const persistentStamp = conversationEventsDirectoryStamp();
-  const liveStamp = fileChangeStamp(CONVERSATIONS_LOG_PATH);
-  if (
-    combinedConversationLogCache.cutoffBucket === cutoffBucket &&
-    combinedConversationLogCache.historyStamp === historyStamp &&
-    combinedConversationLogCache.facebookHistoryStamp === facebookHistoryStamp &&
-    combinedConversationLogCache.persistentStamp === persistentStamp &&
-    combinedConversationLogCache.liveStamp === liveStamp
-  ) {
-    return combinedConversationLogCache.entries;
-  }
-  // V6.36.87 — Verrou anti-concurrence : si plusieurs appels arrivent en
-  // même temps (plusieurs commerciaux, webhooks simultanés), sans ce
-  // verrou ils passaient TOUS les vérifications ci-dessus avant qu'aucun
-  // n'ait fini d'écrire le nouveau cache, et lançaient chacun leur propre
-  // fusion complète en parallèle. Diagnostiqué en production le 01/09 :
-  // CPU à 42.9% en continu, plusieurs fusions consécutives avec un nombre
-  // d'événements identique dans les logs (preuve de fusions simultanées
-  // sur le même état). Les appels suivants attendent maintenant le
-  // résultat de la fusion déjà en cours au lieu d'en relancer une.
   if (loadWhatsAppLogInFlight) {
     return loadWhatsAppLogInFlight;
   }
 
   loadWhatsAppLogInFlight = (async () => {
     try {
-      return await loadWhatsAppLogUncached(cutoffAt, cutoffBucket, historyStamp, facebookHistoryStamp, persistentStamp, liveStamp);
+      if (reset) inboxGeneration += 1;
+      return await inboxRefresh(reset);
     } finally {
       loadWhatsAppLogInFlight = null;
     }
@@ -16261,57 +16447,6 @@ async function loadWhatsAppLog() {
 }
 
 let loadWhatsAppLogInFlight = null;
-
-async function loadWhatsAppLogUncached(cutoffAt, cutoffBucket, historyStamp, facebookHistoryStamp, persistentStamp, liveStamp) {
-  const merged = new Map();
-  const mergeIfRecent = entry => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
-    const time = safeString(entry?.time || entry?.event_time || entry?.meta_created_time || entry?.created_time || entry?.timestamp);
-    if (!historyTimeIsRecent(time, cutoffAt)) return;
-    const key = conversationLogDedupeKey(entry);
-    merged.set(key, mergeConversationLogEntries(merged.get(key), entry));
-  };
-
-  // V6.36.66 — Versions ASYNC (cession d'event loop périodique) au lieu
-  // des versions Sync, pour ne plus jamais bloquer un envoi WhatsApp en
-  // cours pendant la fusion complète de l'historique.
-  await forEachJsonArrayObjectAsync(INSTAGRAM_HISTORY_PATH, mergeIfRecent);
-  await forEachJsonArrayObjectAsync(FACEBOOK_HISTORY_PATH, mergeIfRecent);
-
-  // Les événements persistants sont déjà partitionnés par jour.
-  for (const name of conversationEventFilesSince(cutoffAt)) {
-    await forEachJsonlRecordAsync(path.join(CONVERSATION_EVENTS_DIR, name), mergeIfRecent);
-  }
-
-  // Le cache live est plafonné à 5000 entrées, mais on le parcourt lui aussi
-  // en streaming pour éviter un pic inutile au moment où l'Inbox s'ouvre.
-  await forEachJsonArrayObjectAsync(CONVERSATIONS_LOG_PATH, mergeIfRecent);
-
-  const entries = [];
-  for (const entry of merged.values()) {
-    const clean = applyConversationPurgeTombstones(entry);
-    if (clean) entries.push(clean);
-  }
-  entries.sort(conversationEntryComparator);
-
-  const memory = process.memoryUsage();
-  const rssMb = Math.round(Number(memory.rss || 0) / 1024 / 1024);
-  if (rssMb > 350) {
-    console.warn(`⚠️ Inbox mémoire: RSS ${rssMb} MB | ${entries.length} événement(s) fusionné(s)`);
-  }
-
-  combinedConversationLogCache = {
-    liveStamp,
-    historyStamp,
-    facebookHistoryStamp,
-    persistentStamp,
-    cutoffBucket,
-    entries,
-    __rebuiltAt: Date.now()
-  };
-
-  return [...entries];
-}
 
 // V6.35.23 — Cache mémoire pour conversation-state.json. Ce fichier a
 // atteint 15+ Mo (1000+ conversations) et était relu + re-parsé
@@ -16345,9 +16480,20 @@ function loadConversationStatesAdmin() {
       fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
     );
     const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    const firstLoad = !conversationStatesCacheAdmin;
     conversationStatesCacheAdmin = result;
     conversationStatesCacheStampAdmin = stamp;
     conversationStatesUnreadable = false;
+    if (firstLoad) {
+      const recovered = overlayNewerSqliteStates(result);
+      // SQLite est considéré à jour pour ces objets : les enregistrements
+      // suivants ne réécriront que les conversations modifiées.
+      const refs = sqliteSyncedStateRefs();
+      for (const [contact, state] of Object.entries(result)) refs.set(contact, state);
+      // Conversations reprises depuis SQLite : le JSON sera réécrit au
+      // prochain enregistrement groupé pour les contenir aussi.
+      if (recovered) saveConversationStatesAdmin(result);
+    }
     return { ...result };
   } catch (error) {
     // V6.37.2 — Fichier présent mais illisible : on bloque toute écriture
@@ -16382,73 +16528,228 @@ let pendingStateToWrite = null;
 // ~38 000 conversations dans SQLite (JSON.stringify de chacune), ce qui
 // bloquait le serveur plusieurs secondes. Au premier flush après un
 // démarrage, la Map est vide : tout est synchronisé une fois, comme avant.
-const sqliteSyncedStateRefs = new Map();
+// `var` (initialisée à la demande) : loadConversationStatesAdmin() peut être
+// appelé avant cette ligne au démarrage.
+var sqliteSyncedStateRefsMap;
+function sqliteSyncedStateRefs() {
+  if (!sqliteSyncedStateRefsMap) sqliteSyncedStateRefsMap = new Map();
+  return sqliteSyncedStateRefsMap;
+}
+
+// V6.37.3 — Le fichier JSON complet (77 Mo en production) n'est plus réécrit
+// à chaque enregistrement groupé : SQLite reçoit les conversations modifiées
+// à chaque fois (rapide), le JSON au plus une fois par minute, et toujours
+// à l'arrêt, avant un snapshot ou un export. Au démarrage, les conversations
+// plus récentes dans SQLite que dans le JSON sont réintégrées (voir
+// overlayNewerSqliteStates).
+const STATE_JSON_MIN_INTERVAL_MS = Math.max(
+  10 * 1000,
+  Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
+);
+const STATE_FLUSH_SLOW_LOG_MS = 500;
+var stateJsonPending;
+var stateJsonTimer;
+var lastStateJsonWriteAt;
 // `var` sans valeur initiale : loadConversationStatesAdmin() peut être
 // appelé avant cette ligne, il ne faut pas réinitialiser l'indicateur ici.
 var conversationStatesUnreadable;
 
-function flushConversationStatesWrite() {
-  if (!pendingStateToWrite) return;
-  if (conversationStatesUnreadable) {
-    console.error('🚨 conversation-state.json non écrit : le fichier existant est illisible. Restaurez une sauvegarde puis redémarrez.');
+// `force` (par défaut) : écrit aussi le fichier JSON complet. Les écouteurs
+// SIGTERM/SIGINT/beforeExit et les appels explicites forcent l'écriture ;
+// la minuterie d'enregistrement groupé passe `false`.
+function flushConversationStatesWrite(force = true) {
+  const forceJson = force !== false;
+  const startedAt = Date.now();
+  let sqliteMs = 0;
+  let sqliteRows = 0;
+
+  if (pendingStateToWrite) {
+    const toWrite = pendingStateToWrite;
     pendingStateToWrite = null;
+    if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
     pendingStateWriteTimer = null;
-    return;
-  }
-  const toWrite = pendingStateToWrite;
-  pendingStateToWrite = null;
-  pendingStateWriteTimer = null;
-  try {
-    writeJsonAtomic(CONVERSATION_STATE_PATH_ADMIN, toWrite);
-    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-  } catch (error) {
-    console.error('❌ Écriture différée conversation-state.json :', error.message);
+    stateJsonPending = toWrite;
+
+    // SQLite d'abord : il n'est ainsi jamais en retard sur le JSON.
+    const sqliteStartedAt = Date.now();
+    // V6.36.70 — Synchronisation SQLite à chaque flush groupé. Nécessaire
+    // car 40+ endroits du code (assigner, prioriser, terminer une
+    // conversation, etc.) modifient encore SEULEMENT le JSON via
+    // saveConversationStatesAdmin, sans jamais écrire dans SQLite —
+    // seul le chemin updateConversationState (envoi de message WhatsApp,
+    // V6.36.63) écrivait dans les deux. Sans cette synchronisation, un
+    // admin assignant une conversation risquait de voir son changement
+    // écrasé au message suivant, qui lisait SQLite en priorité (obsolète).
+    // V6.37.2 — Seules les conversations modifiées depuis le dernier
+    // enregistrement sont réécrites (comparaison de références) ; la
+    // resynchronisation complète se fait une fois, en arrière-plan, après
+    // le démarrage (voir sqliteBackgroundFullSync).
+    try {
+      const db = getSqliteDb();
+      if (db) {
+        const upsert = db.prepare(`
+          INSERT INTO conversation_states (contact, data, updated_at)
+          VALUES (@contact, @data, @updated_at)
+          ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+        `);
+        const now = Date.now();
+        const changed = [];
+        for (const [contact, state] of Object.entries(toWrite)) {
+          if (!contact) continue;
+          if (sqliteSyncedStateRefs().get(contact) !== state) changed.push([contact, state]);
+        }
+        const syncChanged = db.transaction((entries) => {
+          for (const [contact, state] of entries) {
+            upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
+          }
+        });
+        syncChanged(changed);
+        sqliteRows = changed.length;
+        for (const [contact, state] of changed) sqliteSyncedStateRefs().set(contact, state);
+        // Nettoyage des conversations supprimées du JSON (références obsolètes).
+        const refs = sqliteSyncedStateRefs();
+        if (refs.size > Object.keys(toWrite).length * 1.2 + 100) {
+          for (const contact of refs.keys()) {
+            if (!(contact in toWrite)) refs.delete(contact);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
+    }
+    sqliteMs = Date.now() - sqliteStartedAt;
   }
 
-  // V6.36.70 — Synchronisation SQLite à chaque flush groupé. Nécessaire
-  // car 40+ endroits du code (assigner, prioriser, terminer une
-  // conversation, etc.) modifient encore SEULEMENT le JSON via
-  // saveConversationStatesAdmin, sans jamais écrire dans SQLite —
-  // seul le chemin updateConversationState (envoi de message WhatsApp,
-  // V6.36.63) écrivait dans les deux. Sans cette synchronisation, un
-  // admin assignant une conversation risquait de voir son changement
-  // écrasé au message suivant, qui lisait SQLite en priorité (obsolète).
-  // On resynchronise TOUTE la table en une seule transaction groupée
-  // (rapide même sur des milliers de lignes), pas par conversation
-  // individuelle — le flush JSON étant déjà lui-même groupé/différé,
-  // ce coût supplémentaire reste rare et non-bloquant pour un commercial.
-  try {
-    const db = getSqliteDb();
-    if (db) {
-      const upsert = db.prepare(`
-        INSERT INTO conversation_states (contact, data, updated_at)
-        VALUES (@contact, @data, @updated_at)
-        ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-      `);
-      const now = Date.now();
-      const changed = [];
-      for (const [contact, state] of Object.entries(toWrite)) {
-        if (!contact) continue;
-        if (sqliteSyncedStateRefs.get(contact) !== state) changed.push([contact, state]);
-      }
-      const syncChanged = db.transaction((entries) => {
-        for (const [contact, state] of entries) {
-          upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
-        }
-      });
-      syncChanged(changed);
-      for (const [contact, state] of changed) sqliteSyncedStateRefs.set(contact, state);
-      // Nettoyage des conversations supprimées du JSON (références obsolètes).
-      if (sqliteSyncedStateRefs.size > Object.keys(toWrite).length * 1.2 + 100) {
-        for (const contact of sqliteSyncedStateRefs.keys()) {
-          if (!(contact in toWrite)) sqliteSyncedStateRefs.delete(contact);
-        }
-      }
+  if (!stateJsonPending) return;
+
+  if (conversationStatesUnreadable) {
+    console.error('🚨 conversation-state.json non écrit : le fichier existant est illisible. Restaurez une sauvegarde puis redémarrez.');
+    stateJsonPending = null;
+    return;
+  }
+
+  const sinceLastJson = Date.now() - (lastStateJsonWriteAt || 0);
+  if (!forceJson && sinceLastJson < STATE_JSON_MIN_INTERVAL_MS) {
+    if (!stateJsonTimer) {
+      stateJsonTimer = setTimeout(() => {
+        stateJsonTimer = null;
+        flushConversationStatesWrite(false);
+      }, STATE_JSON_MIN_INTERVAL_MS - sinceLastJson);
+      if (typeof stateJsonTimer.unref === 'function') stateJsonTimer.unref();
     }
+    if (sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
+      console.warn(`⏱️ État des conversations : SQLite ${sqliteMs} ms (${sqliteRows} conversation(s)) | JSON différé`);
+    }
+    return;
+  }
+
+  if (stateJsonTimer) {
+    clearTimeout(stateJsonTimer);
+    stateJsonTimer = null;
+  }
+
+  const toWriteJson = stateJsonPending;
+  stateJsonPending = null;
+  const jsonStartedAt = Date.now();
+  try {
+    writeJsonAtomic(CONVERSATION_STATE_PATH_ADMIN, toWriteJson);
+    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
+    lastStateJsonWriteAt = Date.now();
   } catch (error) {
-    console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
+    console.error('❌ Écriture différée conversation-state.json :', error.message);
+    // Nouvelle tentative au prochain enregistrement.
+    if (!stateJsonPending) stateJsonPending = toWriteJson;
+  }
+  const jsonMs = Date.now() - jsonStartedAt;
+
+  if (jsonMs + sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
+    let sizeMb = 0;
+    try { sizeMb = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size / 1e6; } catch {}
+    console.warn(
+      `⏱️ État des conversations : ${Date.now() - startedAt} ms | JSON ${jsonMs} ms (${sizeMb.toFixed(1)} Mo) | SQLite ${sqliteMs} ms (${sqliteRows} conversation(s))`
+    );
   }
 }
+
+// V6.37.3 — Au premier chargement : réintègre les conversations plus
+// récentes dans SQLite que dans le fichier JSON (le JSON n'étant écrit
+// qu'une fois par minute, un arrêt brutal peut le laisser en retard).
+function overlayNewerSqliteStates(states) {
+  try {
+    const db = getSqliteDb();
+    if (!db) return 0;
+    const jsonMtimeMs = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs;
+    const rows = db
+      .prepare('SELECT contact, data FROM conversation_states WHERE updated_at > ?')
+      // Marge de 2 s : l'ancien code synchronisait SQLite juste APRÈS
+      // l'écriture du JSON, avec un horodatage légèrement postérieur.
+      .all(Math.floor(jsonMtimeMs) + 2000);
+    let applied = 0;
+    for (const row of rows) {
+      try {
+        const data = JSON.parse(row.data);
+        if (data && typeof data === 'object') {
+          states[row.contact] = data;
+          applied++;
+        }
+      } catch {}
+    }
+    if (applied) {
+      console.log(`♻️ État des conversations : ${applied} conversation(s) plus récente(s) reprise(s) depuis SQLite.`);
+    }
+    return applied;
+  } catch (error) {
+    console.warn('⚠️ Reprise SQLite → état des conversations :', error.message);
+    return 0;
+  }
+}
+
+// V6.37.3 — Resynchronisation complète JSON → SQLite, une fois par
+// démarrage, par lots de 500 conversations en laissant la main entre deux
+// lots (le serveur reste réactif). Avant, elle avait lieu à CHAQUE
+// enregistrement groupé et bloquait le serveur plusieurs secondes.
+async function sqliteBackgroundFullSync() {
+  const db = getSqliteDb();
+  if (!db) return;
+  const startedAt = Date.now();
+  const entries = Object.entries(loadConversationStatesAdmin());
+  const upsert = db.prepare(`
+    INSERT INTO conversation_states (contact, data, updated_at)
+    VALUES (@contact, @data, @updated_at)
+    ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+  `);
+  // Horodatage = celui du fichier JSON : ces lignes ne sont pas « plus
+  // récentes » que le JSON et ne seront pas reprises au démarrage suivant.
+  let asOf = Date.now();
+  try { asOf = Math.floor(fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs); } catch {}
+  const runBatch = db.transaction(batch => {
+    for (const [contact, state] of batch) {
+      upsert.run({ contact, data: JSON.stringify(state), updated_at: asOf });
+    }
+  });
+  const refs = sqliteSyncedStateRefs();
+  let synced = 0;
+  for (let index = 0; index < entries.length; index += 500) {
+    // On ignore les conversations modifiées entre-temps : l'enregistrement
+    // groupé normal s'en charge avec leur version la plus récente.
+    const current = conversationStatesCacheAdmin || {};
+    const batch = entries
+      .slice(index, index + 500)
+      .filter(([contact, state]) => contact && current[contact] === state);
+    if (batch.length) {
+      runBatch(batch);
+      for (const [contact, state] of batch) refs.set(contact, state);
+      synced += batch.length;
+    }
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log(`🗄️ SQLite resynchronisé en arrière-plan : ${synced} conversation(s) en ${Date.now() - startedAt} ms.`);
+}
+
+const sqliteBackgroundSyncTimer = setTimeout(() => {
+  sqliteBackgroundFullSync().catch(error => console.error('❌ Resynchronisation SQLite en arrière-plan :', error.message));
+}, 3 * 60 * 1000);
+if (typeof sqliteBackgroundSyncTimer.unref === 'function') sqliteBackgroundSyncTimer.unref();
 
 function saveConversationStatesAdmin(states) {
   const safeStates =
@@ -16465,7 +16766,7 @@ function saveConversationStatesAdmin(states) {
   pendingStateToWrite = safeStates;
 
   if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
-  pendingStateWriteTimer = setTimeout(flushConversationStatesWrite, STATE_WRITE_DEBOUNCE_MS);
+  pendingStateWriteTimer = setTimeout(() => flushConversationStatesWrite(false), STATE_WRITE_DEBOUNCE_MS);
   if (typeof pendingStateWriteTimer.unref === 'function') pendingStateWriteTimer.unref();
 }
 

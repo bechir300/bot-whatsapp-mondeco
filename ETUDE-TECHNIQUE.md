@@ -34,6 +34,21 @@ L'audit initial (sections 1 à 4 ci-dessous) a été réalisé sur le code de Gi
   - accessibilité (195 tailles de police relevées à 11 px, focus clavier).
 - **Industrialisation** : `npm test`, CI GitHub, `.env.example`, `.gitignore` couvrant les données présentes dans le dossier de l'application.
 
+**Performance (V6.37.2 et V6.37.3), mesurée sur les données de production :**
+
+Mesures de départ en production :
+- `conversation-state.json` faisait 135 Mo pour 38 435 conversations, dont 92,5 Mo de données publicitaires recopiées ;
+- chaque enregistrement réécrivait le fichier **et** les 38 435 lignes SQLite ;
+- la boîte de réception relisait environ 186 Mo d'événements toutes les 5 minutes (54 600 événements, jusqu'à 2 Go de mémoire).
+
+Corrections :
+1. `adReferral` allégé (`raw` jamais relu, lien Meta expiré quand l'image est copiée localement) : 135,7 → 77,2 Mo en production.
+2. SQLite : seules les conversations modifiées sont réécrites ; la resynchronisation complète se fait une fois après le démarrage, en arrière-plan, par lots.
+3. Fichier JSON d'état : réécrit au plus une fois par minute (SQLite reçoit chaque modification avant), toujours à l'arrêt, avant un snapshot ou un export ; au démarrage, les conversations plus récentes dans SQLite sont reprises. Vérifié avec un arrêt brutal (`kill -9`) : aucune perte.
+4. Boîte de réception incrémentale : une copie par source en mémoire, seules les nouvelles lignes des fichiers d'événements sont lues ; les historiques Instagram/Facebook et le journal ne sont relus que s'ils ont changé (au plus toutes les 5 minutes). Résultat vérifié identique à l'ancienne fusion complète (liste et détails) ; mise à jour avec 25 nouveaux messages en 0,34 s au lieu d'environ 2 s.
+
+Banc d'essai (38 435 conversations, trafic simulé), pire blocage du serveur : 2,77 s avec la version d'origine, 1,03 s en V6.37.2, **0,06 s en V6.37.3**.
+
 **Recommandations propres au VPS :**
 1. **Ne plus modifier le code directement sur le serveur.** Modifier sur GitHub (ou en local), puis `git pull` sur le VPS. Les ~90 fichiers `*.BACKUP-*` du dossier montrent que l'historique des modifications n'existait que sous forme de copies : git le fait mieux, et ils sont désormais ignorés.
 2. **Séparer les données du code** : définir `DATA_DIR=/opt/mondeco/data` et y déplacer les fichiers de données et `mondeco.db`, application arrêtée. Une mise à jour du code ne risque alors plus d'écraser des données.

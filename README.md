@@ -63,6 +63,13 @@ Toutes les variables sont documentées dans `.env.example`.
 - **Messages** : traitement dans l'ordre pour chaque client ; reprise automatique d'un message en échec (15 s puis 60 s), sauf s'il est déjà journalisé.
 - **Réseau** : délai maximal sur tous les appels Meta ; reprise des lectures sur 429/5xx ; taille des médias plafonnée.
 - **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`) ; limite de tentatives de connexion par adresse IP et par compte.
+- **Performance** (V6.37.2–6.37.3) :
+  - `adReferral` allégé (135 → 77 Mo en production) ;
+  - SQLite ne réécrit que les conversations modifiées ;
+  - fichier JSON d'état réécrit au plus une fois par minute (`MONDECO_STATE_JSON_MIN_INTERVAL_MS`), toujours à l'arrêt, avant un snapshot ou un export, avec reprise depuis SQLite après un arrêt brutal ;
+  - boîte de réception incrémentale : seules les nouvelles lignes d'événements sont lues.
+
+  Les logs `⏱️ État des conversations` et `⏱️ Inbox` signalent toute opération de plus de 0,5 s.
 - **Logs** : identifiant `X-Request-Id` par requête, repris dans tous ses logs ; numéros masqués et contenu des messages retiré (`LOG_MESSAGE_CONTENT=true` pour un débogage ponctuel) ; `LOG_FORMAT=json` ; alertes d'erreurs vers `ALERT_WEBHOOK_URL` (Slack, Discord, Google Chat, Teams).
 
 ## Pilotage
