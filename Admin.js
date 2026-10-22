@@ -461,10 +461,26 @@ const INSTRUCTIONS_MIGRATION_MARKER = path.join(
 
 const ADMIN_HTML_PATH = path.join(APP_DIR, 'Admin.html');
 
+// Tout environnement est considéré comme réel sauf NODE_ENV=development
+// (un VPS lancé sans NODE_ENV reste protégé).
+const IS_PRODUCTION_RUNTIME =
+  String(process.env.NODE_ENV || '').trim().toLowerCase() !== 'development';
+
+const ADMIN_PASSWORD_CONFIGURED = Boolean(
+  String(process.env.ADMIN_PASSWORD || '').trim()
+);
+
+// V6.37 — Le mot de passe par défaut ne sert qu'en développement local
+// (NODE_ENV=development) : ailleurs, il n'est jamais utilisé pour créer ou
+// réinitialiser un compte.
 const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
+
+if (ADMIN_PASSWORD_CONFIGURED && ADMIN_PASSWORD.length < 12) {
+  console.warn('⚠️ ADMIN_PASSWORD fait moins de 12 caractères : choisissez un mot de passe plus long.');
+}
 
 const ADMIN_EMAIL = (
   process.env.ADMIN_EMAIL ||
@@ -2254,7 +2270,10 @@ function restoreFullSnapshot(snapshotId) {
       safeString(snapshotId)
     );
 
-  if (!safeId) {
+  if (
+    !safeId ||
+    !/^[A-Za-z0-9_-]+$/.test(safeId)
+  ) {
     throw new Error(
       'Sauvegarde invalide.'
     );
@@ -4465,6 +4484,13 @@ const SESSION_DURATION_DAYS = Math.max(
   Math.min(90, Number(process.env.MONDECO_SESSION_DAYS || 30) || 30)
 );
 const SESSION_DURATION = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+// V6.37 — Expiration après inactivité (aucune requête authentifiée, onglet
+// fermé). L'interface envoie un signal de présence toutes les 20 s tant
+// qu'elle est ouverte : une session active n'expire pas en cours de journée.
+const SESSION_IDLE_TIMEOUT_MS = Math.max(
+  1,
+  Math.min(24 * 30, Number(process.env.MONDECO_SESSION_IDLE_HOURS || 12) || 12)
+) * 60 * 60 * 1000;
 const SESSION_PERSIST_MIN_INTERVAL_MS = 60 * 1000;
 let sessionStoreDirty = false;
 let sessionStoreLastPersistAt = 0;
@@ -4701,51 +4727,61 @@ function sanitizeUserForClient(user) {
 // + JSON.parse répétés des milliers de fois, mesuré à 1.4s sur cette
 // route à elle seule (sur un total de ~1.5-2s pour ouvrir une conversation,
 // expliquant la lenteur perçue en changeant de client après une clôture).
+// V6.37 — Vrai lorsque users.json existe mais est illisible (et sa
+// sauvegarde .bak aussi). Toute écriture est alors bloquée : réécrire la
+// liste à partir d'un tableau vide effacerait définitivement tous les
+// comptes. `var` : loadUsers() est appelé au démarrage avant cette ligne.
+var usersStoreUnreadable = false;
+
 function loadUsers() {
-  try {
-    if (
-      !fs.existsSync(
-        USERS_PATH
-      )
-    ) {
-      return [];
-    }
-
-    const stamp = fileChangeStamp(USERS_PATH);
-    if (usersCache && stamp === usersCacheStamp) {
-      return usersCache;
-    }
-
-    const parsed =
-      JSON.parse(
-        fs.readFileSync(
-          USERS_PATH,
-          'utf8'
-        ) ||
-        '[]'
-      );
-
-    const result = Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
-
-    usersCache = result;
-    usersCacheStamp = stamp;
-
-    return result;
-  } catch (error) {
-    console.warn(
-      '⚠️ Lecture users.json :',
-      error.message
-    );
-
+  if (!fs.existsSync(USERS_PATH)) {
+    usersStoreUnreadable = false;
     return [];
   }
+
+  const stamp = fileChangeStamp(USERS_PATH);
+  if (usersCache && stamp === usersCacheStamp) {
+    return usersCache;
+  }
+
+  const read = candidate => {
+    if (!fileExistsWithContent(candidate)) return null;
+    const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  };
+
+  try {
+    const result = read(USERS_PATH) || [];
+    usersCache = result;
+    usersCacheStamp = stamp;
+    usersStoreUnreadable = false;
+    return result;
+  } catch (error) {
+    console.error('❌ Lecture users.json impossible :', error.message);
+  }
+
+  try {
+    const backup = read(`${USERS_PATH}.bak`);
+    if (backup !== null) {
+      console.warn('♻️ users.json restauré depuis users.json.bak');
+      usersStoreUnreadable = false;
+      return backup;
+    }
+  } catch (backupError) {
+    console.error('❌ users.json.bak invalide :', backupError.message);
+  }
+
+  usersStoreUnreadable = true;
+  return [];
 }
 
 function saveUsers(users) {
+  if (usersStoreUnreadable) {
+    throw new Error(
+      'users.json est illisible : écriture bloquée pour ne pas effacer les comptes. Restaurez une sauvegarde.'
+    );
+  }
+
   writeJsonAtomic(
     USERS_PATH,
     Array.isArray(users)
@@ -4758,7 +4794,14 @@ function initializeUsers() {
   const existing =
     loadUsers();
 
-  if (existing.length) {
+  if (existing.length || usersStoreUnreadable) {
+    return;
+  }
+
+  if (!ADMIN_PASSWORD_CONFIGURED && IS_PRODUCTION_RUNTIME) {
+    console.error(
+      '❌ ADMIN_PASSWORD absent : aucun compte administrateur initial créé. Définissez ADMIN_EMAIL et ADMIN_PASSWORD puis redémarrez.'
+    );
     return;
   }
 
@@ -4814,6 +4857,12 @@ function adminEnvironmentFingerprint() {
 }
 
 function syncBootstrapAdminFromEnvironment() {
+  // V6.37 — Sans ADMIN_PASSWORD explicite en production, on ne touche
+  // jamais aux comptes existants.
+  if (!ADMIN_PASSWORD_CONFIGURED && IS_PRODUCTION_RUNTIME) {
+    return;
+  }
+
   const fingerprint =
     adminEnvironmentFingerprint();
 
@@ -4851,6 +4900,11 @@ function syncBootstrapAdminFromEnvironment() {
 
   const users =
     loadUsers();
+
+  if (usersStoreUnreadable) {
+    console.error('❌ Synchronisation admin ignorée : users.json illisible.');
+    return;
+  }
 
   const now =
     new Date().toISOString();
@@ -5208,16 +5262,31 @@ function getAuthenticatedUser(req) {
           0
         );
 
+  const lastActivityAt =
+    typeof session === 'object'
+      ? Number(session.lastSeenAt || session.createdAt || 0)
+      : 0;
+
   if (
     !expiresAt ||
     expiresAt <=
-      Date.now()
+      Date.now() ||
+    (
+      lastActivityAt &&
+      Date.now() - lastActivityAt > SESSION_IDLE_TIMEOUT_MS
+    )
   ) {
     sessions.delete(sessionKey);
     sessionStoreDirty = true;
     persistSessions(true);
 
     return null;
+  }
+
+  if (typeof session === 'object') {
+    session.lastSeenAt = Date.now();
+    sessionStoreDirty = true;
+    persistSessions();
   }
 
   const userId =
@@ -5854,27 +5923,23 @@ function secureCookie(req) {
 }
 
 
+// V6.37 — req.ip tient compte de `trust proxy` (server.js). Lire
+// X-Forwarded-For directement permettait de contourner la limite en
+// changeant cet en-tête à chaque essai.
 function loginAttemptKey(req) {
-  return (
-    safeString(
-      req.headers[
-        'x-forwarded-for'
-      ]
-    )
-      .split(',')[0]
-      .trim() ||
-    safeString(
-      req.ip
-    ) ||
-    'unknown'
-  );
+  return `ip:${safeString(req.ip) || 'unknown'}`;
 }
 
-function getLoginAttemptState(req) {
-  const key =
-    loginAttemptKey(
-      req
-    );
+// Limite complémentaire par compte : bloque une attaque distribuée sur
+// plusieurs adresses IP visant le même e-mail.
+function loginEmailAttemptKey(email) {
+  return `email:${normalizeEmail(email)}`;
+}
+
+function getLoginAttemptState(
+  req,
+  key = loginAttemptKey(req)
+) {
 
   const current =
     loginAttempts.get(
@@ -5910,10 +5975,14 @@ function getLoginAttemptState(req) {
   };
 }
 
-function registerLoginFailure(req) {
+function registerLoginFailure(
+  req,
+  key = loginAttemptKey(req)
+) {
   const state =
     getLoginAttemptState(
-      req
+      req,
+      key
     );
 
   const failures =
@@ -5934,7 +6003,9 @@ function registerLoginFailure(req) {
     state.key,
     {
       failures,
-      blockedUntil
+      blockedUntil,
+      lastFailureAt:
+        Date.now()
     }
   );
 
@@ -5944,13 +6015,34 @@ function registerLoginFailure(req) {
   };
 }
 
-function clearLoginFailures(req) {
+function clearLoginFailures(
+  req,
+  key = loginAttemptKey(req)
+) {
   loginAttempts.delete(
-    loginAttemptKey(
-      req
-    )
+    key
   );
 }
+
+// Purge des compteurs expirés : sans elle, la Map grossissait sans limite.
+const loginAttemptsSweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, state] of loginAttempts.entries()) {
+    const lastActivity = Math.max(
+      Number(state?.blockedUntil || 0),
+      Number(state?.lastFailureAt || 0) + LOGIN_BLOCK_MS
+    );
+    if (lastActivity <= now) loginAttempts.delete(key);
+  }
+}, 5 * 60 * 1000);
+if (typeof loginAttemptsSweepTimer.unref === 'function') loginAttemptsSweepTimer.unref();
+
+// Empreinte factice : le temps de réponse reste identique que l'e-mail
+// existe ou non (évite de révéler les comptes existants).
+const DUMMY_PASSWORD_USER = (() => {
+  const credentials = hashUserPassword(crypto.randomBytes(16).toString('hex'));
+  return { passwordSalt: credentials.salt, passwordHash: credentials.hash };
+})();
 
 function createSessionForUser(
   req,
@@ -6210,6 +6302,26 @@ router.post('/login', (req, res) => {
       });
   }
 
+  const emailAttemptKey =
+    loginEmailAttemptKey(
+      email
+    );
+
+  if (
+    getLoginAttemptState(
+      req,
+      emailAttemptKey
+    ).blockedUntil >
+    Date.now()
+  ) {
+    return res
+      .status(429)
+      .json({
+        error:
+          'Trop de tentatives. Réessayez dans quelques minutes.'
+      });
+  }
+
   const users =
     loadUsers();
 
@@ -6222,17 +6334,27 @@ router.post('/login', (req, res) => {
         email
     );
 
+  const passwordValid =
+    verifyUserPassword(
+      password,
+      index === -1
+        ? DUMMY_PASSWORD_USER
+        : users[index]
+    );
+
   if (
     index === -1 ||
     users[index].active ===
       false ||
-    !verifyUserPassword(
-      password,
-      users[index]
-    )
+    !passwordValid
   ) {
     registerLoginFailure(
       req
+    );
+
+    registerLoginFailure(
+      req,
+      emailAttemptKey
     );
 
     return res
@@ -6245,6 +6367,11 @@ router.post('/login', (req, res) => {
 
   clearLoginFailures(
     req
+  );
+
+  clearLoginFailures(
+    req,
+    emailAttemptKey
   );
 
   users[index] = {
@@ -7718,10 +7845,14 @@ router.put(
       users
     );
 
+    // V6.37 — Un changement de rôle ou d'e-mail déconnecte aussi le
+    // compte : la personne doit se reconnecter avec ses nouveaux droits.
     if (
       active ===
         false ||
-      password
+      password ||
+      safeString(current.role) !== safeString(updated.role) ||
+      normalizeEmail(current.email) !== normalizeEmail(updated.email)
     ) {
       invalidateUserSessions(
         updated.id
@@ -23269,5 +23400,9 @@ module.exports = {
   // Patch session - Exportee pour que server.js puisse chercher une
   // reponse rapide correspondant a une publicite Meta, avant d'appeler
   // l'IA, pour un nouveau message client issu d'une pub.
-  loadQuickReplies
+  loadQuickReplies,
+  // V6.37 — routes de diagnostic réservées aux admins (server.js) et
+  // écriture immédiate de l'état des conversations à l'arrêt.
+  requireAdmin,
+  flushConversationStatesWrite
 };
