@@ -3,7 +3,6 @@ node_modules/
 
 .env
 .env.*
-!.env.example
 
 # Runtime / persistent data (Railway Volume /data)
 products.json
@@ -31,11 +30,37 @@ backups/
 .DS_Store
 Thumbs.db
 .vscode/
+!.env.example
 
-# Runtime / persistent data added after V6.19
+# Données d'exécution présentes dans le dossier de l'application (VPS
+# /opt/mondeco) : ne jamais les envoyer sur GitHub.
 admin-sessions.json
 users.json.bak
-*.jsonl
-ai-history.json
+attendance-log.json
+notifications.json
+sla-events.json
+social-*.json
+instagram-history*.json
+facebook-*.json
 kpi-daily.json
+ai-history.json
 ai-eval-runs.json
+ai-cost*.json
+followup-last.json
+x.pendingReply
+.admin-env-credentials-fingerprint
+.v630-retention-15.json
+.purged-record-hashes.json
+*.jsonl
+mondeco.db
+mondeco.db-shm
+mondeco.db-wal
+conversation-events/
+conversation-media/
+conversation-profile/
+team-activity-days/
+isolate-*.log
+
+# Copies de sauvegarde faites à la main sur le serveur
+*.BACKUP-*
+*.BACKUP

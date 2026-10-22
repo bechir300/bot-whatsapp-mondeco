@@ -1,4 +1,49 @@
-# Étude technique — MONDECO V6.39.0
+# Étude technique — MONDECO V6.37.0 (version VPS intégrée)
+
+## 0. Intégration avec la version de production du VPS
+
+L'audit initial (sections 1 à 4 ci-dessous) a été réalisé sur le code de GitHub `main`. Or la version **réellement en service** sur le VPS (`/opt/mondeco`, V6.36.102) contenait environ un mois de travail fait directement sur le serveur et jamais publié. Cette version 6.37.0 **part du code du VPS** (branche `vps-production`) et y reporte les améliorations de l'audit.
+
+**Conservé tel quel depuis le VPS** (déjà traité, d'une autre façon) :
+- cache partagé et écriture différée de `conversation-state.json` et `conversation-log.json`, accès par conversation via SQLite (`mondeco.db`). La couche de stockage proposée dans l'audit (section 2, priorité 2) **n'est pas reprise** ;
+- fenêtre WhatsApp de 24 h : blocage des messages libres hors fenêtre et relance par modèle approuvé (`WHATSAPP_REENGAGEMENT_TEMPLATE_NAME`). Le système de modèles multiples de l'audit (priorité 3, point 13) **n'est pas repris** ;
+- budget IA mensuel (100 $) et plage horaire IA (18 h–10 h). L'audit ajoute seulement un quota par client et un plafond quotidien optionnel, désactivé par défaut.
+
+**Ajouté à la version du VPS :**
+- **Sécurité :**
+  - routes de diagnostic réservées aux admins (`/debug-env` était public sur le serveur) ;
+  - XSS des gestionnaires `onclick` (51) ;
+  - limite de connexion non contournable ;
+  - plus de mot de passe par défaut hors `NODE_ENV=development` ;
+  - protection de `users.json` ;
+  - sessions inactives ;
+  - en-têtes HTTP ;
+  - signature des webhooks obligatoire (option) ;
+  - 0 vulnérabilité npm (`multer`, `proxy-addr`, `qs` mis à jour).
+- **Fiabilité :**
+  - délai maximal des appels IA et Meta ;
+  - file par conversation ;
+  - reprise des messages en échec ;
+  - historique IA persistant ;
+  - **arrêt propre**. Les écouteurs `SIGTERM` existants enregistraient les fichiers mais empêchaient Node de s'arrêter : à chaque redémarrage, le gestionnaire de processus devait attendre puis tuer l'application de force.
+- **Confidentialité** : 22 logs ne contiennent plus de numéros ni de textes de messages.
+- **Pilotage :**
+  - page Indicateurs ;
+  - évaluation de la qualité IA (elle fonctionne aussi hors plage horaire IA, le budget restant appliqué) ;
+  - boîtes de dialogue intégrées (47 `confirm`/`prompt` remplacés) ;
+  - accessibilité (195 tailles de police relevées à 11 px, focus clavier).
+- **Industrialisation** : `npm test`, CI GitHub, `.env.example`, `.gitignore` couvrant les données présentes dans le dossier de l'application.
+
+**Recommandations propres au VPS :**
+1. **Ne plus modifier le code directement sur le serveur.** Modifier sur GitHub (ou en local), puis `git pull` sur le VPS. Les ~90 fichiers `*.BACKUP-*` du dossier montrent que l'historique des modifications n'existait que sous forme de copies : git le fait mieux, et ils sont désormais ignorés.
+2. **Séparer les données du code** : définir `DATA_DIR=/opt/mondeco/data` et y déplacer les fichiers de données et `mondeco.db`, application arrêtée. Une mise à jour du code ne risque alors plus d'écraser des données.
+3. Lancer l'application avec un **utilisateur dédié** (pas root), via systemd ou pm2, derrière Nginx en HTTPS.
+4. Appliquer les mises à jour de sécurité d'Ubuntu (92 en attente, dont 21 de sécurité) : `apt update && apt upgrade`, puis redémarrer en dehors des heures d'affluence.
+5. Définir `ADMIN_PASSWORD` (12 caractères minimum) et `META_APP_SECRET`, puis `WEBHOOK_SIGNATURE_REQUIRED=true`.
+
+_Note : les numéros de version 6.36 à 6.39 cités dans les sections suivantes sont ceux de la branche d'audit. Dans cette version, tout ce qui a été repris est regroupé en 6.37.0._
+
+---
 
 Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de pilotage, réalisé en octobre 2026. Cette étude couvre la sécurité, la fiabilité, la performance, la confidentialité, la maintenabilité et l'expérience utilisateur. Elle sépare **ce qui est corrigé dans cette version** de **ce qui reste à faire**, par priorité.
 

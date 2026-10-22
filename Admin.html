@@ -6,6 +6,13 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2311100f'/%3E%3Cpath d='M13 46V18L25 34L37 18V46' fill='none' stroke='white' stroke-width='4.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M41 19H43C53 19 58 24.5 58 32C58 39.5 53 45 43 45H41' fill='none' stroke='%23ed1c24' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
 <meta name="theme-color" content="#11100f">
+<!-- V6.36.5 — Application installable (PWA) : icônes + manifeste. -->
+<link rel="manifest" href="/admin/manifest.json">
+<link rel="apple-touch-icon" href="/admin/icon-apple-touch.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MONDECO">
+<meta name="mobile-web-app-capable" content="yes">
 <title>MONDECO — Agent Omnicanal</title>
 
 <style>
@@ -885,6 +892,47 @@ body{
   opacity:.88;
 }
 
+/* V6.36.5 — Bouton d'installation de l'application (PWA). */
+.pwa-install-btn{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-height:44px;
+  margin:4px 10px 0;
+  padding:11px 13px;
+  border:1px solid #1f5c33;
+  border-radius:13px;
+  background:#12281a;
+  color:#7de8a0;
+  font-size:13px;
+  font-weight:650;
+  cursor:pointer;
+  transition:all .18s ease;
+  width:calc(100% - 20px);
+}
+.pwa-install-btn:hover{
+  background:#16311f;
+  border-color:#2a7a45;
+  color:#a5f5bd;
+}
+.pwa-install-btn .nav-icon{
+  width:18px;
+  height:18px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+}
+.pwa-install-btn .nav-icon svg{
+  width:17px;
+  height:17px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+.pwa-install-btn.hidden{display:none}
+
 .nav button.active .nav-icon{color:#fff}
 
 .sidebar-footer{
@@ -1274,6 +1322,20 @@ tbody tr:hover{background:#fffafa}
 .modal-header h3{font-size:27px}
 .modal-body{padding:24px}
 .modal-footer{padding:18px 24px 24px;background:#fcfaf8;border-top:1px solid #eee5de}
+
+/* V6.36.14 — Fenêtre "conversation déjà prise en charge", claire et
+   distincte d'une alerte système générique. */
+.conversation-locked-modal{max-width:420px}
+.conversation-locked-modal .modal-header{background:#fff7ed;border-bottom:1px solid #fde3bd}
+.conversation-locked-modal .modal-header h3{font-size:19px;color:#9a5b06}
+.conversation-locked-body{padding:22px 24px 6px}
+.conversation-locked-owner{font-size:15px;color:#28211d;margin:0 0 10px}
+.conversation-locked-owner strong{color:#c2740a}
+.conversation-locked-detail{
+  font-size:13.5px;color:#5c534c;background:#fff7ed;border:1px solid #fde3bd;
+  border-radius:12px;padding:11px 13px;margin:0 0 14px;
+}
+.conversation-locked-hint{font-size:12.5px;color:#8a8078;margin:0 0 18px;line-height:1.5}
 
 /* badge utilitaire */
 .premium-badge{
@@ -2898,6 +2960,17 @@ tbody tr:hover{
   color:#fff;
 }
 .inbox-filter.active span{
+  color:#fff;
+}
+.inbox-filter span.badge-alert{
+  background:#e11d2e;
+  color:#fff;
+  border-radius:999px;
+  padding:1px 6px;
+  font-weight:900;
+}
+.inbox-filter.active span.badge-alert{
+  background:#e11d2e;
   color:#fff;
 }
 .inbox-list-meta{
@@ -4725,6 +4798,37 @@ tbody tr:hover{
   font-size:24px;
   line-height:1;
 }
+
+/* V6.36.8 — Panneau emoji + sélecteur de stickers. */
+.wa-emoji-panel{
+  position:absolute;left:0;bottom:calc(100% + 8px);z-index:80;
+  display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:2px;
+  width:min(320px,calc(100% - 20px));max-height:220px;overflow-y:auto;
+  padding:10px;border:1px solid #ded8d1;border-radius:16px;background:#fff;
+  box-shadow:0 14px 36px rgba(24,20,17,.18);
+}
+.wa-emoji-panel.hidden{display:none !important}
+.wa-emoji-btn{
+  min-height:34px;display:flex;align-items:center;justify-content:center;
+  border:0;border-radius:8px;background:transparent;font-size:19px;cursor:pointer;
+}
+.wa-emoji-btn:hover{background:#f1eeeb}
+
+.wa-sticker-picker{
+  position:absolute;left:10px;bottom:calc(100% + 8px);z-index:80;
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;
+  width:min(320px,calc(100% - 20px));
+  padding:12px;border:1px solid #ded8d1;border-radius:16px;background:#fff;
+  box-shadow:0 14px 36px rgba(24,20,17,.18);
+}
+.wa-sticker-picker.hidden{display:none !important}
+.wa-sticker-option{
+  min-width:0;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;
+  padding:4px;border:1px solid #ece7e2;border-radius:13px;background:#faf9f7;cursor:pointer;
+}
+.wa-sticker-option:hover{border-color:#d6cec7;background:#f3f0ed}
+.wa-sticker-option img{width:100%;height:100%;object-fit:contain}
+.wa-sticker-option.sending{opacity:.45;pointer-events:none}
 .whatsapp-composer .wa-quick-reply-panel,
 .whatsapp-composer.is-compact .wa-quick-reply-panel{
   position:absolute;
@@ -4965,6 +5069,28 @@ tbody tr:hover{
 }
 
 
+
+/* V6.36.17 — Fenêtre WhatsApp 24 h / relance template */
+.wa-window-status{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:0 0 8px;padding:8px 10px;border-radius:10px;
+  font-size:11px;font-weight:700;border:1px solid #cdebd8;
+  background:#f1fbf5;color:#17643a;
+}
+.wa-window-expired{
+  margin:0;padding:14px;border:1px solid #efc7c7;border-radius:12px;
+  background:#fff7f7;color:#5f2626;display:flex;align-items:center;
+  justify-content:space-between;gap:14px;flex-wrap:wrap;
+}
+.wa-window-expired-copy{min-width:220px;flex:1;}
+.wa-window-expired-copy strong{display:block;font-size:13px;margin-bottom:4px;}
+.wa-window-expired-copy span{display:block;font-size:11px;line-height:1.45;color:#7a4848;}
+.wa-reengage-btn{
+  border:0;border-radius:999px;padding:10px 15px;font-weight:800;
+  background:#25d366;color:#073d20;box-shadow:0 2px 8px rgba(37,211,102,.25);
+}
+.wa-reengage-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;}
+@media(max-width:650px){.wa-window-expired{align-items:stretch}.wa-reengage-btn{width:100%;}}
 
 /* ==========================================================
    MONDECO V6.23.1 — CLAVIER CLAIR / ACTIONS TOUJOURS VISIBLES
@@ -5304,6 +5430,7 @@ body.inbox-page-active .main{
   grid-template-columns:auto minmax(280px,1fr) auto;
   grid-template-areas:
     "brand search actions"
+    "channels channels channels"
     "filters filters status";
   align-items:center;
   gap:9px 14px;
@@ -5376,6 +5503,27 @@ body.inbox-page-active .main{
 #page-conversations .inbox-command-filters .inbox-filter.channel.facebook:not(.active){border-color:#cbdcf5 !important;background:#f6f9ff !important;color:#245b9d !important}
 .channel-dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:currentColor}
 
+/* V6.36.7 — Onglets par canal, façon Meta Business Suite. */
+.inbox-channel-tabs{
+  grid-area:channels;
+  display:flex !important;align-items:center;gap:4px;min-width:0;
+  border-bottom:1px solid #eee9e4;margin:0 -14px;padding:0 14px;
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;white-space:nowrap;
+}
+.inbox-channel-tabs::-webkit-scrollbar{height:4px}
+.inbox-channel-tab{
+  flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;
+  padding:9px 12px 10px;border:0;border-bottom:2.5px solid transparent;
+  background:transparent;color:#79716a;font-size:12px;font-weight:750;
+}
+.inbox-channel-tab:hover{color:#2a2622}
+.inbox-channel-tab.active{color:#11100f;border-bottom-color:#ed1c24}
+.inbox-channel-tab-count{
+  min-width:18px;height:18px;padding:0 5px;display:inline-flex;align-items:center;justify-content:center;
+  border-radius:999px;background:#f1eeeb;color:#514b46;font-size:11px;font-weight:800;
+}
+.inbox-channel-tab.active .inbox-channel-tab-count{background:#fdeceb;color:#ed1c24}
+
 .inbox-sync-statuses{grid-area:status;display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0;max-width:460px}
 .inbox-sync-status{
   max-width:310px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -5403,6 +5551,41 @@ body.inbox-page-active .main{
   width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid #ddd7d1;border-radius:9px;background:#fff;color:#4d4742;font-size:16px;
 }
 .inbox-list-focus-btn:hover{background:#f1eeeb}
+
+/* V6.36.6 — Sélection multiple + terminaison groupée. */
+.inbox-select-toggle-btn{
+  height:30px;padding:0 11px;border:1px solid #ddd7d1;border-radius:9px;background:#fff;color:#4d4742;font-size:11px;font-weight:650;white-space:nowrap;
+}
+.inbox-select-toggle-btn:hover{background:#f1eeeb}
+.inbox-select-toggle-btn.active{background:#1473e6;border-color:#1473e6;color:#fff}
+.inbox-ai-respond-all-btn,.inbox-speed-cleanup-btn{
+  height:30px;padding:0 11px;border:1px solid #ddd7d1;border-radius:9px;background:#fff;color:#4d4742;font-size:11px;font-weight:650;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;
+}
+.inbox-ai-respond-all-btn:hover,.inbox-speed-cleanup-btn:hover{background:#f1eeeb}
+.inbox-ai-respond-all-btn:disabled,.inbox-speed-cleanup-btn:disabled{opacity:.55;cursor:default}
+.inbox-bulk-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 12px;background:#e7f0fe;border-bottom:1px solid #bcd6fb;
+}
+.inbox-bulk-bar.hidden{display:none}
+.inbox-bulk-selectall{display:flex;align-items:center;gap:8px;font-size:11.5px;font-weight:650;color:#0d3f7a;cursor:pointer}
+.inbox-bulk-selectall input{width:16px;height:16px;cursor:pointer}
+.inbox-bulk-actions{display:flex;gap:8px}
+.inbox-bulk-terminate-btn{
+  height:30px;padding:0 12px;border:0;border-radius:9px;background:#1473e6;color:#fff;font-size:11px;font-weight:700;white-space:nowrap;
+}
+.inbox-bulk-terminate-btn:hover{background:#0f5bc0}
+.inbox-bulk-terminate-btn:disabled{opacity:.5;cursor:not-allowed}
+.inbox-bulk-cancel-btn{
+  height:30px;padding:0 12px;border:1px solid #bcd6fb;border-radius:9px;background:#fff;color:#0d3f7a;font-size:11px;font-weight:650;white-space:nowrap;
+}
+.inbox-bulk-cancel-btn:hover{background:#f2f7ff}
+.inbox-conversation-item .inbox-item-checkbox{display:none}
+.inbox-conversation-list.select-mode .inbox-conversation-item{grid-template-columns:22px 46px minmax(0,1fr) auto !important}
+.inbox-conversation-list.select-mode .inbox-conversation-item .inbox-item-checkbox{
+  display:grid;place-items:center;width:18px;height:18px;align-self:center;cursor:pointer;
+}
+
 #page-conversations .inbox-conversation-list{flex:1 1 auto;min-height:0;overflow:auto !important}
 #page-conversations .inbox-conversation-item{
   min-height:86px !important;padding:12px 12px !important;grid-template-columns:46px minmax(0,1fr) auto !important;gap:10px !important;
@@ -5473,7 +5656,7 @@ body.inbox-page-active .main{
 @media(max-width:1100px) and (min-width:901px){
   #page-conversations .inbox-commandbar{
     grid-template-columns:auto minmax(180px,1fr) auto;
-    grid-template-areas:"brand search actions" "filters filters filters" "status status status";
+    grid-template-areas:"brand search actions" "channels channels channels" "filters filters filters" "status status status";
   }
   .inbox-sync-statuses{justify-content:flex-start;max-width:none}
   #page-conversations .inbox-shell{grid-template-columns:300px minmax(0,1fr) !important}
@@ -5496,7 +5679,7 @@ body.inbox-page-active .main{
   }
   #page-conversations .inbox-commandbar{
     grid-template-columns:minmax(0,1fr) auto;
-    grid-template-areas:"search actions" "filters filters" "status status";
+    grid-template-areas:"search actions" "channels channels" "filters filters" "status status";
     gap:7px;padding:8px;border-radius:0;
   }
   .inbox-command-brand{display:none}
@@ -5731,6 +5914,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
     grid-template-areas:
       "modes modes"
       "search actions"
+      "channels channels"
       "filters filters"
       "status status" !important;
     align-items:center;
@@ -6015,8 +6199,20 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
   }
   /* Sur téléphone, Favori + badges de suivi surchargent l'en-tête.
      Ils restent disponibles sur desktop ; on garde Appel + Fiche client. */
-  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle){
+  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle):not(.favorite-toggle-btn){
     display:none !important;
+  }
+  #page-conversations .inbox-header-actions .favorite-toggle-btn{
+    display:inline-flex !important;
+    width:40px !important;
+    min-width:40px !important;
+    max-width:40px !important;
+    height:40px !important;
+    min-height:40px !important;
+    padding:0 !important;
+    justify-content:center;
+    align-items:center;
+    font-size:16px;
   }
   #page-conversations .inbox-header-actions .inbox-customer-toggle{
     width:40px !important;
@@ -6544,8 +6740,20 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
     max-width:none !important;
     overflow:visible !important;
   }
-  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle){
+  #page-conversations .inbox-header-actions > :not(.wa-call-header-btn):not(.inbox-customer-toggle):not(.favorite-toggle-btn){
     display:none !important;
+  }
+  #page-conversations .inbox-header-actions .favorite-toggle-btn{
+    display:inline-flex !important;
+    width:40px !important;
+    min-width:40px !important;
+    max-width:40px !important;
+    height:40px !important;
+    min-height:40px !important;
+    padding:0 !important;
+    justify-content:center;
+    align-items:center;
+    font-size:16px;
   }
   #page-conversations .inbox-header-actions .inbox-customer-toggle,
   #page-conversations .inbox-header-actions .wa-call-header-btn{
@@ -6644,7 +6852,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 }
 
 
-/* V6.38 — boîtes de dialogue maison (remplacent await uiConfirm()/await uiPrompt()) */
+/* V6.37 — boîtes de dialogue maison (remplacent confirm()/prompt()) */
 .ui-dialog-backdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(23,18,14,.58)}
 .ui-dialog{width:100%;max-width:460px;max-height:90vh;overflow-y:auto;background:var(--panel,#fff);color:var(--text,#211b16);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .ui-dialog-body{padding:22px 22px 8px;font-size:15px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
@@ -6653,8 +6861,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .ui-dialog-input:focus,.ui-dialog-actions button:focus-visible{outline:2px solid var(--accent,#be551b);outline-offset:2px}
 .ui-dialog-actions{display:flex;justify-content:flex-end;gap:10px;padding:18px 22px 22px;flex-wrap:wrap}
 .ui-dialog-actions .btn{min-height:44px;min-width:110px}
-
-/* V6.39 — page Indicateurs */
+/* V6.37 — page Indicateurs */
 .kpi-page{--kpi-ai:#2a78d6;--kpi-human:#eb6834;--kpi-other:#c9c2ba}
 .kpi-toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
 .kpi-period{display:grid;gap:4px;font-size:12px;font-weight:700;color:var(--muted)}
@@ -6697,19 +6904,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .kpi-note{font-size:13px;line-height:1.6;color:var(--muted);max-width:960px}
 .kpi-empty{padding:18px;color:var(--muted);font-size:14px}
 @media(max-width:800px){.kpi-columns{grid-template-columns:1fr}.kpi-tile strong{font-size:24px}}
-
-/* V6.39 — fenêtre WhatsApp 24 h et modèles */
-.wa-window-notice{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:0 0 8px;padding:10px 12px;border-radius:12px;border:1px solid #f0d9a8;background:#fff8e8;color:#5c4512;font-size:13.5px;line-height:1.45}
-.wa-window-notice.failure{border-color:#f1c4bf;background:#fff1ef;color:#7d2a22}
-.wa-window-notice .btn{min-height:40px;white-space:nowrap}
-.wa-template-dialog{max-width:560px}
-.wa-template-dialog .ui-dialog-body{white-space:normal}
-.wa-template-field{display:grid;gap:5px;margin:0 22px 12px;font-size:13.5px;font-weight:700}
-.wa-template-field select,.wa-template-field input{min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font:inherit;font-weight:400;background:#fff;color:var(--text)}
-.wa-template-preview{margin:4px 22px 0;padding:12px;border-radius:12px;background:#e7f7ec;color:#163b25;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
-.wa-template-error{margin:8px 22px 0;color:var(--red);font-size:13.5px}
-
-/* V6.39 — évaluation qualité IA */
+/* V6.37 — évaluation qualité IA */
 .ai-eval-card{margin-top:16px;padding:18px}
 .ai-eval-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .ai-eval-head h3{margin:0 0 6px;font-size:17px}
@@ -6728,8 +6923,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .ai-eval-reply{margin:8px 0 0;padding:10px;border-radius:10px;background:#f8f5f1;white-space:pre-wrap;overflow-wrap:anywhere}
 .ai-eval-reasons{margin:6px 0 0;padding-left:18px;color:#8f2b23}
 .ai-eval-history{margin-top:12px;font-size:13px;color:var(--muted)}
-
-/* V6.39 — accessibilité : contour visible pour la navigation au clavier
+/* V6.37 — accessibilité : contour visible pour la navigation au clavier
    (souris et tactile ne l'affichent pas grâce à :focus-visible). */
 button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus-visible,[tabindex]:not(rect):focus-visible{
   outline:2px solid var(--accent,#be551b) !important;
@@ -6811,6 +7005,15 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg></span>
         <span>Discussion de test</span>
       </button>
+      <button data-page="ai-replies">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/><path d="M6 12v1a6 6 0 0 0 12 0v-1"/><path d="M12 19v3M9 22h6"/></svg></span>
+        <span>Réponses IA</span>
+        <span id="aiAlertsNavBadge" class="nav-count hidden">0</span>
+      </button>
+      <button data-page="wa-report">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-7"/></svg></span>
+        <span>Rapport WhatsApp</span>
+      </button>
       <button data-page="settings">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></svg></span>
         <span>Paramètres</span>
@@ -6824,6 +7027,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         <span>Indicateurs</span>
       </button>
     </nav>
+
+    <!-- V6.36.5 — Bouton d'installation de l'application (PWA). Masqué par
+         défaut : n'apparaît que si le navigateur confirme que l'app peut
+         être installée, ou sur iOS où on affiche des instructions dédiées. -->
+    <button id="pwaInstallButton" class="pwa-install-btn hidden" type="button">
+      <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5"/><path d="M4 19h16"/></svg></span>
+      <span>Installer l'application</span>
+    </button>
 
     <div class="sidebar-footer">
       <div class="sidebar-user" id="sidebarUser">
@@ -6961,7 +7172,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" id="cleanupStorageBtn" type="button">🧹 Nettoyer le stockage sûr</button>
           <button class="btn primary" id="migrateCloudBtn" type="button">☁️ Migrer médias vers Cloudinary</button>
-          <span style="font-size:11px;color:#8a817a;align-self:center">Railway garde les données métier + 15 jours; Cloudinary garde les médias.</span>
+          <span style="font-size:11px;color:#8a817a;align-self:center">Railway garde les données métier + 48h; Cloudinary garde les médias.</span>
         </div>
       </div>
     </section>
@@ -7050,7 +7261,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
-              <button id="inboxModeCommentsBtn" class="inbox-mode-tab" type="button" onclick="setInboxInteractionMode('comments')">💭 Commentaires <span id="commentsPendingBadge" class="mode-count pending hidden" title="Commentaires à répondre">0</span></button>
+              <button id="inboxModeCommentsBtn" class="inbox-mode-tab" type="button" style="display:none" onclick="setInboxInteractionMode('comments')">💭 Commentaires <span id="commentsPendingBadge" class="mode-count pending hidden" title="Commentaires à répondre">0</span></button>
             </div>
             <div id="inboxMiniSub" class="inbox-mini-sub">WhatsApp • Instagram • Facebook</div>
             <div id="pendingWorkSummary" class="pending-work-summary" aria-label="Interactions à répondre"></div>
@@ -7070,7 +7281,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
               <span class="inbox-toolbar-icon">⛶</span><span class="inbox-toolbar-label">Plein écran</span>
             </button>
             <button class="inbox-toolbar-btn" id="syncInstagramHistoryBtn" type="button" title="Synchroniser Instagram" style="display:none">IG ↻</button>
-            <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Historique Facebook 15 jours (manuel — peut être long). Le temps réel fonctionne séparément." style="display:none">FB ↻</button>
+            <button class="inbox-toolbar-btn" id="syncFacebookHistoryBtn" type="button" title="Historique Facebook 48h (manuel — peut être long). Le temps réel fonctionne séparément." style="display:none">FB ↻</button>
             <button class="inbox-toolbar-btn social-comments-sync hidden" id="syncSocialCommentsBtn" type="button" title="Synchroniser publications et commentaires Facebook / Instagram"><span>💭</span><span class="inbox-toolbar-label">Synchroniser</span></button>
             <button class="inbox-toolbar-btn social-comments-sync hidden" id="diagnoseSocialCommentsBtn" type="button" title="Vérifier l’accès Meta aux commentaires"><span>✓</span><span class="inbox-toolbar-label">Vérifier Meta</span></button>
             <button class="inbox-toolbar-btn notification" id="enableNotificationsBtn" type="button" title="Notifications">
@@ -7079,20 +7290,31 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
             <button class="inbox-toolbar-btn refresh" id="refreshConversationsBtn" type="button" title="Actualiser">↻</button>
           </div>
 
+          <!-- V6.36.7 — Onglets par canal (façon Meta Business Suite), sur
+               leur propre ligne de la grille du bandeau ("channels"), au-
+               dessus des filtres de statut ci-dessous. Combinables : un
+               commercial peut choisir WhatsApp + À répondre en même temps,
+               ce qui était impossible avant (un seul filtre exclusif). -->
+          <div class="inbox-channel-tabs" id="conversationChannelTabs" role="tablist" aria-label="Canal">
+            <button class="inbox-channel-tab active" data-channel="all">Tous les messages <span id="channelCountAll" class="inbox-channel-tab-count">0</span></button>
+            <button class="inbox-channel-tab" data-channel="whatsapp"><span class="channel-dot"></span>WhatsApp <span id="channelCountWhatsApp" class="inbox-channel-tab-count">0</span></button>
+            <button class="inbox-channel-tab" data-channel="instagram" style="display:none"><span class="channel-dot"></span>Instagram <span id="channelCountInstagram" class="inbox-channel-tab-count">0</span></button>
+            <button class="inbox-channel-tab" data-channel="facebook" style="display:none"><span class="channel-dot"></span>Facebook <span id="channelCountFacebook" class="inbox-channel-tab-count">0</span></button>
+          </div>
+
           <div class="inbox-filters inbox-command-filters" id="conversationFilters" aria-label="Filtres conversations">
-            <button class="inbox-filter active" data-filter="all">Tous <span id="filterCountAll">0</span></button>
-            <button class="inbox-filter channel whatsapp" data-filter="whatsapp"><span class="channel-dot"></span>WhatsApp <span id="filterCountWhatsApp">0</span></button>
-            <button class="inbox-filter channel instagram" data-filter="instagram"><span class="channel-dot"></span>Instagram <span id="filterCountInstagram">0</span></button>
-            <button class="inbox-filter channel facebook" data-filter="facebook"><span class="channel-dot"></span>Facebook <span id="filterCountFacebook">0</span></button>
-            <button class="inbox-filter" data-filter="unread">Non lus <span id="filterCountUnread">0</span></button>
-            <button class="inbox-filter" data-filter="pending">À répondre <span id="filterCountPending">0</span></button>
-            <button class="inbox-filter" data-filter="priority">Priorité <span id="filterCountPriority">0</span></button>
+            <button class="inbox-filter active" data-filter="pending">À répondre <span id="filterCountPending">0</span></button>
+            <button class="inbox-filter" data-filter="urgent">⚠ Urgent <span id="filterCountUrgent">0</span></button>
             <button class="inbox-filter" data-filter="favorites">⭐ Favoris <span id="filterCountFavorites">0</span></button>
-            <button class="inbox-filter" data-filter="history15" title="Toutes les conversations conservées pendant 15 jours">🗂 Historique 15j <span id="filterCountHistory15">0</span></button>
-            <button class="inbox-filter" data-filter="commercial">Commercial <span id="filterCountCommercial">0</span></button>
-            <button class="inbox-filter" data-filter="sla">SLA <span id="filterCountSla">0</span></button>
-            <button class="inbox-filter" data-filter="ads">Publicités <span id="filterCountAds">0</span></button>
             <button class="inbox-filter" data-filter="resolved">Terminées <span id="filterCountResolved">0</span></button>
+            <button class="inbox-filter" data-filter="archives">🗂 Archives</button>
+            <button class="inbox-filter commercial-only" data-filter="mine">👤 Mes conversations</button>
+            <button class="inbox-filter admin-hide" type="button" id="showAllWhatsAppBtn">📱 Tous WhatsApp</button>
+            <button class="inbox-filter admin-hide" data-filter="unread">Non lus <span id="filterCountUnread">0</span></button>
+            <button class="inbox-filter admin-hide" type="button" title="Somme de tous les messages non lus, toutes conversations">💬 Total non lus <span id="filterCountTotalUnread">0</span></button>
+            <button class="inbox-filter admin-hide" data-filter="priority">Priorité <span id="filterCountPriority">0</span></button>
+            <button class="inbox-filter admin-hide" data-filter="history15" title="Toutes les conversations conservées pendant 48h">🗂 Historique 48h <span id="filterCountHistory15">0</span></button>
+            <button class="inbox-filter admin-hide" data-filter="ads">Publicités <span id="filterCountAds">0</span></button>
           </div>
 
           <div class="inbox-filters inbox-command-filters hidden" id="commentFilters" aria-label="Filtres commentaires">
@@ -7119,7 +7341,27 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
             <div class="inbox-list-meta">
               <strong id="conversationCountLabel">0 conversation</strong>
             </div>
+            <button class="inbox-select-toggle-btn" type="button" id="conversationSelectToggle" onclick="toggleConversationSelectMode()" title="Sélectionner plusieurs conversations">☑ Sélectionner</button>
+            <!-- V6.36.85 — Réactivé après investigation : l'incident du
+                 31/08 (fuite envoyée à ZHAYRA) provenait du pipeline IA
+                 normal, pas de cette route (confirmée sans lien via les
+                 timestamps). Filtre stripReasoningLeak() ajouté côté
+                 serveur par précaution avant réactivation. -->
+            <button class="inbox-ai-respond-all-btn" type="button" onclick="aiRespondAllUnread()" title="Faire répondre l'IA à tous les messages WhatsApp non lus">🤖 IA répond aux non-lus</button>
+            <button class="inbox-speed-cleanup-btn" type="button" onclick="speedCleanupNow()" title="Nettoyer l'historique de plus de 48h pour accélérer l'application">⚡ Optimiser</button>
             <button class="inbox-list-focus-btn" type="button" onclick="toggleInboxFocus(true)" title="Agrandir la conversation">⟨</button>
+          </div>
+          <!-- V6.36.6 — Barre d'actions groupées, visible seulement en mode sélection. -->
+          <div id="conversationBulkBar" class="inbox-bulk-bar hidden">
+            <label class="inbox-bulk-selectall">
+              <input type="checkbox" id="conversationSelectAllBox" onchange="toggleSelectAllVisibleConversations(this.checked)">
+              <span id="conversationSelectedCount">0 sélectionnée(s)</span>
+            </label>
+            <div class="inbox-bulk-actions">
+              <button type="button" class="inbox-bulk-terminate-btn" onclick="bulkResolveSelectedConversations()">✓ Terminer la sélection</button>
+              <button type="button" class="inbox-bulk-reactivate-ai-btn" onclick="bulkReactivateAISelectedConversations()">🤖 Réactiver IA</button>
+              <button type="button" class="inbox-bulk-cancel-btn" onclick="toggleConversationSelectMode(false)">Annuler</button>
+            </div>
           </div>
           <div id="conversationListContainer" class="inbox-conversation-list"></div>
         </aside>
@@ -7171,6 +7413,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
             <button type="button" onclick="markAllNotificationsRead()">Marquer tout comme lu</button>
           </div>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid rgba(0,0,0,0.06);">
+          <span style="font-size:13px;color:#5b5650;">🔔 Notifications système</span>
+          <button type="button" id="notificationSystemToggle" class="btn small"></button>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid rgba(0,0,0,0.06);">
+          <span style="font-size:13px;color:#5b5650;">🔊 Sonnerie</span>
+          <button type="button" id="notificationSoundToggle" class="btn small"></button>
+        </div>
         <div id="notificationPanelList" class="notification-panel-list"><div class="empty">Chargement...</div></div>
       </aside>
     </div>
@@ -7181,7 +7431,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
     </div>
 
     <!-- ================================================== -->
-    <!-- V6.39 — INDICATEURS (KPI) -->
+    <!-- V6.37 — INDICATEURS (KPI) -->
     <!-- ================================================== -->
     <section id="page-kpi" class="page kpi-page">
       <div class="page-header">
@@ -7520,6 +7770,71 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
     <!-- TEST -->
     <!-- ================================================== -->
 
+    <section id="page-ai-replies" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Réponses IA</h2>
+          <p class="page-subtitle">
+            Historique des réponses envoyées automatiquement par l'agent, toutes conversations confondues.
+          </p>
+        </div>
+        <div class="actions">
+          <button class="btn" id="refreshAiRepliesBtn" type="button" onclick="loadAiReplies()">↻ Actualiser</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <div id="aiRepliesStats" style="display:flex;gap:16px;flex-wrap:wrap;"></div>
+      </div>
+      <div class="card" style="margin-bottom:14px;">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+          <input id="aiRepliesSearch" type="text" placeholder="Rechercher un client, numéro ou message..." style="flex:1;min-width:200px;padding:8px 12px;border-radius:8px;border:1px solid var(--border,#ddd);" oninput="debounceLoadAiReplies()">
+          <select id="aiRepliesChannel" onchange="loadAiReplies()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border,#ddd);">
+            <option value="">Tous les canaux</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="instagram">Instagram</option>
+            <option value="facebook">Facebook</option>
+          </select>
+          <select id="aiRepliesAlertFilter" onchange="loadAiReplies()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border,#ddd);">
+            <option value="">Toutes les réponses</option>
+            <option value="1">⚠️ Alertes uniquement</option>
+          </select>
+          <select id="aiRepliesPeriod" onchange="loadAiReplies()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border,#ddd);">
+            <option value="">Toute période</option>
+            <option value="today">Aujourd'hui</option>
+            <option value="week">7 derniers jours</option>
+          </select>
+        </div>
+      </div>
+      <div class="card">
+        <div id="aiRepliesList" style="display:flex;flex-direction:column;gap:10px;"></div>
+      </div>
+    </section>
+    <section id="page-wa-report" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Rapport WhatsApp</h2>
+          <p class="page-subtitle">
+            Statistiques, répartition par campagne, échantillon de conversations et anomalies, sur une période personnalisée.
+          </p>
+        </div>
+      </div>
+      <div class="card">
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+          <div>
+            <label style="display:block;font-size:12px;color:#5b5650;margin-bottom:4px;">Date de début</label>
+            <input type="date" id="waReportStartDate" class="input">
+          </div>
+          <div>
+            <label style="display:block;font-size:12px;color:#5b5650;margin-bottom:4px;">Date de fin</label>
+            <input type="date" id="waReportEndDate" class="input">
+          </div>
+          <button class="btn" id="waReportGenerateBtn" type="button" onclick="generateWaReport()">Générer le rapport</button>
+        </div>
+        <p style="font-size:12px;color:#9a948c;margin-top:8px;">Période maximale : 31 jours. La génération prend généralement 20 à 60 secondes.</p>
+      </div>
+      <div id="waReportStatus" style="margin-top:14px;"></div>
+      <div id="waReportResult"></div>
+    </section>
     <section id="page-test" class="page">
       <div class="page-header">
         <div>
@@ -8164,6 +8479,32 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
 </div>
 
 <!-- ======================================================== -->
+<!-- MODAL "CONVERSATION DÉJÀ PRISE EN CHARGE" (V6.36.14) -->
+<!-- ======================================================== -->
+<div class="modal-backdrop" id="conversationLockedModal">
+  <div class="modal conversation-locked-modal">
+    <div class="modal-header">
+      <div>
+        <h3>🔒 Conversation déjà prise en charge</h3>
+      </div>
+      <button class="close" type="button" data-close="conversationLockedModal">×</button>
+    </div>
+    <div class="conversation-locked-body">
+      <p class="conversation-locked-owner">
+        <strong id="conversationLockedOwnerName">Un autre commercial</strong> répond actuellement à ce client.
+      </p>
+      <p id="conversationLockedDetail" class="conversation-locked-detail"></p>
+      <p class="conversation-locked-hint">
+        Votre message n'a pas été envoyé — rien n'a été perdu, votre texte reste dans le champ. Vous pouvez patienter, ou choisir une autre conversation en attendant.
+      </p>
+    </div>
+    <div class="actions">
+      <button class="btn primary" type="button" data-close="conversationLockedModal">Compris</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================== -->
 <!-- MODAL PRODUIT -->
 <!-- ======================================================== -->
 
@@ -8413,7 +8754,7 @@ const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
 // entités HTML avant d'exécuter le code, donc escapeHtml() seul ne suffit pas
 // à empêcher de sortir d'une chaîne '...'. JSON.stringify produit un littéral
 // JS valide, puis escapeHtml protège l'attribut.
-// V6.38 — Boîtes de dialogue maison, à la place de confirm()/prompt() du
+// V6.37 — Boîtes de dialogue maison, à la place de confirm()/prompt() du
 // navigateur (peu lisibles, bloquantes et mal adaptées au mobile).
 // uiConfirm() résout true/false ; uiPrompt() résout le texte ou null
 // (annulation), exactement comme les fonctions natives.
@@ -8523,6 +8864,10 @@ const PAGE_ROLES = {
     ['admin','editor'],
   test:
     ['admin','editor'],
+  'ai-replies':
+    ['admin','editor','responsable_commercial','commercial'],
+  'wa-report':
+    ['admin'],
   settings:
     ['admin'],
   team:
@@ -8577,6 +8922,26 @@ function userInitials(
 }
 
 function applyRoleAccess(){
+  // V6.36.38 — Un commercial voit un seul filtre par défaut, "À répondre",
+  // au lieu de 10 boutons différents (Non lus, Priorité, Favoris,
+  // Historique, Commercial, SLA, Publicités, Terminées...) qui rendaient
+  // difficile de savoir en un coup d'œil quoi traiter. Ces filtres restent
+  // entièrement disponibles pour admin/responsable_commercial.
+  const isCommercialRole = currentUser?.role === 'commercial';
+  document.querySelectorAll('.commercial-hide').forEach(el => {
+    el.classList.toggle('hidden', isCommercialRole);
+  });
+  document.querySelectorAll('.commercial-only').forEach(el => {
+    el.classList.toggle('hidden', !isCommercialRole);
+  });
+  // V6.36.39 — Filtres secondaires masqués pour TOUS les rôles (admin
+  // inclus), pas seulement les commerciaux : trop peu utilisés en pratique
+  // pour justifier une place permanente dans la barre. Reste accessible
+  // en retirant .hidden manuellement si besoin plus tard.
+  document.querySelectorAll('.admin-hide').forEach(el => {
+    el.classList.add('hidden');
+  });
+
   navButtons.forEach(
     button => {
       const page =
@@ -8671,151 +9036,7 @@ function applyRoleAccess(){
 }
 
 // ============================================================
-// V6.39 — FENÊTRE WHATSAPP 24 H ET MODÈLES (TEMPLATES)
-// ============================================================
-// Plus de 24 h après le dernier message du client, WhatsApp n'accepte
-// qu'un modèle approuvé. Meta accepte d'abord l'envoi d'un texte libre puis
-// signale l'échec (code 131047) : on prévient donc le commercial avant
-// l'envoi, et on affiche l'échec s'il survient.
-const WHATSAPP_WINDOW_MS=24*60*60*1000;
-let whatsappTemplatesList=null;
-
-function whatsappWindowNoticeHtml(contact,state={},channel=''){
-  const resolvedChannel=channel||conversationChannel(conversations.find(item=>item.contact===contact)||{contact,channel:state?.channel});
-  if(resolvedChannel!=='whatsapp') return '';
-  const failure=state?.lastDeliveryFailure;
-  const lastCustomerMs=Date.parse(String(state?.lastCustomerAt||''));
-  const windowClosed=Number.isFinite(lastCustomerMs)&&Date.now()-lastCustomerMs>WHATSAPP_WINDOW_MS;
-  const button=`<button class="btn" type="button" onclick="openWhatsAppTemplateDialog(${jsArg(contact)})">📋 Envoyer un modèle</button>`;
-  if(failure){
-    const reason=failure.windowClosed
-      ?'le client n’a pas écrit depuis plus de 24 h'
-      :(failure.title||`code ${failure.code||'inconnu'}`);
-    return `<div class="wa-window-notice failure" role="alert"><span>⚠️ <strong>Dernier message non remis</strong> (${escapeHtml(formatShortTime(failure.at))}) : ${escapeHtml(reason)}.${failure.windowClosed?' Utilisez un modèle WhatsApp approuvé.':''}</span>${failure.windowClosed?button:''}</div>`;
-  }
-  if(windowClosed){
-    return `<div class="wa-window-notice"><span>🕒 <strong>Fenêtre de 24 h fermée</strong> : un message libre ne sera pas remis. Envoyez un modèle approuvé ; la conversation se rouvre quand le client répond.</span>${button}</div>`;
-  }
-  return '';
-}
-
-function refreshWhatsAppWindowNotice(contact,state){
-  const host=document.getElementById('waWindowNotice');
-  if(!host||contact!==selectedConversationContact) return;
-  const html=whatsappWindowNoticeHtml(contact,state||{});
-  if(host.innerHTML!==html) host.innerHTML=html;
-}
-
-function renderWhatsAppTemplateText(body,values){
-  return String(body||'').replace(/\{\{\s*(\d+)\s*\}\}/g,(match,number)=>{
-    const value=values[Number(number)-1];
-    return value?value:match;
-  });
-}
-
-window.openWhatsAppTemplateDialog=async function(contact){
-  let data;
-  try{
-    data=whatsappTemplatesList||await apiFetch(`${API}/whatsapp/templates`);
-  }catch(error){
-    await uiAlert(`Impossible de charger les modèles WhatsApp : ${error.message||error}`);
-    return;
-  }
-  if(!data?.configured){
-    await uiAlert(data?.message||'Les modèles WhatsApp ne sont pas configurés.');
-    return;
-  }
-  const templates=(data.items||[]).filter(item=>item.supported);
-  if(!templates.length){
-    await uiAlert('Aucun modèle approuvé utilisable. Créez un modèle (texte simple) dans WhatsApp Manager puis attendez son approbation par Meta.');
-    return;
-  }
-  whatsappTemplatesList=data;
-
-  const previousFocus=document.activeElement;
-  const backdrop=document.createElement('div');
-  backdrop.className='ui-dialog-backdrop';
-  backdrop.innerHTML=`<div class="ui-dialog wa-template-dialog" role="dialog" aria-modal="true" aria-labelledby="waTemplateTitle">
-    <div class="ui-dialog-body"><strong id="waTemplateTitle">Envoyer un modèle WhatsApp</strong><br>Seuls les modèles approuvés par Meta peuvent être envoyés hors de la fenêtre de 24 h.</div>
-    <label class="wa-template-field">Modèle
-      <select data-wa-template>${templates.map((item,index)=>`<option value="${index}">${escapeHtml(item.name)} (${escapeHtml(item.language)})</option>`).join('')}</select>
-    </label>
-    <div data-wa-params></div>
-    <div class="wa-template-preview" data-wa-preview aria-live="polite"></div>
-    <div class="wa-template-error hidden" data-wa-error role="alert"></div>
-    <div class="ui-dialog-actions">
-      <button type="button" class="btn" data-wa-cancel>Annuler</button>
-      <button type="button" class="btn primary" data-wa-send>Envoyer le modèle</button>
-    </div>
-  </div>`;
-  document.body.appendChild(backdrop);
-
-  const select=backdrop.querySelector('[data-wa-template]');
-  const paramsHost=backdrop.querySelector('[data-wa-params]');
-  const preview=backdrop.querySelector('[data-wa-preview]');
-  const errorBox=backdrop.querySelector('[data-wa-error]');
-  const sendButton=backdrop.querySelector('[data-wa-send]');
-  const current=()=>templates[Number(select.value)||0];
-  const values=()=>[...paramsHost.querySelectorAll('input')].map(input=>input.value.trim());
-  const updatePreview=()=>{preview.textContent=renderWhatsAppTemplateText(current().body,values());errorBox.classList.add('hidden');};
-  const renderParams=()=>{
-    const template=current();
-    paramsHost.innerHTML=Array.from({length:template.placeholderCount},(_,index)=>
-      `<label class="wa-template-field">Variable {{${index+1}}}<input type="text" maxlength="1000" autocomplete="off"></label>`).join('');
-    paramsHost.querySelectorAll('input').forEach(input=>input.addEventListener('input',updatePreview));
-    updatePreview();
-  };
-  const close=()=>{
-    document.removeEventListener('keydown',onKey,true);
-    backdrop.remove();
-    try{previousFocus?.focus?.();}catch{}
-  };
-  const onKey=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}};
-
-  select.addEventListener('change',renderParams);
-  backdrop.querySelector('[data-wa-cancel]').addEventListener('click',close);
-  backdrop.addEventListener('click',event=>{if(event.target===backdrop)close();});
-  document.addEventListener('keydown',onKey,true);
-  sendButton.addEventListener('click',async()=>{
-    const template=current();
-    const parameters=values();
-    if(parameters.some(value=>!value)){
-      errorBox.textContent='Remplissez toutes les variables du modèle.';
-      errorBox.classList.remove('hidden');
-      return;
-    }
-    const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:'whatsapp',externalContact:selectedConversationData?.state?.externalContact};
-    const externalContact=conversationExternalContact(item);
-    sendButton.disabled=true;
-    sendButton.textContent='Envoi…';
-    try{
-      await apiFetch(`${API}/commercial/send`,{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          phone:externalContact,
-          contact,
-          channel:'whatsapp',
-          externalContact,
-          text:renderWhatsAppTemplateText(template.body,parameters),
-          template:{name:template.name,language:template.language,parameters}
-        })
-      });
-      close();
-      if(typeof softRefreshSelectedConversation==='function') softRefreshSelectedConversation();
-    }catch(error){
-      errorBox.textContent=error.message||'Envoi impossible.';
-      errorBox.classList.remove('hidden');
-      sendButton.disabled=false;
-      sendButton.textContent='Envoyer le modèle';
-    }
-  });
-  renderParams();
-  select.focus();
-};
-
-// ============================================================
-// V6.39 — ÉVALUATION DE LA QUALITÉ IA
+// V6.37 — ÉVALUATION DE LA QUALITÉ IA
 // ============================================================
 let aiEvalPollTimer=null;
 
@@ -8892,7 +9113,18 @@ document.getElementById('aiEvalRun')?.addEventListener('click',async()=>{
   loadAiEvaluation();
 });
 
-// V6.39 — Accessibilité : Entrée ou Espace activent les éléments
+// V6.37 — Accessibilité : Entrée ou Espace activent les éléments
+// role="button" qui ne sont pas de vrais boutons (cartes de commentaires…).
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Enter'&&event.key!==' ') return;
+  const target=event.target;
+  if(!(target instanceof HTMLElement)||target.getAttribute('role')!=='button') return;
+  if(['BUTTON','A','INPUT','TEXTAREA','SELECT'].includes(target.tagName)) return;
+  event.preventDefault();
+  target.click();
+});
+
+// V6.37 — Accessibilité : Entrée ou Espace activent les éléments
 // role="button" qui ne sont pas de vrais boutons (cartes de commentaires…).
 document.addEventListener('keydown',event=>{
   if(event.key!=='Enter'&&event.key!==' ') return;
@@ -8904,7 +9136,7 @@ document.addEventListener('keydown',event=>{
 });
 
 // ============================================================
-// V6.39 — PAGE INDICATEURS (KPI)
+// V6.37 — PAGE INDICATEURS (KPI)
 // ============================================================
 let kpiData=null;
 let kpiLoadGeneration=0;
@@ -9127,15 +9359,20 @@ function showPage(name){
   if(name === 'products') loadProducts();
   if(name === 'woocommerce') loadWooCommerceStatus();
   if(name === 'instructions') loadInstructions();
+  if(name === 'ai-replies') loadAiReplies();
   if(name === 'conversations'){
     // V6.26 : recharge le dernier type d'interaction utilisé sans écraser
     // la liste Commentaires par la liste Messages.
     setInboxInteractionMode(inboxInteractionMode);
-    if(inboxInteractionMode === 'messages') loadQuickReplies();
-    refreshInstagramHistoryStatus({ autoStart: true });
-    refreshFacebookHistoryStatus({ autoStart: false });
-    // Met à jour le badge Commentaires même quand l'utilisateur reste dans Messages.
-    refreshSocialCommentsStatus();
+    setTimeout(()=>{
+      if(inboxInteractionMode === 'messages') loadQuickReplies();
+      // Patch session (13/10) - Application WhatsApp uniquement : synchro
+      // Instagram/Facebook desactivee a chaque affichage de la page
+      // conversations (vrai point d'entree, independant des timers).
+      // refreshInstagramHistoryStatus({ autoStart: true });
+      // refreshFacebookHistoryStatus({ autoStart: false });
+      refreshSocialCommentsStatus();
+    },1500);
   }
   if(name === 'corrections'){
     loadProducts().then(loadCommercialCorrections);
@@ -9263,8 +9500,8 @@ async function refreshHome(){
         const mb = value => `${(Number(value || 0)/(1024*1024)).toFixed(1)} MB`;
         const migration=storage.retentionMigration||{};
         const migrationText=migration.pending
-          ? ' • ⚠ Rétention 15j en attente : marquez les discussions importantes ★ puis lancez le nettoyage'
-          : ' • Rétention 15j active';
+          ? ' • ⚠ Rétention 48h en attente : marquez les discussions importantes ★ puis lancez le nettoyage'
+          : ' • Rétention 48h active';
         const cloud=storage.cloudStorage||{};
         const cloudText=cloud.configured
           ? ` • ☁️ Cloudinary ${Number(cloud.manifestAssets||0)} assets / ${mb(cloud.migratedBytes)} • Local restant ${mb(Number(cloud.localMediaBytes||0)+Number(cloud.localProfileBytes||0))}`
@@ -9285,8 +9522,8 @@ async function refreshHome(){
 
 document.getElementById('cleanupStorageBtn')?.addEventListener('click', async () => {
   if(!await uiConfirm(
-    'Appliquer maintenant la rétention de 15 jours ?\n\n' +
-    'Les conversations de plus de 15 jours NON marquées ★ Favori pourront être supprimées du stockage.\n' +
+    'Appliquer maintenant la rétention de 48h ?\n\n' +
+    'Les conversations de plus de 48h NON marquées ★ Favori pourront être supprimées du stockage.\n' +
     'Les conversations ★ Favori seront conservées.\n\nContinuer ?'
   )) return;
   const button=document.getElementById('cleanupStorageBtn');
@@ -9343,6 +9580,31 @@ function closeModal(id){
   if(id === 'instructionModal'){
     resetInstructionForm();
   }
+}
+
+// V6.36.14 — Fenêtre claire "conversation déjà prise en charge", remplace
+// l'alerte système générique qui affichait auparavant le message brut
+// renvoyé par le serveur.
+function showConversationLockedModal(data = {}){
+  const ownerName = data?.ownerName || 'Un autre commercial';
+  const ownerEl = document.getElementById('conversationLockedOwnerName');
+  if(ownerEl) ownerEl.textContent = ownerName;
+
+  const detailEl = document.getElementById('conversationLockedDetail');
+  if(detailEl){
+    const retryAt = data?.retryAt ? formatPresenceLastSeenAbsolute(data.retryAt) : '';
+    const remainingMs = Number(data?.remainingMs || 0);
+    if(retryAt && remainingMs > 0){
+      const remainingMin = Math.max(1, Math.round(remainingMs / 60000));
+      detailEl.textContent = `Vous pourrez reprendre la main automatiquement vers ${retryAt}, si le client reste sans réponse (environ ${remainingMin} min).`;
+    }else if(retryAt){
+      detailEl.textContent = `Reprise automatique possible vers ${retryAt} si le client reste sans réponse.`;
+    }else{
+      detailEl.textContent = 'La conversation reste réservée à ce commercial tant qu’il est en train d’y répondre.';
+    }
+  }
+
+  openModal('conversationLockedModal');
 }
 
 document.querySelectorAll('[data-close]').forEach(btn => {
@@ -9863,7 +10125,19 @@ let quickReplies = [];
 // éviter de les recharger depuis le serveur à CHAQUE ouverture de
 // conversation (elles changent rarement). Voir loadQuickReplies().
 let quickRepliesLoadedAt = 0;
-let conversationFilter = 'all';
+// V6.36.7 — Deux axes de filtre désormais SÉPARÉS et COMBINABLES : le canal
+// (WhatsApp/Instagram/Facebook/Tous, en onglets façon Meta Business Suite)
+// et le statut (Non lus/À répondre/Priorité/etc., toujours en petits
+// boutons). Avant, un seul "conversationFilter" rendait "WhatsApp" et
+// "À répondre" mutuellement exclusifs — impossible de voir les deux à la
+// fois. "conversationFilter" est conservé comme alias en lecture pour le
+// statut, par compatibilité avec le code existant qui s'y réfère encore.
+let conversationChannelFilter = 'all';
+let conversationStatusFilter = 'pending';
+Object.defineProperty(window, 'conversationFilter', {
+  get(){ return conversationStatusFilter; },
+  set(value){ conversationStatusFilter = value; }
+});
 let selectedConversationContact = '';
 let selectedConversationTargetMessageId = '';
 // V6.35.4 — Jeton anti-course : incrémenté à chaque navigation vers une
@@ -9872,12 +10146,24 @@ let selectedConversationTargetMessageId = '';
 // ignorée, pour éviter qu'une réponse en retard n'écrase à l'écran la
 // conversation actuellement affichée avec les messages d'une autre.
 let conversationRequestToken = 0;
+// V6.36.72 — Verrou anti-collision : empêche le rafraîchissement
+// automatique périodique (toutes les 5s) d'incrémenter le jeton de
+// navigation PENDANT qu'un envoi de message est en cours. Sans ça, le
+// polling pouvait invalider silencieusement l'affichage du message
+// qu'on venait d'envoyer (openConversation() abandonnait sa propre
+// réponse, pourtant reçue avec succès, car le jeton avait déjà changé).
+let conversationSendInProgress = false;
 // V6.35.17 — Fige la position de la conversation ouverte dans la liste
 // (même principe que WhatsApp : ouvrir une discussion ne la fait pas
 // sauter ailleurs). On mémorise ici si elle était non lue AVANT ouverture,
 // et le tri utilise cette valeur figée pour elle tant qu'elle reste
 // sélectionnée, au lieu de son statut réel (devenu "lu" dès l'ouverture).
 let selectedConversationPinnedUnread = false;
+
+// V6.36.6 — Sélection multiple + terminaison groupée.
+let conversationSelectMode = false;
+let selectedConversationContacts = new Set();
+
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
   localStorage.getItem('mondecoNotificationCursor') || '';
@@ -9973,7 +10259,9 @@ function resetInteractionDetail(){
 }
 
 window.setInboxInteractionMode = async function(mode){
+  const previousInboxInteractionMode=inboxInteractionMode;
   inboxInteractionMode = mode === 'comments' ? 'comments' : 'messages';
+  const inboxInteractionModeChanged=previousInboxInteractionMode!==inboxInteractionMode;
   // V6.29 : un changement Messages / Commentaires revient toujours à la liste.
   // Sur mobile, conserver has-selection masquait toute la liste du nouvel onglet.
   const inboxPage=document.getElementById('page-conversations');
@@ -9998,8 +10286,8 @@ window.setInboxInteractionMode = async function(mode){
   if(mini) mini.textContent=inboxInteractionMode==='comments'?'Publications + commentaires Facebook / Instagram':'WhatsApp • Instagram • Facebook';
   if(sync) sync.classList.toggle('hidden',inboxInteractionMode!=='comments'||!['admin','responsable_commercial'].includes(currentUser?.role));
   if(diagnose) diagnose.classList.toggle('hidden',inboxInteractionMode!=='comments'||!['admin','responsable_commercial'].includes(currentUser?.role));
-  if(label) label.textContent=inboxInteractionMode==='comments'?'0 commentaire':'0 conversation';
-  resetInteractionDetail();
+  if(label&&inboxInteractionModeChanged) label.textContent=inboxInteractionMode==='comments'?'0 commentaire':'0 conversation';
+  if(inboxInteractionModeChanged) resetInteractionDetail();
   if(inboxInteractionMode==='comments'){
     selectedConversationContact='';selectedConversationData=null;
     await loadSocialComments();
@@ -10035,12 +10323,12 @@ function renderSocialCommentsList(){
     return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment(${jsArg(comment.key)})">
       ${socialCommentAvatar(comment)}
       <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':'<span class="comment-badge comment-owned">✓ Traité</span>'}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
-      <span class="social-comment-side"><span data-role="comment-time" data-created-at="${escapeHtml(comment.createdAt||'')}">${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
+      <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
     </button>`;
   }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
 }
 
-// V6.38 — Rafraîchissement périodique de la liste des commentaires : seule
+// V6.37 — Rafraîchissement périodique de la liste des commentaires : seule
 // l'heure affichée dépend du temps. Avant, toute la liste (avatars compris)
 // était reconstruite toutes les 5 s.
 function refreshSocialCommentTimeLabels(){
@@ -10356,6 +10644,19 @@ function setConversationFilter(filter){
   loadConversations();
 }
 
+// V6.36.7 — Axe canal, indépendant de l'axe statut ci-dessus, combinable.
+function setConversationChannelFilter(channel){
+  conversationChannelFilter = channel || 'all';
+
+  document
+    .querySelectorAll('#conversationChannelTabs .inbox-channel-tab')
+    .forEach(button => {
+      button.classList.toggle('active', button.dataset.channel === conversationChannelFilter);
+    });
+
+  loadConversations();
+}
+
 function openAllNewMessages(){
   setConversationFilter('unread');
   showPage('conversations');
@@ -10474,7 +10775,7 @@ function renderInstagramHistoryStatus(status = {}){
     const listed = Number(status.listedConversations || total || 0);
     const phase = String(status.phase || '').trim();
     if(phase === 'listing'){
-      setInboxSyncStatus(label,'running','⟳ Instagram · synchronisation…',`Historique 15 jours : ${listed} discussion(s) détectée(s) · page ${Number(status.listPages || 0) || 1}.`);
+      setInboxSyncStatus(label,'running','⟳ Instagram · synchronisation…',`Historique 48h : ${listed} discussion(s) détectée(s) · page ${Number(status.listPages || 0) || 1}.`);
     }else{
       setInboxSyncStatus(label,'running',`⟳ Instagram · ${done}/${total || listed || '…'} discussions`,`${discovered || imported} ID message(s) trouvés · ${imported} importé(s)${unavailable ? ` · ${unavailable} sans contenu détaillé Meta` : ''}.`);
     }
@@ -10499,7 +10800,7 @@ function renderInstagramHistoryStatus(status = {}){
       setInboxSyncStatus(label,'ok',`✓ Instagram · à jour${syncStatusTime(status.completedAt) ? ` · ${syncStatusTime(status.completedAt)}` : ''}`,`${total} discussion(s) · ${imported} message(s) importé(s)${unavailable ? ` · ${unavailable} sans détail Meta` : ''}${errors ? ` · ${errors} erreur(s)` : ''}.`);
     }
   }else{
-    setInboxSyncStatus(label,'idle','Instagram · historique non lancé','Cliquez sur IG ↻ pour lancer l’historique Instagram 15 jours.');
+    setInboxSyncStatus(label,'idle','Instagram · historique non lancé','Cliquez sur IG ↻ pour lancer l’historique Instagram 48h.');
   }
 }
 
@@ -10516,7 +10817,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
     const running = Boolean(status.running);
 
     if(
-      autoStart &&
+      false && autoStart &&
       !instagramHistoryAutoSyncChecked &&
       status.configured &&
       !running &&
@@ -10627,10 +10928,10 @@ function renderFacebookHistoryStatus(status = {}){
     }else if(total === 0){
       setInboxSyncStatus(label,'warning','⚠ FB historique · 0 conversation',warning || 'Meta retourne 0 conversation. Vérifiez le Page Access Token et les permissions Messenger.');
     }else{
-      setInboxSyncStatus(label,'ok',`✓ FB historique 15j · à jour${syncStatusTime(status.completedAt) ? ` · ${syncStatusTime(status.completedAt)}` : ''}`,`${pageName || 'Facebook'} · ${total} discussion(s) · ${imported} message(s) importé(s)${unavailable ? ` · ${unavailable} détail(s) indisponible(s)` : ''}${errors ? ` · ${errors} erreur(s)` : ''}.`);
+      setInboxSyncStatus(label,'ok',`✓ FB historique 48h · à jour${syncStatusTime(status.completedAt) ? ` · ${syncStatusTime(status.completedAt)}` : ''}`,`${pageName || 'Facebook'} · ${total} discussion(s) · ${imported} message(s) importé(s)${unavailable ? ` · ${unavailable} détail(s) indisponible(s)` : ''}${errors ? ` · ${errors} erreur(s)` : ''}.`);
     }
   }else{
-    setInboxSyncStatus(label,'idle','FB historique 15j · manuel','Le temps réel Messenger reste prioritaire. Utilisez FB ↻ seulement pour resynchroniser l’historique 15 jours.');
+    setInboxSyncStatus(label,'idle','FB historique 48h · manuel','Le temps réel Messenger reste prioritaire. Utilisez FB ↻ seulement pour resynchroniser l’historique 48h.');
   }
 }
 
@@ -10714,13 +11015,16 @@ async function startFacebookHistorySync({ silent = false } = {}){
 function applyConversationChannelAccessUI(){
   const access=conversationChannelAccess||{};
   const map={whatsapp:'whatsappMessages',instagram:'instagramMessages',facebook:'facebookMessages'};
-  Object.entries(map).forEach(([filter,key])=>{
-    const button=document.querySelector(`#conversationFilters [data-filter="${filter}"]`);
+  // V6.36.7 — Les boutons de canal vivent maintenant dans les onglets
+  // #conversationChannelTabs, et c'est conversationChannelFilter (pas le
+  // statut) qui doit être réinitialisé si le canal actif devient restreint.
+  Object.entries(map).forEach(([channel,key])=>{
+    const button=document.querySelector(`#conversationChannelTabs [data-channel="${channel}"]`);
     if(button) button.style.display=access[key]===false?'none':'';
   });
-  if(map[conversationFilter] && access[map[conversationFilter]]===false){
-    conversationFilter='all';
-    document.querySelectorAll('#conversationFilters [data-filter]').forEach(button=>button.classList.toggle('active',button.dataset.filter==='all'));
+  if(map[conversationChannelFilter] && access[map[conversationChannelFilter]]===false){
+    conversationChannelFilter='all';
+    document.querySelectorAll('#conversationChannelTabs [data-channel]').forEach(button=>button.classList.toggle('active',button.dataset.channel==='all'));
   }
 }
 
@@ -10737,18 +11041,26 @@ function applyCommentChannelAccessUI(){
 }
 
 async function loadConversations({ append = false } = {}){
-  const requestId=++conversationLoadGeneration;
   const inboxPageActive=document.getElementById('page-conversations')?.classList?.contains('active');
   // En mode Commentaires, les rafraîchissements de messages restent en arrière-plan et ne touchent jamais la liste visible.
   if(inboxPageActive && inboxInteractionMode!=='messages') return;
+  const requestId=++conversationLoadGeneration;
   try{
     const search = String(document.getElementById('conversationSearch')?.value || '').trim();
     const offset = append ? conversations.length : 0;
+    // V6.36.96 — Une recherche active ignore le filtre de statut ("À
+    // répondre", etc.) : chercher un client par nom/numéro doit le
+    // retrouver peu importe s'il a déjà été traité, sinon une
+    // conversation terminée devenait introuvable même par recherche
+    // exacte (signalé le 03/09, cas "Ali Khlif").
     const params = new URLSearchParams({
       paged:'1',
       limit:'80',
       offset:String(offset),
-      filter:conversationFilter
+      filter: search ? 'all' : conversationFilter,
+      // V6.36.7 — Canal envoyé séparément, combiné côté serveur avec le
+      // statut ci-dessus (voir Admin.js /api/conversations).
+      channel:conversationChannelFilter
     });
     // V6.35.15 — Ancrage de pagination sur la dernière conversation
     // réellement affichée, plus fiable qu'un simple offset numérique sur
@@ -10758,7 +11070,11 @@ async function loadConversations({ append = false } = {}){
       if(lastContact) params.set('afterContact', lastContact);
     }
     if(search) params.set('q',search);
-    const data = await apiFetch(`${API}/conversations?${params.toString()}`);
+    const data = await apiFetch(
+      conversationFilter === 'archives'
+        ? `${API}/conversations/archives?${params.toString()}`
+        : `${API}/conversations?${params.toString()}`
+    );
     // Protection anti-bascule : si l'utilisateur est passé dans Commentaires pendant la requête,
     // ou si une requête plus récente existe, cette réponse est ignorée visuellement.
     if(requestId!==conversationLoadGeneration) return;
@@ -10777,13 +11093,14 @@ async function loadConversations({ append = false } = {}){
       ? data.counts
       : null;
     if(conversationServerCounts){
+      // V6.36.81 — Badge basé sur unread (vrais messages non lus).
       interactionPendingCounts={
         ...interactionPendingCounts,
-        messages:Number(conversationServerCounts.pendingReply||0),
-        whatsapp:Number(conversationServerCounts.pendingWhatsApp||0),
-        instagramMessages:Number(conversationServerCounts.pendingInstagram||0),
-        facebookMessages:Number(conversationServerCounts.pendingFacebook||0),
-        total:Number(conversationServerCounts.pendingReply||0)+Number(interactionPendingCounts?.comments||0)
+        messages:Number(conversationServerCounts.unread||0),
+        whatsapp:Number(conversationServerCounts.unreadWhatsApp||0),
+        instagramMessages:Number(conversationServerCounts.unreadInstagram||0),
+        facebookMessages:Number(conversationServerCounts.unreadFacebook||0),
+        total:Number(conversationServerCounts.unread||0)+Number(interactionPendingCounts?.comments||0)
       };
       updatePendingWorkUi();
       updateNotificationBadges();
@@ -10860,6 +11177,21 @@ function formatDate(value){
   }catch{
     return value;
   }
+}
+
+// V6.36.72 — Temps écoulé relatif ("il y a 5 min"), utilisé pour
+// l'indicateur "Vu par le client".
+function formatElapsedSince(timestampMs){
+  if(!timestampMs || !Number.isFinite(timestampMs)) return '';
+  const diffSeconds = Math.floor((Date.now() - timestampMs) / 1000);
+  if(diffSeconds < 0) return '';
+  if(diffSeconds < 60) return 'à l\'instant';
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if(diffMinutes < 60) return `il y a ${diffMinutes} min`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if(diffHours < 24) return `il y a ${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `il y a ${diffDays}j`;
 }
 
 function formatShortTime(value){
@@ -11027,7 +11359,20 @@ function conversationAvatarHtml(item, extraClass = ''){
   `;
 }
 
+// V6.36.7 — Vérifie maintenant DEUX axes combinés : le canal
+// (conversationChannelFilter) ET le statut (conversationFilter, alias de
+// conversationStatusFilter). Avant, "whatsapp" et "pending" étaient des
+// valeurs du MÊME filtre, mutuellement exclusives — impossible de voir
+// "WhatsApp + À répondre" ensemble.
 function conversationMatchesFilter(item){
+  if(
+    conversationChannelFilter &&
+    conversationChannelFilter !== 'all' &&
+    conversationChannel(item) !== conversationChannelFilter
+  ){
+    return false;
+  }
+
   if(
     conversationFilter ===
     'resolved'
@@ -11041,27 +11386,6 @@ function conversationMatchesFilter(item){
 
   if(item.resolved){
     return false;
-  }
-
-  if(
-    conversationFilter ===
-    'whatsapp'
-  ){
-    return conversationChannel(item) === 'whatsapp';
-  }
-
-  if(
-    conversationFilter ===
-    'instagram'
-  ){
-    return conversationChannel(item) === 'instagram';
-  }
-
-  if(
-    conversationFilter ===
-    'facebook'
-  ){
-    return conversationChannel(item) === 'facebook';
   }
 
   if(
@@ -11116,13 +11440,14 @@ function conversationMatchesFilter(item){
 }
 
 function updateConversationFilterCounts(){
-  const open =
+  const hasServerCounts=conversationServerCounts&&typeof conversationServerCounts==='object';
+  const open = hasServerCounts ? null :
     conversations.filter(
       item =>
         !item.resolved
     );
 
-  const localCounts = {
+  const localCounts = hasServerCounts ? null : {
     all:
       open.length,
     whatsapp:
@@ -11185,17 +11510,13 @@ function updateConversationFilterCounts(){
       ).length
   };
 
-  const counts =
-    conversationServerCounts &&
-    typeof conversationServerCounts === 'object'
-      ? conversationServerCounts
-      : localCounts;
+  const counts = hasServerCounts ? conversationServerCounts : localCounts;
 
   const mapping = {
-    filterCountAll:'all',
-    filterCountWhatsApp:'whatsapp',
-    filterCountInstagram:'instagram',
-    filterCountFacebook:'facebook',
+    channelCountAll:'all',
+    channelCountWhatsApp:'whatsapp',
+    channelCountInstagram:'instagram',
+    channelCountFacebook:'facebook',
     filterCountUnread:'unread',
     filterCountPending:'pendingReply',
     filterCountPriority:'priority',
@@ -11204,7 +11525,8 @@ function updateConversationFilterCounts(){
     filterCountCommercial:'commercial',
     filterCountSla:'sla',
     filterCountAds:'ads',
-    filterCountResolved:'resolved'
+    filterCountResolved:'resolved',
+    filterCountTotalUnread:'totalUnreadMessages'
   };
 
   for(
@@ -11220,18 +11542,26 @@ function updateConversationFilterCounts(){
           counts[key] ||
           0
         );
+      if(id === 'filterCountPending' || id === 'filterCountResolved' || id === 'filterCountTotalUnread'){
+        el.classList.toggle('badge-alert', Number(counts[key] || 0) > 0);
+      }
     }
   }
 
-  if(Number.isFinite(Number(counts.pendingReply))){
-    interactionPendingCounts.messages=Number(counts.pendingReply||0);
-    interactionPendingCounts.whatsapp=Number(counts.pendingWhatsApp||0);
-    interactionPendingCounts.instagramMessages=Number(counts.pendingInstagram||0);
-    interactionPendingCounts.facebookMessages=Number(counts.pendingFacebook||0);
+  // V6.36.81 — Badge "À répondre" basé sur les VRAIS messages non lus
+  // (unreadCount), plus sur la logique métier "personne n'a répondu"
+  // (pendingReply), qui restait élevée même après lecture par un
+  // commercial tant que la conversation n'était pas explicitement close.
+  if(Number.isFinite(Number(counts.unread))){
+    interactionPendingCounts.messages=Number(counts.unread||0);
+    interactionPendingCounts.whatsapp=Number(counts.unreadWhatsApp||0);
+    interactionPendingCounts.instagramMessages=Number(counts.unreadInstagram||0);
+    interactionPendingCounts.facebookMessages=Number(counts.unreadFacebook||0);
     interactionPendingCounts.total=interactionPendingCounts.messages+Number(interactionPendingCounts.comments||0);
   }
   updatePendingWorkUi();
   updateNotificationBadges();
+  updateAiAlertsBadge();
 }
 
 
@@ -11351,6 +11681,154 @@ function markConversationSelectedInList(contact){
   itemNode.querySelector('.inbox-unread')?.remove();
 }
 
+// ============================================================
+// V6.36.6 — Sélection multiple + terminaison groupée
+// ============================================================
+function toggleConversationSelectMode(forceValue){
+  conversationSelectMode = typeof forceValue === 'boolean' ? forceValue : !conversationSelectMode;
+  if(!conversationSelectMode) selectedConversationContacts.clear();
+
+  document.getElementById('conversationListContainer')?.classList.toggle('select-mode', conversationSelectMode);
+  document.getElementById('conversationBulkBar')?.classList.toggle('hidden', !conversationSelectMode);
+  document.getElementById('conversationSelectToggle')?.classList.toggle('active', conversationSelectMode);
+  const allBox = document.getElementById('conversationSelectAllBox');
+  if(allBox) allBox.checked = false;
+
+  updateConversationSelectionUi();
+}
+
+function toggleConversationItemSelection(contact, checked){
+  if(checked) selectedConversationContacts.add(contact);
+  else selectedConversationContacts.delete(contact);
+  updateConversationSelectionUi();
+}
+
+function toggleSelectAllVisibleConversations(checked){
+  const container = document.getElementById('conversationListContainer');
+  if(!container) return;
+  container.querySelectorAll('.inbox-conversation-item').forEach(itemEl => {
+    const contact = itemEl.dataset.contact;
+    if(!contact) return;
+    const box = itemEl.querySelector('.inbox-item-checkbox input');
+    if(box) box.checked = checked;
+    if(checked) selectedConversationContacts.add(contact);
+    else selectedConversationContacts.delete(contact);
+  });
+  updateConversationSelectionUi();
+}
+
+function updateConversationSelectionUi(){
+  const count = selectedConversationContacts.size;
+  const label = document.getElementById('conversationSelectedCount');
+  if(label) label.textContent = count > 0 ? `${count} sélectionnée(s)` : 'Aucune sélectionnée';
+  const btn = document.querySelector('.inbox-bulk-terminate-btn');
+  if(btn) btn.disabled = count === 0;
+}
+
+// V6.36.82 — Réactivation groupée de l'IA. Lève seulement la pause (comme
+// le bouton individuel "Réactiver IA") : ne force PAS de réponse
+// immédiate, l'IA répondra normalement au prochain message du client.
+async function bulkReactivateAISelectedConversations(){
+  const contacts = [...selectedConversationContacts];
+  if(!contacts.length) return;
+  if(!await uiConfirm(`Réactiver l'IA pour ${contacts.length} conversation(s) sélectionnée(s) ?`)) return;
+
+  const btn = document.querySelector('.inbox-bulk-reactivate-ai-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'En cours…'; }
+
+  try{
+    const result = await apiFetch(`${API}/conversations/bulk-reactivate-ai`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ contacts })
+    });
+    toggleConversationSelectMode(false);
+    await loadConversations();
+    if(result.refusedCount > 0){
+      alert(`${result.reactivatedCount} conversation(s) réactivée(s). ${result.refusedCount} ignorée(s) (canal Facebook ou non autorisé pour votre planning).`);
+    }
+  }catch(error){
+    alert(`Erreur : ${error.message}`);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🤖 Réactiver IA'; }
+  }
+}
+
+// V6.36.84 — Fait répondre l'IA immédiatement à TOUS les messages
+// WhatsApp non lus (max 50 par appel côté serveur), en réutilisant le
+// dernier message client de chaque conversation.
+// V6.36.88 — Nettoyage agressif à 48h pour garder l'application rapide.
+// Distinct de storage-cleanup (90 jours, orienté espace disque) : celui-ci
+// réduit vraiment le volume que loadWhatsAppLog() doit fusionner à chaque
+// affichage de conversation.
+async function speedCleanupNow(){
+  if(!await uiConfirm("Nettoyer l'historique de conversation de plus de 48h pour accélérer l'application ?\n\nLes conversations ★ Favori et celles en attente de réponse sont toujours conservées, quelle que soit leur ancienneté.")) return;
+
+  const btn = document.querySelector('.inbox-speed-cleanup-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Nettoyage…'; }
+
+  try{
+    const result = await apiFetch(`${API}/speed-cleanup`, { method:'POST' });
+    const freed = Number(result?.freedBytes||0)/(1024*1024);
+    alert(`Nettoyage terminé : environ ${freed.toFixed(1)} MB libérés. L'application devrait être plus rapide dès maintenant.`);
+    await loadConversations();
+  }catch(error){
+    alert(`Erreur : ${error.message}`);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '⚡ Optimiser la vitesse'; }
+  }
+}
+
+async function aiRespondAllUnread(){
+  if(!await uiConfirm("Faire répondre l'IA à TOUS les messages WhatsApp non lus (jusqu'à 50 à la fois) ? Cette action réactive l'IA sur ces conversations et envoie une réponse immédiatement.")) return;
+
+  const btn = document.querySelector('.inbox-ai-respond-all-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'En cours…'; }
+
+  try{
+    const result = await apiFetch(`${API}/conversations/ai-respond-all-unread`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'}
+    });
+    await loadConversations();
+    let msg = `${result.respondedCount} conversation(s) ont reçu une réponse IA.`;
+    if(result.skippedCount > 0) msg += `\n${result.skippedCount} ignorée(s) (IA incertaine, transférée au commercial).`;
+    if(result.failedCount > 0) msg += `\n${result.failedCount} échec(s) technique(s).`;
+    if(result.message) msg = result.message;
+    alert(msg);
+  }catch(error){
+    alert(`Erreur : ${error.message}`);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🤖 Répondre à tous les non-lus'; }
+  }
+}
+
+async function bulkResolveSelectedConversations(){
+  const contacts = [...selectedConversationContacts];
+  if(!contacts.length) return;
+  if(!await uiConfirm(`Terminer ${contacts.length} conversation(s) sélectionnée(s) ? Cette action peut être annulée individuellement ensuite si besoin.`)) return;
+
+  const btn = document.querySelector('.inbox-bulk-terminate-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'En cours…'; }
+
+  try{
+    const result = await apiFetch(`${API}/conversations/bulk-resolve`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ contacts })
+    });
+    toggleConversationSelectMode(false);
+    await loadConversations();
+    if(result.refusedCount > 0){
+      alert(`${result.resolvedCount} conversation(s) terminée(s). ${result.refusedCount} ignorée(s) (canal non autorisé pour votre planning).`);
+    }
+  }catch(error){
+    alert(`Erreur : ${error.message}`);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '✓ Terminer la sélection'; }
+  }
+}
+
 function renderConversationsList(){
   updateConversationFilterCounts();
 
@@ -11447,6 +11925,9 @@ function renderConversationsList(){
             data-contact="${escapeHtml(item.contact)}"
             onclick="openConversation(${jsArg(item.contact)})"
           >
+            <span class="inbox-item-checkbox" onclick="event.stopPropagation()">
+              <input type="checkbox" ${selectedConversationContacts.has(item.contact) ? 'checked' : ''} onchange="toggleConversationItemSelection(${jsArg(item.contact)}, this.checked)">
+            </span>
             ${conversationAvatarHtml(item, item.hasAdReferral ? 'ad' : '')}
 
             <span class="inbox-item-main">
@@ -11489,7 +11970,16 @@ function selectedConversationAccess(contact, state = {}){
       canWrite: serverAccess.canWrite !== false,
       canReply: serverAccess.canReply !== false,
       canTakeover: serverAccess.canTakeover === true,
-      canManage: serverAccess.canManage !== false && (currentUser?.role !== 'commercial' || assignedToMe),
+      // V6.36.66 — Bug corrigé : cette ligne réappliquait sa propre
+      // condition (currentUser?.role !== 'commercial' || assignedToMe)
+      // PAR-DESSUS la valeur déjà calculée par le serveur, écrasant le
+      // correctif backend du 28/08 pour les conversations non assignées.
+      // Un commercial sur une conversation "Non affectée" avait donc
+      // canManage=false malgré serverAccess.canManage=true, cachant le
+      // bouton Terminer. Le serveur est déjà la source de vérité pour
+      // cette logique (voir /api/conversations), pas besoin de la
+      // recalculer ici.
+      canManage: serverAccess.canManage !== false,
       readOnly: serverAccess.readOnly === true,
       lockOwnerUserId:String(serverAccess.lockOwnerUserId||''),
       lockOwnerName:String(serverAccess.lockOwnerName||''),
@@ -11511,7 +12001,6 @@ function renderConversationHeader(
   contact,
   state
 ){
-  refreshWhatsAppWindowNotice(contact, state);
   const item =
     conversations.find(
       entry =>
@@ -11611,10 +12100,14 @@ function renderConversationHeader(
   );
   const lastReadMs = Date.parse(state?.lastReadByCustomerAt || '') || 0;
   const seenByCustomer = lastOutgoingMs > 0 && lastReadMs > 0 && lastReadMs >= lastOutgoingMs;
+  // V6.36.72 — Ajout du temps écoulé relatif ("il y a 5 min") en plus de
+  // l'heure fixe, pour voir en un coup d'œil depuis combien de temps le
+  // client a vu le message sans avoir à calculer soi-même.
+  const seenElapsedLabel = seenByCustomer ? formatElapsedSince(lastReadMs) : '';
   const seenIndicatorHtml = lastOutgoingMs > 0
     ? `<div class="inbox-seen-indicator ${seenByCustomer ? 'seen' : ''}">
         ${seenByCustomer
-          ? `✓✓ Vu par le client à ${escapeHtml(formatShortTime(state.lastReadByCustomerAt))}`
+          ? `✓✓ Vu par le client à ${escapeHtml(formatShortTime(state.lastReadByCustomerAt))}${seenElapsedLabel ? ` (${escapeHtml(seenElapsedLabel)})` : ''}`
           : '✓✓ Envoyé — pas encore vu'}
       </div>`
     : '';
@@ -11647,7 +12140,7 @@ function renderConversationHeader(
     </div>
 
     <div class="inbox-header-actions">
-      <button class="inbox-header-btn ${state.favorite ? 'active' : ''}" type="button" onclick="toggleConversationFavorite(${jsArg(contact)}, ${state.favorite ? 'false' : 'true'})" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 15 jours'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
+      <button class="inbox-header-btn favorite-toggle-btn ${state.favorite ? 'active' : ''}" type="button" onclick="toggleConversationFavorite(${jsArg(contact)}, ${state.favorite ? 'false' : 'true'})" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 48h'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
       <button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()" title="Afficher la fiche client"><span class="inbox-header-action-icon">👤</span><span class="inbox-header-action-label">Fiche client</span></button>
       ${channel === 'whatsapp'
         ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall(${jsArg(contact)})" title="Appeler ce client sur WhatsApp"><span class="inbox-header-action-icon">📞</span><span class="inbox-header-action-label">Appel WhatsApp</span></button>`
@@ -11861,7 +12354,7 @@ function renderThreadMessage(
   const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
   const purgePart=type === 'incoming' ? 'incoming' : 'reply';
   const purgeKey=String(entry?.purgeKeys?.[purgePart]||'');
-  const deleteButton=currentUser?.role==='admin'&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(purgeKey)},'${purgePart}')" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
+  const deleteButton=(currentUser?.role==='admin'||currentUser?.role==='responsable_commercial'||currentUser?.role==='commercial')&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(purgeKey)},'${purgePart}')" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
 
   return `
     <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
@@ -11990,6 +12483,21 @@ function historyLimitNotice(entries = []){
   return `<div class="inbox-history-limit">ℹ️ ${unavailable} ancien${unavailable > 1 ? 's' : ''} message${unavailable > 1 ? 's' : ''} ${escapeHtml(platformText)} identifié${unavailable > 1 ? 's' : ''} par Meta dans cette portion d’historique, mais le contenu détaillé n’est plus fourni par l’API. Aucune direction ni contenu n’est inventé.</div>`;
 }
 
+function formatWhatsAppWindowRemaining(ms){
+  const total=Math.max(0,Number(ms||0));
+  const hours=Math.floor(total/3600000);
+  const minutes=Math.floor((total%3600000)/60000);
+  if(hours>0) return `${hours} h ${minutes} min`;
+  return `${Math.max(1,minutes)} min`;
+}
+
+function whatsappWindowStatusHtml(data = {}){
+  const info=data?.whatsappWindow||{};
+  if(info?.applicable!==true || info?.expired===true) return '';
+  if(info?.known!==true) return '<div class="wa-window-status">🟢 WhatsApp disponible · fenêtre 24 h non déterminée</div>';
+  return `<div class="wa-window-status">🟢 Fenêtre WhatsApp ouverte · encore ${escapeHtml(formatWhatsAppWindowRemaining(info.remainingMs))}</div>`;
+}
+
 function buildConversationComposer(
   contact,
   access = null
@@ -12019,9 +12527,31 @@ function buildConversationComposer(
     `;
   }
 
+  const windowInfo = selectedConversationData?.whatsappWindow || {};
+  if(composerChannel === 'whatsapp' && windowInfo?.expired === true){
+    const lastAt = windowInfo.lastCustomerAt ? formatDate(windowInfo.lastCustomerAt) : 'date inconnue';
+    const configured = windowInfo.templateConfigured === true;
+    const alreadySent = windowInfo.reengagementSent === true;
+    const sentAt = windowInfo.reengagementSentAt ? formatDate(windowInfo.reengagementSentAt) : '';
+    return `
+      <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer">
+        <div class="wa-window-expired">
+          <div class="wa-window-expired-copy">
+            <strong>${alreadySent ? '📨 Relance WhatsApp envoyée' : '🔒 Fenêtre WhatsApp de 24 h terminée'}</strong>
+            <span>${alreadySent
+              ? `Relance envoyée${sentAt ? ` le ${escapeHtml(sentAt)}` : ''}. Attendez maintenant la réponse du client ; dès qu’il répond, le clavier normal se réactive automatiquement.`
+              : `Dernier message client : ${escapeHtml(lastAt)}. Un texte, média, vocal ou sticker libre serait refusé par WhatsApp. Envoyez la relance approuvée puis attendez la réponse du client.`}</span>
+            ${configured || alreadySent ? '' : '<span style="margin-top:5px;font-weight:800">⚠ Modèle de relance non configuré sur le serveur.</span>'}
+          </div>
+          ${alreadySent ? '' : `<button id="whatsappReengageBtn" class="wa-reengage-btn" type="button" onclick="sendWhatsAppReengagement(${jsArg(contact)})" ${configured ? '' : 'disabled'}>📨 Relancer le client</button>`}
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer">
-      <div id="waWindowNotice" aria-live="polite">${whatsappWindowNoticeHtml(contact, selectedConversationData?.state || {}, composerChannel)}</div>
+      ${composerChannel === 'whatsapp' ? whatsappWindowStatusHtml(selectedConversationData || {}) : ''}
       <div
         id="conversationQuickReplyPanel"
         class="quick-reply-box wa-quick-reply-panel hidden"
@@ -12122,8 +12652,17 @@ function buildConversationComposer(
             onchange="selectConversationAttachment(this,'document')"
           >
         </label>
+
+        <button type="button" class="wa-attachment-option" role="menuitem" onclick="openStickerPicker()">
+          <span class="wa-attachment-icon">😊</span>
+          <span>Sticker</span>
+        </button>
       </div>
       ` : ''}
+
+      <!-- V6.36.8 — Sélecteur de stickers, en dehors du menu pièce jointe
+           (s'ouvre par-dessus, plus grand pour bien voir les aperçus). -->
+      <div id="conversationStickerPicker" class="wa-sticker-picker hidden" role="dialog" aria-label="Stickers"></div>
 
       <div id="conversationAttachmentChip" class="wa-attachment-chip hidden">
         <span id="conversationAttachmentName" class="composer-file-name">Aucun fichier sélectionné</span>
@@ -12155,6 +12694,7 @@ function buildConversationComposer(
 
         <div class="wa-input-shell">
           <div id="conversationSlashSuggestions" class="wa-slash-suggestions hidden" role="listbox" aria-label="Raccourcis disponibles"></div>
+          <div id="conversationEmojiPanel" class="wa-emoji-panel hidden" role="dialog" aria-label="Emojis"></div>
           <textarea
             id="conversationQuickReply"
             rows="1"
@@ -12162,6 +12702,16 @@ function buildConversationComposer(
             aria-label="Écrire un message au client"
             oninput="autoResizeConversationComposer(this);syncConversationPrimaryAction();handleConversationSlashInput(this)"
           ></textarea>
+
+          <button
+            id="conversationEmojiBtn"
+            class="wa-inline-action"
+            type="button"
+            onclick="toggleConversationEmojiPanel()"
+            aria-label="Emojis"
+            aria-expanded="false"
+            title="Emojis"
+          >😊</button>
 
           <button
             id="conversationQuickReplyBtn"
@@ -12340,53 +12890,27 @@ window.openConversation = async function(contact, targetMessageId = ''){
       'has-selection'
     );
 
-  let readResult = null;
-  try{
-    readResult = await apiFetch(
-      `${API}/conversations/${encodeURIComponent(contact)}/read`,
-      {
-        method:'POST'
-      }
-    );
-  }catch(error){
-    console.debug(
-      'Marquage lu :',
-      error.message
-    );
-  }
-
+  // V6.36.83 — Le marquage lu ne bloque plus l'ouverture du client.
   const localItem =
-    conversations.find(
-      item =>
-        item.contact === contact
-    );
+    conversations.find(item => item.contact === contact);
 
-  // V6.35.17 — Capturé AVANT le passage à 0 : c'est cette valeur (l'état
-  // au moment du clic) qui sera utilisée pour trier cette conversation
-  // tant qu'elle reste sélectionnée, pas son statut réel devenu "lu".
   selectedConversationPinnedUnread =
     Number(localItem?.unreadCount || 0) > 0;
 
-  if(localItem && readResult?.readOnly !== true){
-    localItem.unreadCount = 0;
-  }
-
-  // Une navigation plus récente a démarré entre-temps : on n'écrase pas
-  // la liste ni la conversation qu'elle affiche déjà.
-  if(myRequestToken !== conversationRequestToken) return;
-
-  // V6.35.16 — Avant, renderConversationsList() ici retriait TOUTE la
-  // liste immédiatement au clic. Comme le tri fait remonter les non lus,
-  // la conversation qu'on vient d'ouvrir changeait de position À L'INSTANT
-  // MÊME du clic (elle vient de passer "lue") — donnant l'impression
-  // qu'elle avait disparu, alors qu'elle avait juste sauté ailleurs dans
-  // la liste pendant que le regard restait au même endroit. On se contente
-  // maintenant de marquer visuellement l'élément comme sélectionné et de
-  // retirer son badge non-lu EN PLACE, sans reclasser toute la liste. Le
-  // vrai retri (légitime) n'arrivera qu'au prochain rafraîchissement
-  // naturel — à ce moment l'attention du commercial est déjà sur la
-  // conversation ouverte, donc le mouvement est beaucoup moins perturbant.
   markConversationSelectedInList(contact);
+
+  apiFetch(
+    `${API}/conversations/${encodeURIComponent(contact)}/read`,
+    { method:'POST' }
+  ).then(readResult => {
+    if(myRequestToken !== conversationRequestToken) return;
+    if(localItem && readResult?.readOnly !== true){
+      localItem.unreadCount = 0;
+      markConversationSelectedInList(contact);
+    }
+  }).catch(error => {
+    console.debug('Marquage lu :', error.message);
+  });
 
   const detailParams = new URLSearchParams({limit:'120'});
   if(targetMessageId) detailParams.set('messageId',targetMessageId);
@@ -12531,7 +13055,7 @@ window.openConversation = async function(contact, targetMessageId = ''){
     });
   }
 
-  await loadConversations();
+  // V6.36.83 — pas de rechargement complet de l'Inbox à chaque ouverture.
 }
 
 window.loadOlderConversationMessages = async function(contact, before){
@@ -12562,7 +13086,13 @@ window.loadOlderConversationMessages = async function(contact, before){
 };
 
 window.deleteConversationMessage=async function(purgeKey,part){
-  if(currentUser?.role!=='admin'||!selectedConversationContact||!purgeKey)return;
+  // V6.36.99 — Autorisation alignée sur celle du bouton (ligne ~11784) :
+  // admin, responsable_commercial et commercial peuvent tous supprimer un
+  // message. Avant ce correctif, le bouton était visible pour les
+  // commerciaux mais l'action était bloquée silencieusement (rôle
+  // 'admin' uniquement), signalé le 03/09.
+  const allowedRoles=['admin','responsable_commercial','commercial'];
+  if(!allowedRoles.includes(currentUser?.role)||!selectedConversationContact||!purgeKey)return;
   const channel=conversationChannel(selectedConversationData?.state||{contact:selectedConversationContact});
   const remoteNote=channel==='whatsapp'||channel==='instagram'||channel==='facebook'
     ? '\n\nImportant : pour un message privé, cela le supprime définitivement de MONDECO mais ne peut pas garantir un « supprimer pour tout le monde » chez le client.'
@@ -12757,8 +13287,13 @@ window.createTaskFromConversation = async function(contact){
 window.openLinkedTaskConversation = async function(contact,messageId=''){
   if(!contact)return;
   showPage('conversations');
+  // V6.36.7 — Réinitialise les DEUX axes (canal + statut) pour garantir
+  // que la conversation ciblée sera bien visible, quel que soit le
+  // filtre actif avant d'ouvrir ce lien.
   conversationFilter='all';
+  conversationChannelFilter='all';
   document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.filter==='all'));
+  document.querySelectorAll('#conversationChannelTabs .inbox-channel-tab').forEach(button=>button.classList.toggle('active',button.dataset.channel==='all'));
   await loadConversations();
   await window.openConversation(contact,messageId||'');
 };
@@ -12978,6 +13513,26 @@ document
       }
     );
   });
+
+// V6.36.7 — Même mécanisme pour les nouveaux onglets de canal.
+document
+  .querySelectorAll('#conversationChannelTabs .inbox-channel-tab')
+  .forEach(button => {
+    button.addEventListener('click', () => {
+      setConversationChannelFilter(button.dataset.channel || 'all');
+    });
+  });
+
+// V6.36.38 — Raccourci commercial : voir TOUS les messages WhatsApp
+// (répondus, en attente, terminés...) en un clic, sans devoir combiner
+// manuellement l'onglet WhatsApp avec un filtre de statut.
+const showAllWhatsAppBtn = document.getElementById('showAllWhatsAppBtn');
+if(showAllWhatsAppBtn){
+  showAllWhatsAppBtn.addEventListener('click', () => {
+    setConversationChannelFilter('whatsapp');
+    setConversationFilter('all');
+  });
+}
 
 // ============================================================
 // CLAVIER INTELLIGENT / RÉPONSES RAPIDES
@@ -13456,10 +14011,19 @@ window.startConversationVoiceRecording=async function(contact){
     conversationVoiceRecorder=null;
     renderConversationVoiceBar('');
     syncConversationPrimaryAction();
-    const denied=String(error?.name||'').toLowerCase().includes('notallowed');
-    alert(denied
-      ? 'Autorisez le microphone pour app.mondeco.tn dans les réglages du navigateur, puis réessayez.'
-      : (error?.message||'Impossible d’utiliser le microphone.'));
+    // V6.36.16 — Messages clairs pour les erreurs micro les plus courantes,
+    // au lieu du texte technique brut du navigateur ("Requested device not
+    // found", "NotReadableError"...), incompréhensible pour un commercial.
+    const errorName=String(error?.name||'').toLowerCase();
+    let friendlyMessage=error?.message||'Impossible d’utiliser le microphone.';
+    if(errorName.includes('notallowed')){
+      friendlyMessage='Autorisez le microphone pour app.mondeco.tn dans les réglages du navigateur, puis réessayez.';
+    }else if(errorName.includes('notfound')){
+      friendlyMessage='Aucun microphone détecté sur cet ordinateur. Vérifiez qu’un micro est bien branché et activé, puis réessayez.';
+    }else if(errorName.includes('notreadable')){
+      friendlyMessage='Le microphone est déjà utilisé par un autre programme (Zoom, Teams, un autre onglet...). Fermez-le puis réessayez.';
+    }
+    alert(friendlyMessage);
   }
 };
 
@@ -13715,7 +14279,16 @@ window.startWhatsAppCall=async function(contact){
     await pollWhatsAppCall();
     activeWhatsAppCall.pollTimer=setInterval(pollWhatsAppCall,1100);
   }catch(error){
-    const message=error?.message||'Impossible de démarrer l’appel WhatsApp.';
+    // V6.36.16 — Même clarification que pour le message vocal.
+    const errorName=String(error?.name||'').toLowerCase();
+    let message=error?.message||'Impossible de démarrer l’appel WhatsApp.';
+    if(errorName.includes('notallowed')){
+      message='Autorisez le microphone pour app.mondeco.tn dans les réglages du navigateur, puis réessayez.';
+    }else if(errorName.includes('notfound')){
+      message='Aucun microphone détecté sur cet ordinateur. Vérifiez qu’un micro est bien branché et activé, puis réessayez.';
+    }else if(errorName.includes('notreadable')){
+      message='Le microphone est déjà utilisé par un autre programme (Zoom, Teams, un autre onglet...). Fermez-le puis réessayez.';
+    }
     setWhatsAppCallUi('error',message,true);
     document.getElementById('waCallCloseBtn')?.classList.remove('hidden');
     cleanupWhatsAppCallLocal({hide:false});
@@ -13774,6 +14347,18 @@ window.closeConversationComposerMenus = function(except = ''){
       false
     );
   }
+  // V6.36.8 — Ferme aussi les panneaux emoji et stickers, sauf exception.
+  if(except !== 'emoji'){
+    setConversationComposerMenuState(
+      'conversationEmojiPanel',
+      'conversationEmojiBtn',
+      false
+    );
+  }
+  if(except !== 'stickers'){
+    const picker = document.getElementById('conversationStickerPicker');
+    if(picker) picker.classList.add('hidden');
+  }
 };
 
 window.toggleConversationAttachmentMenu = function(){
@@ -13798,6 +14383,107 @@ window.toggleConversationQuickReplies = function(){
     'conversationQuickReplyBtn',
     willOpen
   );
+};
+
+// ============================================================
+// V6.36.8 — Emojis + Stickers
+// ============================================================
+
+// Sélection volontairement compacte et pertinente pour un service client
+// (courtoisie, confirmation, attente, produits) plutôt qu'un clavier
+// emoji exhaustif — plus rapide à parcourir pour un commercial.
+const CONVERSATION_EMOJI_SET = [
+  '😊','🙂','😀','😁','😉','🙏','👍','👏',
+  '❤️','🎉','✅','⏳','😅','😍','🤝','👋',
+  '📦','🚚','💰','📍','📞','🕒','⭐','🔥',
+  '😢','😮','🤔','👌','💯','🎁','🛋️','🪑'
+];
+
+function renderConversationEmojiPanel(){
+  const panel = document.getElementById('conversationEmojiPanel');
+  if(!panel || panel.dataset.rendered) return;
+  panel.innerHTML = CONVERSATION_EMOJI_SET.map(emoji =>
+    `<button type="button" class="wa-emoji-btn" onclick="insertConversationEmoji('${emoji}')">${emoji}</button>`
+  ).join('');
+  panel.dataset.rendered = '1';
+}
+
+window.toggleConversationEmojiPanel = function(){
+  const panel = document.getElementById('conversationEmojiPanel');
+  if(!panel) return;
+  renderConversationEmojiPanel();
+  const willOpen = panel.classList.contains('hidden');
+  closeConversationComposerMenus('emoji');
+  setConversationComposerMenuState('conversationEmojiPanel', 'conversationEmojiBtn', willOpen);
+};
+
+window.insertConversationEmoji = function(emoji){
+  const textarea = document.getElementById('conversationQuickReply');
+  if(!textarea) return;
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + emoji + textarea.value.slice(end);
+  const cursor = start + emoji.length;
+  textarea.setSelectionRange(cursor, cursor);
+  textarea.focus();
+  autoResizeConversationComposer(textarea);
+  syncConversationPrimaryAction();
+};
+
+async function renderConversationStickerPicker(){
+  const picker = document.getElementById('conversationStickerPicker');
+  if(!picker) return;
+  if(picker.dataset.rendered){
+    picker.classList.remove('hidden');
+    return;
+  }
+  picker.innerHTML = '<div class="empty" style="grid-column:1/-1;padding:10px">Chargement…</div>';
+  picker.classList.remove('hidden');
+  try{
+    const data = await apiFetch(`${API}/stickers`);
+    const stickers = Array.isArray(data?.stickers) ? data.stickers : [];
+    picker.innerHTML = stickers.map(s =>
+      `<button type="button" class="wa-sticker-option" data-sticker="${escapeHtml(s.id)}" onclick="sendConversationSticker(${jsArg(s.id)},this)">
+        <img src="${escapeHtml(s.url)}" alt="Sticker" loading="lazy">
+      </button>`
+    ).join('');
+    picker.dataset.rendered = '1';
+  }catch(error){
+    picker.innerHTML = `<div class="empty" style="grid-column:1/-1;padding:10px">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+window.openStickerPicker = function(){
+  closeConversationComposerMenus('stickers');
+  renderConversationStickerPicker();
+};
+
+window.sendConversationSticker = async function(stickerId, buttonEl){
+  const contact = selectedConversationContact;
+  if(!contact) return;
+  if(buttonEl) buttonEl.classList.add('sending');
+  try{
+    await apiFetch(`${API}/commercial/send-sticker`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        contact,
+        stickerId,
+        channel:'whatsapp',
+        externalContact: selectedConversationData?.state?.externalContact || ''
+      })
+    });
+    document.getElementById('conversationStickerPicker')?.classList.add('hidden');
+    await softRefreshSelectedConversation();
+  }catch(error){
+    if(error?.code==='CONVERSATION_LOCKED'){
+      showConversationLockedModal(error?.data || {});
+    }else{
+      alert(`Envoi du sticker impossible : ${error.message}`);
+    }
+  }finally{
+    if(buttonEl) buttonEl.classList.remove('sending');
+  }
 };
 
 window.autoResizeConversationComposer = function(textarea){
@@ -14191,11 +14877,64 @@ window.selectConversationAttachment = function(input, type){
   syncConversationPrimaryAction();
 };
 
+window.sendWhatsAppReengagement = async function(contact){
+  const data=selectedConversationData||{};
+  const item=conversations.find(entry=>entry.contact===contact)||{
+    contact,channel:data?.state?.channel,externalContact:data?.state?.externalContact
+  };
+  if(conversationChannel(item)!=='whatsapp') return;
+
+  if(currentUser?.role==='commercial' && selectedConversationAccess(contact,data?.state||{}).canReply===false){
+    alert('Vous ne pouvez pas répondre à cette conversation.');
+    return;
+  }
+
+  const externalContact=conversationExternalContact(item);
+  const button=document.getElementById('whatsappReengageBtn');
+  if(button){button.disabled=true;button.textContent='Envoi de la relance…';}
+
+  try{
+    await apiFetch(`${API}/commercial/send`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        phone:externalContact,
+        contact,
+        channel:'whatsapp',
+        externalContact,
+        sendMode:'whatsapp_reengage',
+        text:''
+      })
+    });
+
+    await refreshPendingCountsNow();
+    await window.openConversation(contact);
+    alert('Relance WhatsApp envoyée. Dès que le client répond, la fenêtre de 24 h se rouvre automatiquement.');
+  }catch(error){
+    if(error?.code==='WHATSAPP_WINDOW_REOPENED'){
+      await window.openConversation(contact);
+      alert('Le client a répondu entre-temps : la fenêtre WhatsApp est de nouveau ouverte. Vous pouvez écrire normalement.');
+    }else if(error?.code==='WHATSAPP_TEMPLATE_NOT_CONFIGURED'){
+      alert('Le modèle de relance WhatsApp doit être configuré une seule fois par l’administrateur.');
+    }else if(error?.code==='WHATSAPP_REENGAGEMENT_ALREADY_SENT'){
+      await window.openConversation(contact);
+      alert('Une relance a déjà été envoyée pour ce client. Attendez sa réponse.');
+    }else{
+      alert(error.message);
+    }
+  }finally{
+    const current=document.getElementById('whatsappReengageBtn');
+    if(current){current.disabled=false;current.textContent='📨 Relancer le client';}
+  }
+};
+
 window.sendConversationCommercialReply = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).canReply === false){
     alert('Vous ne pouvez pas répondre à cette conversation.');
     return;
   }
+
+  conversationSendInProgress = true;
 
   // V6.35.12 — Le jeton anti-course doit être invalidé DÈS LE DÉBUT de
   // l'envoi, pas seulement à la fin (dans l'appel openConversation() final).
@@ -14223,6 +14962,46 @@ window.sendConversationCommercialReply = async function(contact){
   if(!text && !file){
     alert('Écrivez un message ou ajoutez un fichier.');
     return;
+  }
+
+  // V6.36.71 — Affichage optimiste : le vrai temps d'envoi (appel réseau
+  // vers Meta) reste incompressible côté serveur (mesuré jusqu'à 4s dans
+  // "Phases envoi"), mais rien n'empêchait déjà d'afficher IMMÉDIATEMENT
+  // le message côté commercial pendant que l'envoi se fait en arrière-
+  // plan — exactement le principe des vraies apps de messagerie (message
+  // visible tout de suite, coche de confirmation ensuite). Uniquement
+  // pour les messages texte simples (pas les fichiers/vocaux, plus
+  // complexes à prévisualiser fidèlement).
+  let optimisticBubbleId = '';
+  if(text && !file){
+    const threadEl = document.getElementById('conversationDetail');
+    if(threadEl){
+      optimisticBubbleId = `optimistic-${Date.now()}`;
+      const bubble = document.createElement('div');
+      bubble.id = optimisticBubbleId;
+      bubble.className = 'inbox-message-row commercial optimistic';
+      // V6.36.80 — Confirmation totalement optimiste : affichée comme
+      // envoyée DÈS LE CLIC, avant même la réponse serveur (qui prend
+      // ~1-2s de vrai aller-retour réseau, incompressible). En cas
+      // d'échec réel (rare), le bloc catch plus bas remet la bulle en
+      // état d'erreur visible pour le commercial.
+      bubble.style.opacity = '1';
+      bubble.innerHTML = `
+        <div class="inbox-message-wrap">
+          <div class="inbox-message-label">✓ Envoyé</div>
+          <div class="inbox-bubble">${escapeHtml(text)}</div>
+        </div>
+      `;
+      threadEl.appendChild(bubble);
+      threadEl.scrollTop = threadEl.scrollHeight;
+    }
+    // Le champ de saisie se vide tout de suite : le commercial peut déjà
+    // taper le message suivant pendant que celui-ci part en arrière-plan.
+    const textElImmediate = document.getElementById('conversationQuickReply');
+    if(textElImmediate){
+      textElImmediate.value = '';
+      autoResizeConversationComposer(textElImmediate);
+    }
   }
 
   const data =
@@ -14368,7 +15147,22 @@ window.sendConversationCommercialReply = async function(contact){
     if(selectedConversationData?.contact === contact && selectedConversationData?.state){
       selectedConversationData.state.unreadCount = 0;
     }
-    renderConversationsList();
+    // V6.36.81 — pas de reconstruction complète de l'Inbox après envoi.
+    // Le rafraîchissement en arrière-plan remettra la liste à jour.
+
+    // V6.36.79 — Confirmation VISUELLE immédiate de la bulle optimiste,
+    // dès que l'envoi a réussi (< 1s mesuré en prod), sans attendre le
+    // rechargement complet de la conversation (qui dépend de
+    // loadWhatsAppLog(), plus lent sous fort trafic — 5-10s observés en
+    // production le 30/08).
+    if(optimisticBubbleId){
+      const bubbleEl = document.getElementById(optimisticBubbleId);
+      if(bubbleEl){
+        bubbleEl.style.opacity = '1';
+        const labelEl = bubbleEl.querySelector('.inbox-message-label');
+        if(labelEl) labelEl.textContent = '✓ Envoyé';
+      }
+    }
 
     // V6.35.6 — Ces trois appels ne font que rafraîchir l'affichage : le
     // message est déjà parti. S'ils échouent (réseau lent, backend
@@ -14378,27 +15172,48 @@ window.sendConversationCommercialReply = async function(contact){
     // openConversation() en fait déjà une à sa toute fin. L'appeler deux
     // fois de suite doublait inutilement ce chargement réseau à chaque
     // envoi, sur une liste de 900+ conversations.
-    try{
-      await refreshPendingCountsNow();
-      await window.openConversation(contact);
-    }catch(refreshError){
-      console.debug('Rafraîchissement post-envoi :', refreshError.message);
-    }
+    // V6.36.82 — Aucun rechargement immédiat après envoi.
+    // La bulle optimiste est déjà affichée et l'actualisation automatique
+    // synchronisera ensuite les données sans bloquer le changement de client.
   }catch(error){
+    // V6.36.71 — La bulle optimiste doit être retirée en cas d'échec,
+    // et le texte remis dans le champ pour ne rien faire perdre au
+    // commercial (sauf pour les cas ambigus SEND_TIMEOUT/NETWORK_UNCERTAIN,
+    // gérés plus bas, où on ne sait pas si le message est réellement
+    // parti — dans ce cas la bulle reste visible telle quelle).
+    const isUncertain = error?.code==='SEND_TIMEOUT_UNCERTAIN' || error?.code==='SEND_NETWORK_UNCERTAIN';
+    if(optimisticBubbleId && !isUncertain){
+      document.getElementById(optimisticBubbleId)?.remove();
+      const textElRestore = document.getElementById('conversationQuickReply');
+      if(textElRestore && text){
+        textElRestore.value = text;
+        autoResizeConversationComposer(textElRestore);
+      }
+    }
     if(error?.code==='FACEBOOK_TOKEN_EXPIRED'){
       alert(
         'Facebook Messenger est temporairement déconnecté : le Page Access Token a expiré.\n\n' +
         'Aucun message n’a été envoyé. Demandez à l’administrateur de renouveler le token longue durée dans Railway.'
       );
+    }else if(error?.code==='CONVERSATION_LOCKED'){
+      // V6.36.14 — Fenêtre claire dédiée, plutôt qu'une alerte système
+      // générique : le commercial voit immédiatement QUI traite la
+      // conversation et QUAND il pourra réessayer, sans texte technique.
+      showConversationLockedModal(error?.data || {});
     }else if(error?.code==='SEND_TIMEOUT_UNCERTAIN' || error?.code==='SEND_NETWORK_UNCERTAIN'){
       // V6.35.6 — Cas ambigu : on ne sait pas si Meta a reçu le message.
       // On ne vide PAS le champ de texte ici, pour que le commercial
       // puisse vérifier la conversation avant de décider de renvoyer.
       alert(error.message);
+    }else if(error?.code==='WHATSAPP_OUTSIDE_WINDOW'){
+      // V6.36.17 — La fenêtre a pu expirer pendant que le commercial écrivait.
+      // On recharge immédiatement le composer spécial « Relancer le client ».
+      await window.openConversation(contact);
     }else{
       alert(error.message);
     }
   }finally{
+    conversationSendInProgress = false;
     const currentButton =
       document.getElementById('conversationSendBtn');
 
@@ -14441,16 +15256,16 @@ function updatePendingWorkUi(){
       `<span class="pending-work-pill metric network-facebook" title="Commentaires Facebook qui attendent une réponse">FB com <strong>${pendingCountLabel(facebookComments)}</strong></span>`;
   }
 
-  // Les compteurs des filtres de canal indiquent le volume actif total ;
+  // Les compteurs des onglets de canal indiquent le volume actif total ;
   // leur infobulle précise maintenant le nombre réellement à répondre.
   const channelHints={
-    whatsapp:['filterCountWhatsApp',whatsapp,'conversations WhatsApp'],
-    instagram:['filterCountInstagram',instagramMessages,'messages Instagram'],
-    facebook:['filterCountFacebook',facebookMessages,'messages Facebook']
+    whatsapp:['channelCountWhatsApp',whatsapp,'conversations WhatsApp'],
+    instagram:['channelCountInstagram',instagramMessages,'messages Instagram'],
+    facebook:['channelCountFacebook',facebookMessages,'messages Facebook']
   };
   for(const [channel,[id,pending,label]] of Object.entries(channelHints)){
     const countEl=document.getElementById(id);
-    const button=countEl?.closest?.('.inbox-filter');
+    const button=countEl?.closest?.('.inbox-channel-tab');
     if(button) button.title=`${countEl?.textContent||'0'} ${label} actives • ${pendingCountLabel(pending)} à répondre`;
   }
   const commentHints=[
@@ -14480,10 +15295,13 @@ async function refreshPendingCountsNow(){
 }
 
 window.openPendingMessages=async function(){
-  await setInboxInteractionMode('messages');
+  // V6.36.7 — Statut sur "À répondre" ET canal remis sur "Tous", pour voir
+  // tous les messages en attente peu importe le canal actif avant.
   conversationFilter='pending';
+  conversationChannelFilter='all';
   document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.filter==='pending'));
-  await loadConversations();
+  document.querySelectorAll('#conversationChannelTabs .inbox-channel-tab').forEach(button=>button.classList.toggle('active',button.dataset.channel==='all'));
+  await setInboxInteractionMode('messages');
 };
 window.openPendingComments=async function(){
   await setInboxInteractionMode('comments');
@@ -14508,6 +15326,24 @@ function updateNotificationBadges(){
   }
   updatePendingWorkUi();
 }
+
+// V6.36.32 — Badge d'alertes commerciales (numero partage, intention de
+// commande, reclamation, etc.) sur le bouton de menu "Reponses IA".
+async function updateAiAlertsBadge(){
+  const el = document.getElementById('aiAlertsNavBadge');
+  if(!el) return;
+  try{
+    const data = await apiFetch(`${API}/ai-replies/alert-count`);
+    const count = Math.max(0, Number(data?.count || 0));
+    el.textContent = count > 99 ? '99+' : String(count);
+    el.title = `${count} alerte${count>1?'s':''} commerciale${count>1?'s':''} à traiter`;
+    el.classList.toggle('hidden', count <= 0);
+  }catch{
+    // silencieux : ne casse pas l'interface si l'appel echoue.
+  }
+}
+updateAiAlertsBadge();
+setInterval(updateAiAlertsBadge, 60000);
 
 function playNotificationTone(kind = 'message', channel = ''){
   try{
@@ -14556,6 +15392,73 @@ function playNotificationTone(kind = 'message', channel = ''){
   }catch(error){console.debug('Son notification indisponible',error);}
 }
 
+// V6.36.40 — Bulle de discussion flottante à l'intérieur de MONDECO,
+// façon Messenger/Instagram : reste visible en bas à droite tant que la
+// commerciale n'a pas cliqué dessus (pas de disparition automatique, pour
+// ne jamais rater un message même en s'absentant un instant de l'écran).
+// V6.36.41 — Simplifié en UNE seule bulle à la fois (au lieu d'empiler),
+// avec un compteur qui s'incrémente si d'autres événements arrivent
+// pendant qu'elle est affichée. La vraie alerte anti-oubli reste la
+// notification navigateur (showClientBrowserNotification), qui fonctionne
+// même onglet/app fermé — cette bulle est un simple rappel visuel doux
+// pour quand la commerciale a déjà l'œil sur l'écran MONDECO.
+let mondecoBubbleQueue = [];
+
+function showFloatingBubble(event){
+  const kind = String(event.kind||'');
+  if(kind==='report') return;
+
+  mondecoBubbleQueue.push(event);
+  renderMondecoBubble();
+}
+
+function renderMondecoBubble(){
+  const container = document.getElementById('mondecoBubbleContainer');
+  if(!container || !mondecoBubbleQueue.length) return;
+
+  const event = mondecoBubbleQueue[mondecoBubbleQueue.length-1];
+  const extraCount = mondecoBubbleQueue.length - 1;
+  const kind = String(event.kind||'');
+  const urgent = event.urgent===true;
+  const rawIdentity = event.username
+    ? (String(event.username).startsWith('@')?event.username:`@${event.username}`)
+    : event.profileName||String(event.contact||'').replace(/^(instagram|facebook):/,'');
+  // V6.36.42 — Un numéro de téléphone brut (ex: "21658583475") n'est pas
+  // lisible dans une bulle minimaliste. On ne l'affiche que si un vrai
+  // nom/identifiant est connu ; sinon on retombe sur un libellé neutre.
+  const isRawPhoneNumber = /^\d{6,}$/.test(rawIdentity);
+  const identity = isRawPhoneNumber ? 'Nouveau message' : rawIdentity;
+  const preview = event.preview||'Nouveau message client';
+  const initials = isRawPhoneNumber ? '💬' : String(identity||'M').trim().slice(0,2).toUpperCase();
+
+  // V6.36.43 — Bulle réduite à l'essentiel : juste un rond cliquable
+  // (avatar/icône + badge compteur), sans texte à côté. Le clic ouvre
+  // directement la bonne conversation, donc rien n'est perdu au clic ;
+  // seul l'aperçu visible avant clic est retiré, au profit d'une bulle
+  // plus proche du vrai esprit Messenger.
+  container.innerHTML = `
+    <div class="mondeco-bubble-round${urgent?' urgent':''}" id="mondecoSingleBubble" title="${escapeHtml(identity)}: ${escapeHtml(preview)}">
+      ${escapeHtml(initials)}${extraCount>0?`<span class="mondeco-bubble-count">+${extraCount}</span>`:''}
+      <button class="mondeco-bubble-round-close" type="button" title="Fermer">✕</button>
+    </div>
+  `;
+
+  document.querySelector('#mondecoSingleBubble .mondeco-bubble-round-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    mondecoBubbleQueue = [];
+    container.innerHTML = '';
+  });
+
+  document.getElementById('mondecoSingleBubble').addEventListener('click', () => {
+    mondecoBubbleQueue = [];
+    container.innerHTML = '';
+    if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
+    if(kind==='comment'&&event.commentKey){openNotificationSocialComment(event.notificationId||event.id,event.commentKey);return;}
+    if(event.contact){openNotificationConversation(event.notificationId||event.id,event.contact,event.messageId||'');}
+    else{openAllNewMessages();}
+  });
+}
+
 function showClientBrowserNotification(event){
   const urgent=event.urgent===true;
   const kind=String(event.kind||(urgent?'commercial':'message'));
@@ -14578,7 +15481,7 @@ function showClientBrowserNotification(event){
   const body=(kind==='report'||kind==='task')
     ? (event.preview||'')
     : `${identity}\n${event.preview||'Nouveau message client'}`;
-  if('Notification' in window&&Notification.permission==='granted'){
+  if('Notification' in window&&Notification.permission==='granted'&&isNotificationSystemEnabled()){
     try{
       const notification=new Notification(title,{body,tag:`mondeco-${event.id}`});
       notification.onclick=()=>{
@@ -14823,12 +15726,14 @@ async function pollCommercialNotifications(){
       }
       if(eventId)notificationSeenIds.add(eventId);
       showClientBrowserNotification(event);
+      showFloatingBubble(event);
     }
-    if(events.length&&document.getElementById('page-conversations')?.classList?.contains('active')){
-      // Ne jamais changer l'onglet actif lors d'un rafraîchissement automatique.
-      if(inboxInteractionMode==='comments'){
+    const hasMessageEvent=events.some(e=>['message','commercial'].includes(String(e?.kind||'')));
+    const hasCommentEvent=events.some(e=>String(e?.kind||'')==='comment');
+    if(document.getElementById('page-conversations')?.classList?.contains('active')){
+      if(inboxInteractionMode==='comments'&&hasCommentEvent){
         await loadSocialComments();
-      }else{
+      }else if(inboxInteractionMode==='messages'&&hasMessageEvent&&!conversationSendInProgress){
         await loadConversations();
         if(selectedConversationContact)await softRefreshSelectedConversation();
       }
@@ -14883,9 +15788,15 @@ window.openNotificationConversation=async function(notificationId,contact,messag
   try{
     if(notificationId)await apiFetch(`${API}/notifications/${encodeURIComponent(notificationId)}/read`,{method:'POST'}).catch(()=>{});
     closeNotificationPanel();
+    // V6.36.7 — Réinitialise les deux axes pour garantir la visibilité de
+    // la conversation ciblée par la notification.
     conversationFilter='all';
+    conversationChannelFilter='all';
     document.querySelectorAll('#conversationFilters .inbox-filter').forEach(button=>{
       button.classList.toggle('active',button.dataset.filter==='all');
+    });
+    document.querySelectorAll('#conversationChannelTabs .inbox-channel-tab').forEach(button=>{
+      button.classList.toggle('active',button.dataset.channel==='all');
     });
     showPage('conversations');
     await loadConversations();
@@ -14918,6 +15829,47 @@ document.getElementById('enableNotificationsBtn').addEventListener('click', asyn
   }
   await openNotificationPanel();
 });
+
+// V6.36.44 — Interrupteur simple pour couper/rallumer les notifications
+// système à volonté, sans repasser par les réglages du téléphone. Stocké
+// côté app (localStorage) : n'annule pas la permission navigateur, mais
+// empêche l'affichage tant que c'est désactivé — même résultat pratique.
+function isNotificationSystemEnabled(){
+  return localStorage.getItem('mondecoNotificationsDisabled')!=='1';
+}
+function renderNotificationSystemToggle(){
+  const btn=document.getElementById('notificationSystemToggle');
+  if(!btn)return;
+  const enabled=isNotificationSystemEnabled();
+  btn.textContent=enabled?'Activées':'Désactivées';
+  btn.className=`btn small${enabled?'':' danger'}`;
+}
+document.getElementById('notificationSystemToggle')?.addEventListener('click',()=>{
+  const enabled=isNotificationSystemEnabled();
+  localStorage.setItem('mondecoNotificationsDisabled',enabled?'1':'0');
+  renderNotificationSystemToggle();
+});
+renderNotificationSystemToggle();
+
+// V6.36.56 — Interrupteur dédié à la sonnerie, séparé des notifications
+// système : un admin peut couper le son sans désactiver complètement les
+// notifications (qui restent utiles visuellement/en arrière-plan).
+function isNotificationSoundEnabled(){
+  return localStorage.getItem('mondecoSoundDisabled')!=='1';
+}
+function renderNotificationSoundToggle(){
+  const btn=document.getElementById('notificationSoundToggle');
+  if(!btn)return;
+  const enabled=isNotificationSoundEnabled();
+  btn.textContent=enabled?'Activée':'Désactivée';
+  btn.className=`btn small${enabled?'':' danger'}`;
+}
+document.getElementById('notificationSoundToggle')?.addEventListener('click',()=>{
+  const enabled=isNotificationSoundEnabled();
+  localStorage.setItem('mondecoSoundDisabled',enabled?'1':'0');
+  renderNotificationSoundToggle();
+});
+renderNotificationSoundToggle();
 
 document.querySelectorAll('[data-notification-filter]').forEach(button=>{
   button.addEventListener('click',async()=>{
@@ -15006,23 +15958,29 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
   }
 }
 
-setTimeout(
-  refreshFacebookRealtimeBadge,
-  900
-);
+// V6.36.94 — Réactivé (02/09) : testé désactivé ~30 min, CPU serveur
+// resté à 84% (contre 83-88% avant) — confirmé, Facebook N'EST PAS la
+// cause principale. Vrai bug identifié et corrigé séparément (cloudEntry,
+// V6.36.93). Fréquence conservée à 5 min (V6.36.91).
+// Patch session (13/10) - badge Facebook au chargement desactive
+// setTimeout(
+//   refreshFacebookRealtimeBadge,
+//   900
+// );
 
-setTimeout(
-  () => syncFacebookRealtimeMessages({ force:true }),
-  4500
-);
+// Patch session (13/10) - synchro Facebook au chargement desactivee
+// setTimeout(
+//   () => syncFacebookRealtimeMessages({ force:true }),
+//   4500
+// );
 
 facebookRealtimeRecoveryTimer = setInterval(
   () => {
-    if(document.visibilityState === 'visible'){
+    if(false && document.visibilityState === 'visible'){
       syncFacebookRealtimeMessages();
     }
   },
-  30000
+  5 * 60 * 1000
 );
 
 setInterval(
@@ -15033,8 +15991,8 @@ setInterval(
 setInterval(
   () => {
     if(
-      document.visibilityState === 'visible' &&
       selectedConversationContact &&
+      !conversationSendInProgress &&
       document.getElementById('page-conversations')
         ?.classList
         ?.contains('active')
@@ -15252,7 +16210,11 @@ document.getElementById('sendCommercialReplyBtn').addEventListener('click', asyn
       loadConversations()
     ]);
   }catch(error){
-    alert(error.message);
+    if(error?.code==='CONVERSATION_LOCKED'){
+      showConversationLockedModal(error?.data || {});
+    }else{
+      alert(error.message);
+    }
   }
 });
 
@@ -16377,6 +17339,108 @@ function tunisDateKey(){
   }
 }
 
+async function resolveAiAlert(messageId, time, btnEl){
+  if(!await uiConfirm('Marquer cette alerte comme résolue ?')) return;
+  try{
+    await apiFetch(`${API}/ai-replies/resolve-alert`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messageId, time })
+    });
+    const card = btnEl.closest('div[style*="border"]');
+    if(card && card.parentElement) card.remove();
+    updateAiAlertsBadge();
+  }catch(error){
+    alert('Erreur : ' + error.message);
+  }
+}
+function aiReplyCardHtml(r){
+  return `
+    <div style="border:1px solid var(--border,#e5e5e5);border-radius:10px;padding:12px 14px;">
+      <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:6px;">
+        <span>${escapeHtml(r.channel||'whatsapp')} · ${escapeHtml(r.contact||'')}</span>
+        <span>${escapeHtml(new Date(r.time).toLocaleString('fr-FR'))}</span>
+      </div>
+      ${r.incoming ? `<div style="font-size:13px;color:var(--muted);margin-bottom:4px;">👤 ${escapeHtml(r.incoming)}</div>` : ''}
+      <div style="font-size:14px;margin-bottom:8px;">🤖 ${escapeHtml(r.reply)}</div>
+      <button class="btn small" type="button" onclick="openLinkedTaskConversation(${jsArg(r.contact||'')},'')">💬 Voir la conversation</button>
+    </div>
+  `;
+}
+let aiRepliesDebounceTimer = null;
+function debounceLoadAiReplies(){
+  clearTimeout(aiRepliesDebounceTimer);
+  aiRepliesDebounceTimer = setTimeout(loadAiReplies, 350);
+}
+function renderAiRepliesStats(stats){
+  const el = document.getElementById('aiRepliesStats');
+  if(!el || !stats) return;
+  const channelLabels = { whatsapp:'WhatsApp', instagram:'Instagram', facebook:'Facebook' };
+  const channelHtml = Object.entries(stats.byChannel||{})
+    .map(([ch,n]) => `<div><div style="font-size:20px;font-weight:800;">${n}</div><div style="font-size:12px;color:var(--muted);">${escapeHtml(channelLabels[ch]||ch)}</div></div>`)
+    .join('');
+  el.innerHTML = `
+    <div><div style="font-size:20px;font-weight:800;">${stats.total||0}</div><div style="font-size:12px;color:var(--muted);">Total</div></div>
+    ${channelHtml}
+    <div><div style="font-size:20px;font-weight:800;color:#b91c1c;">${stats.transferRate||0}%</div><div style="font-size:12px;color:var(--muted);">Transférés au commercial</div></div>
+    <div><div style="font-size:20px;font-weight:800;color:#b91c1c;">${stats.alerts||0}</div><div style="font-size:12px;color:var(--muted);">Alertes</div></div>
+  `;
+}
+async function loadAiReplies(){
+  const container = document.getElementById('aiRepliesList');
+  if(!container) return;
+  container.innerHTML = '<p style="color:var(--muted)">Chargement...</p>';
+  try{
+    const search = document.getElementById('aiRepliesSearch')?.value || '';
+    const channel = document.getElementById('aiRepliesChannel')?.value || '';
+    const period = document.getElementById('aiRepliesPeriod')?.value || '';
+    const alertOnly = document.getElementById('aiRepliesAlertFilter')?.value || '';
+    const params = new URLSearchParams({ limit:'200' });
+    if(search) params.set('search', search);
+    if(channel) params.set('channel', channel);
+    if(period) params.set('period', period);
+    if(alertOnly) params.set('alertOnly', '1');
+    const data = await apiFetch(`${API}/ai-replies?${params.toString()}`);
+    renderAiRepliesStats(data?.stats);
+    const replies = Array.isArray(data?.replies) ? data.replies : [];
+    if(!replies.length){
+      container.innerHTML = '<p style="color:var(--muted)">Aucune réponse IA trouvée pour ces filtres.</p>';
+      return;
+    }
+    // V6.36.27 — Regroupe en tête les reponses avec un signal necessitant
+    // l'attention d'un commercial (numero de telephone partage, intention
+    // de commande), pour que l'equipe les reperent immediatement.
+    const alertLabels = { phone_shared:'📞 Numéro partagé', order_intent:'🛒 Intention de commande', complaint:'😠 Client mécontent', showroom_visit:'🏪 Visite showroom', price_negotiation:'💰 Négociation prix' };
+    const withAlerts = replies.filter(r => Array.isArray(r.alertFlags) && r.alertFlags.length);
+    const withoutAlerts = replies.filter(r => !(Array.isArray(r.alertFlags) && r.alertFlags.length));
+    let html = '';
+    if(withAlerts.length){
+      html += `<div style="margin-bottom:16px;">
+        <div style="font-weight:800;font-size:14px;color:#b91c1c;margin-bottom:8px;">⚠️ À traiter (${withAlerts.length})</div>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          ${withAlerts.map(r => `
+            <div style="border:2px solid #f87171;background:#fef2f2;border-radius:10px;padding:12px 14px;">
+              <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;">
+                ${r.alertFlags.map(f => `<span style="background:#dc2626;color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;">${escapeHtml(alertLabels[f]||f)}</span>`).join('')}
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);margin-bottom:6px;">
+                <span>${escapeHtml(r.channel||'whatsapp')} · ${escapeHtml(r.contact||'')}</span>
+                <span>${escapeHtml(new Date(r.time).toLocaleString('fr-FR'))}</span>
+              </div>
+              ${r.incoming ? `<div style="font-size:13px;color:var(--muted);margin-bottom:4px;">👤 ${escapeHtml(r.incoming)}</div>` : ''}
+              <div style="font-size:14px;margin-bottom:8px;">🤖 ${escapeHtml(r.reply)}</div>
+              <button class="btn small" type="button" onclick="openLinkedTaskConversation(${jsArg(r.contact||'')},'')">💬 Voir la conversation</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+    }
+    html += `<div style="display:flex;flex-direction:column;gap:10px;">${withoutAlerts.map(aiReplyCardHtml).join('')}</div>`;
+    container.innerHTML = html;
+  }catch(error){
+    container.innerHTML = `<p style="color:#c00">Erreur de chargement : ${escapeHtml(error.message)}</p>`;
+  }
+}
 async function loadTeamPresence(){
   if(!['admin','responsable_commercial'].includes(currentUser?.role)){
     return teamPresence;
@@ -17318,13 +18382,13 @@ function teamControlTab(name){
 }
 document.querySelectorAll('[data-team-control-tab]').forEach(btn=>btn.addEventListener('click',()=>teamControlTab(btn.dataset.teamControlTab)));
 
-async function loadSimpleTeamDashboard(showLoading=true){
+async function loadSimpleTeamDashboard(showLoading=true,forceRefresh=false){
   const accessHost=document.getElementById('simpleTeamRows');
   const perfHost=document.getElementById('simplePerformanceRows');
   const date=simpleTeamDate();
   if(showLoading&&accessHost)accessHost.innerHTML='<tr><td colspan="6"><div class="empty">Chargement...</div></td></tr>';
   if(showLoading&&perfHost)perfHost.innerHTML='<tr><td colspan="12"><div class="empty">Chargement...</div></td></tr>';
-  try{simpleTeamDashboard=await apiFetch(`${API}/team/simple-dashboard?date=${encodeURIComponent(date)}`);renderSimpleTeamDashboard();return simpleTeamDashboard}
+  try{simpleTeamDashboard=await apiFetch(`${API}/team/simple-dashboard?date=${encodeURIComponent(date)}${forceRefresh?'&force=1':''}`);renderSimpleTeamDashboard();return simpleTeamDashboard}
   catch(error){if(accessHost)accessHost.innerHTML=`<tr><td colspan="6"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;if(perfHost)perfHost.innerHTML=`<tr><td colspan="12"><div class="empty">${escapeHtml(error.message)}</div></td></tr>`;return null}
 }
 
@@ -17375,7 +18439,7 @@ function renderSimpleDailyReport(report){
 function formatPresenceLastSeenAbsolute(value){try{return new Intl.DateTimeFormat('fr-TN',{timeZone:'Africa/Tunis',hour:'2-digit',minute:'2-digit'}).format(new Date(value))}catch{return String(value||'—')}}
 function refreshSimplePresenceOnly(){if(!simpleTeamDashboard?.users)return;(teamPresence?.users||[]).forEach(item=>{const user=simpleTeamDashboard.users.find(u=>u.id===item.id);if(user)user.presence=item.presence||user.presence});renderSimpleTeamDashboard()}
 
-document.getElementById('simpleTeamRefresh')?.addEventListener('click',()=>loadSimpleTeamDashboard());
+document.getElementById('simpleTeamRefresh')?.addEventListener('click',()=>loadSimpleTeamDashboard(true,true));
 document.getElementById('simpleTeamDate')?.addEventListener('change',()=>loadSimpleTeamDashboard());
 document.getElementById('openTeamAccountModal')?.addEventListener('click',()=>openModal('teamAccountModal'));
 
@@ -17502,6 +18566,159 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   }
 });
 
+// V6.36.45 — Frontend du rapport WhatsApp personnalisé.
+let waReportPollTimer = null;
+
+function initWaReportDefaultDates(){
+  const startEl = document.getElementById('waReportStartDate');
+  const endEl = document.getElementById('waReportEndDate');
+  if(!startEl || !endEl) return;
+  if(startEl.value && endEl.value) return;
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 7*24*60*60*1000);
+  const fmt = d => d.toISOString().slice(0,10);
+  if(!endEl.value) endEl.value = fmt(today);
+  if(!startEl.value) startEl.value = fmt(weekAgo);
+}
+document.addEventListener('DOMContentLoaded', initWaReportDefaultDates);
+initWaReportDefaultDates();
+
+function normalizeDateValue(raw){
+  // V6.36.46 — Sur certains navigateurs mobiles, <input type="date">.value
+  // peut ne pas être strictement AAAA-MM-JJ malgré la spec HTML. On
+  // reconstruit la date nous-mêmes via l'objet Date plutôt que de faire
+  // confiance à la chaîne brute.
+  if(!raw) return '';
+  const d = new Date(raw);
+  if(Number.isNaN(d.getTime())){
+    // Tentative de parsing manuel type DD/MM/AAAA.
+    const m = String(raw).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if(m){
+      const [, dd, mm, yyyy] = m;
+      return `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
+    }
+    return '';
+  }
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+window.generateWaReport = async function(){
+  const startDate = normalizeDateValue(document.getElementById('waReportStartDate')?.value);
+  const endDate = normalizeDateValue(document.getElementById('waReportEndDate')?.value);
+  const statusEl = document.getElementById('waReportStatus');
+  const resultEl = document.getElementById('waReportResult');
+  const btn = document.getElementById('waReportGenerateBtn');
+
+  if(!startDate || !endDate){
+    statusEl.innerHTML = '<div class="notice warning">Choisissez une date de début et de fin.</div>';
+    return;
+  }
+
+  if(waReportPollTimer){ clearInterval(waReportPollTimer); waReportPollTimer = null; }
+  resultEl.innerHTML = '';
+  btn.disabled = true;
+  statusEl.innerHTML = '<div class="notice">⏳ Génération en cours (20 à 60 secondes)...</div>';
+
+  try{
+    // V6.36.57 — Bug enfin identifié via log serveur : apiFetch() ne
+    // définit AUCUN Content-Type par défaut. Sans ce header explicite,
+    // Express ne parse jamais le body comme JSON (req.body restait {}
+    // en permanence), d'où "Dates invalides" malgré des dates correctement
+    // sélectionnées et normalisées côté client.
+    const data = await apiFetch(`${API}/reports/whatsapp-custom`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({startDate, endDate})
+    });
+    pollWaReport(data.reportId);
+  }catch(error){
+    statusEl.innerHTML = `<div class="notice warning">${escapeHtml(error.message)}</div>`;
+    btn.disabled = false;
+  }
+};
+
+function pollWaReport(reportId){
+  const statusEl = document.getElementById('waReportStatus');
+  const btn = document.getElementById('waReportGenerateBtn');
+
+  waReportPollTimer = setInterval(async () => {
+    try{
+      const report = await apiFetch(`${API}/reports/whatsapp-custom/${encodeURIComponent(reportId)}`);
+      if(report.status === 'generating'){
+        return;
+      }
+      clearInterval(waReportPollTimer);
+      waReportPollTimer = null;
+      btn.disabled = false;
+      if(report.status === 'error'){
+        statusEl.innerHTML = `<div class="notice warning">Erreur : ${escapeHtml(report.error||'inconnue')}</div>`;
+        return;
+      }
+      statusEl.innerHTML = `<div class="notice success">✅ Rapport généré (${escapeHtml(report.startDate)} → ${escapeHtml(report.endDate)})</div>`;
+      renderWaReport(report);
+    }catch(error){
+      clearInterval(waReportPollTimer);
+      waReportPollTimer = null;
+      btn.disabled = false;
+      statusEl.innerHTML = `<div class="notice warning">${escapeHtml(error.message)}</div>`;
+    }
+  }, 3000);
+}
+
+function renderWaReport(report){
+  const resultEl = document.getElementById('waReportResult');
+  const s1 = report.section1 || {};
+  const s2 = report.section2 || [];
+  const s3 = report.section3 || [];
+  const s4 = report.section4 || {};
+
+  const avgMin = s1.avgResponseSeconds!=null ? Math.round(s1.avgResponseSeconds/60) : null;
+
+  let html = '<div class="card"><h3>1. Statistiques globales</h3>';
+  html += `<p>Conversations traitées : <strong>${s1.totalConversations??'—'}</strong></p>`;
+  html += `<p>Avec réponse valide : <strong>${s1.conversationsWithReply??'—'}</strong></p>`;
+  html += `<p>Sans réponse au-delà de 15 min : <strong>${s1.conversationsNoReply15min??'—'}</strong></p>`;
+  html += `<p>Temps de réponse moyen : <strong>${avgMin!=null?avgMin+' min':'non disponible'}</strong></p>`;
+  html += `<p>Avec question de qualification : <strong>${s1.qualificationCount??'—'}</strong></p>`;
+  html += '</div>';
+
+  html += '<div class="card"><h3>2. Répartition par source</h3><table style="width:100%;border-collapse:collapse;">';
+  html += '<tr><th style="text-align:left;">Campagne/produit</th><th>Conversations</th><th>Qualifiées</th><th>Devis</th></tr>';
+  for(const row of s2){
+    html += `<tr><td>${escapeHtml(row.name)}</td><td style="text-align:center;">${row.total}</td><td style="text-align:center;">${row.qualified}</td><td style="text-align:center;">${row.devis}</td></tr>`;
+  }
+  html += '</table></div>';
+
+  html += '<div class="card"><h3>3. Échantillon de conversations</h3>';
+  for(const sample of s3){
+    html += `<div style="border-bottom:1px solid rgba(0,0,0,0.06);padding:10px 0;">`;
+    html += `<p style="font-size:12px;color:#9a948c;">${escapeHtml(sample.produit||'non disponible')} — ${escapeHtml(sample.contact)}</p>`;
+    html += `<p><strong>Client :</strong> ${escapeHtml(sample.clientMsg||'')}</p>`;
+    if(sample.commercialRequired){
+      html += `<p><strong>Statut :</strong> transférée à un commercial</p>`;
+    }else{
+      html += `<p><strong>IA :</strong> ${escapeHtml(sample.aiReply||'').replace(/\n/g,'<br>')}</p>`;
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += '<div class="card"><h3>4. Anomalies détectées</h3>';
+  const reasoning = s4.reasoningLeaks||[];
+  html += `<p><strong>Raisonnement interne fuité :</strong> ${reasoning.length} cas</p>`;
+  for(const item of reasoning){
+    html += `<div style="font-size:13px;color:#5b5650;margin-bottom:6px;">${escapeHtml(item.contact)} — ${escapeHtml(item.reply)}</div>`;
+  }
+  const noReply = s4.noReply15min||[];
+  html += `<p><strong>Sans réponse >15 min :</strong> ${noReply.length} conversation(s)</p>`;
+  html += '</div>';
+
+  resultEl.innerHTML = html;
+}
+
 (async function init(){
   try{
     currentUser =
@@ -17523,6 +18740,20 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
       defaultPage
     );
 
+    // V6.36.37 — Demande automatique de la permission de notification
+    // navigateur, au lieu d'attendre que l'utilisateur clique la cloche 🔔.
+    // Beaucoup de commerciaux ne cliquaient jamais dessus et ne recevaient
+    // donc jamais les notifications (client qui revient, IA qui transfère),
+    // sans même s'en rendre compte. Léger délai pour ne pas être intrusif
+    // dès l'affichage de la page.
+    if('Notification' in window && Notification.permission==='default'){
+      setTimeout(async()=>{
+        try{
+          const permission=await Notification.requestPermission();
+          if(permission==='granted')localStorage.setItem('mondecoNotificationSound','1');
+        }catch(error){console.debug('Autorisation notification automatique :',error);}
+      },2000);
+    }
 
     // V6.35 — /api/conversations réconcilie déjà les états répondus.
     // Ne plus lancer 900 ms après connexion une deuxième fusion complète de
@@ -17719,7 +18950,160 @@ document.addEventListener('keydown', function(event){
 
 updateInboxFocusButton();
 updateCustomerPanelButton();
+
+// ============================================================
+// V6.36.5 — Installation de l'application (PWA)
+// ============================================================
+(function initPwaInstall(){
+  const btn = document.getElementById('pwaInstallButton');
+  if(!btn) return;
+
+  // Service worker : requis par Chrome/Android pour proposer l'installation.
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('/admin/sw.js').catch(() => {});
+  }
+
+  const isStandalone = () =>
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+
+  if(isStandalone()){
+    // Déjà installée et lancée en tant qu'application : rien à proposer.
+    return;
+  }
+
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  let deferredPrompt = null;
+
+  if(isIos){
+    // Safari iOS n'a pas d'installation automatique : on affiche le
+    // bouton, qui ouvre des instructions claires au clic.
+    btn.classList.remove('hidden');
+    btn.addEventListener('click', () => {
+      alert(
+        "Pour installer MONDECO sur iPhone/iPad :\n\n" +
+        "1. Appuyez sur le bouton Partager (le carré avec une flèche vers le haut), en bas de Safari.\n" +
+        "2. Faites défiler et appuyez sur « Sur l'écran d'accueil ».\n" +
+        "3. Appuyez sur « Ajouter ».\n\n" +
+        "L'icône MONDECO apparaîtra alors sur votre écran d'accueil, comme une vraie application."
+      );
+    });
+  }else{
+    // Android/Chrome/Edge : le navigateur propose une vraie invite
+    // d'installation native, capturée ici pour être déclenchée par notre
+    // propre bouton plutôt que d'attendre son apparition spontanée.
+    window.addEventListener('beforeinstallprompt', event => {
+      event.preventDefault();
+      deferredPrompt = event;
+      btn.classList.remove('hidden');
+    });
+
+    btn.addEventListener('click', async () => {
+      if(!deferredPrompt) return;
+      btn.disabled = true;
+      deferredPrompt.prompt();
+      try{
+        await deferredPrompt.userChoice;
+      }catch{}
+      deferredPrompt = null;
+      btn.classList.add('hidden');
+      btn.disabled = false;
+    });
+
+    window.addEventListener('appinstalled', () => {
+      btn.classList.add('hidden');
+    });
+  }
+})();
 </script>
 
+<div id="mondecoBubbleContainer" style="position:fixed;bottom:160px;right:20px;z-index:99999;display:flex;flex-direction:column-reverse;gap:10px;max-width:340px;pointer-events:none;"></div>
+
+<style>
+.mondeco-bubble{
+  pointer-events:auto;
+  background:#fff;
+  border-radius:14px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.18);
+  padding:12px 14px;
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  cursor:pointer;
+  animation:mondecoBubbleIn 0.25s ease-out;
+  border:1px solid rgba(0,0,0,0.06);
+  max-width:340px;
+}
+.mondeco-bubble:hover{box-shadow:0 10px 28px rgba(0,0,0,0.24);}
+.mondeco-bubble-avatar{
+  width:38px;height:38px;border-radius:50%;
+  background:#ed1c24;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:14px;flex-shrink:0;
+  position:relative;
+}
+.mondeco-bubble-count{
+  position:absolute;top:-6px;left:-6px;
+  background:#11100f;color:#fff;
+  font-size:10px;font-weight:700;
+  min-width:16px;height:16px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 4px;
+  border:2px solid #fff;
+}
+.mondeco-bubble-round{
+  pointer-events:auto;
+  position:relative;
+  width:56px;height:56px;border-radius:50%;
+  background:#ed1c24;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;font-weight:700;
+  cursor:pointer;
+  box-shadow:0 8px 20px rgba(0,0,0,0.22);
+  animation:mondecoBubbleIn 0.25s ease-out;
+}
+.mondeco-bubble-round:hover{box-shadow:0 10px 26px rgba(0,0,0,0.3);}
+.mondeco-bubble-round.urgent{box-shadow:0 8px 20px rgba(237,28,36,0.5);}
+.mondeco-bubble-round-close{
+  position:absolute;top:-4px;right:-4px;
+  width:18px;height:18px;border-radius:50%;
+  background:#11100f;color:#fff;border:2px solid #fff;
+  font-size:10px;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  padding:0;
+}
+.mondeco-bubble-round-close:hover{background:#3a3630;}
+.mondeco-bubble-body{flex:1;min-width:0;}
+.mondeco-bubble-name{font-weight:700;font-size:13px;color:#11100f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mondeco-bubble-preview{font-size:12.5px;color:#5b5650;margin-top:2px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
+.mondeco-bubble-close{
+  flex-shrink:0;background:none;border:none;color:#9a948c;
+  font-size:16px;cursor:pointer;padding:2px 4px;line-height:1;
+}
+.mondeco-bubble-close:hover{color:#11100f;}
+.mondeco-bubble.urgent{border-left:4px solid #ed1c24;}
+@keyframes mondecoBubbleIn{
+  from{opacity:0;transform:translateY(12px);}
+  to{opacity:1;transform:translateY(0);}
+}
+</style>
+
+
+<div id="mondecoDebugPanel" style="position:fixed;top:0;left:0;right:0;max-height:25vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font-family:monospace;font-size:10px;padding:6px;z-index:999999;white-space:pre-wrap;word-break:break-all;pointer-events:none;"></div>
+<script>
+window.mondecoDebugLog = function(msg){
+  const panel = document.getElementById('mondecoDebugPanel');
+  if(!panel) return;
+  const time = new Date().toISOString().substr(11,12);
+  const line = document.createElement('div');
+  line.textContent = `[${time}] ${msg}`;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+  while(panel.children.length > 40){ panel.removeChild(panel.firstChild); }
+};
+window.addEventListener('error', function(e){
+  window.mondecoDebugLog('ERREUR JS: ' + e.message + ' @ ' + e.filename + ':' + e.lineno);
+});
+</script>
 </body>
 </html>

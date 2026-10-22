@@ -1,6 +1,6 @@
 {
   "name": "bot-whatsapp-mondeco",
-  "version": "6.39.0",
+  "version": "6.37.0",
   "description": "Agent IA omnicanal Mondeco (WhatsApp, Instagram, Facebook) via Gemini/Groq + Meta Cloud API, avec centre de pilotage commercial",
   "main": "server.js",
   "scripts": {
@@ -9,10 +9,12 @@
     "test": "npm run check && node scripts/run-tests.js"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "compression": "^1.8.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "undici": "^8.10.0"
   },
   "engines": {
     "node": ">=20"
