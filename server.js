@@ -6700,9 +6700,18 @@ async function sendWhatsAppMedia(
   const mediaId =
     await uploadWhatsAppMedia(file);
 
-  const mime = safeString(file?.mimetype).toLowerCase();
+  const mime = safeString(file?.mimetype).toLowerCase().split(';')[0];
+  // V6.38.1 — WhatsApp n'accepte en « image » que JPEG et PNG. Un WebP ou
+  // un GIF envoyé comme photo est accepté à l'appel puis refusé plus tard
+  // par Meta (code 131053) : le client ne reçoit rien. L'interface convertit
+  // déjà en JPEG ; ce qui passe malgré tout part comme document.
+  const isWhatsAppPhoto = mime === 'image/jpeg' || mime === 'image/jpg' || mime === 'image/png';
+  const wantsImage = mediaKind === 'image' || mime.startsWith('image/');
+  if (wantsImage && !isWhatsAppPhoto) {
+    console.warn(`⚠️ Image ${mime || 'de type inconnu'} non acceptée comme photo par WhatsApp : envoyée comme document.`);
+  }
   const type =
-    mediaKind === 'image' || mime.startsWith('image/')
+    wantsImage && isWhatsAppPhoto
       ? 'image'
       : mediaKind === 'audio' || mime.startsWith('audio/')
         ? 'audio'

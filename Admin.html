@@ -15053,6 +15053,37 @@ window.suggestConversationReply = async function(contact){
   }
 };
 
+// V6.38.1 — Convertit en JPEG une image que WhatsApp refuse comme photo
+// (WebP, GIF, BMP…). En cas d'échec, le fichier d'origine est conservé :
+// le serveur l'enverra alors comme document.
+const WHATSAPP_PHOTO_TYPES = ['image/jpeg','image/jpg','image/png'];
+
+async function whatsappCompatibleImageFile(file){
+  const type = String(file?.type || '').toLowerCase();
+  if(!type.startsWith('image/') || WHATSAPP_PHOTO_TYPES.includes(type)) return file;
+  try{
+    const bitmap = await createImageBitmap(file);
+    const maxSide = 2560;
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d');
+    // Fond blanc : la transparence deviendrait noire en JPEG.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if(!blob) return file;
+    const name = (String(file.name || 'photo').replace(/\.[a-z0-9]+$/i, '') || 'photo') + '.jpg';
+    return new File([blob], name, { type:'image/jpeg', lastModified:Date.now() });
+  }catch(error){
+    console.warn('Conversion image WhatsApp impossible :', error?.message || error);
+    return file;
+  }
+}
+
 window.sendConversationCommercialReply = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).canReply === false){
     alert('Vous ne pouvez pas répondre à cette conversation.');
@@ -15077,7 +15108,7 @@ window.sendConversationCommercialReply = async function(contact){
   const text =
     String(textEl?.value || '').trim();
 
-  const file =
+  let file =
     conversationVoiceFile ||
     document.getElementById('conversationCameraFile')?.files?.[0] ||
     document.getElementById('conversationImageFile')?.files?.[0] ||
@@ -15159,6 +15190,13 @@ window.sendConversationCommercialReply = async function(contact){
   if(['instagram','facebook'].includes(channel) && file){
     alert(`Pour ${channel === 'facebook' ? 'Facebook Messenger' : 'Instagram'}, envoyez pour le moment une réponse texte.`);
     return;
+  }
+
+  // V6.38.1 — WhatsApp n'accepte que JPEG et PNG pour une photo : un WebP
+  // (image enregistrée depuis le site) était accepté à l'envoi puis refusé
+  // par Meta (code 131053), sans que le client ne reçoive rien.
+  if(channel === 'whatsapp' && file){
+    file = await whatsappCompatibleImageFile(file);
   }
 
   const entries =
