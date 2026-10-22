@@ -22143,7 +22143,7 @@ function whatsappWindowInfoForState(contact, state = {}) {
 router.get('/api/conversations/:contact', requireAuth, async (req, res) => {
   const __detailStart = Date.now();
   res.once('finish', () => {
-    console.log(`⏱️ ROUTE conversation/detail TOTAL ${Date.now() - __detailStart}ms ${safeString(req.params.contact)}`);
+    console.log(`⏱️ ROUTE conversation/detail TOTAL ${Date.now() - __detailStart}ms ***${safeString(req.params.contact).replace(/\D/g, '').slice(-4)}`);
   });
   try {
     const contact = safeString(req.params.contact);

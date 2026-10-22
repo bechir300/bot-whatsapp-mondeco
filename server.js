@@ -8456,7 +8456,7 @@ async function processWhatsAppWebhook(body) {
           for (const err of status.errors) {
             console.warn(
               '❌ Échec livraison WhatsApp :',
-              `vers ${statusPhone || 'numéro inconnu'} |`,
+              `vers ${statusPhone ? maskPhoneForLog(statusPhone) : 'numéro inconnu'} |`,
               `code ${safeString(err?.code)} :`,
               safeString(err?.title) || safeString(err?.message) || 'raison non précisée',
               err?.error_data?.details ? `(${safeString(err.error_data.details)})` : ''
