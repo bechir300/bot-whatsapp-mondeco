@@ -6643,6 +6643,16 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
   #page-conversations .inbox-header-action-icon{font-size:15px !important}
 }
 
+
+/* V6.38 — boîtes de dialogue maison (remplacent await uiConfirm()/await uiPrompt()) */
+.ui-dialog-backdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(23,18,14,.58)}
+.ui-dialog{width:100%;max-width:460px;max-height:90vh;overflow-y:auto;background:var(--panel,#fff);color:var(--text,#211b16);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.ui-dialog-body{padding:22px 22px 8px;font-size:15px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
+.ui-dialog-body.danger{border-top:4px solid var(--red,#b43d36);border-radius:16px 16px 0 0}
+.ui-dialog-input{display:block;margin:6px 22px 0;width:calc(100% - 44px);padding:11px 12px;font:inherit;font-size:15px;border:1px solid var(--line,#e7ded4);border-radius:10px;background:#fff;color:inherit}
+.ui-dialog-input:focus,.ui-dialog-actions button:focus-visible{outline:2px solid var(--accent,#be551b);outline-offset:2px}
+.ui-dialog-actions{display:flex;justify-content:flex-end;gap:10px;padding:18px 22px 22px;flex-wrap:wrap}
+.ui-dialog-actions .btn{min-height:44px;min-width:110px}
 </style>
 </head>
 
@@ -8249,6 +8259,70 @@ const navButtons = [...document.querySelectorAll('.nav button[data-page]')];
 // entités HTML avant d'exécuter le code, donc escapeHtml() seul ne suffit pas
 // à empêcher de sortir d'une chaîne '...'. JSON.stringify produit un littéral
 // JS valide, puis escapeHtml protège l'attribut.
+// V6.38 — Boîtes de dialogue maison, à la place de confirm()/prompt() du
+// navigateur (peu lisibles, bloquantes et mal adaptées au mobile).
+// uiConfirm() résout true/false ; uiPrompt() résout le texte ou null
+// (annulation), exactement comme les fonctions natives.
+function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLabel='OK',cancelLabel='Annuler'}={}){
+  return new Promise(resolve=>{
+    const previousFocus=document.activeElement;
+    const backdrop=document.createElement('div');
+    backdrop.className='ui-dialog-backdrop';
+    backdrop.innerHTML=`<div class="ui-dialog" role="dialog" aria-modal="true" aria-labelledby="uiDialogMessage">
+      <div class="ui-dialog-body ${danger?'danger':''}" id="uiDialogMessage"></div>
+      ${input?'<input class="ui-dialog-input" type="text" aria-labelledby="uiDialogMessage">':''}
+      <div class="ui-dialog-actions">
+        <button type="button" class="btn" data-ui-dialog="cancel"></button>
+        <button type="button" class="btn ${danger?'danger':'primary'}" data-ui-dialog="ok"></button>
+      </div>
+    </div>`;
+    backdrop.querySelector('.ui-dialog-body').textContent=String(message??'');
+    backdrop.querySelector('[data-ui-dialog="cancel"]').textContent=cancelLabel;
+    backdrop.querySelector('[data-ui-dialog="ok"]').textContent=confirmLabel;
+    const field=backdrop.querySelector('.ui-dialog-input');
+    if(field) field.value=String(defaultValue??'');
+
+    let done=false;
+    const close=accepted=>{
+      if(done)return;
+      done=true;
+      document.removeEventListener('keydown',onKey,true);
+      backdrop.remove();
+      try{previousFocus?.focus?.();}catch{}
+      resolve(input?(accepted?field.value:null):Boolean(accepted));
+    };
+    const onKey=event=>{
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(false);}
+      else if(event.key==='Enter'&&(event.target===field||!input)){event.preventDefault();close(true);}
+      else if(event.key==='Tab'){
+        const focusable=[...backdrop.querySelectorAll('input,button')];
+        const index=focusable.indexOf(document.activeElement);
+        const next=event.shiftKey?(index<=0?focusable.length-1:index-1):(index+1)%focusable.length;
+        event.preventDefault();
+        focusable[next].focus();
+      }
+    };
+    backdrop.addEventListener('click',event=>{
+      const action=event.target.closest('[data-ui-dialog]')?.dataset.uiDialog;
+      if(action)close(action==='ok');
+      else if(event.target===backdrop)close(false);
+    });
+    document.addEventListener('keydown',onKey,true);
+    document.body.appendChild(backdrop);
+    (field||backdrop.querySelector('[data-ui-dialog="ok"]')).focus();
+    if(field) field.select();
+  });
+}
+
+function uiConfirm(message,options={}){
+  const danger=options.danger ?? /supprim|définiti|irréversible|SUPPRESSION|désactiv/i.test(String(message));
+  return uiDialog({message,danger,confirmLabel:danger?'Confirmer':'OK',...options});
+}
+
+function uiPrompt(message,defaultValue=''){
+  return uiDialog({message,input:true,defaultValue,confirmLabel:'Valider'});
+}
+
 // N'accepte que les liens http(s) : bloque javascript:, data:, etc.
 function safeHttpUrl(value){
   const url = String(value ?? '').trim();
@@ -8622,7 +8696,7 @@ async function refreshHome(){
 
 
 document.getElementById('cleanupStorageBtn')?.addEventListener('click', async () => {
-  if(!confirm(
+  if(!await uiConfirm(
     'Appliquer maintenant la rétention de 15 jours ?\n\n' +
     'Les conversations de plus de 15 jours NON marquées ★ Favori pourront être supprimées du stockage.\n' +
     'Les conversations ★ Favori seront conservées.\n\nContinuer ?'
@@ -8885,7 +8959,7 @@ window.deleteProduct = async function(id){
   const product = products.find(item => item.id === id);
   if(!product) return;
 
-  if(!confirm(`Supprimer le produit « ${product.name} » ?`)){
+  if(!await uiConfirm(`Supprimer le produit « ${product.name} » ?`)){
     return;
   }
 
@@ -9093,7 +9167,7 @@ window.deleteInstruction = async function(id){
   const item = instructions.find(x => x.id === id);
   if(!item) return;
 
-  if(!confirm(`Supprimer l'instruction « ${item.title} » ?`)){
+  if(!await uiConfirm(`Supprimer l'instruction « ${item.title} » ?`)){
     return;
   }
 
@@ -9143,7 +9217,7 @@ document.getElementById('instructionForm').addEventListener('submit', async even
 });
 
 document.getElementById('importLegacyBtn').addEventListener('click', async () => {
-  if(!confirm('Importer les blocs de business-info.txt qui ne sont pas encore présents ?')){
+  if(!await uiConfirm('Importer les blocs de business-info.txt qui ne sont pas encore présents ?')){
     return;
   }
 
@@ -9373,9 +9447,21 @@ function renderSocialCommentsList(){
     return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment(${jsArg(comment.key)})">
       ${socialCommentAvatar(comment)}
       <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':'<span class="comment-badge comment-owned">✓ Traité</span>'}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
-      <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
+      <span class="social-comment-side"><span data-role="comment-time" data-created-at="${escapeHtml(comment.createdAt||'')}">${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
     </button>`;
   }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
+}
+
+// V6.38 — Rafraîchissement périodique de la liste des commentaires : seule
+// l'heure affichée dépend du temps. Avant, toute la liste (avatars compris)
+// était reconstruite toutes les 5 s.
+function refreshSocialCommentTimeLabels(){
+  const host=document.getElementById('conversationListContainer');
+  if(!host) return;
+  host.querySelectorAll('[data-role="comment-time"]').forEach(node=>{
+    const label=formatShortTime(node.dataset.createdAt||'');
+    if(node.textContent!==label) node.textContent=label;
+  });
 }
 
 async function loadSocialComments({append=false}={}){
@@ -9521,7 +9607,7 @@ window.replyToSocialComment=async function(){
 window.privateReplyToSocialComment=async function(){
   const target=selectedSocialCommentData?.comment;if(!target)return;const input=document.getElementById('socialCommentReplyText');const message=String(input?.value||'').trim();if(!message){alert('Écrivez d’abord le message privé dans la zone de saisie.');return;}
   const btn=document.getElementById('socialCommentPrivateSendBtn');if(btn)btn.disabled=true;
-  if(!confirm('Envoyer ce message en privé à '+(target.authorUsername?('@'+target.authorUsername):(target.authorName||'ce client'))+' via '+commentChannelLabel(target.channel)+' ?')){if(btn)btn.disabled=false;return;}
+  if(!await uiConfirm('Envoyer ce message en privé à '+(target.authorUsername?('@'+target.authorUsername):(target.authorName||'ce client'))+' via '+commentChannelLabel(target.channel)+' ?')){if(btn)btn.disabled=false;return;}
   try{
     await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/private-reply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
     if(input)input.value='';
@@ -9532,7 +9618,7 @@ window.privateReplyToSocialComment=async function(){
   }catch(error){alert('Réponse privée impossible : '+error.message);}finally{if(btn)btn.disabled=false;}
 };
 window.toggleSocialCommentHidden=async function(){const target=selectedSocialCommentData?.comment;if(!target)return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}/hide`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hidden:!target.isHidden})});await openSocialComment(target.key);await loadSocialComments();}catch(error){alert('Modération impossible : '+error.message);}};
-window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(currentUser?.role!=='admin')return;if(!target||!confirm('SUPPRESSION DÉFINITIVE\n\nCe commentaire et ses réponses liées seront supprimés de MONDECO. La suppression sera aussi demandée à '+commentChannelLabel(target.channel)+'. Cette action est irréversible.\n\nContinuer ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();await refreshPendingCountsNow();}catch(error){alert('Suppression impossible : '+error.message);}};
+window.deleteSocialComment=async function(){const target=selectedSocialCommentData?.comment;if(currentUser?.role!=='admin')return;if(!target||!await uiConfirm('SUPPRESSION DÉFINITIVE\n\nCe commentaire et ses réponses liées seront supprimés de MONDECO. La suppression sera aussi demandée à '+commentChannelLabel(target.channel)+'. Cette action est irréversible.\n\nContinuer ?'))return;try{await apiFetch(`${API}/social-comments/${encodeURIComponent(target.key)}`,{method:'DELETE'});selectedSocialCommentData=null;selectedSocialCommentKey='';resetInteractionDetail();await loadSocialComments();await refreshPendingCountsNow();}catch(error){alert('Suppression impossible : '+error.message);}};
 
 async function maybeStartInitialSocialCommentsSync(status){
   if(inboxInteractionMode!=='comments'||socialCommentsInitialSyncAttempted) return;
@@ -10014,7 +10100,7 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
 async function startFacebookHistorySync({ silent = false } = {}){
   if(!canManageInstagramHistory()) return;
   if(!silent){
-    const ok = confirm(
+    const ok = await uiConfirm(
       'Synchroniser tout l’historique Facebook des 15 derniers jours ?\n\n' +
       'Cette opération peut être longue avec plusieurs milliers de conversations. ' +
       'Elle n’est pas nécessaire pour recevoir les nouveaux messages : le temps réel fonctionne séparément.'
@@ -11891,7 +11977,7 @@ window.deleteConversationMessage=async function(purgeKey,part){
   const remoteNote=channel==='whatsapp'||channel==='instagram'||channel==='facebook'
     ? '\n\nImportant : pour un message privé, cela le supprime définitivement de MONDECO mais ne peut pas garantir un « supprimer pour tout le monde » chez le client.'
     : '';
-  if(!confirm('SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'))return;
+  if(!await uiConfirm('SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'))return;
   try{
     await apiFetch(`${API}/conversations/${encodeURIComponent(selectedConversationContact)}/messages/${encodeURIComponent(purgeKey)}?part=${encodeURIComponent(part)}`,{method:'DELETE'});
     await loadConversations();
@@ -11999,7 +12085,7 @@ window.assignConversation = async function(contact){
       const commercials = (users || []).filter(user => user.role === 'commercial' && user.active !== false);
       if(!commercials.length){ alert('Aucun commercial actif.'); return; }
       const choices = commercials.map((user,index)=>`${index+1}. ${user.name || user.email}`).join('\n');
-      const answer = prompt(`Choisissez le commercial :\n\n${choices}\n\nEntrez le numéro :`, '1');
+      const answer = await uiPrompt(`Choisissez le commercial :\n\n${choices}\n\nEntrez le numéro :`, '1');
       if(answer === null) return;
       const selected = commercials[Number(answer)-1];
       if(!selected){ alert('Choix invalide.'); return; }
@@ -12007,7 +12093,7 @@ window.assignConversation = async function(contact){
       assignedUserId = selected.id;
     }catch(error){ alert(error.message); return; }
   }else{
-    assignedTo = prompt('Affecter cette conversation à :', current);
+    assignedTo = await uiPrompt('Affecter cette conversation à :', current);
     if(assignedTo === null) return;
   }
 
@@ -12044,14 +12130,14 @@ window.createTaskFromConversation = async function(contact){
   const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:state.channel,externalContact:state.externalContact,profileName:state.profileName};
   const clientName=conversationDisplayName(item);
   const channel=conversationChannel(item);
-  const date=prompt('Date de la tâche (AAAA-MM-JJ) :',tunisDateKey());
+  const date=await uiPrompt('Date de la tâche (AAAA-MM-JJ) :',tunisDateKey());
   if(date===null)return;
-  const dueTime=prompt('Heure limite (HH:MM) :','');
+  const dueTime=await uiPrompt('Heure limite (HH:MM) :','');
   if(dueTime===null)return;
-  const title=prompt('Tâche :',`Suivi ${channelDisplayName(channel)} — ${clientName}`);
+  const title=await uiPrompt('Tâche :',`Suivi ${channelDisplayName(channel)} — ${clientName}`);
   if(!title?.trim())return;
   const lastIncoming=[...(Array.isArray(data.entries)?data.entries:[])].reverse().find(entry=>String(entry?.incoming||'').trim())?.incoming||state.lastCustomerText||'';
-  const details=prompt('Détails :',lastIncoming?`Dernier message client : ${String(lastIncoming).slice(0,500)}`:'Suivi de la conversation client.');
+  const details=await uiPrompt('Détails :',lastIncoming?`Dernier message client : ${String(lastIncoming).slice(0,500)}`:'Suivi de la conversation client.');
   if(details===null)return;
 
   try{
@@ -12141,7 +12227,7 @@ window.reactivateConversationAI = async function(contact){
     return;
   }
   if(
-    !confirm(
+    !await uiConfirm(
       'Réactiver l’agent IA pour cette conversation ?'
     )
   ){
@@ -12417,7 +12503,7 @@ window.saveConversationQuickReply = async function(){
   }
 
   const title =
-    prompt(
+    await uiPrompt(
       'Nom de cette réponse rapide :',
       'Nouvelle réponse'
     );
@@ -12425,7 +12511,7 @@ window.saveConversationQuickReply = async function(){
   if(!title?.trim()) return;
 
   const shortcut =
-    prompt(
+    await uiPrompt(
       'Raccourci sans /, par exemple showroom :',
       ''
     );
@@ -12541,7 +12627,7 @@ window.importConversationQuickRepliesFile=async function(file){
       alert('Aucune réponse reconnue. Format conseillé : raccourci;titre;reponse ou /raccourci | Titre | Réponse.');
       return;
     }
-    if(!confirm(`Importer ${items.length} réponse(s) rapide(s) ? Les raccourcis déjà existants seront ignorés.`)) return;
+    if(!await uiConfirm(`Importer ${items.length} réponse(s) rapide(s) ? Les raccourcis déjà existants seront ignorés.`)) return;
     const result=await apiFetch(`${API}/quick-replies/import`,{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})
     });
@@ -12572,7 +12658,7 @@ window.deleteConversationQuickReply = async function(){
       reply => reply.id === id
     );
 
-  if(!confirm(`Supprimer « ${item?.title || 'cette réponse'} » ?`)){
+  if(!await uiConfirm(`Supprimer « ${item?.title || 'cette réponse'} » ?`)){
     return;
   }
 
@@ -14530,7 +14616,7 @@ window.approveCommercialCorrection = async function(id){
 };
 
 window.ignoreCommercialCorrection = async function(id){
-  if(!confirm('Ignorer cette correction ? Elle ne sera pas apprise par l’agent.')){
+  if(!await uiConfirm('Ignorer cette correction ? Elle ne sera pas apprise par l’agent.')){
     return;
   }
 
@@ -14557,7 +14643,7 @@ document.getElementById('sendCommercialReplyBtn').addEventListener('click', asyn
     return;
   }
 
-  if(!confirm(`Envoyer cette réponse au client +${phone.replace(/\D/g,'')} ?`)){
+  if(!await uiConfirm(`Envoyer cette réponse au client +${phone.replace(/\D/g,'')} ?`)){
     return;
   }
 
@@ -14628,7 +14714,7 @@ document.getElementById('saveProductCorrectionBtn').addEventListener('click', as
   const product = products.find(item => item.id === productId);
   if(!product) return;
 
-  if(!confirm(`Valider la correction de « ${product.name} » ?`)){
+  if(!await uiConfirm(`Valider la correction de « ${product.name} » ?`)){
     return;
   }
 
@@ -15153,7 +15239,7 @@ document.getElementById('wooCopyWebhookBtn').addEventListener('click', async () 
     await navigator.clipboard.writeText(value);
     alert('URL webhook copiée.');
   }catch{
-    prompt(
+    await uiPrompt(
       'Copiez cette URL :',
       value
     );
@@ -15161,7 +15247,7 @@ document.getElementById('wooCopyWebhookBtn').addEventListener('click', async () 
 });
 
 document.getElementById('wooInstallWebhooksBtn').addEventListener('click', async () => {
-  if(!confirm(
+  if(!await uiConfirm(
     'Installer automatiquement les 3 webhooks produits WooCommerce ? La clé API doit avoir le droit Lecture/Écriture.'
   )){
     return;
@@ -15632,7 +15718,7 @@ document.getElementById('restoreBackupBtn').addEventListener('click', async () =
     return;
   }
 
-  const ok = confirm(
+  const ok = await uiConfirm(
     'Restaurer cette sauvegarde ?\\n\\n' +
     'Les produits, instructions, paramètres et images actuels seront remplacés par ceux de cette sauvegarde. ' +
     'Une sauvegarde de sécurité de l\u2019état actuel sera créée automatiquement.'
@@ -16168,7 +16254,7 @@ window.editTeamUser = async function(id){
   }
 
   const name =
-    prompt(
+    await uiPrompt(
       'Nom complet :',
       user.name || ''
     );
@@ -16178,7 +16264,7 @@ window.editTeamUser = async function(id){
   }
 
   const email =
-    prompt(
+    await uiPrompt(
       'Adresse e-mail :',
       user.email || ''
     );
@@ -16188,7 +16274,7 @@ window.editTeamUser = async function(id){
   }
 
   const role =
-    prompt(
+    await uiPrompt(
       currentUser?.role === 'responsable_commercial' ? 'Rôle : commercial' : 'Rôle : admin, responsable_commercial, editor ou commercial',
       currentUser?.role === 'responsable_commercial' ? 'commercial' : (user.role || 'commercial')
     );
@@ -16227,7 +16313,7 @@ window.editTeamUser = async function(id){
 
 window.resetTeamUserPassword = async function(id){
   const password =
-    prompt(
+    await uiPrompt(
       'Nouveau mot de passe (minimum 8 caractères) :',
       ''
     );
@@ -16300,7 +16386,7 @@ window.deleteTeamUser = async function(id){
     );
 
   if(
-    !confirm(
+    !await uiConfirm(
       `Supprimer le compte ${user?.name || user?.email || ''} ?`
     )
   ){
@@ -16752,16 +16838,16 @@ function renderTeamSchedules(){
 
 window.editSchedule=async function(id){
   const item=teamSchedules.find(x=>x.id===id);if(!item)return;
-  const startTime=prompt('Heure de début :',item.startTime||'09:00');if(startTime===null)return;
-  const endTime=prompt('Heure de fin :',item.endTime||'17:00');if(endTime===null)return;
-  const slaMinutes=prompt('Délai maximum de réponse client (minutes) :',String(item.slaMinutes||5));if(slaMinutes===null)return;
-  const channelsRaw=prompt('Plateformes : whatsapp, instagram, facebook (séparées par une virgule)',(item.channels||[]).join(','));if(channelsRaw===null)return;
-  const mission=prompt('Mission :',item.mission||'');if(mission===null)return;
+  const startTime=await uiPrompt('Heure de début :',item.startTime||'09:00');if(startTime===null)return;
+  const endTime=await uiPrompt('Heure de fin :',item.endTime||'17:00');if(endTime===null)return;
+  const slaMinutes=await uiPrompt('Délai maximum de réponse client (minutes) :',String(item.slaMinutes||5));if(slaMinutes===null)return;
+  const channelsRaw=await uiPrompt('Plateformes : whatsapp, instagram, facebook (séparées par une virgule)',(item.channels||[]).join(','));if(channelsRaw===null)return;
+  const mission=await uiPrompt('Mission :',item.mission||'');if(mission===null)return;
   const channels=channelsRaw.split(',').map(v=>v.trim().toLowerCase()).filter(v=>['whatsapp','instagram','facebook'].includes(v));
   try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({startTime:startTime.trim(),endTime:endTime.trim(),slaMinutes:Number(slaMinutes||5),channels,mission})});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}
 };
 
-window.deleteSchedule=async function(id){if(!confirm('Supprimer ce planning ?'))return;try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}};
+window.deleteSchedule=async function(id){if(!await uiConfirm('Supprimer ce planning ?'))return;try{await apiFetch(`${API}/schedules/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}};
 
 document.getElementById('scheduleForm')?.addEventListener('submit',async event=>{event.preventDefault();const channels=[];if(document.getElementById('scheduleWhatsApp')?.checked)channels.push('whatsapp');if(document.getElementById('scheduleInstagram')?.checked)channels.push('instagram');if(document.getElementById('scheduleFacebook')?.checked)channels.push('facebook');if(!channels.length){alert('Sélectionnez au moins une plateforme.');return;}try{await apiFetch(`${API}/schedules`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('scheduleUser').value,date:document.getElementById('scheduleDate').value,startTime:document.getElementById('scheduleStart').value,endTime:document.getElementById('scheduleEnd').value,breakStart:document.getElementById('scheduleBreakStart').value,breakEnd:document.getElementById('scheduleBreakEnd').value,channels,mission:document.getElementById('scheduleMission').value,slaMinutes:Number(document.getElementById('scheduleSla').value||5)})});document.getElementById('scheduleMission').value='';await Promise.all([loadTeamSchedules(),loadTeamOperations()]);}catch(error){alert(error.message);}});
 
@@ -16770,15 +16856,15 @@ async function loadTeamTasks(){setTodayInputs();const date=document.getElementBy
 function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(item.channel))}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}${item.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" onclick="openLinkedTaskConversation(${jsArg(item.conversationContact)},${jsArg(item.conversationMessageId||'')})">💬 Ouvrir ${escapeHtml(item.clientName||'la conversation')}</button></div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editTask(${jsArg(item.id)})">Modifier</button><button class="btn danger" type="button" onclick="deleteTask(${jsArg(item.id)})">Supprimer</button></div></div>`).join('');}
 window.editTask=async function(id){
   const item=teamTasks.find(x=>x.id===id);if(!item)return;
-  const title=prompt('Tâche :',item.title||'');if(title===null)return;
-  const dueTime=prompt('Heure limite (HH:MM) :',item.dueTime||'');if(dueTime===null)return;
-  const details=prompt('Détails :',item.details||'');if(details===null)return;
-  const channel=prompt('Plateforme : both, whatsapp, instagram ou facebook',item.channel||'both');if(channel===null)return;
-  const priority=prompt('Priorité : normal, high ou urgent',item.priority||'normal');if(priority===null)return;
+  const title=await uiPrompt('Tâche :',item.title||'');if(title===null)return;
+  const dueTime=await uiPrompt('Heure limite (HH:MM) :',item.dueTime||'');if(dueTime===null)return;
+  const details=await uiPrompt('Détails :',item.details||'');if(details===null)return;
+  const channel=await uiPrompt('Plateforme : both, whatsapp, instagram ou facebook',item.channel||'both');if(channel===null)return;
+  const priority=await uiPrompt('Priorité : normal, high ou urgent',item.priority||'normal');if(priority===null)return;
   try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.trim(),dueTime:dueTime.trim(),details:details.trim(),channel:channel.trim().toLowerCase(),priority:priority.trim().toLowerCase(),status:item.status})});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}
 };
 
-window.deleteTask=async function(id){if(!confirm('Supprimer cette tâche ?'))return;try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}};
+window.deleteTask=async function(id){if(!await uiConfirm('Supprimer cette tâche ?'))return;try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'DELETE'});await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}};
 
 document.getElementById('taskForm')?.addEventListener('submit',async event=>{event.preventDefault();const selectedDate=document.getElementById('taskDate').value;try{const result=await apiFetch(`${API}/tasks`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:document.getElementById('taskUser').value,date:selectedDate,channel:document.getElementById('taskChannel').value,startTime:document.getElementById('taskStart').value,dueTime:document.getElementById('taskDue').value,title:document.getElementById('taskTitle').value,details:document.getElementById('taskDetails').value,priority:document.getElementById('taskPriority').value})});if(Number(result?.created)>1)alert(`Tâche créée pour ${Number(result.created)} commerciaux.`);event.target.reset();setTodayInputs();document.getElementById('taskDate').value=selectedDate;await Promise.all([loadTeamTasks(),loadTeamOperations()]);}catch(error){alert(error.message);}});
 
@@ -16810,7 +16896,7 @@ document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(butto
 
 if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
 
-if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visible')return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visible')return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){refreshSocialCommentTimeLabels();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 
 // ============================================================
 // LOGOUT / INIT

@@ -1,4 +1,4 @@
-# Étude technique — MONDECO V6.37.0
+# Étude technique — MONDECO V6.38.0
 
 Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de pilotage, réalisé en octobre 2026. Cette étude couvre la sécurité, la fiabilité, la performance, la confidentialité, la maintenabilité et l'expérience utilisateur. Elle sépare **ce qui est corrigé dans cette version** de **ce qui reste à faire**, par priorité.
 
@@ -75,12 +75,21 @@ Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de p
 | 5 | Sessions | Déconnexion après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`). Un changement de rôle ou d'e-mail déconnecte le compte concerné. |
 | 6 | Injection de prompt | Les champs publicitaires (dont `ref`, que n'importe qui peut écrire dans un lien) sont mis sur une ligne, débarrassés des séparateurs, encadrés et plafonnés. Une règle explicite indique que les messages client sont des données, pas des consignes. Le marqueur `[COMMERCIAL_REQUIRED]` est conservé tel quel : il oriente toujours vers un humain, c'est le sens sûr. |
 
-### Priorité 2 — dans le trimestre
-7. **Passer à SQLite** (better-sqlite3) pour les conversations, les états et les notifications. Les fichiers JSON sont relus et réécrits entièrement de façon synchrone à chaque message (plus de 15 Mo pour l'état des conversations), ce qui bloque le serveur sous charge. SQLite apporte des transactions, des index et la suppression de ces blocages, sans nouveau service à héberger.
-8. **Historique IA persistant**, reconstruit depuis `conversation-events` : il est aujourd'hui perdu à chaque redémarrage.
-9. **Découper les fichiers monolithiques** en modules (`channels/whatsapp.js`, `channels/instagram.js`, `ai/`, `storage/`, `routes/`), en commençant par les fonctions pures, qu'on peut tester.
-10. **Logs structurés** (pino) avec niveaux, identifiant de corrélation par message et alertes (par exemple Better Stack ou Sentry) sur les erreurs d'envoi et le taux de secours IA.
-11. **Interface** : remplacer les `onclick` inline par des écouteurs délégués (`data-*`), ce qui permet ensuite une CSP stricte ; ne mettre à jour que les badges SLA au lieu de reconstruire toute la liste des commentaires ; remplacer `confirm()`/`prompt()` par des modales.
+### Priorité 2 — ✅ réalisée en V6.38.0 (avec un choix d'architecture expliqué ci-dessous)
+| # | Point | Réalisation |
+| --- | --- | --- |
+| 7 | Stockage bloquant | **Magasin partagé à écriture groupée** (`lib/json-object-store.js`). `conversation-state.json` (15 Mo+) était réécrit en entier, de façon bloquante, plusieurs fois par message, et server.js et Admin.js en gardaient chacun leur propre copie. Il n'y a plus qu'un exemplaire en mémoire, écrit sur disque au plus toutes les 5 s. Le magasin est vidé à l'arrêt, avant chaque sauvegarde et chaque export, et rechargé après une restauration ; il n'écrase jamais un fichier illisible. Le journal `conversation-log.json` n'est plus relu ni re-parsé à chaque message. |
+| 8 | Historique IA | Conservé dans `ai-history.json` : il survit aux redéploiements et est purgé après 48 h sans message. |
+| 9 | Découpage | Premiers modules dans `lib/`, testés directement : réseau (`http.js`), file par conversation et reprise (`conversation-queue.js`), quotas IA (`ai-quota.js`), confidentialité (`log-privacy.js`), prompt (`prompt-safety.js`), logs (`logger.js`) et stockage (`json-object-store.js`). |
+| 10 | Logs et alertes | Identifiant de corrélation par requête (en-tête `X-Request-Id`), propagé à tous les logs du traitement, y compris les reprises. `LOG_FORMAT=json` produit une ligne JSON par log. `ALERT_WEBHOOK_URL` (Slack, Discord, Google Chat, Teams) reçoit les erreurs regroupées, au plus une alerte toutes les 10 min. Ce module maison remplace pino : aucune dépendance supplémentaire et les plus de 300 appels `console.*` existants n'ont pas à être modifiés. |
+| 11 | Interface | Les 43 `confirm()`/`prompt()` natifs sont remplacés par des boîtes de dialogue intégrées (clavier : Échap/Entrée/Tab, adaptées au mobile, rouge pour les actions destructrices). La liste des commentaires n'est plus reconstruite toutes les 5 s : seule l'heure est mise à jour. |
+
+**Pourquoi pas encore SQLite.** Les fichiers JSON sont utilisés par une quarantaine de fonctions : sauvegardes et snapshots, restauration, export, rétention de 15 jours, purge définitive, synchronisations Meta et sauvetage d'espace disque. Une bascule vers SQLite demande de toutes les réécrire, sans pouvoir les tester sur les vraies données de production, ce qui est risqué pour un outil en service. Le magasin partagé apporte dès maintenant le gain principal (plus de réécriture bloquante de 15 Mo à chaque message) sans changer le format des fichiers. Il est aussi le point d'entrée unique où brancher SQLite plus tard : seul `lib/json-object-store.js` serait à remplacer pour l'état des conversations.
+
+**Reste à faire, issu de la priorité 2 :**
+- Remplacer les `onclick` inline par des écouteurs délégués (`data-*`) pour permettre une CSP stricte. La faille XSS correspondante est déjà corrigée par `jsArg()`.
+- Poursuivre le découpage (`channels/`, `routes/`).
+- Migrer vers SQLite après une copie des données de production pour tester.
 
 ### Priorité 3 — évolution produit
 12. **Tableau de bord KPI** : temps de première réponse, taux de résolution par l'IA, conversions vers un showroom, satisfaction.

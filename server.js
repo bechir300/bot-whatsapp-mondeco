@@ -15,6 +15,15 @@
 
 require('dotenv').config();
 
+// Installé avant tout autre module : les logs d'Admin.js passent aussi par
+// le format structuré, l'identifiant de corrélation et les alertes.
+const {
+  installConsoleLogger,
+  requestContextMiddleware
+} = require('./lib/logger');
+
+const consoleLogger = installConsoleLogger();
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -50,6 +59,8 @@ const {
 } = require('./Admin');
 
 const app = express();
+
+app.use(requestContextMiddleware);
 
 // Railway place un proxy devant l'application : req.ip et req.protocol
 // reflètent ainsi le vrai client (utilisé par la limite de connexion).
@@ -6404,6 +6415,12 @@ app.get('/debug-env', requireAdmin, (req, res) => {
           CLOUDFLARE_API_TOKEN
         ),
 
+      log_format:
+        consoleLogger.format,
+
+      alerts_enabled:
+        consoleLogger.alertsEnabled,
+
       admin_password_present:
         Boolean(
           process.env.ADMIN_PASSWORD
@@ -9731,6 +9748,10 @@ async function gracefulShutdown(signal) {
   await conversationQueue.waitForIdle();
 
   const flushed = flushAllJsonStores();
+  await Promise.race([
+    consoleLogger.flushAlerts(),
+    new Promise(resolve => setTimeout(resolve, 3000))
+  ]);
   console.log(`✅ Traitements terminés (${flushed} fichier(s) enregistré(s)), arrêt du serveur.`);
   process.exit(0);
 }
