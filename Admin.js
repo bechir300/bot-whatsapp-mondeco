@@ -10,6 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
+const { createJsonObjectStore } = require('./lib/json-object-store');
+const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
+const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 // V6.36.45 — Lecture asynchrone ligne par ligne des fichiers JSONL, pour
 // le générateur de rapport WhatsApp personnalisé (jamais de blocage du
 // thread principal, contrairement à un JSON.parse complet du fichier).
@@ -23348,6 +23351,202 @@ router.get(
         writable:
           storageIsWritable()
       }
+    });
+  }
+);
+
+// ============================================================
+// V6.37 — INDICATEURS (KPI)
+// ============================================================
+// Les journaux conversation-events ne sont conservés que quelques jours
+// (HISTORY_IMPORT_DAYS). Chaque journée terminée est donc résumée dans
+// kpi-daily.json : uniquement des chiffres agrégés, aucune donnée client.
+
+const kpiDailyStore = createJsonObjectStore({
+  filePath: path.join(DATA_DIR, 'kpi-daily.json'),
+  label: 'kpi-daily.json',
+  write: (filePath, data) => writeJsonAtomic(filePath, data)
+});
+
+function kpiTimezone() {
+  return safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+}
+
+function kpiTodayKey() {
+  return dateKeyInTimezone(new Date(), kpiTimezone());
+}
+
+function computeKpisForDate(date) {
+  const entries = loadPerformanceConversationEvents([date], kpiTimezone());
+  return entries.length ? computeDailyKpis(entries, { date }) : null;
+}
+
+// Renvoie les KPI d'une journée : instantané stocké pour une journée
+// terminée, calcul en direct pour aujourd'hui.
+function kpisForDate(date, today = kpiTodayKey()) {
+  if (date === today) return computeKpisForDate(date);
+
+  const stored = kpiDailyStore.get(date);
+  if (stored && stored.schema === KPI_SCHEMA_VERSION) return stored;
+
+  const computed = computeKpisForDate(date);
+  if (computed) {
+    kpiDailyStore.update(date, () => ({ ...computed, snapshotAt: new Date().toISOString() }));
+  }
+  return computed || stored || null;
+}
+
+// Fige les journées récentes avant que leurs journaux soient purgés.
+function ensureRecentKpiSnapshots(daysBack = 7) {
+  const today = kpiTodayKey();
+  for (let offset = 1; offset <= daysBack; offset++) {
+    try {
+      kpisForDate(teamDateAdd(today, -offset), today);
+    } catch (error) {
+      console.warn('⚠️ KPI : instantané journalier impossible :', error.message);
+    }
+  }
+}
+
+const kpiSnapshotTimer = setInterval(ensureRecentKpiSnapshots, 60 * 60 * 1000);
+if (typeof kpiSnapshotTimer.unref === 'function') kpiSnapshotTimer.unref();
+const kpiStartupTimer = setTimeout(ensureRecentKpiSnapshots, 60 * 1000);
+if (typeof kpiStartupTimer.unref === 'function') kpiStartupTimer.unref();
+
+router.get(
+  '/api/kpi',
+  requireAdminOrCommercialManager,
+  (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(90, Number(req.query?.days) || 7));
+      const today = kpiTodayKey();
+      const daily = [];
+
+      for (let offset = days - 1; offset >= 0; offset--) {
+        const date = teamDateAdd(today, -offset);
+        const kpis = kpisForDate(date, today);
+        daily.push(kpis ? { ...kpis, date } : { date, conversations: 0, missing: true });
+      }
+
+      const available = daily.filter(day => !day.missing);
+
+      return res.json({
+        timezone: kpiTimezone(),
+        today,
+        days,
+        summary: combineKpis(available),
+        daily,
+        missingDays: daily.filter(day => day.missing).map(day => day.date)
+      });
+    } catch (error) {
+      console.error('❌ KPI :', error.message);
+      return res.status(500).json({ error: 'Impossible de calculer les indicateurs.' });
+    }
+  }
+);
+
+// ============================================================
+// V6.37 — ÉVALUATION DE LA QUALITÉ IA
+// ============================================================
+// Rejoue les questions de référence + des questions de prix tirées du
+// catalogue. Lancée à la demande par un administrateur (≈ 12 appels IA),
+// en arrière-plan : la page suit la progression.
+
+const AI_EVAL_RUNS_PATH = path.join(DATA_DIR, 'ai-eval-runs.json');
+const AI_EVAL_MAX_RUNS = 20;
+let currentAiEvaluation = null;
+
+// Empreinte de ce qui influence les réponses : instructions actives,
+// prix du catalogue et modèle IA. Si elle change, l'évaluation est à refaire.
+function aiEvaluationFingerprint() {
+  const instructions = loadInstructions()
+    .filter(item => item.active !== false)
+    .map(item => [safeString(item.title), safeString(item.content || item.text)]);
+  const products = loadProducts()
+    .filter(item => item.active !== false)
+    .map(item => [safeString(item.name), safeString(item.price), safeString(item.promoPrice)]);
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify([instructions, products, safeString(process.env.GEMINI_MODEL), safeString(process.env.GROQ_MODEL)]))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function loadAiEvaluationRuns() {
+  return readJsonArray(AI_EVAL_RUNS_PATH, 'ai-eval-runs.json');
+}
+
+router.post(
+  '/api/ai-eval/run',
+  requireAdmin,
+  (req, res) => {
+    if (!chatHandler) {
+      return res.status(503).json({ error: 'Le moteur IA n’est pas connecté.' });
+    }
+    if (currentAiEvaluation) {
+      return res.status(409).json({ error: 'Une évaluation est déjà en cours.', progress: currentAiEvaluation });
+    }
+
+    let cases;
+    try {
+      cases = [...loadReferenceCases(), ...buildCatalogCases(loadProducts(), 3)];
+    } catch (error) {
+      return res.status(500).json({ error: `Questions de référence illisibles : ${error.message}` });
+    }
+
+    const run = {
+      id: `eval-${timestampId()}`,
+      startedAt: new Date().toISOString(),
+      startedBy: safeString(req.user?.name || req.user?.email),
+      model: safeString(process.env.GEMINI_MODEL) || 'Gemini (par défaut)',
+      fingerprint: aiEvaluationFingerprint()
+    };
+    currentAiEvaluation = { id: run.id, done: 0, total: cases.length, startedAt: run.startedAt };
+
+    runAiEvaluation({
+      cases,
+      ask: (testCase, index) => chatHandler(`ai-eval-${run.id}-${index}`, testCase.question, 'whatsapp'),
+      onProgress: done => {
+        if (currentAiEvaluation) currentAiEvaluation.done = done;
+      }
+    })
+      .then(result => {
+        const finished = { ...run, finishedAt: new Date().toISOString(), ...result };
+        writeJsonAtomic(AI_EVAL_RUNS_PATH, [finished, ...loadAiEvaluationRuns()].slice(0, AI_EVAL_MAX_RUNS));
+        console.log(`🧪 Évaluation IA terminée : ${result.passed}/${result.total} (${result.score} %).`);
+      })
+      .catch(error => console.error('❌ Évaluation IA :', error.message))
+      .finally(() => {
+        currentAiEvaluation = null;
+      });
+
+    return res.status(202).json({ started: true, progress: currentAiEvaluation });
+  }
+);
+
+router.get(
+  '/api/ai-eval/status',
+  requireAdmin,
+  (req, res) => {
+    const runs = loadAiEvaluationRuns();
+    const latest = runs[0] || null;
+    let caseCount = 0;
+    try {
+      caseCount = loadReferenceCases().length + buildCatalogCases(loadProducts(), 3).length;
+    } catch {}
+    return res.json({
+      running: currentAiEvaluation,
+      caseCount,
+      latest,
+      stale: Boolean(latest && latest.fingerprint !== aiEvaluationFingerprint()),
+      history: runs.map(item => ({
+        id: item.id,
+        finishedAt: item.finishedAt,
+        model: item.model,
+        score: item.score,
+        passed: item.passed,
+        total: item.total
+      }))
     });
   }
 );
