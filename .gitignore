@@ -3,6 +3,7 @@ node_modules/
 
 .env
 .env.*
+!.env.example
 
 # Runtime / persistent data (Railway Volume /data)
 products.json
@@ -30,3 +31,8 @@ backups/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Runtime / persistent data added after V6.19
+admin-sessions.json
+users.json.bak
+*.jsonl

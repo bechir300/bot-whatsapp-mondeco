@@ -33,10 +33,30 @@ const {
   resolveCommercialSla,
   processSocialCommentWebhookEntry,
   ensureStorageHeadroom,
-  storeCloudAssetBuffer
+  storeCloudAssetBuffer,
+  requireAdmin
 } = require('./Admin');
 
 const app = express();
+
+// Railway place un proxy devant l'application : req.ip et req.protocol
+// reflètent ainsi le vrai client (utilisé par la limite de connexion).
+// TRUST_PROXY_HOPS permet d'ajuster le nombre de proxys si l'hébergement change.
+app.set('trust proxy', Math.max(0, Number(process.env.TRUST_PROXY_HOPS ?? 1) || 0));
+app.disable('x-powered-by');
+
+// En-têtes de sécurité de base (sans dépendance externe). Pas de CSP stricte
+// sur les scripts : Admin.html repose sur du JavaScript inline.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  if (req.secure) {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000');
+  }
+  next();
+});
 
 // V6.35.10 — Compression gzip des réponses (HTML/JSON/JS). Aucune
 // compression n'était activée : Admin.html (~630 Ko) et les réponses JSON
@@ -176,6 +196,14 @@ const GEMINI_MODEL =
     process.env.GEMINI_MODEL ||
     'gemini-3.6-flash'
   ).trim();
+
+// Délai maximal d'un appel IA. Sans limite, un appel bloqué figeait la
+// conversation et le secours Groq ne se déclenchait jamais.
+const AI_REQUEST_TIMEOUT_MS =
+  Math.max(
+    5000,
+    Number(process.env.AI_REQUEST_TIMEOUT_MS) || 25000
+  );
 
 const GROQ_API_KEY =
   (
@@ -380,6 +408,25 @@ console.log('');
 // ============================================================
 // HELPERS
 // ============================================================
+
+// Données personnelles dans les logs Railway : par défaut, les numéros sont
+// masqués et le contenu des messages n'est pas écrit. LOG_MESSAGE_CONTENT=true
+// réactive le contenu complet pour un débogage ponctuel.
+const LOG_MESSAGE_CONTENT =
+  String(process.env.LOG_MESSAGE_CONTENT || '').trim().toLowerCase() === 'true';
+
+function maskPhoneForLog(value) {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return String(value ?? '');
+  if (LOG_MESSAGE_CONTENT) return digits;
+  return `***${digits.slice(-4)}`;
+}
+
+function messageContentForLog(value) {
+  const text = String(value ?? '');
+  if (LOG_MESSAGE_CONTENT) return text;
+  return `[${text.length} caractère(s) masqué(s)]`;
+}
 
 function safeString(value) {
   return String(value ?? '').trim();
@@ -1828,7 +1875,7 @@ function markHumanTakeover(phone, settings) {
   );
 
   console.log(
-    `🤝 IA suspendue pour ${phone} pendant ${minutes} min`
+    `🤝 IA suspendue pour ${maskPhoneForLog(phone)} pendant ${minutes} min`
   );
 }
 
@@ -1860,7 +1907,7 @@ function pauseAiForCommercial(
   );
 
   console.log(
-    `🤝 Handoff strict : IA suspendue pour ${phone} jusqu'à réactivation manuelle.`
+    `🤝 Handoff strict : IA suspendue pour ${maskPhoneForLog(phone)} jusqu'à réactivation manuelle.`
   );
 }
 
@@ -1921,7 +1968,32 @@ const MAX_HISTORY_MESSAGES =
 const MAX_HISTORY_CHARS =
   6000;
 
+// Historique IA en mémoire : purgé après 48 h d'inactivité pour que la Map
+// ne grossisse pas indéfiniment (une entrée par client jamais supprimée).
+const HISTORY_IDLE_TTL_MS =
+  48 * 60 * 60 * 1000;
+
+const conversationHistoryTouchedAt =
+  new Map();
+
+const historySweepTimer =
+  setInterval(() => {
+    const cutoff = Date.now() - HISTORY_IDLE_TTL_MS;
+    for (const [userId, touchedAt] of conversationHistoryTouchedAt.entries()) {
+      if (touchedAt < cutoff) {
+        conversationHistoryTouchedAt.delete(userId);
+        conversationHistory.delete(userId);
+      }
+    }
+  }, 60 * 60 * 1000);
+
+if (typeof historySweepTimer.unref === 'function') {
+  historySweepTimer.unref();
+}
+
 function getUserHistory(userId) {
+  conversationHistoryTouchedAt.set(userId, Date.now());
+
   if (!conversationHistory.has(userId)) {
     conversationHistory.set(
       userId,
@@ -2030,6 +2102,41 @@ function cleanupProcessedMessageIds() {
       processedMessageIds.delete(id);
     }
   }
+}
+
+// File d'attente par conversation : Meta envoie chaque message dans un
+// webhook séparé. Sans sérialisation, deux messages rapprochés d'un même
+// client étaient traités en parallèle (historique entremêlé, double réponse
+// IA, état de conversation écrasé). Les conversations différentes restent
+// traitées en parallèle.
+const conversationProcessingQueues = new Map();
+const inFlightConversationJobs = new Set();
+
+function runInConversationQueue(key, task) {
+  const queueKey = safeString(key) || 'unknown';
+  const previous = conversationProcessingQueues.get(queueKey) || Promise.resolve();
+  const job = previous
+    .catch(() => {})
+    .then(task);
+  // `tracked` ne rejette jamais : l'erreur est déjà remontée à l'appelant
+  // via `job`, on évite ainsi un « Unhandled Promise Rejection ».
+  const tracked = job.catch(() => {}).finally(() => {
+    inFlightConversationJobs.delete(tracked);
+    if (conversationProcessingQueues.get(queueKey) === tracked) {
+      conversationProcessingQueues.delete(queueKey);
+    }
+  });
+  inFlightConversationJobs.add(tracked);
+  conversationProcessingQueues.set(queueKey, tracked);
+  return job;
+}
+
+function metaEventQueueKey(channel, event) {
+  const ids = [
+    safeString(event?.sender?.id),
+    safeString(event?.recipient?.id)
+  ].sort();
+  return `${channel}:${ids.join('|')}`;
 }
 
 function isDuplicateMessage(messageId) {
@@ -3631,9 +3738,10 @@ async function callGeminiChat(
 
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/` +
-    `${encodeURIComponent(GEMINI_MODEL)}:generateContent` +
-    `?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    `${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
 
+  // Clé transmise en en-tête (et non dans l'URL) pour ne pas la laisser
+  // fuiter dans des journaux de proxy ou des messages d'erreur.
   const response =
     await fetch(
       url,
@@ -3641,9 +3749,17 @@ async function callGeminiChat(
         method:
           'POST',
 
+        signal:
+          AbortSignal.timeout(
+            AI_REQUEST_TIMEOUT_MS
+          ),
+
         headers: {
           'Content-Type':
-            'application/json'
+            'application/json',
+
+          'x-goog-api-key':
+            GEMINI_API_KEY
         },
 
         body:
@@ -3735,6 +3851,11 @@ async function callGroqChat(
       {
         method:
           'POST',
+
+        signal:
+          AbortSignal.timeout(
+            AI_REQUEST_TIMEOUT_MS
+          ),
 
         headers: {
           Authorization:
@@ -6219,7 +6340,10 @@ app.get('/health', (req, res) => {
     });
 });
 
-app.get('/debug-env', (req, res) => {
+// Routes de diagnostic et de test : réservées aux administrateurs connectés.
+// Publiques, elles exposaient la configuration et permettaient à n'importe qui
+// de consommer le quota IA payant via /test-ia.
+app.get('/debug-env', requireAdmin, (req, res) => {
   const settings =
     getBotSettings();
 
@@ -6330,7 +6454,7 @@ app.get('/debug-env', (req, res) => {
     });
 });
 
-app.get('/debug-log', (req, res) => {
+app.get('/debug-log', requireAdmin, (req, res) => {
   console.log(
     '🧪 TEST LOG RAILWAY REÇU :',
     new Date().toISOString()
@@ -6364,6 +6488,7 @@ app.get('/webhook', (req, res) => {
   );
 
   if (
+    VERIFY_TOKEN &&
     mode === 'subscribe' &&
     token === VERIFY_TOKEN
   ) {
@@ -6966,7 +7091,10 @@ async function processFacebookWebhook(body) {
     for (const [stream, events] of streams) {
       for (const event of events) {
         try {
-          await processSingleFacebookEvent(event, entryPageId, stream);
+          await runInConversationQueue(
+            metaEventQueueKey('facebook', event),
+            () => processSingleFacebookEvent(event, entryPageId, stream)
+          );
         } catch (error) {
           console.error('❌ Erreur message Facebook :', error);
         }
@@ -7122,9 +7250,12 @@ async function processWhatsAppWebhook(body) {
 
       for (const message of messages) {
         try {
-          await processSingleMessage(
-            message,
-            { profileName: contactsProfileByPhone[normalizePhone(message?.from)] || '' }
+          await runInConversationQueue(
+            `whatsapp:${normalizePhone(message?.from)}`,
+            () => processSingleMessage(
+              message,
+              { profileName: contactsProfileByPhone[normalizePhone(message?.from)] || '' }
+            )
           );
         } catch (error) {
           console.error(
@@ -7197,8 +7328,11 @@ async function processInstagramWebhook(body) {
 
     for (const event of events) {
       try {
-        await processSingleInstagramEvent(
-          event
+        await runInConversationQueue(
+          metaEventQueueKey('instagram', event),
+          () => processSingleInstagramEvent(
+            event
+          )
         );
       } catch (error) {
         console.error(
@@ -8301,7 +8435,7 @@ async function processSingleMessage(message, webhookMeta = {}) {
   console.log(
     '👤 MESSAGE ENTRANT',
     '| de :',
-    from,
+    maskPhoneForLog(from),
     '| type :',
     messageType ||
     'unknown',
@@ -8731,7 +8865,7 @@ async function processSingleMessage(message, webhookMeta = {}) {
 
     console.log(
       '💬 TEXTE CLIENT :',
-      userText
+      messageContentForLog(userText)
     );
 
     let reply;
@@ -8782,7 +8916,7 @@ async function processSingleMessage(message, webhookMeta = {}) {
 
       console.log(
         '✅ RÉPONSE IA :',
-        reply
+        messageContentForLog(reply)
       );
 
       message.__needsCommercial = false;
@@ -8875,7 +9009,7 @@ async function processSingleMessage(message, webhookMeta = {}) {
       });
 
       console.log(
-        `✅ Réponse WhatsApp envoyée à ${from}`
+        `✅ Réponse WhatsApp envoyée à ${maskPhoneForLog(from)}`
       );
     } catch (error) {
       console.error(
@@ -8908,7 +9042,7 @@ async function processSingleMessage(message, webhookMeta = {}) {
   // ==========================================================
 
   console.log(
-    `👤 Message non texte reçu de ${from} (${messageType}).`
+    `👤 Message non texte reçu de ${maskPhoneForLog(from)} (${messageType}).`
   );
 
   console.log(
@@ -9375,11 +9509,11 @@ async function checkFollowUps() {
         });
 
         console.log(
-          `🔔 Relance automatique envoyée à ${phone}`
+          `🔔 Relance automatique envoyée à ${maskPhoneForLog(phone)}`
         );
       } catch (error) {
         console.error(
-          `❌ Relance ${phone} :`,
+          `❌ Relance ${maskPhoneForLog(phone)} :`,
           error.message
         );
       }
@@ -9417,6 +9551,7 @@ if (
 
 app.get(
   '/test-ia',
+  requireAdmin,
   async (req, res) => {
     try {
       const message =
@@ -9449,6 +9584,7 @@ app.get(
 
 app.post(
   '/reset-test-history',
+  requireAdmin,
   (req, res) => {
     conversationHistory.delete(
       'test-browser'
@@ -9516,7 +9652,7 @@ process.on(
 // DÉMARRAGE
 // ============================================================
 
-app.listen(
+const httpServer = app.listen(
   PORT,
   '0.0.0.0',
   () => {
@@ -9546,3 +9682,44 @@ app.listen(
     );
   }
 );
+
+// ============================================================
+// ARRÊT PROPRE
+// ============================================================
+// Railway envoie SIGTERM à chaque redéploiement. Les webhooks sont déjà
+// acquittés (200) à ce moment-là : on cesse d'accepter des connexions et on
+// laisse les traitements de messages en cours se terminer avant de quitter.
+
+const SHUTDOWN_GRACE_MS =
+  Math.max(
+    1000,
+    Number(process.env.SHUTDOWN_GRACE_MS) || 20000
+  );
+
+let shuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(
+    `🛑 ${signal} reçu : arrêt propre (${inFlightConversationJobs.size} traitement(s) en cours).`
+  );
+
+  clearInterval(followUpTimer);
+  httpServer.close();
+
+  const forceExit = setTimeout(() => {
+    console.warn('⚠️ Délai d’arrêt dépassé : sortie forcée.');
+    process.exit(0);
+  }, SHUTDOWN_GRACE_MS);
+  forceExit.unref();
+
+  await Promise.allSettled([...inFlightConversationJobs]);
+
+  console.log('✅ Traitements terminés, arrêt du serveur.');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

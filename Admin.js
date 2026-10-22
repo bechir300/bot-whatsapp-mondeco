@@ -292,10 +292,26 @@ const INSTRUCTIONS_MIGRATION_MARKER = path.join(
 
 const ADMIN_HTML_PATH = path.join(APP_DIR, 'Admin.html');
 
+const IS_PRODUCTION_RUNTIME = Boolean(
+  process.env.NODE_ENV === 'production' ||
+  process.env.RAILWAY_ENVIRONMENT_NAME ||
+  process.env.RAILWAY_ENVIRONMENT
+);
+
+const ADMIN_PASSWORD_CONFIGURED = Boolean(
+  String(process.env.ADMIN_PASSWORD || '').trim()
+);
+
+// Le mot de passe par défaut ne sert qu'en développement local : en
+// production, il n'est jamais utilisé pour créer ou réinitialiser un compte.
 const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
   'mondeco2026'
 ).trim();
+
+if (ADMIN_PASSWORD_CONFIGURED && ADMIN_PASSWORD.length < 12) {
+  console.warn('⚠️ ADMIN_PASSWORD fait moins de 12 caractères : choisissez un mot de passe plus long.');
+}
 
 const ADMIN_EMAIL = (
   process.env.ADMIN_EMAIL ||
@@ -2067,7 +2083,10 @@ function restoreFullSnapshot(snapshotId) {
       safeString(snapshotId)
     );
 
-  if (!safeId) {
+  if (
+    !safeId ||
+    !/^[A-Za-z0-9_-]+$/.test(safeId)
+  ) {
     throw new Error(
       'Sauvegarde invalide.'
     );
@@ -4487,41 +4506,49 @@ function sanitizeUserForClient(user) {
   };
 }
 
+// Vrai lorsque users.json existe mais est illisible (et sa sauvegarde .bak
+// aussi). Toute écriture est alors bloquée : réécrire la liste à partir d'un
+// tableau vide effacerait définitivement tous les comptes.
+// `var` : loadUsers() est appelé au démarrage avant cette ligne.
+var usersStoreUnreadable = false;
+
 function loadUsers() {
+  const read = candidate => {
+    if (!fileExistsWithContent(candidate)) return null;
+    const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  };
+
   try {
-    if (
-      !fs.existsSync(
-        USERS_PATH
-      )
-    ) {
-      return [];
-    }
-
-    const parsed =
-      JSON.parse(
-        fs.readFileSync(
-          USERS_PATH,
-          'utf8'
-        ) ||
-        '[]'
-      );
-
-    return Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
+    const users = read(USERS_PATH);
+    usersStoreUnreadable = false;
+    return users || [];
   } catch (error) {
-    console.warn(
-      '⚠️ Lecture users.json :',
-      error.message
-    );
-
-    return [];
+    console.error('❌ Lecture users.json impossible :', error.message);
   }
+
+  try {
+    const backup = read(`${USERS_PATH}.bak`);
+    if (backup !== null) {
+      console.warn('♻️ users.json restauré depuis users.json.bak');
+      usersStoreUnreadable = false;
+      return backup;
+    }
+  } catch (backupError) {
+    console.error('❌ users.json.bak invalide :', backupError.message);
+  }
+
+  usersStoreUnreadable = true;
+  return [];
 }
 
 function saveUsers(users) {
+  if (usersStoreUnreadable) {
+    throw new Error(
+      'users.json est illisible : écriture bloquée pour ne pas effacer les comptes. Restaurez une sauvegarde.'
+    );
+  }
+
   writeJsonAtomic(
     USERS_PATH,
     Array.isArray(users)
@@ -4534,7 +4561,14 @@ function initializeUsers() {
   const existing =
     loadUsers();
 
-  if (existing.length) {
+  if (existing.length || usersStoreUnreadable) {
+    return;
+  }
+
+  if (!ADMIN_PASSWORD_CONFIGURED && IS_PRODUCTION_RUNTIME) {
+    console.error(
+      '❌ ADMIN_PASSWORD absent : aucun compte administrateur initial créé. Définissez ADMIN_EMAIL et ADMIN_PASSWORD dans Railway puis redéployez.'
+    );
     return;
   }
 
@@ -4590,6 +4624,12 @@ function adminEnvironmentFingerprint() {
 }
 
 function syncBootstrapAdminFromEnvironment() {
+  // Sans ADMIN_PASSWORD explicite en production, on ne touche jamais aux
+  // comptes existants (le mot de passe par défaut n'est utilisé qu'en local).
+  if (!ADMIN_PASSWORD_CONFIGURED && IS_PRODUCTION_RUNTIME) {
+    return;
+  }
+
   const fingerprint =
     adminEnvironmentFingerprint();
 
@@ -4627,6 +4667,11 @@ function syncBootstrapAdminFromEnvironment() {
 
   const users =
     loadUsers();
+
+  if (usersStoreUnreadable) {
+    console.error('❌ Synchronisation admin ignorée : users.json illisible.');
+    return;
+  }
 
   const now =
     new Date().toISOString();
@@ -5580,27 +5625,23 @@ function secureCookie(req) {
 }
 
 
+// req.ip est fiable car server.js configure `trust proxy` (proxy Railway).
+// Lire X-Forwarded-For directement permettait de contourner la limite en
+// changeant cet en-tête à chaque essai.
 function loginAttemptKey(req) {
-  return (
-    safeString(
-      req.headers[
-        'x-forwarded-for'
-      ]
-    )
-      .split(',')[0]
-      .trim() ||
-    safeString(
-      req.ip
-    ) ||
-    'unknown'
-  );
+  return `ip:${safeString(req.ip) || 'unknown'}`;
 }
 
-function getLoginAttemptState(req) {
-  const key =
-    loginAttemptKey(
-      req
-    );
+// Limite complémentaire par compte : bloque une attaque distribuée sur
+// plusieurs adresses IP visant le même e-mail.
+function loginEmailAttemptKey(email) {
+  return `email:${normalizeEmail(email)}`;
+}
+
+function getLoginAttemptState(
+  req,
+  key = loginAttemptKey(req)
+) {
 
   const current =
     loginAttempts.get(
@@ -5636,10 +5677,14 @@ function getLoginAttemptState(req) {
   };
 }
 
-function registerLoginFailure(req) {
+function registerLoginFailure(
+  req,
+  key = loginAttemptKey(req)
+) {
   const state =
     getLoginAttemptState(
-      req
+      req,
+      key
     );
 
   const failures =
@@ -5660,7 +5705,9 @@ function registerLoginFailure(req) {
     state.key,
     {
       failures,
-      blockedUntil
+      blockedUntil,
+      lastFailureAt:
+        Date.now()
     }
   );
 
@@ -5670,13 +5717,34 @@ function registerLoginFailure(req) {
   };
 }
 
-function clearLoginFailures(req) {
+function clearLoginFailures(
+  req,
+  key = loginAttemptKey(req)
+) {
   loginAttempts.delete(
-    loginAttemptKey(
-      req
-    )
+    key
   );
 }
+
+// Purge des compteurs expirés : sans elle, la Map grossissait sans limite.
+const loginAttemptsSweepTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, state] of loginAttempts.entries()) {
+    const lastActivity = Math.max(
+      Number(state?.blockedUntil || 0),
+      Number(state?.lastFailureAt || 0) + LOGIN_BLOCK_MS
+    );
+    if (lastActivity <= now) loginAttempts.delete(key);
+  }
+}, 5 * 60 * 1000);
+if (typeof loginAttemptsSweepTimer.unref === 'function') loginAttemptsSweepTimer.unref();
+
+// Empreinte factice : le temps de réponse reste identique que l'e-mail
+// existe ou non (évite de révéler les comptes existants).
+const DUMMY_PASSWORD_USER = (() => {
+  const credentials = hashUserPassword(crypto.randomBytes(16).toString('hex'));
+  return { passwordSalt: credentials.salt, passwordHash: credentials.hash };
+})();
 
 function createSessionForUser(
   req,
@@ -5936,6 +6004,26 @@ router.post('/login', (req, res) => {
       });
   }
 
+  const emailAttemptKey =
+    loginEmailAttemptKey(
+      email
+    );
+
+  if (
+    getLoginAttemptState(
+      req,
+      emailAttemptKey
+    ).blockedUntil >
+    Date.now()
+  ) {
+    return res
+      .status(429)
+      .json({
+        error:
+          'Trop de tentatives. Réessayez dans quelques minutes.'
+      });
+  }
+
   const users =
     loadUsers();
 
@@ -5948,17 +6036,27 @@ router.post('/login', (req, res) => {
         email
     );
 
+  const passwordValid =
+    verifyUserPassword(
+      password,
+      index === -1
+        ? DUMMY_PASSWORD_USER
+        : users[index]
+    );
+
   if (
     index === -1 ||
     users[index].active ===
       false ||
-    !verifyUserPassword(
-      password,
-      users[index]
-    )
+    !passwordValid
   ) {
     registerLoginFailure(
       req
+    );
+
+    registerLoginFailure(
+      req,
+      emailAttemptKey
     );
 
     return res
@@ -5971,6 +6069,11 @@ router.post('/login', (req, res) => {
 
   clearLoginFailures(
     req
+  );
+
+  clearLoginFailures(
+    req,
+    emailAttemptKey
   );
 
   users[index] = {
@@ -20958,5 +21061,6 @@ module.exports = {
   processSocialCommentWebhookEntry,
   ensureStorageHeadroom,
   storeCloudAssetBuffer,
-  cloudManifestEntry
+  cloudManifestEntry,
+  requireAdmin
 };
