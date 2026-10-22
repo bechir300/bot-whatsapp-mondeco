@@ -32,6 +32,13 @@ const { maskPhoneForLog, messageContentForLog } = require('./lib/log-privacy');
 const { promptDataField } = require('./lib/prompt-safety');
 const { slimAdReferral, slimConversationState } = require('./lib/ad-referral');
 const { createAiQuota } = require('./lib/ai-quota');
+const {
+  COPILOT_SYSTEM_ADDENDUM,
+  buildCopilotTranscript,
+  buildCopilotUserMessage,
+  cleanCopilotDraft,
+  lastCustomerText
+} = require('./lib/reply-copilot');
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const {
@@ -45,6 +52,7 @@ const {
   getBusinessContext,
   getBotSettings,
   setChatHandler,
+  setReplySuggestionHandler,
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
@@ -4423,7 +4431,7 @@ function stripReasoningLeak(reply, contactHint = '') {
   const leaked = REASONING_LEAK_PATTERNS.some(pattern => pattern.test(reply));
   if (!leaked) return reply;
   console.error(
-    `🚨 Fuite de raisonnement interne détectée et bloquée${contactHint ? ` pour ${contactHint}` : ''} : "${reply.slice(0, 200)}"`
+    `🚨 Fuite de raisonnement interne détectée et bloquée${contactHint ? ` pour ${maskPhoneForLog(contactHint)}` : ''} : "${messageContentForLog(reply.slice(0, 200))}"`
   );
   return '[COMMERCIAL_REQUIRED]';
 }
@@ -4558,6 +4566,35 @@ if (typeof aiQuotaSweepTimer.unref === 'function') {
   aiQuotaSweepTimer.unref();
 }
 
+// V6.36.53 — Motifs de fuite propres aux réponses texte (voir generateReply),
+// partagés avec le copilote commercial (V6.38).
+const GENERATE_REPLY_LEAK_PATTERNS = [
+  /\bwait,?\s+what if\b/i,
+  /\bthe prompt rule says\b/i,
+  /\bHANDOFF STRICT\b/,
+  /<think>/i,
+  /\bas an ai\b/i,
+  /\bI (?:should|must|need to) (?:respond|answer|reply)\b/i,
+  /\bREQUIRED\]\.?\s*$/m,
+  // Patch session - fuite observee le 22/09 : citation litterale d'une
+  // regle interne de formatage au lieu d'une vraie reponse.
+  /\bformat for price\b/i,
+  /FORMAT DES PRIX EN ARABE/i,
+  /\bCONCISION OBLIGATOIRE\b/i,
+  /\bINVITATION SHOWROOM\b/i,
+  // Patch session (22/09, 2e vague) - meta-raisonnement en anglais
+  // laisse dans ou apres la reponse (ex: "Then ask if...", "DO NOT
+  // include...", "Already sent in previous turn?", "Category Link:").
+  /\bthen ask if\b/i,
+  /\bdo not include\b/i,
+  /\balready sent in previous turn\b/i,
+  /\bcategory link\s*:/i,
+  /\bshowroom invitation\b/i,
+  /\bcommercial advisor\b/i,
+  /\bnext turn\b/i,
+  /\byes\/no\b/i
+];
+
 async function generateReply(
   userId,
   userText,
@@ -4643,41 +4680,14 @@ async function generateReply(
   // jamais apparaître dans les journaux structurés normaux — ce filtre
   // est une protection de dernier recours, pas un correctif de la cause
   // racine (non identifiée à ce stade).
-  const reasoningLeakPatterns = [
-    /\bwait,?\s+what if\b/i,
-    /\bthe prompt rule says\b/i,
-    /\bHANDOFF STRICT\b/,
-    /<think>/i,
-    /\bas an ai\b/i,
-    /\bI (?:should|must|need to) (?:respond|answer|reply)\b/i,
-    /\bREQUIRED\]\.?\s*$/m,
-    // Patch session - fuite observee le 22/09 : citation litterale d'une
-    // regle interne de formatage au lieu d'une vraie reponse.
-    /\bformat for price\b/i,
-    /FORMAT DES PRIX EN ARABE/i,
-    /\bCONCISION OBLIGATOIRE\b/i,
-    /\bINVITATION SHOWROOM\b/i,
-    // Patch session (22/09, 2e vague) - meta-raisonnement en anglais
-    // laisse dans ou apres la reponse (ex: "Then ask if...", "DO NOT
-    // include...", "Already sent in previous turn?", "Category Link:").
-    /\bthen ask if\b/i,
-    /\bdo not include\b/i,
-    /\balready sent in previous turn\b/i,
-    /\bcategory link\s*:/i,
-    /\bshowroom invitation\b/i,
-    /\bcommercial advisor\b/i,
-    /\bnext turn\b/i,
-    /\byes\/no\b/i
-  ];
-
   const finalReply =
-    reasoningLeakPatterns.some(pattern => pattern.test(reply))
+    GENERATE_REPLY_LEAK_PATTERNS.some(pattern => pattern.test(reply))
       ? '[COMMERCIAL_REQUIRED]'
       : reply;
 
   if (finalReply !== reply) {
     console.error(
-      `🚨 Fuite de raisonnement interne détectée et bloquée pour ${userId} : "${reply.slice(0, 200)}"`
+      `🚨 Fuite de raisonnement interne détectée et bloquée pour ${maskPhoneForLog(userId)} : "${messageContentForLog(reply.slice(0, 200))}"`
     );
   }
 
@@ -4694,6 +4704,131 @@ async function generateReply(
   );
 
   return finalReply;
+}
+
+// ============================================================
+// V6.38 — COPILOTE IA DES COMMERCIAUX
+// ============================================================
+// En journée, l'IA ne répond pas aux clients (plage 18h-10h) : le
+// commercial clique sur « Suggérer une réponse » et reçoit un brouillon,
+// rédigé avec les mêmes instructions, le même catalogue et le même
+// contexte publicitaire que l'IA. Le brouillon n'est jamais envoyé
+// automatiquement. La plage horaire ne s'applique pas (c'est un humain qui
+// envoie), le budget mensuel IA si. Quota par commercial pour les coûts.
+const copilotQuota =
+  createAiQuota({
+    maxPerContactPerHour:
+      Math.max(0, Number(process.env.AI_COPILOT_MAX_PER_USER_PER_HOUR ?? 60) || 0),
+    maxPerDay:
+      0
+  });
+
+const copilotQuotaSweepTimer = setInterval(() => copilotQuota.sweep(), 10 * 60 * 1000);
+
+if (typeof copilotQuotaSweepTimer.unref === 'function') {
+  copilotQuotaSweepTimer.unref();
+}
+
+async function generateReplySuggestion({
+  contact,
+  channel = 'whatsapp',
+  entries = [],
+  note = '',
+  actor = {}
+}) {
+  const normalizedContact =
+    safeString(contact);
+
+  const turns =
+    buildCopilotTranscript(entries);
+
+  if (!turns.length) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_EMPTY_CONVERSATION',
+      error: 'Aucun message récent dans cette conversation : rien à quoi répondre.'
+    };
+  }
+
+  if (copilotQuota.reserve(safeString(actor?.id) || 'anonymous')) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_QUOTA',
+      error: 'Trop de suggestions demandées cette heure-ci. Réessayez un peu plus tard.'
+    };
+  }
+
+  if (isAiMonthlyBudgetExceeded()) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_BUDGET',
+      error: 'Budget IA mensuel atteint : suggestions suspendues jusqu’au mois prochain.'
+    };
+  }
+
+  const started = Date.now();
+  const customerText =
+    lastCustomerText(turns) || turns[turns.length - 1].text;
+
+  const reply =
+    await callAIChat(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              buildBusinessSystemPrompt(
+                customerText,
+                channel,
+                { contact: normalizedContact }
+              ) + COPILOT_SYSTEM_ADDENDUM
+          },
+          {
+            role: 'user',
+            content: buildCopilotUserMessage(turns, { note })
+          }
+        ],
+        max_completion_tokens: 2000
+      },
+      {
+        vision: false,
+        ignoreActiveHours: true
+      }
+    );
+
+  const cleaned = cleanCopilotDraft(reply);
+  const leaked =
+    cleaned.draft &&
+    GENERATE_REPLY_LEAK_PATTERNS.some(pattern => pattern.test(cleaned.draft));
+
+  if (leaked) {
+    console.error(
+      `🚨 Copilote : fuite de raisonnement bloquée pour ${maskPhoneForLog(normalizedContact)} : "${messageContentForLog(cleaned.draft.slice(0, 200))}"`
+    );
+  }
+
+  console.log(
+    `✨ Copilote : suggestion pour ${maskPhoneForLog(normalizedContact)} en ${Date.now() - started}ms` +
+    (cleaned.needsHuman || leaked ? ' (sans brouillon)' : '')
+  );
+
+  if (cleaned.needsHuman || leaked || !cleaned.draft) {
+    return {
+      ok: true,
+      draft: '',
+      placeholders: [],
+      note: 'L’IA n’a pas trouvé d’information assez fiable pour proposer une réponse : rédigez-la vous-même.'
+    };
+  }
+
+  return {
+    ok: true,
+    draft: cleaned.draft,
+    placeholders: cleaned.placeholders,
+    note: cleaned.placeholders.length
+      ? 'Complétez les passages [À COMPLÉTER] avant d’envoyer.'
+      : ''
+  };
 }
 
 // ============================================================
@@ -5615,6 +5750,7 @@ function handleWhatsAppCallsWebhook(value) {
 // ============================================================
 
 setChatHandler(generateReply);
+setReplySuggestionHandler(generateReplySuggestion);
 setImageChatHandler(generateVisionReply);
 
 setCustomizationHandler(

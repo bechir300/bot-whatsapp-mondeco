@@ -14476,6 +14476,7 @@ router.post(
 // ============================================================
 
 let chatHandler = null;
+let replySuggestionHandler = null;
 let imageChatHandler = null;
 let commercialSendHandler = null;
 let whatsappCallHandler = null;
@@ -14488,6 +14489,17 @@ function setChatHandler(fn) {
   }
 
   chatHandler = fn;
+}
+
+// V6.38 — Copilote IA : brouillon de réponse pour un commercial.
+function setReplySuggestionHandler(fn) {
+  if (typeof fn !== 'function') {
+    throw new Error(
+      'setReplySuggestionHandler attend une fonction.'
+    );
+  }
+
+  replySuggestionHandler = fn;
 }
 
 function setImageChatHandler(fn) {
@@ -22700,6 +22712,52 @@ router.get('/api/conversations/:contact', requireAuth, async (req, res) => {
 });
 
 
+// V6.38 — Copilote IA : propose un brouillon de réponse (jamais envoyé
+// automatiquement). Lecture de la conversation depuis la boîte de réception
+// en mémoire, comme la route de détail.
+router.post('/api/conversations/:contact/suggest-reply', requireAuth, async (req, res) => {
+  try {
+    if (!replySuggestionHandler) {
+      return res.status(503).json({ error: 'Le copilote IA n’est pas encore connecté.' });
+    }
+    const contact = safeString(req.params.contact);
+    if (!contact) return res.status(400).json({ error: 'Contact client obligatoire.' });
+
+    const state = getConversationStateSingle(contact) || {};
+    const channel = safeString(state?.channel).toLowerCase() ||
+      (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+    if (!requireCommercialMessageChannelAccess(req, res, channel)) return;
+
+    const log = await loadWhatsAppLog();
+    const entries = normalizeInstagramThreadEntries(conversationEntriesForDetail(log, contact));
+
+    const result = await replySuggestionHandler({
+      contact,
+      channel,
+      entries,
+      note: safeString(req.body?.note).slice(0, 300),
+      actor: {
+        id: safeString(req.user?.id),
+        name: safeString(req.user?.name),
+        role: safeString(req.user?.role)
+      }
+    });
+
+    if (!result?.ok) {
+      const status = result?.errorCode === 'COPILOT_QUOTA' ? 429 : result?.errorCode === 'COPILOT_EMPTY_CONVERSATION' ? 422 : 503;
+      return res.status(status).json({ error: result?.error || 'Suggestion impossible.', errorCode: result?.errorCode || '' });
+    }
+    return res.json({
+      draft: safeString(result.draft),
+      placeholders: Array.isArray(result.placeholders) ? result.placeholders : [],
+      note: safeString(result.note)
+    });
+  } catch (error) {
+    console.error('❌ Copilote IA :', error.message);
+    return res.status(502).json({ error: 'L’IA ne répond pas pour le moment. Réessayez dans un instant.' });
+  }
+});
+
 router.delete('/api/conversations/:contact/messages/:purgeKey', requireCommercialAccess, async (req,res) => {
   try {
     const contact = safeString(req.params.contact);
@@ -23953,6 +24011,7 @@ module.exports = {
   getBusinessContext,
   getBotSettings,
   setChatHandler,
+  setReplySuggestionHandler,
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,

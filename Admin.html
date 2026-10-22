@@ -4754,6 +4754,41 @@ tbody tr:hover{
 .wa-inline-action[aria-expanded="true"]{
   background:#f1efec;
 }
+.copilot-btn.is-loading{
+  animation:copilotPulse 1s ease-in-out infinite;
+  cursor:progress;
+}
+@keyframes copilotPulse{
+  0%,100%{opacity:1}
+  50%{opacity:.35}
+}
+.copilot-hint{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  margin:0 10px 6px;
+  padding:7px 10px;
+  border-radius:10px;
+  background:#f4effa;
+  color:#4b3a63;
+  font-size:12px;
+  line-height:1.4;
+}
+.copilot-hint.is-warning{
+  background:#fff4dd;
+  color:#6b4a00;
+}
+.copilot-hint.hidden{
+  display:none;
+}
+.copilot-hint button{
+  margin-left:auto;
+  border:0;
+  background:transparent;
+  color:inherit;
+  font-size:14px;
+  cursor:pointer;
+}
 .wa-attachment-menu{
   position:absolute;
   left:10px;
@@ -12679,6 +12714,8 @@ function buildConversationComposer(
       <div id="conversationVoiceBar" class="wa-voice-bar hidden" aria-live="polite"></div>
       ` : ''}
 
+      <div id="conversationCopilotHint" class="copilot-hint hidden" role="status" aria-live="polite"></div>
+
       <div class="wa-composer-row ${composerChannel === 'whatsapp' ? '' : 'no-attachments'}">
         ${composerChannel === 'whatsapp' ? `
         <button
@@ -12722,6 +12759,15 @@ function buildConversationComposer(
             aria-expanded="false"
             title="Réponses rapides"
           >⚡</button>
+
+          <button
+            id="conversationCopilotBtn"
+            class="wa-inline-action copilot-btn"
+            type="button"
+            onclick="suggestConversationReply(${jsArg(contact)})"
+            aria-label="Suggérer une réponse avec l’IA"
+            title="Suggérer une réponse (IA) — brouillon modifiable, jamais envoyé automatiquement"
+          >✨</button>
         </div>
 
         <button
@@ -14928,6 +14974,85 @@ window.sendWhatsAppReengagement = async function(contact){
   }
 };
 
+// ============================================================
+// V6.38 — COPILOTE IA : brouillon de réponse pour le commercial
+// ============================================================
+const COPILOT_PLACEHOLDER_PATTERN = /\[\s*À\s+COMPLÉTER[^\]]*\]/i;
+let conversationCopilotInFlight = '';
+
+function hideConversationCopilotHint(){
+  const hint = document.getElementById('conversationCopilotHint');
+  if(hint){
+    hint.classList.add('hidden');
+    hint.innerHTML = '';
+  }
+}
+
+function showConversationCopilotHint(message, warning = false){
+  const hint = document.getElementById('conversationCopilotHint');
+  if(!hint) return;
+  hint.classList.toggle('is-warning', warning);
+  hint.innerHTML = `<span>✨ ${escapeHtml(message)}</span><button type="button" onclick="hideConversationCopilotHint()" aria-label="Fermer">×</button>`;
+  hint.classList.remove('hidden');
+}
+
+window.hideConversationCopilotHint = hideConversationCopilotHint;
+
+window.suggestConversationReply = async function(contact){
+  if(conversationCopilotInFlight) return;
+  const textEl = document.getElementById('conversationQuickReply');
+  const current = String(textEl?.value || '').trim();
+  if(current && !(await uiConfirm('Remplacer le texte déjà écrit par une suggestion de l’IA ?', { danger:false, confirmLabel:'Remplacer' }))){
+    return;
+  }
+
+  const button = document.getElementById('conversationCopilotBtn');
+  conversationCopilotInFlight = contact;
+  button?.classList.add('is-loading');
+  if(button) button.disabled = true;
+  showConversationCopilotHint('L’IA rédige une proposition…');
+
+  try{
+    const data = await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}/suggest-reply`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({})
+    });
+    // Le commercial a changé de conversation entre-temps : on n'écrit pas
+    // le brouillon dans la mauvaise discussion.
+    if(selectedConversationContact !== contact) return;
+    const field = document.getElementById('conversationQuickReply');
+    if(!data?.draft){
+      showConversationCopilotHint(data?.note || 'Aucune suggestion disponible pour cette conversation.', true);
+      return;
+    }
+    if(field){
+      field.value = data.draft;
+      autoResizeConversationComposer(field);
+      syncConversationPrimaryAction();
+      field.focus();
+      const placeholder = data.draft.search(COPILOT_PLACEHOLDER_PATTERN);
+      if(placeholder >= 0){
+        const match = data.draft.slice(placeholder).match(COPILOT_PLACEHOLDER_PATTERN);
+        field.setSelectionRange(placeholder, placeholder + (match ? match[0].length : 0));
+      }
+    }
+    showConversationCopilotHint(
+      data.note || 'Proposition de l’IA : relisez et modifiez-la avant d’envoyer.',
+      Array.isArray(data.placeholders) && data.placeholders.length > 0
+    );
+  }catch(error){
+    if(selectedConversationContact === contact){
+      showConversationCopilotHint(error.message || 'Suggestion impossible pour le moment.', true);
+    }
+  }finally{
+    conversationCopilotInFlight = '';
+    const currentButton = document.getElementById('conversationCopilotBtn');
+    currentButton?.classList.remove('is-loading');
+    if(currentButton) currentButton.disabled = false;
+  }
+};
+
 window.sendConversationCommercialReply = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).canReply === false){
     alert('Vous ne pouvez pas répondre à cette conversation.');
@@ -14960,9 +15085,20 @@ window.sendConversationCommercialReply = async function(contact){
     null;
 
   if(!text && !file){
+    conversationSendInProgress = false;
     alert('Écrivez un message ou ajoutez un fichier.');
     return;
   }
+
+  // V6.38 — Un brouillon du copilote peut contenir des passages
+  // [À COMPLÉTER : …] : on ne les laisse pas partir chez le client.
+  if(COPILOT_PLACEHOLDER_PATTERN.test(text)){
+    conversationSendInProgress = false;
+    await uiAlert('Le message contient encore un passage [À COMPLÉTER]. Remplacez-le par l’information exacte avant d’envoyer.');
+    textEl?.focus();
+    return;
+  }
+  hideConversationCopilotHint();
 
   // V6.36.71 — Affichage optimiste : le vrai temps d'envoi (appel réseau
   // vers Meta) reste incompressible côté serveur (mesuré jusqu'à 4s dans
