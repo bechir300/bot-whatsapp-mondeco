@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
+const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 
 const router = express.Router();
 
@@ -21223,6 +21224,112 @@ router.get(
       console.error('❌ KPI :', error.message);
       return res.status(500).json({ error: 'Impossible de calculer les indicateurs.' });
     }
+  }
+);
+
+// ============================================================
+// V6.39 — ÉVALUATION DE LA QUALITÉ IA
+// ============================================================
+// Rejoue les questions de référence + des questions de prix tirées du
+// catalogue. Lancée à la demande par un administrateur (≈ 12 appels IA),
+// en arrière-plan : la page suit la progression.
+
+const AI_EVAL_RUNS_PATH = path.join(DATA_DIR, 'ai-eval-runs.json');
+const AI_EVAL_MAX_RUNS = 20;
+let currentAiEvaluation = null;
+
+// Empreinte de ce qui influence les réponses : instructions actives,
+// prix du catalogue et modèle IA. Si elle change, l'évaluation est à refaire.
+function aiEvaluationFingerprint() {
+  const instructions = loadInstructions()
+    .filter(item => item.active !== false)
+    .map(item => [safeString(item.title), safeString(item.content || item.text)]);
+  const products = loadProducts()
+    .filter(item => item.active !== false)
+    .map(item => [safeString(item.name), safeString(item.price), safeString(item.promoPrice)]);
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify([instructions, products, safeString(process.env.GEMINI_MODEL), safeString(process.env.GROQ_MODEL)]))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function loadAiEvaluationRuns() {
+  return readJsonArray(AI_EVAL_RUNS_PATH, 'ai-eval-runs.json');
+}
+
+router.post(
+  '/api/ai-eval/run',
+  requireAdmin,
+  (req, res) => {
+    if (!chatHandler) {
+      return res.status(503).json({ error: 'Le moteur IA n’est pas connecté.' });
+    }
+    if (currentAiEvaluation) {
+      return res.status(409).json({ error: 'Une évaluation est déjà en cours.', progress: currentAiEvaluation });
+    }
+
+    let cases;
+    try {
+      cases = [...loadReferenceCases(), ...buildCatalogCases(loadProducts(), 3)];
+    } catch (error) {
+      return res.status(500).json({ error: `Questions de référence illisibles : ${error.message}` });
+    }
+
+    const run = {
+      id: `eval-${timestampId()}`,
+      startedAt: new Date().toISOString(),
+      startedBy: safeString(req.user?.name || req.user?.email),
+      model: safeString(process.env.GEMINI_MODEL) || 'Gemini (par défaut)',
+      fingerprint: aiEvaluationFingerprint()
+    };
+    currentAiEvaluation = { id: run.id, done: 0, total: cases.length, startedAt: run.startedAt };
+
+    runAiEvaluation({
+      cases,
+      ask: (testCase, index) => chatHandler(`ai-eval-${run.id}-${index}`, testCase.question, 'whatsapp'),
+      onProgress: done => {
+        if (currentAiEvaluation) currentAiEvaluation.done = done;
+      }
+    })
+      .then(result => {
+        const finished = { ...run, finishedAt: new Date().toISOString(), ...result };
+        writeJsonAtomic(AI_EVAL_RUNS_PATH, [finished, ...loadAiEvaluationRuns()].slice(0, AI_EVAL_MAX_RUNS));
+        console.log(`🧪 Évaluation IA terminée : ${result.passed}/${result.total} (${result.score} %).`);
+      })
+      .catch(error => console.error('❌ Évaluation IA :', error.message))
+      .finally(() => {
+        currentAiEvaluation = null;
+      });
+
+    return res.status(202).json({ started: true, progress: currentAiEvaluation });
+  }
+);
+
+router.get(
+  '/api/ai-eval/status',
+  requireAdmin,
+  (req, res) => {
+    const runs = loadAiEvaluationRuns();
+    const latest = runs[0] || null;
+    let caseCount = 0;
+    try {
+      caseCount = loadReferenceCases().length + buildCatalogCases(loadProducts(), 3).length;
+    } catch {}
+    return res.json({
+      running: currentAiEvaluation,
+      caseCount,
+      latest,
+      stale: Boolean(latest && latest.fingerprint !== aiEvaluationFingerprint()),
+      history: runs.map(item => ({
+        id: item.id,
+        finishedAt: item.finishedAt,
+        model: item.model,
+        score: item.score,
+        passed: item.passed,
+        total: item.total
+      }))
+    });
   }
 );
 

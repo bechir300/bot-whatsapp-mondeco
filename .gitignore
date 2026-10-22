@@ -38,3 +38,4 @@ users.json.bak
 *.jsonl
 ai-history.json
 kpi-daily.json
+ai-eval-runs.json

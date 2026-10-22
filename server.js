@@ -1990,6 +1990,9 @@ function addHistoryMessage(
   role,
   content
 ) {
+  // Les questions de l'évaluation qualité sont indépendantes : pas d'historique.
+  if (safeString(userId).startsWith('ai-eval-')) return;
+
   aiHistoryStore.update(safeString(userId), item => {
     const previous =
       Array.isArray(item?.messages) &&

@@ -6707,6 +6707,26 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .wa-template-field select,.wa-template-field input{min-height:42px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font:inherit;font-weight:400;background:#fff;color:var(--text)}
 .wa-template-preview{margin:4px 22px 0;padding:12px;border-radius:12px;background:#e7f7ec;color:#163b25;font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .wa-template-error{margin:8px 22px 0;color:var(--red);font-size:13.5px}
+
+/* V6.39 — évaluation qualité IA */
+.ai-eval-card{margin-top:16px;padding:18px}
+.ai-eval-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.ai-eval-head h3{margin:0 0 6px;font-size:17px}
+.ai-eval-head p{margin:0;max-width:720px;color:var(--muted);font-size:13.5px;line-height:1.5}
+.ai-eval-status{margin:12px 0;font-size:14px;line-height:1.5}
+.ai-eval-status.stale{padding:10px 12px;border-radius:10px;background:#fff8e8;border:1px solid #f0d9a8;color:#5c4512}
+.ai-eval-score{display:inline-block;padding:3px 10px;border-radius:999px;font-weight:800;background:#edf8f1;color:#165c34}
+.ai-eval-score.low{background:#fff0ef;color:#8f2b23}
+.ai-eval-list{display:grid;gap:8px;margin-top:8px}
+.ai-eval-item{border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13.5px;line-height:1.5}
+.ai-eval-item summary{cursor:pointer;display:flex;gap:10px;align-items:baseline;list-style:none}
+.ai-eval-item summary::-webkit-details-marker{display:none}
+.ai-eval-item summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.ai-eval-badge{flex:none;font-weight:800}
+.ai-eval-badge.pass{color:#147344}.ai-eval-badge.fail,.ai-eval-badge.error{color:#b43d36}
+.ai-eval-reply{margin:8px 0 0;padding:10px;border-radius:10px;background:#f8f5f1;white-space:pre-wrap;overflow-wrap:anywhere}
+.ai-eval-reasons{margin:6px 0 0;padding-left:18px;color:#8f2b23}
+.ai-eval-history{margin-top:12px;font-size:13px;color:var(--muted)}
 </style>
 </head>
 
@@ -7535,6 +7555,19 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
             Envoyer
           </button>
         </div>
+      </div>
+
+      <div class="card ai-eval-card" id="aiEvalCard" hidden>
+        <div class="ai-eval-head">
+          <div>
+            <h3>Évaluation de la qualité IA</h3>
+            <p>Rejoue des questions de référence (livraison, showrooms, produit inconnu, tentative de manipulation…) et des questions de prix tirées du catalogue, puis vérifie chaque réponse. À relancer après chaque modification des instructions, du catalogue ou du modèle IA.</p>
+          </div>
+          <button class="btn primary" id="aiEvalRun" type="button">▶ Lancer l’évaluation</button>
+        </div>
+        <div id="aiEvalStatus" class="ai-eval-status" aria-live="polite"></div>
+        <div id="aiEvalResults"></div>
+        <div id="aiEvalHistory" class="ai-eval-history"></div>
       </div>
     </section>
 
@@ -8774,6 +8807,84 @@ window.openWhatsAppTemplateDialog=async function(contact){
 };
 
 // ============================================================
+// V6.39 — ÉVALUATION DE LA QUALITÉ IA
+// ============================================================
+let aiEvalPollTimer=null;
+
+async function loadAiEvaluation(){
+  const card=document.getElementById('aiEvalCard');
+  if(!card) return;
+  if(currentUser?.role!=='admin'){card.hidden=true;return;}
+  card.hidden=false;
+  let data;
+  try{
+    data=await apiFetch(`${API}/ai-eval/status`);
+  }catch(error){
+    document.getElementById('aiEvalStatus').textContent=`Évaluation indisponible : ${error.message||error}`;
+    return;
+  }
+  renderAiEvaluation(data);
+  clearTimeout(aiEvalPollTimer);
+  if(data.running&&document.getElementById('page-test')?.classList.contains('active')){
+    aiEvalPollTimer=setTimeout(loadAiEvaluation,2000);
+  }
+}
+
+function renderAiEvaluation(data){
+  const status=document.getElementById('aiEvalStatus');
+  const results=document.getElementById('aiEvalResults');
+  const history=document.getElementById('aiEvalHistory');
+  const button=document.getElementById('aiEvalRun');
+  const latest=data?.latest;
+  if(button){
+    button.disabled=Boolean(data?.running);
+    button.textContent=data?.running?'Évaluation en cours…':`▶ Lancer l’évaluation (${Number(data?.caseCount||0)} questions)`;
+  }
+  if(status){
+    status.className='ai-eval-status';
+    if(data?.running){
+      status.textContent=`⏳ Évaluation en cours : ${data.running.done}/${data.running.total} questions…`;
+    }else if(!latest){
+      status.textContent='Aucune évaluation enregistrée. Lancez la première pour obtenir un score de référence.';
+    }else{
+      const low=Number(latest.score)<80;
+      status.innerHTML=`Dernière évaluation : <span class="ai-eval-score ${low?'low':''}">${escapeHtml(String(latest.score))} %</span> (${escapeHtml(String(latest.passed))}/${escapeHtml(String(latest.total))} réussies) le ${escapeHtml(new Date(latest.finishedAt).toLocaleString('fr-FR'))} • modèle ${escapeHtml(latest.model||'—')}`;
+      if(data.stale){
+        status.classList.add('stale');
+        status.innerHTML+=`<br>⚠️ Instructions, catalogue ou modèle IA modifiés depuis : relancez l’évaluation.`;
+      }
+    }
+  }
+  if(results){
+    const items=Array.isArray(latest?.results)?latest.results:[];
+    const ordered=[...items].sort((a,b)=>(a.status==='pass')-(b.status==='pass'));
+    results.innerHTML=items.length?`<div class="ai-eval-list">${ordered.map(item=>{
+      const icon=item.status==='pass'?'✓ Réussi':item.status==='error'?'⚠ Erreur':'✗ Échec';
+      const expected=item.mode==='handoff'?'transfert attendu':item.mode==='answer'?'réponse attendue':'réponse ou transfert';
+      return `<details class="ai-eval-item"${item.status==='pass'?'':' open'}>
+        <summary><span class="ai-eval-badge ${escapeHtml(item.status)}">${icon}</span><span><strong>${escapeHtml(item.question)}</strong> — ${escapeHtml(expected)}${item.handoff?' • l’IA a transféré au commercial':''}</span></summary>
+        ${item.reasons?.length?`<ul class="ai-eval-reasons">${item.reasons.map(reason=>`<li>${escapeHtml(reason)}</li>`).join('')}</ul>`:''}
+        ${item.note?`<div>${escapeHtml(item.note)}</div>`:''}
+        ${item.reply?`<div class="ai-eval-reply">${escapeHtml(item.reply)}</div>`:''}
+      </details>`;}).join('')}</div>`:'';
+  }
+  if(history){
+    const runs=(data?.history||[]).slice(1,8);
+    history.innerHTML=runs.length?`Précédentes : ${runs.map(run=>`${escapeHtml(new Date(run.finishedAt).toLocaleDateString('fr-FR'))} ${escapeHtml(String(run.score))} %`).join(' • ')}`:'';
+  }
+}
+
+document.getElementById('aiEvalRun')?.addEventListener('click',async()=>{
+  if(!await uiConfirm('Lancer l’évaluation ? Chaque question consomme un appel IA (environ une minute au total).',{danger:false})) return;
+  try{
+    await apiFetch(`${API}/ai-eval/run`,{method:'POST'});
+  }catch(error){
+    await uiAlert(error.message||'Lancement impossible.');
+  }
+  loadAiEvaluation();
+});
+
+// ============================================================
 // V6.39 — PAGE INDICATEURS (KPI)
 // ============================================================
 let kpiData=null;
@@ -9017,6 +9128,7 @@ function showPage(name){
   if(name === 'mywork') loadMyWorkday();
   if(name === 'team') loadTeamAdmin();
   if(name === 'kpi') loadKpiDashboard();
+  if(name === 'test') loadAiEvaluation();
 }
 
 navButtons.forEach(btn => {
