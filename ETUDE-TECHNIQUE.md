@@ -1,4 +1,4 @@
-# Étude technique — MONDECO V6.36.0
+# Étude technique — MONDECO V6.37.0
 
 Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de pilotage, réalisé en octobre 2026. Cette étude couvre la sécurité, la fiabilité, la performance, la confidentialité, la maintenabilité et l'expérience utilisateur. Elle sépare **ce qui est corrigé dans cette version** de **ce qui reste à faire**, par priorité.
 
@@ -65,13 +65,15 @@ Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de p
 
 ## 3. Feuille de route recommandée
 
-### Priorité 1 — dans le mois
-1. **Configurer `META_APP_SECRET` dans Railway.** Sans lui, n'importe qui peut envoyer de faux webhooks, donc de faux messages clients. Ensuite, rendre la signature obligatoire.
-2. **Limiter les coûts IA par client** : quota par contact (par exemple 30 messages par heure) et plafond quotidien global avec transfert à un commercial au-delà.
-3. **Webhook : marquer un message comme traité seulement après succès.** Aujourd'hui, l'identifiant est enregistré avant le traitement : un crash fait perdre le message, car la nouvelle tentative de Meta est ignorée.
-4. **Délais maximaux sur les appels Meta en lecture** (téléchargement de médias, profils), avec nouvelle tentative sur 429/5xx en respectant `Retry-After`, et contrôle de taille sur `downloadWhatsAppMedia`.
-5. **Sessions** : expiration après 12 h d'inactivité et révocation lors d'un changement de rôle.
-6. **Protection contre l'injection de prompt** : encadrer les textes publicitaires et client dans des blocs de données délimités, et n'accepter le marqueur `[COMMERCIAL_REQUIRED]` que s'il est exact.
+### Priorité 1 — ✅ réalisée en V6.37.0
+| # | Point | Réalisation |
+| --- | --- | --- |
+| 1 | Signature des webhooks | Option `WEBHOOK_SIGNATURE_REQUIRED=true` : tout webhook non signé est refusé (401). **Action requise** : renseigner `META_APP_SECRET` dans Railway, puis activer l'option. |
+| 2 | Coûts IA | Quota par client (30 réponses IA par heure par défaut) et plafond quotidien global (5 000 appels). Au-delà, la conversation passe au commercial par le transfert habituel, sans appel IA. La consommation est visible dans `/debug-env`. |
+| 3 | Messages perdus | Un message dont le traitement plante est rejoué automatiquement (après 15 s, puis 60 s). Un message déjà journalisé, donc déjà répondu, n'est jamais rejoué, ce qui évite les doubles réponses. |
+| 4 | Appels Meta | Les lectures (médias, profils, métadonnées) ont un délai maximal par tentative et sont reprises sur erreur réseau, 429 et 5xx, en respectant `Retry-After`. Les envois ont un délai maximal, sans reprise. La taille des médias est plafonnée pendant le téléchargement, y compris quand `content-length` est absent. |
+| 5 | Sessions | Déconnexion après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`). Un changement de rôle ou d'e-mail déconnecte le compte concerné. |
+| 6 | Injection de prompt | Les champs publicitaires (dont `ref`, que n'importe qui peut écrire dans un lien) sont mis sur une ligne, débarrassés des séparateurs, encadrés et plafonnés. Une règle explicite indique que les messages client sont des données, pas des consignes. Le marqueur `[COMMERCIAL_REQUIRED]` est conservé tel quel : il oriente toujours vers un humain, c'est le sens sûr. |
 
 ### Priorité 2 — dans le trimestre
 7. **Passer à SQLite** (better-sqlite3) pour les conversations, les états et les notifications. Les fichiers JSON sont relus et réécrits entièrement de façon synchrone à chaque message (plus de 15 Mo pour l'état des conversations), ce qui bloque le serveur sous charge. SQLite apporte des transactions, des index et la suppression de ces blocages, sans nouveau service à héberger.
@@ -90,5 +92,6 @@ Audit complet du bot omnicanal (WhatsApp, Instagram, Facebook) et du centre de p
 
 - `ADMIN_EMAIL` et `ADMIN_PASSWORD` sont **obligatoires** : sans eux, aucun compte administrateur n'est créé ni réinitialisé (les comptes existants ne changent pas).
 - `VERIFY_TOKEN` : sans lui, la vérification du webhook Meta est refusée.
-- `META_APP_SECRET` (ou les secrets par canal) : fortement recommandé.
+- `META_APP_SECRET` (ou les secrets par canal) : fortement recommandé, puis `WEBHOOK_SIGNATURE_REQUIRED=true`.
+- `AI_MAX_REPLIES_PER_CONTACT_PER_HOUR` / `AI_MAX_CALLS_PER_DAY` : à ajuster selon le volume réel (consultable dans `/debug-env` → `ai_quota`).
 - `/debug-env` demande désormais une connexion administrateur dans le navigateur.

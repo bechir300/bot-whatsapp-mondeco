@@ -4278,6 +4278,13 @@ const SESSION_DURATION_DAYS = Math.max(
   Math.min(90, Number(process.env.MONDECO_SESSION_DAYS || 30) || 30)
 );
 const SESSION_DURATION = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+// Expiration après inactivité (aucune requête authentifiée, onglet fermé).
+// L'interface envoie un signal de présence toutes les 20 s tant qu'elle est
+// ouverte : une session active n'expire donc pas en cours de journée.
+const SESSION_IDLE_TIMEOUT_MS = Math.max(
+  1,
+  Math.min(24 * 30, Number(process.env.MONDECO_SESSION_IDLE_HOURS || 12) || 12)
+) * 60 * 60 * 1000;
 const SESSION_PERSIST_MIN_INTERVAL_MS = 60 * 1000;
 let sessionStoreDirty = false;
 let sessionStoreLastPersistAt = 0;
@@ -5029,16 +5036,31 @@ function getAuthenticatedUser(req) {
           0
         );
 
+  const lastActivityAt =
+    typeof session === 'object'
+      ? Number(session.lastSeenAt || session.createdAt || 0)
+      : 0;
+
   if (
     !expiresAt ||
     expiresAt <=
-      Date.now()
+      Date.now() ||
+    (
+      lastActivityAt &&
+      Date.now() - lastActivityAt > SESSION_IDLE_TIMEOUT_MS
+    )
   ) {
     sessions.delete(sessionKey);
     sessionStoreDirty = true;
     persistSessions(true);
 
     return null;
+  }
+
+  if (typeof session === 'object') {
+    session.lastSeenAt = Date.now();
+    sessionStoreDirty = true;
+    persistSessions();
   }
 
   const userId =
@@ -7453,10 +7475,14 @@ router.put(
       users
     );
 
+    // Un changement de rôle ou d'e-mail déconnecte aussi le compte : la
+    // personne doit se reconnecter avec ses nouveaux droits.
     if (
       active ===
         false ||
-      password
+      password ||
+      safeString(current.role) !== safeString(updated.role) ||
+      normalizeEmail(current.email) !== normalizeEmail(updated.email)
     ) {
       invalidateUserSessions(
         updated.id
@@ -15014,6 +15040,7 @@ async function instagramGraphGet(url) {
   const response = await fetch(
     url,
     {
+      signal: AbortSignal.timeout(20000),
       headers: {
         Authorization:
           `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
@@ -15324,7 +15351,8 @@ async function persistInstagramHistoryProfilePicture(
   if (!url || !scopedId) return '';
 
   try {
-    const response = await fetch(url);
+    // Délai maximal : une photo de profil bloquée ne doit pas figer la synchro.
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) return '';
 
     const buffer = Buffer.from(
@@ -16619,7 +16647,7 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
   if (!url || !scopedId) return '';
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) return '';
     const buffer = Buffer.from(await response.arrayBuffer());
     if (!buffer.length || buffer.length > 5 * 1024 * 1024) return '';
