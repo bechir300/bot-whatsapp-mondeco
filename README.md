@@ -2,7 +2,7 @@
 
 Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
 
-Version **6.41.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (étape 1 : couleurs et polices).
+Version **6.42.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (étapes 1 et 2 : couleurs, polices, boîte de réception).
 
 ## Architecture
 

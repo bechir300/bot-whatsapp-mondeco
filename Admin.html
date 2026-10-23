@@ -7335,7 +7335,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.41</span>
+              <span class="inbox-version">V6.42</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -12500,9 +12500,7 @@ function renderThreadMessage(
         ${
           text
             ? `
-              <div class="inbox-bubble">
-                ${escapeHtml(text)}
-              </div>
+              <div class="inbox-bubble">${escapeHtml(String(text).trim())}</div>
             `
             : ''
         }
@@ -19644,10 +19642,29 @@ window.toggleInboxFocus = function(forceOpen){
   updateInboxFocusButton();
 };
 
+// V6.42 — Sur grand écran (≥ 1440 px), la fiche client est une 3e colonne
+// fixe ; le bouton la masque ou l'affiche (choix mémorisé).
+const CUSTOMER_PANEL_DOCK_QUERY = window.matchMedia('(min-width:1440px)');
+
+function customerPanelDocked(){
+  return CUSTOMER_PANEL_DOCK_QUERY.matches;
+}
+
+(function initCustomerPanelDock(){
+  let dismissed = false;
+  try{ dismissed = localStorage.getItem('mondecoCustomerPanelDismissed') === '1'; }catch{}
+  document.getElementById('page-conversations')?.classList.toggle('customer-panel-dismissed', dismissed);
+  CUSTOMER_PANEL_DOCK_QUERY.addEventListener?.('change', () => window.updateCustomerPanelButton?.());
+})();
+
 window.updateCustomerPanelButton = function(){
   const page = document.getElementById('page-conversations');
   if(!page) return;
-  const open = page.classList.contains('customer-panel-open');
+  const docked = customerPanelDocked();
+  const open = docked
+    ? !page.classList.contains('customer-panel-dismissed')
+    : page.classList.contains('customer-panel-open');
+
   document.querySelectorAll('.inbox-customer-toggle').forEach(function(btn){
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     btn.title = open ? 'Masquer la fiche client' : 'Afficher la fiche client';
@@ -19657,6 +19674,14 @@ window.updateCustomerPanelButton = function(){
 window.toggleCustomerPanel = function(forceOpen){
   const page = document.getElementById('page-conversations');
   if(!page) return;
+  if(customerPanelDocked()){
+    const shouldShow = typeof forceOpen === 'boolean' ? forceOpen : page.classList.contains('customer-panel-dismissed');
+    page.classList.toggle('customer-panel-dismissed', !shouldShow);
+    page.classList.remove('customer-panel-open');
+    try{ localStorage.setItem('mondecoCustomerPanelDismissed', shouldShow ? '0' : '1'); }catch{}
+    updateCustomerPanelButton();
+    return;
+  }
   const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : !page.classList.contains('customer-panel-open');
   page.classList.toggle('customer-panel-open', shouldOpen);
   updateCustomerPanelButton();
@@ -19919,6 +19944,117 @@ body.desktop-sidebar-collapsed .desktop-sidebar-toggle{
 /* Panneau de débogage : caché sauf avec ?debug=1 dans l'adresse */
 #mondecoDebugPanel{display:none !important}
 body.mondeco-debug #mondecoDebugPanel{display:block !important}
+
+/* ==========================================================
+   V6.42 — CHARTE MONDECO, étape 2 : boîte de réception
+   ========================================================== */
+
+/* Grand écran : fiche client en 3e colonne, toujours visible quand une
+   conversation est ouverte (masquable avec le bouton Fiche client). */
+@media (min-width:1440px){
+  #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-shell{
+    grid-template-columns:360px minmax(0,1fr) 340px !important;
+  }
+  #page-conversations.has-selection.inbox-focus:not(.customer-panel-dismissed) .inbox-shell{
+    grid-template-columns:0 minmax(0,1fr) 340px !important;
+  }
+  #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-right{
+    position:static !important;
+    grid-column:3;
+    grid-row:2;
+    width:auto;
+    max-width:none;
+    min-height:0;
+    transform:none;
+    visibility:visible;
+    box-shadow:none;
+    transition:none;
+    border-left:1px solid var(--line) !important;
+    background:#FBF8F4 !important;
+  }
+  #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-drawer-close{
+    display:none;
+  }
+  #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-customer-toggle{
+    background:var(--encre) !important;
+    color:#FFFFFF !important;
+    border-color:var(--encre) !important;
+  }
+}
+
+/* Bulles : client en blanc, IA en bleu ardoise clair, commercial en vert
+   sapin clair (texte foncé lisible), quel que soit le canal. */
+#page-conversations .inbox-message-row.incoming .inbox-bubble{
+  background:#FFFFFF !important;
+  border:1px solid var(--line) !important;
+  color:var(--encre) !important;
+}
+#page-conversations .inbox-message-row.bot .inbox-bubble{
+  background:#E4EDF6 !important;
+  border:1px solid #CFDDEB !important;
+  color:var(--encre) !important;
+}
+#page-conversations .inbox-message-row.commercial .inbox-bubble,
+#page-conversations #inboxCenter[data-channel-theme] .inbox-message-row.commercial .inbox-bubble{
+  background:#E3F0E7 !important;
+  border:1px solid #CBE2D3 !important;
+  color:var(--encre) !important;
+}
+#page-conversations .inbox-message-row.commercial .inbox-bubble a,
+#page-conversations .inbox-message-row.bot .inbox-bubble a{
+  color:#1F5FA8 !important;
+}
+#page-conversations .inbox-thread{
+  background:#F1EBE3 !important;
+}
+#page-conversations .inbox-center{
+  background:#F1EBE3 !important;
+}
+
+/* Envoyer = action principale : rouge MONDECO sur tous les canaux. La
+   couleur du canal reste visible sur le liseré de l'en-tête. */
+#page-conversations #conversationSendBtn.wa-send-btn,
+#page-conversations #inboxCenter[data-channel-theme] #conversationSendBtn.wa-send-btn{
+  background:var(--mondeco-red) !important;
+  box-shadow:none !important;
+  color:#FFFFFF !important;
+}
+
+/* Boutons d'en-tête sobres : contour, sans fonds colorés */
+#page-conversations .inbox-header-btn,
+#page-conversations .wa-call-header-btn{
+  background:#FFFFFF !important;
+  color:var(--encre) !important;
+  border:1px solid var(--line-strong) !important;
+  box-shadow:none !important;
+}
+#page-conversations .inbox-header-btn:hover,
+#page-conversations .wa-call-header-btn:hover{
+  background:#F6F1EA !important;
+}
+#page-conversations .inbox-header-btn.active,
+#page-conversations.customer-panel-open .inbox-customer-toggle{
+  background:var(--encre) !important;
+  color:#FFFFFF !important;
+  border-color:var(--encre) !important;
+}
+
+/* Liste : conversation sélectionnée en lin chaud, repère rouge */
+#page-conversations .inbox-conversation-item.selected{
+  background:#FBF3EA !important;
+  box-shadow:inset 3px 0 0 var(--mondeco-red) !important;
+  border-left-color:transparent !important;
+}
+#page-conversations .inbox-conversation-item:hover:not(.selected){
+  background:#FBF8F4 !important;
+}
+#page-conversations .inbox-item-name{
+  font-size:14px !important;
+}
+#page-conversations .inbox-item-preview{
+  font-size:13px !important;
+  color:var(--muted) !important;
+}
 </style>
 
 
