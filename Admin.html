@@ -4541,6 +4541,23 @@ tbody tr:hover{
 /* V6.19.6 — Inbox commerciale mobile-first */
 .inbox-conversation-item{min-height:96px!important;align-items:center!important}
 .inbox-item-main{display:flex;flex-direction:column;gap:4px}.inbox-item-name-row{justify-content:space-between;gap:8px}
+.sales-stage{display:inline-flex;align-items:center;padding:1px 7px;border-radius:999px;font-weight:800;background:#efe9e2;color:#4a3f35}
+.sales-stage.stage-qualifie{background:#e8f1fb;color:#174f86}
+.sales-stage.stage-devis{background:#fdf1dc;color:#7a4b00}
+.sales-stage.stage-visite{background:#efe8fa;color:#4b2f7a}
+.sales-stage.stage-commande{background:#e3f4ea;color:#14633a}
+.sales-stage.stage-perdu{background:#f3f1ef;color:#77706a;text-decoration:line-through}
+.customer-profile-form{display:grid;gap:8px}
+.customer-profile-form label{display:grid;gap:3px;font-size:12px;font-weight:700;color:var(--muted)}
+.customer-profile-form input,.customer-profile-form select,.customer-profile-form textarea{width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--border,#ddd5cc);border-radius:9px;font:inherit;font-size:13px;color:inherit;background:var(--card,#fff)}
+.customer-profile-form textarea{min-height:64px;resize:vertical}
+.customer-profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.customer-stage-chips{display:flex;flex-wrap:wrap;gap:5px}
+.customer-stage-chips button{border:1px solid var(--border,#ddd5cc);background:transparent;border-radius:999px;padding:4px 9px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;color:inherit}
+.customer-stage-chips button[aria-pressed="true"]{background:#2f2a25;border-color:#2f2a25;color:#fff}
+.customer-profile-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.customer-profile-meta{font-size:11px;color:var(--muted)}
+.customer-profile-meta.is-dirty{color:#a15c00;font-weight:800}
 .inbox-item-platform-row,.inbox-item-status-row,.inbox-item-source-row{display:flex;align-items:center;flex-wrap:wrap;gap:7px;min-width:0;font-size:11px;color:var(--muted)}
 .inbox-item-platform-row .urgent-text{color:#b42318;font-weight:900}.inbox-item-status-row .ai-paused{color:#166534;font-weight:800}.inbox-item-status-row .ai-active{color:#075985;font-weight:800}.inbox-item-status-row .assigned{font-weight:800;color:#3f3a34}.inbox-item-source-row{color:#7a4b00;font-weight:800}
 .inbox-item-preview{font-size:12px!important;color:#2f2b27!important}.sla-human{font-weight:900}.sla-human.late{color:#b42318}.sla-human.pending{color:#b54708}
@@ -6907,6 +6924,8 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .kpi-tile strong{display:block;margin-top:6px;font-size:28px;line-height:1.1;color:var(--text);font-variant-numeric:tabular-nums}
 .kpi-tile small{display:block;margin-top:6px;font-size:12.5px;line-height:1.4;color:var(--muted)}
 .kpi-card{position:relative;padding:16px 18px;margin-bottom:14px}
+.kpi-subtitle{margin:18px 0 8px!important;font-size:14px!important}
+.kpi-funnel-hint{font-size:12px;color:var(--muted);margin:8px 0 0}
 .kpi-card h3{margin:0 0 10px;font-size:16px}
 .kpi-card-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px}
 .kpi-card-head h3{margin:0}
@@ -7508,6 +7527,16 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
       </div>
 
       <div class="card kpi-card">
+        <div class="kpi-card-head">
+          <h3>Parcours de vente</h3>
+          <span class="kpi-funnel-hint">D'après les fiches clients remplies par les commerciaux</span>
+        </div>
+        <div id="kpiFunnel"><div class="kpi-empty">Chargement…</div></div>
+        <h3 class="kpi-subtitle">Publicités qui vendent</h3>
+        <div class="kpi-table-wrap"><table class="kpi-table" id="kpiFunnelAds"></table></div>
+      </div>
+
+      <div class="card kpi-card">
         <h3>Détail par jour</h3>
         <div class="kpi-table-wrap"><table class="kpi-table" id="kpiTable"></table></div>
       </div>
@@ -7516,6 +7545,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         <strong>Définitions.</strong> Une conversation = un client qui a écrit dans la journée. « Réglée par l'IA » : l'IA a répondu sans transfert ni intervention humaine.
         Délai de réponse : entre le message du client et la première réponse (IA ou commercial), horaires de nuit compris. Les délais IA sont mesurés depuis la version 6.39.
         « Intention showroom » : le client parle d'adresse, de showroom ou d'une ville ; ce n'est pas une visite confirmée.
+        « Parcours de vente » : conversations actives sur la période ; une étape compte dès qu'elle a été atteinte une fois (un client passé par « Visite » puis « Perdu » compte comme une visite).
         Les journées terminées sont enregistrées chaque heure : les chiffres restent disponibles après la purge des conversations.
       </p>
     </section>
@@ -9219,10 +9249,14 @@ async function loadKpiDashboard(){
   const tiles=document.getElementById('kpiTiles');
   if(tiles&&!kpiData) tiles.innerHTML='<div class="kpi-empty">Chargement des indicateurs…</div>';
   try{
+    const funnelPromise=apiFetch(`${API}/sales-funnel?days=${encodeURIComponent(days)}`).catch(error=>({error:error.message||'erreur'}));
     const data=await apiFetch(`${API}/kpi?days=${encodeURIComponent(days)}`);
     if(generation!==kpiLoadGeneration) return;
     kpiData=data;
     renderKpiDashboard(data);
+    const funnel=await funnelPromise;
+    if(generation!==kpiLoadGeneration) return;
+    renderSalesFunnel(funnel);
   }catch(error){
     if(tiles) tiles.innerHTML=`<div class="kpi-empty">Indicateurs indisponibles : ${escapeHtml(error.message||'erreur')}</div>`;
   }
@@ -9330,6 +9364,42 @@ function renderKpiChart(daily){
     node.addEventListener('mouseleave',hide);
     node.addEventListener('blur',hide);
   });
+}
+
+// V6.39 — Parcours de vente (fiches clients) et publicités qui vendent.
+function renderSalesFunnel(data){
+  const host=document.getElementById('kpiFunnel');
+  const adsTable=document.getElementById('kpiFunnelAds');
+  if(!host) return;
+  if(data?.error){
+    host.innerHTML=`<div class="kpi-empty">Parcours indisponible : ${escapeHtml(data.error)}</div>`;
+    if(adsTable) adsTable.innerHTML='';
+    return;
+  }
+  const reached=data?.reached||{};
+  const total=Number(reached.conversations||0);
+  const steps=[
+    ['conversations','Conversations'],
+    ['qualifie','Qualifiés'],
+    ['devis','Devis envoyés'],
+    ['visite','Visites showroom'],
+    ['commande','Commandes']
+  ];
+  host.innerHTML=total
+    ? `<div class="kpi-bars">${steps.map(([key,label])=>{
+        const value=Number(reached[key]||0);
+        const share=total?Math.round(value/total*1000)/10:0;
+        return `<div class="kpi-bar-row"><span>${escapeHtml(label)}</span><span class="kpi-bar-track"><span class="kpi-bar-fill ${key==='commande'?'ai':''}" style="width:${Math.max(value?1:0,Math.min(100,share))}%"></span></span><b>${kpiNumber(value)}${key==='conversations'?'':` (${share.toLocaleString('fr-FR')} %)`}</b></div>`;
+      }).join('')}</div>
+      <p class="kpi-funnel-hint">${kpiNumber(data.withProfile)} fiche(s) client remplie(s) sur ${kpiNumber(total)} conversation(s) · ${kpiNumber(data?.current?.perdu)} marquée(s) « Perdu ».</p>`
+    : '<div class="kpi-empty">Aucune conversation sur la période.</div>';
+  if(adsTable){
+    const ads=Array.isArray(data?.ads)?data.ads:[];
+    adsTable.innerHTML=ads.length
+      ? `<thead><tr><th>Publicité</th><th>Conversations</th><th>Qualifiés</th><th>Devis</th><th>Visites</th><th>Commandes</th><th>Taux de commande</th></tr></thead>
+        <tbody>${ads.map(row=>`<tr><td>${escapeHtml(row.ad)}</td><td>${kpiNumber(row.conversations)}</td><td>${kpiNumber(row.qualifie)}</td><td>${kpiNumber(row.devis)}</td><td>${kpiNumber(row.visite)}</td><td><b>${kpiNumber(row.commande)}</b></td><td>${row.orderRate===null?'—':`${row.orderRate.toLocaleString('fr-FR')} %`}</td></tr>`).join('')}</tbody>`
+      : '<tbody><tr><td class="kpi-empty">Aucune conversation issue d’une publicité sur la période.</td></tr></tbody>';
+  }
 }
 
 function renderKpiBreakdowns(summary){
@@ -11655,6 +11725,7 @@ function conversationListTags(item){
     : '<span class="assigned">✓ Répondu</span>');
   if(item.assignedTo) status.push(`<span class="assigned">👤 ${escapeHtml(item.assignedTo)}</span>`);
   if(item.favorite) status.push('<span class="assigned">⭐ Favori</span>');
+  if(item.salesStage&&item.salesStage!=='nouveau') status.push(`<span class="sales-stage stage-${escapeHtml(item.salesStage)}">${escapeHtml(salesStageLabel(item.salesStage))}</span>`);
   if(!facebook){
     status.push(paused
       ? (pending?'<span class="ai-paused">🤖 IA en pause</span>':'<span class="assigned">👤 Suivi commercial</span>')
@@ -12787,6 +12858,199 @@ function buildConversationComposer(
   `;
 }
 
+// ============================================================
+// V6.39 — FICHE CLIENT COMMERCIALE
+// ============================================================
+const SALES_STAGE_FALLBACK = [
+  { key:'nouveau', label:'Nouveau' },
+  { key:'qualifie', label:'Qualifié' },
+  { key:'devis', label:'Devis envoyé' },
+  { key:'visite', label:'Visite showroom' },
+  { key:'commande', label:'Commande' },
+  { key:'perdu', label:'Perdu' }
+];
+let customerProfileOptions = null;
+let customerProfileOptionsPromise = null;
+
+function salesStageList(){
+  return customerProfileOptions?.stages?.length ? customerProfileOptions.stages : SALES_STAGE_FALLBACK;
+}
+
+function salesStageLabel(key){
+  return salesStageList().find(stage => stage.key === key)?.label || key;
+}
+
+function ensureCustomerProfileOptions(){
+  if(customerProfileOptions || customerProfileOptionsPromise) return;
+  customerProfileOptionsPromise = apiFetch(`${API}/conversations/profile-options`)
+    .then(data => {
+      customerProfileOptions = data;
+      const section = document.getElementById('customerProfileSection');
+      if(section && section.dataset.dirty !== '1' && !section.contains(document.activeElement) && selectedConversationContact === section.dataset.contact){
+        section.outerHTML = customerProfileSectionHtml(section.dataset.contact, selectedConversationData?.state || {});
+      }
+    })
+    .catch(() => { customerProfileOptionsPromise = null; });
+}
+
+function customerProfileSectionHtml(contact, state = {}){
+  const profile = state?.customerProfile && typeof state.customerProfile === 'object' ? state.customerProfile : {};
+  const stage = profile.stage || 'nouveau';
+  const readOnly = selectedConversationAccess(contact, state).readOnly === true;
+  const disabled = readOnly ? 'disabled' : '';
+  const showrooms = customerProfileOptions?.showrooms || [];
+  const meta = profile.updatedAt
+    ? `Mis à jour ${profile.updatedBy ? `par ${escapeHtml(profile.updatedBy)} ` : ''}le ${escapeHtml(formatDate(profile.updatedAt))}`
+    : 'Fiche pas encore remplie.';
+  return `
+    <div class="inbox-panel-section" id="customerProfileSection" data-contact="${escapeHtml(contact)}" data-stage="${escapeHtml(stage)}">
+      <div class="inbox-panel-title">Suivi commercial</div>
+      <div class="customer-profile-form" oninput="markCustomerProfileDirty()" onchange="markCustomerProfileDirty()">
+        <div class="customer-stage-chips" role="group" aria-label="Étape de vente">
+          ${salesStageList().map(item => `<button type="button" data-stage="${escapeHtml(item.key)}" aria-pressed="${item.key === stage}" onclick="selectCustomerStage(${jsArg(item.key)})" ${disabled}>${escapeHtml(item.label)}</button>`).join('')}
+        </div>
+        <div class="customer-profile-grid">
+          <label>Ville<input id="customerProfileCity" maxlength="60" value="${escapeHtml(profile.city || '')}" placeholder="Ex. Sfax" ${disabled}></label>
+          <label>Budget<input id="customerProfileBudget" maxlength="60" value="${escapeHtml(profile.budget || '')}" placeholder="Ex. 3000 DT" ${disabled}></label>
+        </div>
+        <label>Produits souhaités<input id="customerProfileProducts" maxlength="200" value="${escapeHtml(profile.products || '')}" placeholder="Ex. salon d’angle, table Opale" ${disabled}></label>
+        <label>Showroom conseillé
+          <select id="customerProfileShowroom" ${disabled}>
+            <option value="">—</option>
+            ${showrooms.map(item => `<option value="${escapeHtml(item.key)}" ${item.key === profile.showroom ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}
+            ${profile.showroom && !showrooms.some(item => item.key === profile.showroom) ? `<option value="${escapeHtml(profile.showroom)}" selected>${escapeHtml(profile.showroom)}</option>` : ''}
+          </select>
+        </label>
+        <label>Note interne<textarea id="customerProfileNote" maxlength="1000" placeholder="Besoin, contraintes, prochaine étape…" ${disabled}>${escapeHtml(profile.note || '')}</textarea></label>
+        ${readOnly ? '' : `
+        <div class="customer-profile-actions">
+          <button class="btn small" type="button" id="customerProfileSaveBtn" onclick="saveCustomerProfile()">💾 Enregistrer</button>
+          <button class="btn small" type="button" id="customerProfileAiBtn" onclick="suggestCustomerProfile()" title="L’IA lit la conversation et propose les champs ; vous vérifiez avant d’enregistrer">✨ Remplir avec l’IA</button>
+        </div>`}
+        <div class="customer-profile-meta" id="customerProfileMeta">${meta}</div>
+      </div>
+    </div>
+  `;
+}
+
+window.markCustomerProfileDirty = function(){
+  const section = document.getElementById('customerProfileSection');
+  if(!section || section.dataset.dirty === '1') return;
+  section.dataset.dirty = '1';
+  const meta = document.getElementById('customerProfileMeta');
+  if(meta){
+    meta.textContent = 'Modifications non enregistrées.';
+    meta.classList.add('is-dirty');
+  }
+};
+
+window.selectCustomerStage = function(key){
+  const section = document.getElementById('customerProfileSection');
+  if(!section) return;
+  section.dataset.stage = key;
+  section.querySelectorAll('.customer-stage-chips button').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.stage === key));
+  });
+  markCustomerProfileDirty();
+};
+
+function customerProfileFormValues(){
+  const value = id => String(document.getElementById(id)?.value || '').trim();
+  return {
+    stage: document.getElementById('customerProfileSection')?.dataset.stage || 'nouveau',
+    city: value('customerProfileCity'),
+    budget: value('customerProfileBudget'),
+    products: value('customerProfileProducts'),
+    showroom: value('customerProfileShowroom'),
+    note: String(document.getElementById('customerProfileNote')?.value || '').trim()
+  };
+}
+
+window.saveCustomerProfile = async function(){
+  const section = document.getElementById('customerProfileSection');
+  if(!section) return;
+  const contact = section.dataset.contact;
+  const button = document.getElementById('customerProfileSaveBtn');
+  section.dataset.busy = '1';
+  if(button) button.disabled = true;
+  try{
+    const result = await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}/profile`, {
+      method:'PUT',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify(customerProfileFormValues())
+    });
+    const current = document.getElementById('customerProfileSection');
+    if(current?.dataset.contact !== contact) return;
+    if(selectedConversationData?.contact === contact && selectedConversationData.state){
+      selectedConversationData.state.customerProfile = result.profile || null;
+    }
+    const item = conversations.find(entry => entry.contact === contact);
+    if(item){
+      item.salesStage = result.profile?.stage || '';
+      renderConversationsList();
+    }
+    current.outerHTML = customerProfileSectionHtml(contact, selectedConversationData?.state || { customerProfile: result.profile });
+  }catch(error){
+    await uiAlert(error.message || 'Enregistrement impossible.');
+  }finally{
+    const current = document.getElementById('customerProfileSection');
+    if(current){
+      current.dataset.busy = '';
+      const saveButton = document.getElementById('customerProfileSaveBtn');
+      if(saveButton) saveButton.disabled = false;
+    }
+  }
+};
+
+window.suggestCustomerProfile = async function(){
+  const section = document.getElementById('customerProfileSection');
+  if(!section) return;
+  const contact = section.dataset.contact;
+  const button = document.getElementById('customerProfileAiBtn');
+  section.dataset.busy = '1';
+  if(button){
+    button.disabled = true;
+    button.textContent = '✨ Analyse…';
+  }
+  try{
+    const data = await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}/profile/suggest`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body:'{}'
+    });
+    const current = document.getElementById('customerProfileSection');
+    if(current?.dataset.contact !== contact) return;
+    const profile = data?.profile || {};
+    // Les champs déjà remplis par le commercial ne sont jamais écrasés.
+    const fill = (id, value) => {
+      const field = document.getElementById(id);
+      if(field && value && !String(field.value || '').trim()) field.value = value;
+    };
+    fill('customerProfileCity', profile.city);
+    fill('customerProfileBudget', profile.budget);
+    fill('customerProfileProducts', profile.products);
+    fill('customerProfileShowroom', profile.showroom);
+    if(profile.note){
+      const note = document.getElementById('customerProfileNote');
+      if(note && !String(note.value || '').trim()) note.value = profile.note;
+    }
+    if(profile.stage && (current.dataset.stage || 'nouveau') === 'nouveau') selectCustomerStage(profile.stage);
+    markCustomerProfileDirty();
+    const meta = document.getElementById('customerProfileMeta');
+    if(meta) meta.textContent = 'Proposition de l’IA : vérifiez puis enregistrez.';
+  }catch(error){
+    await uiAlert(error.message || 'Analyse impossible.');
+  }finally{
+    const current = document.getElementById('customerProfileSection');
+    if(current) current.dataset.busy = '';
+    const aiButton = document.getElementById('customerProfileAiBtn');
+    if(aiButton){
+      aiButton.disabled = false;
+      aiButton.textContent = '✨ Remplir avec l’IA';
+    }
+  }
+};
+
 function renderCustomerPanel(
   contact,
   state
@@ -12845,6 +13109,19 @@ function renderCustomerPanel(
           ? 'En attente du choix'
           : '—';
 
+  // V6.39 — Le formulaire de la fiche client survit au rafraîchissement
+  // automatique (toutes les 5 s) tant qu'il est en cours de saisie.
+  const previousProfile = document.getElementById('customerProfileSection');
+  const keepProfile =
+    previousProfile &&
+    previousProfile.dataset.contact === String(contact) &&
+    (previousProfile.dataset.dirty === '1' || previousProfile.dataset.busy === '1' || previousProfile.contains(document.activeElement));
+  const focusedProfileField = keepProfile && previousProfile.contains(document.activeElement) ? document.activeElement : null;
+  const focusedSelection = focusedProfileField && typeof focusedProfileField.selectionStart === 'number'
+    ? [focusedProfileField.selectionStart, focusedProfileField.selectionEnd]
+    : null;
+  const panelScroll = panel.scrollTop;
+
   panel.innerHTML = `
     <div class="inbox-drawer-head">
       <div><strong>Fiche client</strong><span>Informations & actions</span></div>
@@ -12868,6 +13145,8 @@ function renderCustomerPanel(
         ? `<div class="inbox-info-row"><span>Mode MONDECO</span><strong>Lecture / supervision uniquement</strong></div>`
         : `<div class="inbox-info-row"><span>Relances</span><strong>${Number(state.followUpsSent || 0)}</strong></div>`}
     </div>
+
+    ${customerProfileSectionHtml(contact, state)}
 
     ${state.commercialAttentionReason || state.lastImageReason
       ? `<div class="inbox-panel-section"><div class="inbox-panel-title">Attention</div><div class="inbox-alert">${escapeHtml(state.commercialAttentionReason || state.lastImageReason)}</div></div>`
@@ -12912,6 +13191,16 @@ function renderCustomerPanel(
           </div>`}
     </div>
   `;
+
+  if(keepProfile){
+    document.getElementById('customerProfileSection')?.replaceWith(previousProfile);
+    if(focusedProfileField){
+      focusedProfileField.focus({ preventScroll:true });
+      if(focusedSelection) try{ focusedProfileField.setSelectionRange(...focusedSelection); }catch{}
+    }
+  }
+  panel.scrollTop = panelScroll;
+  ensureCustomerProfileOptions();
 }
 
 window.openConversation = async function(contact, targetMessageId = ''){

@@ -2,7 +2,7 @@
 
 Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
 
-Version **6.38.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux.
+Version **6.39.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux et fiche client commerciale.
 
 ## Architecture
 
@@ -73,6 +73,9 @@ Toutes les variables sont documentées dans `.env.example`.
 - **Logs** : identifiant `X-Request-Id` par requête, repris dans tous ses logs ; numéros masqués et contenu des messages retiré (`LOG_MESSAGE_CONTENT=true` pour un débogage ponctuel) ; `LOG_FORMAT=json` ; alertes d'erreurs vers `ALERT_WEBHOOK_URL` (Slack, Discord, Google Chat, Teams).
 
 ## Pilotage
+
+- **Fiche client** (panneau « Fiche client » d'une conversation, section Suivi commercial) : étape de vente (Nouveau, Qualifié, Devis envoyé, Visite showroom, Commande, Perdu), ville, budget, produits souhaités, showroom conseillé, note interne. Le bouton « ✨ Remplir avec l'IA » propose les champs à partir de la conversation, sans jamais écraser ce que le commercial a déjà saisi ; rien n'est enregistré sans clic sur « Enregistrer ». L'étape apparaît dans la liste des conversations.
+- **Parcours de vente** (page 📊 Indicateurs) : combien de conversations deviennent clients qualifiés, devis, visites et commandes, et quelles publicités vendent le plus.
 
 - **Copilote IA** (bouton ✨ dans la zone de saisie d'une conversation) : en journée, quand l'IA ne répond pas aux clients, le commercial obtient un brouillon de réponse rédigé avec les mêmes instructions, le même catalogue et le même contexte publicitaire que l'IA. Le brouillon est modifiable et n'est jamais envoyé automatiquement. Quand une information fiable manque, l'IA laisse un passage `[À COMPLÉTER : …]` (surligné) ; l'envoi est bloqué tant qu'il en reste un. Le budget IA mensuel s'applique ; quota `AI_COPILOT_MAX_PER_USER_PER_HOUR` (60 par défaut).
 

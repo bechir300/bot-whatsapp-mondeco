@@ -39,6 +39,10 @@ const {
   cleanCopilotDraft,
   lastCustomerText
 } = require('./lib/reply-copilot');
+const {
+  buildProfileExtractionPrompt,
+  parseProfileExtraction
+} = require('./lib/customer-profile');
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const {
@@ -53,6 +57,7 @@ const {
   getBotSettings,
   setChatHandler,
   setReplySuggestionHandler,
+  setProfileSuggestionHandler,
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
@@ -4847,6 +4852,88 @@ async function generateReplySuggestion({
   };
 }
 
+// V6.39 — Fiche client : l'IA propose ville, budget, produits, showroom
+// et étape de vente à partir de la conversation. Le commercial vérifie et
+// enregistre lui-même. Même quota et même budget que le copilote.
+async function generateCustomerProfileSuggestion({
+  contact,
+  entries = [],
+  showrooms = [],
+  actor = {}
+}) {
+  const normalizedContact =
+    safeString(contact);
+
+  const turns =
+    buildCopilotTranscript(entries, { maxTurns: 30, maxTotalChars: 8000 });
+
+  if (!turns.length) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_EMPTY_CONVERSATION',
+      error: 'Aucun message récent dans cette conversation : rien à analyser.'
+    };
+  }
+
+  if (copilotQuota.reserve(safeString(actor?.id) || 'anonymous')) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_QUOTA',
+      error: 'Trop de demandes à l’IA cette heure-ci. Réessayez un peu plus tard.'
+    };
+  }
+
+  if (isAiMonthlyBudgetExceeded()) {
+    return {
+      ok: false,
+      errorCode: 'COPILOT_BUDGET',
+      error: 'Budget IA mensuel atteint : analyse suspendue jusqu’au mois prochain.'
+    };
+  }
+
+  const started = Date.now();
+  const reply =
+    await callAIChat(
+      {
+        messages: [
+          {
+            role: 'system',
+            content: buildProfileExtractionPrompt(showrooms)
+          },
+          {
+            role: 'user',
+            content: turns
+              .map(turn => `${turn.role === 'customer' ? 'CLIENT' : 'MONDECO'} : ${turn.text}`)
+              .join('\n')
+          }
+        ],
+        max_completion_tokens: 600
+      },
+      {
+        vision: false,
+        ignoreActiveHours: true
+      }
+    );
+
+  const profile =
+    parseProfileExtraction(reply, { showroomKeys: showrooms.map(item => item.key) });
+
+  console.log(
+    `🗂️ Fiche client : analyse IA pour ${maskPhoneForLog(normalizedContact)} en ${Date.now() - started}ms` +
+    (profile ? '' : ' (réponse illisible)')
+  );
+
+  if (!profile) {
+    return {
+      ok: false,
+      errorCode: 'PROFILE_UNREADABLE',
+      error: 'L’IA n’a pas pu analyser cette conversation. Remplissez la fiche à la main.'
+    };
+  }
+
+  return { ok: true, profile };
+}
+
 // ============================================================
 // VISION
 // ============================================================
@@ -5767,6 +5854,7 @@ function handleWhatsAppCallsWebhook(value) {
 
 setChatHandler(generateReply);
 setReplySuggestionHandler(generateReplySuggestion);
+setProfileSuggestionHandler(generateCustomerProfileSuggestion);
 setImageChatHandler(generateVisionReply);
 
 setCustomizationHandler(

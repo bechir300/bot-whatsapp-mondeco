@@ -14,6 +14,14 @@ const { createJsonObjectStore } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 const { slimConversationState } = require('./lib/ad-referral');
+const { SALES_STAGES, applyCustomerProfileUpdate, computeSalesFunnel } = require('./lib/customer-profile');
+const { SHOWROOMS } = require('./location-showrooms');
+
+// V6.39 — Showrooms proposés dans la fiche client.
+const PROFILE_SHOWROOMS = Object.entries(SHOWROOMS).map(([key, item]) => ({
+  key,
+  name: String(item?.name || key).replace(/^MONDECO\s+/i, '')
+}));
 // V6.36.45 — Lecture asynchrone ligne par ligne des fichiers JSONL, pour
 // le générateur de rapport WhatsApp personnalisé (jamais de blocage du
 // thread principal, contrairement à un JSON.parse complet du fichier).
@@ -14477,6 +14485,7 @@ router.post(
 
 let chatHandler = null;
 let replySuggestionHandler = null;
+let profileSuggestionHandler = null;
 let imageChatHandler = null;
 let commercialSendHandler = null;
 let whatsappCallHandler = null;
@@ -14500,6 +14509,17 @@ function setReplySuggestionHandler(fn) {
   }
 
   replySuggestionHandler = fn;
+}
+
+// V6.39 — Fiche client : proposition de remplissage par l'IA.
+function setProfileSuggestionHandler(fn) {
+  if (typeof fn !== 'function') {
+    throw new Error(
+      'setProfileSuggestionHandler attend une fonction.'
+    );
+  }
+
+  profileSuggestionHandler = fn;
 }
 
 function setImageChatHandler(fn) {
@@ -21762,6 +21782,11 @@ async function loadArchivedConversationList(user) {
   return items.sort((a,b)=>conversationTimeMs(b.lastTime)-conversationTimeMs(a.lastTime));
 }
 
+// V6.39 — Options de la fiche client (déclarée avant /:contact).
+router.get('/api/conversations/profile-options', requireAuth, (req, res) => {
+  res.json({ stages: SALES_STAGES, showrooms: PROFILE_SHOWROOMS });
+});
+
 router.get('/api/conversations/archives', requireAuth, async (req,res) => {
   try {
     if(!requireCommercialMessageChannelAccess(req,res,'whatsapp')) return;
@@ -21907,6 +21932,7 @@ router.get('/api/conversations', requireAuth, async (req, res) => {
         resolved: Boolean(state.resolved),
         resolvedAt: safeString(state?.resolvedAt),
         activeProductName: safeString(state?.activeProductName),
+        salesStage: safeString(state?.customerProfile?.stage),
         manualTakeover: Boolean(state.manualTakeover),
         humanPaused: Boolean(state.humanPaused),
         pausedUntil: safeString(state?.pausedUntil),
@@ -22754,6 +22780,83 @@ router.post('/api/conversations/:contact/suggest-reply', requireAuth, async (req
     });
   } catch (error) {
     console.error('❌ Copilote IA :', error.message);
+    return res.status(502).json({ error: 'L’IA ne répond pas pour le moment. Réessayez dans un instant.' });
+  }
+});
+
+// ============================================================
+// V6.39 — FICHE CLIENT COMMERCIALE
+// ============================================================
+
+function profileRouteContext(req, res) {
+  const contact = safeString(req.params.contact);
+  if (!contact) {
+    res.status(400).json({ error: 'Contact client obligatoire.' });
+    return null;
+  }
+  if (!requireCommercialConversationChannelAccess(req, res, contact)) return null;
+  const state = getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || {};
+  const channel = safeString(state?.channel).toLowerCase() ||
+    (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+  return { contact, state, channel };
+}
+
+router.put('/api/conversations/:contact/profile', requireAuth, (req, res) => {
+  try {
+    const context = profileRouteContext(req, res);
+    if (!context) return;
+    const actor = safeString(req.user?.name || req.user?.email);
+    const input = req.body && typeof req.body === 'object' ? req.body : {};
+    let saved = null;
+    const updated = updateConversationStateAdmin(context.contact, current => {
+      const next = applyCustomerProfileUpdate(current.customerProfile, input, {
+        actor,
+        showroomKeys: PROFILE_SHOWROOMS.map(item => item.key)
+      });
+      if (!next) return current;
+      saved = next;
+      return { ...current, customerProfile: next };
+    });
+    if (saved && saved.stageChangedAt === saved.updatedAt) {
+      appendTeamActivity({
+        type: 'customer_stage',
+        userId: safeString(req.user?.id),
+        userName: actor,
+        contact: context.contact,
+        channel: context.channel,
+        reason: safeString(saved.stage)
+      });
+    }
+    return res.json({ ok: true, changed: Boolean(saved), profile: updated?.customerProfile || null });
+  } catch (error) {
+    console.error('❌ Fiche client :', error.message);
+    return res.status(500).json({ error: 'Impossible d’enregistrer la fiche client.' });
+  }
+});
+
+router.post('/api/conversations/:contact/profile/suggest', requireAuth, async (req, res) => {
+  try {
+    if (!profileSuggestionHandler) {
+      return res.status(503).json({ error: 'L’analyse IA n’est pas encore connectée.' });
+    }
+    const context = profileRouteContext(req, res);
+    if (!context) return;
+    const log = await loadWhatsAppLog();
+    const entries = normalizeInstagramThreadEntries(conversationEntriesForDetail(log, context.contact));
+    const result = await profileSuggestionHandler({
+      contact: context.contact,
+      channel: context.channel,
+      entries,
+      showrooms: PROFILE_SHOWROOMS,
+      actor: { id: safeString(req.user?.id), name: safeString(req.user?.name), role: safeString(req.user?.role) }
+    });
+    if (!result?.ok) {
+      const status = result?.errorCode === 'COPILOT_QUOTA' ? 429 : result?.errorCode === 'COPILOT_EMPTY_CONVERSATION' ? 422 : 503;
+      return res.status(status).json({ error: result?.error || 'Analyse impossible.', errorCode: result?.errorCode || '' });
+    }
+    return res.json({ profile: result.profile });
+  } catch (error) {
+    console.error('❌ Fiche client (IA) :', error.message);
     return res.status(502).json({ error: 'L’IA ne répond pas pour le moment. Réessayez dans un instant.' });
   }
 });
@@ -23896,6 +23999,29 @@ router.get(
   }
 );
 
+// V6.39 — Parcours de vente : de la conversation à la commande, par
+// publicité. Calculé à la demande depuis l'état des conversations
+// (agrégats uniquement).
+router.get(
+  '/api/sales-funnel',
+  requireAdminOrCommercialManager,
+  (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(90, Number(req.query?.days) || 30));
+      const started = Date.now();
+      const funnel = computeSalesFunnel(loadConversationStatesAdmin(), {
+        sinceMs: Date.now() - days * 24 * 60 * 60 * 1000
+      });
+      const elapsed = Date.now() - started;
+      if (elapsed > 500) console.log(`⏱️ Parcours de vente calculé en ${elapsed} ms`);
+      return res.json({ days, stages: SALES_STAGES, ...funnel });
+    } catch (error) {
+      console.error('❌ Parcours de vente :', error.message);
+      return res.status(500).json({ error: 'Impossible de calculer le parcours de vente.' });
+    }
+  }
+);
+
 // ============================================================
 // V6.37 — ÉVALUATION DE LA QUALITÉ IA
 // ============================================================
@@ -24012,6 +24138,7 @@ module.exports = {
   getBotSettings,
   setChatHandler,
   setReplySuggestionHandler,
+  setProfileSuggestionHandler,
   setImageChatHandler,
   setCustomizationHandler,
   setCommercialSendHandler,
