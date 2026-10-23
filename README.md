@@ -2,7 +2,7 @@
 
 Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
 
-Version **6.42.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (étapes 1 et 2 : couleurs, polices, boîte de réception).
+Version **6.43.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (couleurs, polices, boîte de réception en 3 colonnes, mode sombre).
 
 ## Architecture
 
@@ -86,6 +86,16 @@ Toutes les variables sont documentées dans `.env.example`.
 
 - **Indicateurs** (menu 📊, admin et responsable commercial) : délais de réponse, part réglée par l'IA, transferts, conversations sans réponse, intentions showroom et prix, publicités, canaux. Les journées passées sont conservées dans `kpi-daily.json`, sans aucune donnée client.
 - **Évaluation de la qualité IA** (page Discussion de test, administrateurs) : rejoue `evals/ai-reference-questions.json` et des questions de prix du catalogue. À relancer après chaque modification des instructions, du catalogue ou du modèle.
+
+## Mode sombre
+
+Bouton « Mode sombre » en bas du menu (choix mémorisé par appareil). Les règles sombres sont générées automatiquement à partir du CSS de `Admin.html` par `scripts/build-dark-theme.js`. Après une modification importante du CSS, lancez :
+
+```bash
+npm run build:dark
+```
+
+`npm test` signale un mode sombre qui n'est plus à jour.
 
 ## Qualité
 
