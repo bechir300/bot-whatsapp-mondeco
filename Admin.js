@@ -16,6 +16,7 @@ const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./li
 const { slimConversationState } = require('./lib/ad-referral');
 const { SALES_STAGES, applyCustomerProfileUpdate, computeSalesFunnel } = require('./lib/customer-profile');
 const { SHOWROOMS } = require('./location-showrooms');
+const { readResponseBufferWithLimit } = require('./lib/http');
 
 // V6.39 — Showrooms proposés dans la fiche client.
 const PROFILE_SHOWROOMS = Object.entries(SHOWROOMS).map(([key, item]) => ({
@@ -14988,6 +14989,81 @@ router.post(
   }
 );
 
+// V6.40 — Message WhatsApp interactif : fiche produit (photo facultative,
+// déjà convertie en JPEG par le navigateur) ou question à boutons.
+router.post(
+  '/api/commercial/send/interactive',
+  requireAuth,
+  uploadCommercialMedia,
+  async (req, res) => {
+    try {
+      if (!commercialSendHandler) {
+        return res.status(503).json({ error: 'L’envoi commercial omnicanal n’est pas encore connecté.' });
+      }
+      const contact = safeString(req.body?.contact);
+      const channel = contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp';
+      if (channel !== 'whatsapp') {
+        return res.status(400).json({ error: 'Les fiches produit et les boutons sont disponibles uniquement sur WhatsApp.' });
+      }
+      const externalContact = normalizePhone(safeString(req.body?.externalContact) || contact);
+      if (!externalContact) return res.status(400).json({ error: 'Numéro client obligatoire.' });
+
+      const kind = safeString(req.body?.kind) === 'product' ? 'product' : 'buttons';
+      let interactive;
+      if (kind === 'product') {
+        const product = loadProducts().find(item => safeString(item?.id) === safeString(req.body?.productId));
+        if (!product) return res.status(404).json({ error: 'Produit introuvable dans le catalogue.' });
+        interactive = { kind, product, intro: safeString(req.body?.intro).slice(0, 300) };
+      } else {
+        let buttons = req.body?.buttons;
+        if (typeof buttons === 'string') {
+          try { buttons = JSON.parse(buttons); } catch { buttons = [buttons]; }
+        }
+        interactive = { kind, text: safeString(req.body?.text), buttons: Array.isArray(buttons) ? buttons : [] };
+      }
+
+      if (req.file && !/^image\/(jpe?g|png)$/i.test(safeString(req.file.mimetype))) {
+        return res.status(400).json({ error: 'La photo doit être en JPEG ou PNG.' });
+      }
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
+
+      const result = await commercialSendHandler({
+        phone: externalContact,
+        contact,
+        channel,
+        externalContact,
+        interactive,
+        file: req.file && kind === 'product'
+          ? { buffer: req.file.buffer, mimetype: req.file.mimetype, originalname: req.file.originalname, size: req.file.size }
+          : null,
+        actor: {
+          id: safeString(req.user?.id),
+          name: safeString(req.user?.name),
+          email: safeString(req.user?.email),
+          role: safeString(req.user?.role)
+        }
+      });
+
+      updateConversationStateAdmin(contact, current => ({
+        ...current,
+        unreadCount: 0,
+        lastUnreadMessageId: '',
+        lastReadAt: new Date().toISOString()
+      }));
+      markNotificationsReadForContact(contact, req.user);
+
+      return res.json({ success: true, ...(result && typeof result === 'object' ? result : {}) });
+    } catch (error) {
+      console.error('❌ Envoi interactif commercial :', error.message);
+      return res.status(Number(error?.statusCode) || 500).json({
+        error: error.message || 'Impossible d’envoyer le message au client.',
+        errorCode: safeString(error?.code)
+      });
+    }
+  }
+);
+
 router.post(
   '/api/commercial/send-sticker',
   requireAuth,
@@ -21781,6 +21857,75 @@ async function loadArchivedConversationList(user) {
 
   return items.sort((a,b)=>conversationTimeMs(b.lastTime)-conversationTimeMs(a.lastTime));
 }
+
+// V6.40 — Choix d'un produit à envoyer en fiche WhatsApp (accessible aux
+// commerciaux, qui n'ont pas accès au catalogue complet). Déclarées avant
+// /:contact.
+function pickerSearchText(value) {
+  return safeString(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function productPickerItem(product) {
+  return {
+    id: safeString(product?.id),
+    name: safeString(product?.name),
+    price: safeString(product?.price),
+    promoPrice: safeString(product?.promoPrice),
+    dimensions: safeString(product?.dimensions),
+    hasImage: Boolean(getLocalProductImagePath(product) || /^https:\/\//i.test(safeString(product?.image))),
+    hasUrl: /^https:\/\//i.test(safeString(product?.productUrl))
+  };
+}
+
+router.get('/api/conversations/product-picker', requireAuth, (req, res) => {
+  try {
+    const query = pickerSearchText(req.query?.q);
+    const words = query.split(/\s+/).filter(Boolean);
+    const items = loadProducts()
+      .filter(product => product && product.active !== false && safeString(product.name))
+      .filter(product => {
+        if (!words.length) return true;
+        const haystack = pickerSearchText(`${product.name} ${product.category || ''} ${product.colors || ''}`);
+        return words.every(word => haystack.includes(word));
+      })
+      .slice(0, 40)
+      .map(productPickerItem);
+    return res.json({ items });
+  } catch (error) {
+    console.error('❌ Choix produit :', error.message);
+    return res.status(500).json({ error: 'Catalogue indisponible.' });
+  }
+});
+
+// Photo du produit servie depuis le même site : le navigateur peut la
+// convertir en JPEG (WhatsApp refuse le WebP) sans blocage CORS.
+router.get('/api/conversations/product-picker/:id/image', requireAuth, async (req, res) => {
+  try {
+    const product = loadProducts().find(item => safeString(item?.id) === safeString(req.params.id));
+    if (!product) return res.status(404).json({ error: 'Produit introuvable.' });
+
+    const localPath = getLocalProductImagePath(product);
+    if (localPath && fs.existsSync(localPath)) {
+      res.setHeader('Cache-Control', 'private, max-age=300');
+      return res.sendFile(localPath);
+    }
+
+    const remote = safeString(product.image);
+    if (!/^https:\/\//i.test(remote)) return res.status(404).json({ error: 'Ce produit n’a pas de photo.' });
+    const response = await fetch(remote, { signal: AbortSignal.timeout(15000), redirect: 'follow' });
+    const type = safeString(response.headers.get('content-type')).toLowerCase();
+    if (!response.ok || !type.startsWith('image/')) {
+      return res.status(502).json({ error: 'Photo du produit indisponible.' });
+    }
+    const buffer = await readResponseBufferWithLimit(response, 10 * 1024 * 1024);
+    res.setHeader('Content-Type', type.split(';')[0]);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.send(buffer);
+  } catch (error) {
+    console.warn('⚠️ Photo produit :', error.message);
+    return res.status(502).json({ error: 'Photo du produit indisponible.' });
+  }
+});
 
 // V6.39 — Options de la fiche client (déclarée avant /:contact).
 router.get('/api/conversations/profile-options', requireAuth, (req, res) => {

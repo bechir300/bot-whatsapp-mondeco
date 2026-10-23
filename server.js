@@ -40,6 +40,11 @@ const {
   lastCustomerText
 } = require('./lib/reply-copilot');
 const {
+  buildProductCard,
+  buildReplyButtons,
+  interactiveReplyAsTextMessage
+} = require('./lib/whatsapp-interactive');
+const {
   buildProfileExtractionPrompt,
   parseProfileExtraction
 } = require('./lib/customer-profile');
@@ -5909,7 +5914,8 @@ setCommercialSendHandler(
     mediaKind,
     file,
     stickerId,
-    sendMode
+    sendMode,
+    interactive
   }) => {
     // V6.35.36 — Chronométrage phase par phase : appel réseau Meta vs
     // écriture des données (état conversation, SLA, journal). Permet de
@@ -6033,6 +6039,25 @@ setCommercialSendHandler(
       );
       sentMediaKind = 'template';
       replyLogText = `📨 Relance WhatsApp · modèle ${WHATSAPP_REENGAGEMENT_TEMPLATE_NAME}`;
+    } else if (interactive && resolvedChannel === 'whatsapp') {
+      // V6.40 — Fiche produit ou question à boutons : même règle de
+      // fenêtre 24 h qu'un message libre.
+      assertWhatsAppWithinCustomerWindow(conversationKey);
+      const built =
+        interactive.kind === 'product'
+          ? buildProductCard(interactive.product, {
+              hasImage: Boolean(file?.buffer),
+              intro: interactive.intro
+            })
+          : buildReplyButtons(interactive.text, interactive.buttons);
+      result = await sendWhatsAppInteractive(
+        resolvedExternal,
+        built.interactive,
+        file?.buffer ? file : null
+      );
+      replyLogText = built.logText;
+      // La photo d'en-tête est gardée dans l'historique comme une image.
+      sentMediaKind = file?.buffer ? 'image' : '';
     } else if (stickerId) {
       // V6.36.8 — Sticker WhatsApp : même règle de fenêtre 24h que texte/
       // média (un sticker est un message libre comme un autre pour Meta).
@@ -6786,6 +6811,72 @@ async function uploadWhatsAppMedia(file) {
   }
 
   return safeString(data.id);
+}
+
+// V6.40 — Message interactif (fiche produit, boutons). headerFile : photo
+// d'en-tête facultative, envoyée d'abord à Meta comme média.
+async function sendWhatsAppInteractive(
+  to,
+  interactive,
+  headerFile = null
+) {
+  const cleanRecipient =
+    normalizePhone(to);
+
+  if (!cleanRecipient) {
+    throw new Error('Destinataire WhatsApp manquant.');
+  }
+
+  const payload = JSON.parse(JSON.stringify(interactive));
+
+  if (payload?.header?.type === 'image') {
+    if (!headerFile?.buffer) {
+      throw new Error('Photo du produit manquante.');
+    }
+    const mime = safeString(headerFile.mimetype).toLowerCase().split(';')[0];
+    if (!['image/jpeg', 'image/jpg', 'image/png'].includes(mime)) {
+      throw new Error('La photo d’une fiche produit doit être en JPEG ou PNG.');
+    }
+    payload.header.image = { id: await uploadWhatsAppMedia(headerFile) };
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+    {
+      method: 'POST',
+      // Pas de reprise : un envoi n'est pas rejouable.
+      signal: AbortSignal.timeout(SEND_MESSAGE_TIMEOUT_MS),
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type':
+          'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: cleanRecipient,
+        type: 'interactive',
+        interactive: payload
+      })
+    }
+  );
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message ||
+      `Envoi du message interactif WhatsApp impossible (${response.status}).`
+    );
+  }
+
+  return data;
 }
 
 async function sendWhatsAppMedia(
@@ -9911,7 +10002,18 @@ function handleHumanMessageEcho(value) {
 // MESSAGE CLIENT
 // ============================================================
 
-async function processSingleMessage(message, webhookMeta = {}) {
+async function processSingleMessage(rawMessage, webhookMeta = {}) {
+  // V6.40 — Un clic sur un bouton (message interactif ou modèle) est traité
+  // comme un message texte : titre du bouton = texte du client.
+  const message =
+    interactiveReplyAsTextMessage(rawMessage);
+
+  if (message !== rawMessage) {
+    console.log(
+      `🔘 Réponse à un bouton WhatsApp (${message.interactive_reply.kind}, ${message.interactive_reply.id || 'sans id'})`
+    );
+  }
+
   const messageId =
     safeString(message?.id);
 

@@ -2,7 +2,7 @@
 
 Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
 
-Version **6.39.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux et fiche client commerciale.
+Version **6.40.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale et messages WhatsApp interactifs.
 
 ## Architecture
 
@@ -73,6 +73,11 @@ Toutes les variables sont documentées dans `.env.example`.
 - **Logs** : identifiant `X-Request-Id` par requête, repris dans tous ses logs ; numéros masqués et contenu des messages retiré (`LOG_MESSAGE_CONTENT=true` pour un débogage ponctuel) ; `LOG_FORMAT=json` ; alertes d'erreurs vers `ALERT_WEBHOOK_URL` (Slack, Discord, Google Chat, Teams).
 
 ## Pilotage
+
+- **Messages WhatsApp interactifs** (bouton ＋ d'une conversation WhatsApp) :
+  - « 🛋️ Fiche produit » : photo, prix (promotion barrée), dimensions et bouton « Voir le produit » vers le site ; sans lien, trois boutons de réponse. Les photos WebP sont converties en JPEG.
+  - « 🔘 Question à boutons » : une question et jusqu'à 3 boutons (20 caractères chacun).
+  - Un clic du client sur un bouton arrive comme un message texte normal (IA, transfert, notifications inchangés). Fenêtre de 24 h obligatoire, comme pour un message libre.
 
 - **Fiche client** (panneau « Fiche client » d'une conversation, section Suivi commercial) : étape de vente (Nouveau, Qualifié, Devis envoyé, Visite showroom, Commande, Perdu), ville, budget, produits souhaités, showroom conseillé, note interne. Le bouton « ✨ Remplir avec l'IA » propose les champs à partir de la conversation, sans jamais écraser ce que le commercial a déjà saisi ; rien n'est enregistré sans clic sur « Enregistrer ». L'étape apparaît dans la liste des conversations.
 - **Parcours de vente** (page 📊 Indicateurs) : combien de conversations deviennent clients qualifiés, devis, visites et commandes, et quelles publicités vendent le plus.

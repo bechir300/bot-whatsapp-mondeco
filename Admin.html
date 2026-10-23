@@ -6905,6 +6905,27 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 
 
 /* V6.37 — boîtes de dialogue maison (remplacent confirm()/prompt()) */
+.wa-interactive-dialog{max-width:520px}
+.wa-interactive-dialog h3{margin:0;padding:20px 22px 4px;font-size:17px}
+.wa-interactive-dialog .wa-interactive-help{margin:0;padding:0 22px 8px;font-size:13px;color:var(--muted)}
+.wa-interactive-fields{display:grid;gap:10px;padding:6px 22px 0}
+.wa-interactive-fields label{display:grid;gap:4px;font-size:13px;font-weight:700}
+.wa-interactive-fields input,.wa-interactive-fields textarea{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--line,#e7ded4);border-radius:10px;font:inherit;font-size:14px;background:#fff;color:inherit}
+.wa-interactive-fields textarea{min-height:70px;resize:vertical}
+.wa-product-results{display:grid;gap:6px;max-height:230px;overflow-y:auto;padding:2px}
+.wa-product-result{display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:center;text-align:left;padding:6px 8px;border:1px solid var(--line,#e7ded4);border-radius:10px;background:transparent;font:inherit;color:inherit;cursor:pointer}
+.wa-product-result[aria-pressed="true"]{border-color:#1f8f4e;background:#eef8f1}
+.wa-product-result img,.wa-product-result .wa-product-noimg{width:44px;height:44px;border-radius:8px;object-fit:cover;background:#f1ece6;display:grid;place-items:center}
+.wa-product-result strong{display:block;font-size:13.5px}
+.wa-product-result small{font-size:12px;color:var(--muted)}
+.wa-interactive-preview{margin:12px 22px 0;padding:10px;border-radius:12px;background:#e7ddd3}
+.wa-interactive-bubble{max-width:300px;background:#fff;border-radius:10px;overflow:hidden;font-size:13.5px;line-height:1.4;box-shadow:0 1px 1px rgba(0,0,0,.08)}
+.wa-interactive-bubble img{display:block;width:100%;max-height:170px;object-fit:cover}
+.wa-interactive-bubble .wa-ib-head{padding:8px 10px 0;font-weight:800}
+.wa-interactive-bubble .wa-ib-body{padding:8px 10px;white-space:pre-line}
+.wa-interactive-bubble .wa-ib-foot{padding:0 10px 8px;font-size:11.5px;color:#8a8178}
+.wa-interactive-bubble .wa-ib-btn{display:block;border-top:1px solid #eee;padding:8px;text-align:center;color:#0a7cff;font-weight:700}
+.wa-interactive-count{font-weight:400;color:var(--muted);font-size:11.5px}
 .ui-dialog-backdrop{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(23,18,14,.58)}
 .ui-dialog{width:100%;max-width:460px;max-height:90vh;overflow-y:auto;background:var(--panel,#fff);color:var(--text,#211b16);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 .ui-dialog-body{padding:22px 22px 8px;font-size:15px;line-height:1.5;white-space:pre-line;overflow-wrap:anywhere}
@@ -12763,6 +12784,16 @@ function buildConversationComposer(
           <span class="wa-attachment-icon">😊</span>
           <span>Sticker</span>
         </button>
+
+        <button type="button" class="wa-attachment-option" role="menuitem" onclick="openProductCardComposer(${jsArg(contact)})">
+          <span class="wa-attachment-icon">🛋️</span>
+          <span>Fiche produit</span>
+        </button>
+
+        <button type="button" class="wa-attachment-option" role="menuitem" onclick="openButtonsComposer(${jsArg(contact)})">
+          <span class="wa-attachment-icon">🔘</span>
+          <span>Question à boutons</span>
+        </button>
       </div>
       ` : ''}
 
@@ -15340,6 +15371,236 @@ window.suggestConversationReply = async function(contact){
     currentButton?.classList.remove('is-loading');
     if(currentButton) currentButton.disabled = false;
   }
+};
+
+// ============================================================
+// V6.40 — MESSAGES WHATSAPP INTERACTIFS (fiche produit, boutons)
+// ============================================================
+function waInteractiveDialog(html){
+  const previousFocus = document.activeElement;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'ui-dialog-backdrop';
+  backdrop.innerHTML = `<div class="ui-dialog wa-interactive-dialog" role="dialog" aria-modal="true">${html}</div>`;
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    backdrop.remove();
+    try{ previousFocus?.focus?.(); }catch{}
+  };
+  const onKey = event => {
+    if(event.key === 'Escape'){ event.preventDefault(); event.stopPropagation(); close(); }
+  };
+  backdrop.addEventListener('click', event => {
+    if(event.target === backdrop || event.target.closest('[data-wa-close]')) close();
+  });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(backdrop);
+  return { root: backdrop, close };
+}
+
+function waInteractiveBubbleHtml({ image = '', header = '', body = '', footer = '', buttons = [] }){
+  return `<div class="wa-interactive-bubble">
+    ${image ? `<img src="${escapeHtml(image)}" alt="">` : ''}
+    ${header ? `<div class="wa-ib-head">${escapeHtml(header)}</div>` : ''}
+    <div class="wa-ib-body">${escapeHtml(body)}</div>
+    ${footer ? `<div class="wa-ib-foot">${escapeHtml(footer)}</div>` : ''}
+    ${buttons.map(label => `<span class="wa-ib-btn">${escapeHtml(label)}</span>`).join('')}
+  </div>`;
+}
+
+function waPriceText(value){
+  const clean = String(value || '').trim();
+  return !clean ? '' : /dt|tnd|dinar/i.test(clean) ? clean : `${clean} DT`;
+}
+
+async function sendWhatsAppInteractiveForm(contact, fields, file = null){
+  const item = conversations.find(entry => entry.contact === contact) || { contact };
+  const form = new FormData();
+  form.append('contact', contact);
+  form.append('externalContact', conversationExternalContact(item));
+  for(const [key, value] of Object.entries(fields)){
+    form.append(key, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  if(file) form.append('file', file, file.name || 'photo.jpg');
+  await apiFetch(`${API}/commercial/send/interactive`, { method:'POST', body:form });
+}
+
+window.openProductCardComposer = function(contact){
+  closeConversationComposerMenus();
+  const composerText = String(document.getElementById('conversationQuickReply')?.value || '').trim();
+  const dialog = waInteractiveDialog(`
+    <h3>🛋️ Envoyer une fiche produit</h3>
+    <p class="wa-interactive-help">Photo, prix et bouton « Voir le produit » dans un seul message WhatsApp.</p>
+    <div class="wa-interactive-fields">
+      <label>Produit<input type="search" data-wa="search" placeholder="Rechercher : salon, table Opale…" autocomplete="off"></label>
+      <div class="wa-product-results" data-wa="results" role="listbox" aria-label="Produits"></div>
+      <label>Message d’accompagnement (facultatif)<textarea data-wa="intro" maxlength="300" placeholder="Ex. Voici le modèle dont nous avons parlé 😊">${escapeHtml(composerText)}</textarea></label>
+    </div>
+    <div class="wa-interactive-preview" data-wa="preview"><small>Choisissez un produit pour voir l’aperçu.</small></div>
+    <div class="ui-dialog-actions">
+      <button type="button" class="btn" data-wa-close>Annuler</button>
+      <button type="button" class="btn primary" data-wa="send" disabled>Envoyer</button>
+    </div>
+  `);
+  const root = dialog.root;
+  const search = root.querySelector('[data-wa="search"]');
+  const results = root.querySelector('[data-wa="results"]');
+  const intro = root.querySelector('[data-wa="intro"]');
+  const preview = root.querySelector('[data-wa="preview"]');
+  const sendButton = root.querySelector('[data-wa="send"]');
+  let items = [];
+  let selected = null;
+  let searchTimer = null;
+  let searchGeneration = 0;
+
+  const imageUrl = item => `${API}/conversations/product-picker/${encodeURIComponent(item.id)}/image`;
+
+  const renderPreview = () => {
+    if(!selected){
+      preview.innerHTML = '<small>Choisissez un produit pour voir l’aperçu.</small>';
+      sendButton.disabled = true;
+      return;
+    }
+    const price = waPriceText(selected.price);
+    const promo = waPriceText(selected.promoPrice);
+    const lines = [];
+    if(intro.value.trim()) lines.push(intro.value.trim(), '');
+    lines.push(selected.name);
+    if(promo && price && promo !== price) lines.push(`💰 ${promo} au lieu de ${price}`);
+    else if(promo || price) lines.push(`💰 ${promo || price}`);
+    if(selected.dimensions) lines.push(`📐 ${selected.dimensions}`);
+    preview.innerHTML = waInteractiveBubbleHtml({
+      image: selected.hasImage ? imageUrl(selected) : '',
+      header: selected.hasImage ? '' : selected.name,
+      body: lines.join('\n'),
+      footer: 'MONDECO',
+      buttons: selected.hasUrl ? ['🔗 Voir le produit'] : ['Ça m’intéresse', 'Le voir en showroom', 'Autres modèles']
+    });
+    sendButton.disabled = false;
+  };
+
+  const renderResults = () => {
+    results.innerHTML = items.length
+      ? items.map((item, index) => `<button type="button" class="wa-product-result" data-index="${index}" aria-pressed="${selected?.id === item.id}">
+          ${item.hasImage ? `<img src="${escapeHtml(imageUrl(item))}" alt="" loading="lazy">` : '<span class="wa-product-noimg">🛋️</span>'}
+          <span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(waPriceText(item.promoPrice || item.price) || 'Prix non renseigné')}${item.hasUrl ? '' : ' · sans lien site'}</small></span>
+        </button>`).join('')
+      : '<small>Aucun produit trouvé.</small>';
+  };
+
+  const load = async () => {
+    const generation = ++searchGeneration;
+    try{
+      const data = await apiFetch(`${API}/conversations/product-picker?q=${encodeURIComponent(search.value.trim())}`);
+      if(generation !== searchGeneration) return;
+      items = Array.isArray(data?.items) ? data.items : [];
+      renderResults();
+    }catch(error){
+      results.innerHTML = `<small>${escapeHtml(error.message || 'Catalogue indisponible.')}</small>`;
+    }
+  };
+
+  search.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(load, 250);
+  });
+  intro.addEventListener('input', renderPreview);
+  results.addEventListener('click', event => {
+    const button = event.target.closest('.wa-product-result');
+    if(!button) return;
+    selected = items[Number(button.dataset.index)] || null;
+    renderResults();
+    renderPreview();
+  });
+  sendButton.addEventListener('click', async () => {
+    if(!selected) return;
+    sendButton.disabled = true;
+    sendButton.textContent = 'Envoi…';
+    try{
+      let file = null;
+      if(selected.hasImage){
+        try{
+          const response = await fetch(imageUrl(selected), { credentials:'same-origin' });
+          if(response.ok){
+            const blob = await response.blob();
+            file = await whatsappCompatibleImageFile(new File([blob], 'produit', { type: blob.type || 'image/jpeg' }));
+            if(!['image/jpeg','image/png'].includes(file.type)) file = null;
+          }
+        }catch{ file = null; }
+      }
+      await sendWhatsAppInteractiveForm(contact, { kind:'product', productId:selected.id, intro:intro.value.trim() }, file);
+      const field = document.getElementById('conversationQuickReply');
+      if(field && intro.value.trim() && field.value.trim() === composerText){
+        field.value = '';
+        autoResizeConversationComposer(field);
+      }
+      dialog.close();
+      await openConversation(contact);
+    }catch(error){
+      sendButton.disabled = false;
+      sendButton.textContent = 'Envoyer';
+      await uiAlert(error.message || 'Envoi impossible.');
+    }
+  });
+
+  load();
+  search.focus();
+};
+
+window.openButtonsComposer = function(contact){
+  closeConversationComposerMenus();
+  const composerText = String(document.getElementById('conversationQuickReply')?.value || '').trim();
+  const dialog = waInteractiveDialog(`
+    <h3>🔘 Question à boutons</h3>
+    <p class="wa-interactive-help">Le client répond d’un simple clic ; sa réponse arrive comme un message normal.</p>
+    <div class="wa-interactive-fields">
+      <label>Question<textarea data-wa="text" maxlength="1024" placeholder="Ex. Comment préférez-vous continuer ?">${escapeHtml(composerText)}</textarea></label>
+      ${[1,2,3].map(index => `<label>Bouton ${index}${index === 1 ? '' : ' (facultatif)'} <span class="wa-interactive-count" data-wa-count="${index}">0/20</span><input data-wa-button="${index}" maxlength="20"></label>`).join('')}
+    </div>
+    <div class="wa-interactive-preview" data-wa="preview"></div>
+    <div class="ui-dialog-actions">
+      <button type="button" class="btn" data-wa-close>Annuler</button>
+      <button type="button" class="btn primary" data-wa="send" disabled>Envoyer</button>
+    </div>
+  `);
+  const root = dialog.root;
+  const textField = root.querySelector('[data-wa="text"]');
+  const buttonFields = [...root.querySelectorAll('[data-wa-button]')];
+  const preview = root.querySelector('[data-wa="preview"]');
+  const sendButton = root.querySelector('[data-wa="send"]');
+  const suggestions = ['Livraison', 'Visite showroom', 'Être rappelé(e)'];
+  if(!composerText) textField.value = 'Comment préférez-vous continuer ?';
+  buttonFields.forEach((field, index) => { field.value = suggestions[index]; });
+
+  const labels = () => buttonFields.map(field => field.value.trim()).filter(Boolean);
+  const render = () => {
+    buttonFields.forEach((field, index) => {
+      root.querySelector(`[data-wa-count="${index + 1}"]`).textContent = `${field.value.trim().length}/20`;
+    });
+    preview.innerHTML = waInteractiveBubbleHtml({ body: textField.value.trim() || '…', buttons: labels() });
+    const unique = new Set(labels().map(label => label.toLowerCase())).size === labels().length;
+    sendButton.disabled = !textField.value.trim() || !labels().length || !unique;
+  };
+  root.addEventListener('input', render);
+  sendButton.addEventListener('click', async () => {
+    sendButton.disabled = true;
+    sendButton.textContent = 'Envoi…';
+    try{
+      await sendWhatsAppInteractiveForm(contact, { kind:'buttons', text:textField.value.trim(), buttons:labels() });
+      const field = document.getElementById('conversationQuickReply');
+      if(field && field.value.trim() === composerText && composerText){
+        field.value = '';
+        autoResizeConversationComposer(field);
+      }
+      dialog.close();
+      await openConversation(contact);
+    }catch(error){
+      sendButton.disabled = false;
+      sendButton.textContent = 'Envoyer';
+      await uiAlert(error.message || 'Envoi impossible.');
+    }
+  });
+  render();
+  textField.focus();
 };
 
 // V6.38.1 — Convertit en JPEG une image que WhatsApp refuse comme photo
