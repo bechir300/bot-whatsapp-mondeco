@@ -7344,7 +7344,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
           <div class="inbox-command-brand">
             <div class="inbox-title-line">
               <h2 id="inboxMainTitle">Interactions</h2>
-              <span class="inbox-version">V6.43</span>
+              <span class="inbox-version">V6.44</span>
             </div>
             <div class="inbox-mode-tabs" role="tablist" aria-label="Type d’interaction">
               <button id="inboxModeMessagesBtn" class="inbox-mode-tab active" type="button" onclick="setInboxInteractionMode('messages')">💬 Messages <span id="messagesPendingBadge" class="mode-count pending hidden" title="Messages à répondre">0</span></button>
@@ -8341,6 +8341,22 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
                 <label>Message d'absence</label>
                 <textarea id="settingAbsenceMessage"></textarea>
               </div>
+            </div>
+          </div>
+
+          <div class="card setting-section">
+            <div class="switch-row">
+              <div>
+                <h3 class="setting-title">Fiches produit automatiques</h3>
+                <p class="setting-sub">
+                  Quand l’IA répond à propos d’un seul produit du catalogue, elle envoie aussi sa fiche WhatsApp : photo, prix et bouton « Voir le produit ». Au plus une fois par produit et par client en 24 h, 3 fiches par jour au maximum.
+                </p>
+              </div>
+
+              <label class="switch">
+                <input id="settingAiProductCards" type="checkbox">
+                <span class="slider"></span>
+              </label>
             </div>
           </div>
 
@@ -17671,6 +17687,9 @@ async function loadSettings(){
       day.end || '19:00';
   }
 
+  document.getElementById('settingAiProductCards').checked =
+    settings.aiProductCards === true;
+
   document.getElementById('settingFollowUpEnabled').checked =
     settings.followUp?.enabled === true;
 
@@ -17773,6 +17792,9 @@ function collectSettings(){
 
     imageHandling:
       document.querySelector('input[name="imageHandling"]:checked')?.value || 'commercial',
+
+    aiProductCards:
+      document.getElementById('settingAiProductCards').checked,
 
     pauseWhenHumanReplies:
       document.getElementById('settingPauseHuman').checked,

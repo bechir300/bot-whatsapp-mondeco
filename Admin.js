@@ -3899,6 +3899,9 @@ const DEFAULT_SETTINGS = {
 
   imageHandling: 'secure_catalog',
 
+  // V6.44 — fiche produit envoyée par l'IA après sa réponse (désactivé).
+  aiProductCards: false,
+
   pauseWhenHumanReplies: true,
 
   humanPauseMinutes: 120,
@@ -4117,6 +4120,11 @@ function normalizeSettings(input = {}) {
     },
 
     imageHandling,
+
+    aiProductCards: parseBoolean(
+      source.aiProductCards,
+      DEFAULT_SETTINGS.aiProductCards
+    ),
 
     pauseWhenHumanReplies: parseBoolean(
       source.pauseWhenHumanReplies,
@@ -24327,5 +24335,7 @@ module.exports = {
   // V6.37 — routes de diagnostic réservées aux admins (server.js) et
   // écriture immédiate de l'état des conversations à l'arrêt.
   requireAdmin,
-  flushConversationStatesWrite
+  flushConversationStatesWrite,
+  loadProducts,
+  getLocalProductImagePath
 };

@@ -45,6 +45,12 @@ const {
   interactiveReplyAsTextMessage
 } = require('./lib/whatsapp-interactive');
 const {
+  findProductForCard,
+  productCardAllowed,
+  recordProductCard,
+  imageMimeFromBuffer
+} = require('./lib/product-card-auto');
+const {
   buildProfileExtractionPrompt,
   parseProfileExtraction
 } = require('./lib/customer-profile');
@@ -88,7 +94,10 @@ const {
   loadQuickReplies,
   // V6.37 — routes de diagnostic réservées aux admins + arrêt propre.
   requireAdmin,
-  flushConversationStatesWrite
+  flushConversationStatesWrite,
+  // V6.44 — Fiche produit envoyée par l'IA.
+  loadProducts,
+  getLocalProductImagePath
 } = require('./Admin');
 
 const app = express();
@@ -9999,6 +10008,58 @@ function handleHumanMessageEcho(value) {
 }
 
 // ============================================================
+// V6.44 — FICHE PRODUIT ENVOYÉE PAR L'IA
+// ============================================================
+// Option « Fiches produit automatiques » (Paramètres, désactivée par
+// défaut) : quand la réponse de l'IA cite un seul produit du catalogue dont
+// le prix est connu, sa fiche (photo, prix, bouton « Voir le produit ») est
+// envoyée juste après. Une erreur ici n'affecte jamais la réponse texte.
+async function maybeSendAiProductCard(from, reply) {
+  try {
+    if (getBotSettings()?.aiProductCards !== true) return;
+    const product = findProductForCard(reply, loadProducts());
+    if (!product) return;
+
+    const state = getConversationState(from) || {};
+    if (!productCardAllowed(state, product.id)) return;
+
+    let file = null;
+    const imagePath = getLocalProductImagePath(product);
+    if (imagePath && fs.existsSync(imagePath)) {
+      const buffer = fs.readFileSync(imagePath);
+      const mime = imageMimeFromBuffer(buffer);
+      // WhatsApp refuse le WebP : la fiche part alors avec un titre texte.
+      if (mime === 'image/jpeg' || mime === 'image/png') {
+        file = { buffer, mimetype: mime, originalname: mime === 'image/png' ? 'produit.png' : 'produit.jpg' };
+      }
+    }
+
+    const built = buildProductCard(product, { hasImage: Boolean(file) });
+    const result = await sendWhatsAppInteractive(from, built.interactive, file);
+
+    updateConversationState(from, current => ({
+      ...current,
+      productCards: recordProductCard(current, product.id)
+    }));
+
+    logConversation({
+      contact: from,
+      channel: 'whatsapp',
+      action: 'ai_product_card',
+      source: 'ai_product_card',
+      reply: built.logText,
+      reply_sent: true,
+      meta_message_id: safeString(result?.messages?.[0]?.id) || null,
+      time: new Date().toISOString()
+    });
+
+    console.log(`🛋️ Fiche produit IA envoyée à ${maskPhoneForLog(from)} (${file ? 'avec photo' : 'sans photo'})`);
+  } catch (error) {
+    console.warn('⚠️ Fiche produit IA non envoyée :', error.message);
+  }
+}
+
+// ============================================================
 // MESSAGE CLIENT
 // ============================================================
 
@@ -10697,6 +10758,7 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       console.log(
         `✅ Réponse WhatsApp envoyée à ${maskPhoneForLog(from)}`
       );
+      await maybeSendAiProductCard(from, reply);
       try {
         require('./showroom-pin')
           .maybeSendPin({

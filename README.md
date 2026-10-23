@@ -2,7 +2,7 @@
 
 Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
 
-Version **6.43.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (couleurs, polices, boîte de réception en 3 colonnes, mode sombre).
+Version **6.44.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (couleurs, polices, boîte de réception en 3 colonnes, mode sombre).
 
 ## Architecture
 
@@ -77,6 +77,7 @@ Toutes les variables sont documentées dans `.env.example`.
 - **Messages WhatsApp interactifs** (bouton ＋ d'une conversation WhatsApp) :
   - « 🛋️ Fiche produit » : photo, prix (promotion barrée), dimensions et bouton « Voir le produit » vers le site ; sans lien, trois boutons de réponse. Les photos WebP sont converties en JPEG.
   - « 🔘 Question à boutons » : une question et jusqu'à 3 boutons (20 caractères chacun).
+  - « Fiches produit automatiques » (Paramètres, désactivé par défaut) : quand la réponse de l'IA cite un seul produit du catalogue dont le prix est connu, sa fiche est envoyée juste après (au plus une fois par produit et par client en 24 h, 3 par jour ; photo seulement si elle est en JPEG ou PNG).
   - Un clic du client sur un bouton arrive comme un message texte normal (IA, transfert, notifications inchangés). Fenêtre de 24 h obligatoire, comme pour un message libre.
 
 - **Fiche client** (panneau « Fiche client » d'une conversation, section Suivi commercial) : étape de vente (Nouveau, Qualifié, Devis envoyé, Visite showroom, Commande, Perdu), ville, budget, produits souhaités, showroom conseillé, note interne. Le bouton « ✨ Remplir avec l'IA » propose les champs à partir de la conversation, sans jamais écraser ce que le commercial a déjà saisi ; rien n'est enregistré sans clic sur « Enregistrer ». L'étape apparaît dans la liste des conversations.
