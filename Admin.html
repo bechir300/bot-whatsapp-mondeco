@@ -16733,14 +16733,25 @@ facebookRealtimeRecoveryTimer = setInterval(
   5 * 60 * 1000
 );
 
-setInterval(
-  pollCommercialNotifications,
-  5000
-);
+// V6.44.1 — Toutes les 5 s quand le centre de pilotage est affiché, toutes
+// les 15 s quand l'onglet est en arrière-plan (les alertes continuent
+// d'arriver), et tout de suite au retour sur l'onglet.
+let lastNotificationPollAt = 0;
+function pollCommercialNotificationsPaced(force = false){
+  const hidden = document.visibilityState !== 'visible';
+  if(!force && hidden && Date.now() - lastNotificationPollAt < 15000) return;
+  lastNotificationPollAt = Date.now();
+  pollCommercialNotifications();
+}
+setInterval(pollCommercialNotificationsPaced, 5000);
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') pollCommercialNotificationsPaced(true);
+});
 
 setInterval(
   () => {
     if(
+      document.visibilityState === 'visible' &&
       selectedConversationContact &&
       !conversationSendInProgress &&
       document.getElementById('page-conversations')
@@ -19304,7 +19315,7 @@ document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(butto
   });
 });
 
-if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
+if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.visibilityState==='visible'&&document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
 
 if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visible')return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){refreshSocialCommentTimeLabels();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 

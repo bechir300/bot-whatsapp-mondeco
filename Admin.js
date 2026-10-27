@@ -2782,6 +2782,18 @@ function loadSocialComments() {
     });
 }
 
+// V6.44.1 — Lecture seule mise en cache (même fichier tant qu'il ne change
+// pas) pour les routes interrogées toutes les quelques secondes par chaque
+// poste (notifications, compteurs). Ne pas modifier le tableau renvoyé.
+let socialCommentsReadCache = { stamp: '', items: [] };
+function loadSocialCommentsReadOnly() {
+  const stamp = `${fileChangeStamp(SOCIAL_COMMENTS_PATH)}|${fileChangeStamp(PURGED_RECORD_HASHES_PATH)}`;
+  if (stamp !== socialCommentsReadCache.stamp) {
+    socialCommentsReadCache = { stamp, items: loadSocialComments() };
+  }
+  return socialCommentsReadCache.items;
+}
+
 function loadSocialPosts() {
   return readJsonArray(SOCIAL_POSTS_PATH, 'social-posts.json');
 }
@@ -16998,6 +17010,15 @@ function loadNotificationsStore() {
   }
 }
 
+let notificationsReadCache = { stamp: '', store: { items: [] } };
+function loadNotificationsStoreReadOnly() {
+  const stamp = fileChangeStamp(NOTIFICATIONS_PATH);
+  if (stamp !== notificationsReadCache.stamp) {
+    notificationsReadCache = { stamp, store: loadNotificationsStore() };
+  }
+  return notificationsReadCache.store;
+}
+
 function saveNotificationsStore(store) {
   writeJsonAtomic(NOTIFICATIONS_PATH, {
     items: Array.isArray(store?.items) ? store.items : []
@@ -21728,7 +21749,7 @@ function pendingInteractionCountsForUser(user, logInput = null) {
   const messageStatus = pendingMessageStatusByContact(logInput);
   const channelScope = plannedChannelSetForUser(user);
   let pendingMessages = [...messageStatus.values()].filter(item => !item.resolved && item.pending);
-  let scopedComments = loadSocialComments();
+  let scopedComments = loadSocialCommentsReadOnly();
   if (channelScope) {
     pendingMessages = pendingMessages.filter(item => channelScopeAllowsMessage(channelScope, item.channel));
     scopedComments = scopedComments.filter(item => channelScopeAllowsComment(channelScope, item?.channel));
@@ -23507,12 +23528,17 @@ router.get(
   '/api/notifications',
   requireAuth,
   (req, res) => {
+    const notificationsStarted = Date.now();
+    res.once('finish', () => {
+      const elapsed = Date.now() - notificationsStarted;
+      if (elapsed > 300) console.log(`⏱️ Notifications : ${elapsed} ms`);
+    });
     try {
       const states = loadConversationStatesAdmin();
       const userKey = notificationUserKey(req.user);
       const filter = safeString(req.query?.filter).toLowerCase();
       const sinceMs = Date.parse(safeString(req.query?.since));
-      const store = loadNotificationsStore();
+      const store = loadNotificationsStoreReadOnly();
 
       const pendingMessageMap = pendingMessageStatusByContact();
       const notificationChannelScope = plannedChannelSetForUser(req.user);
@@ -23530,7 +23556,7 @@ router.get(
         messageItems = messageItems.filter(item => channelScopeAllowsMessage(notificationChannelScope, item.channel));
       }
 
-      const notificationSocialComments = loadSocialComments();
+      const notificationSocialComments = loadSocialCommentsReadOnly();
       const notificationSocialReplyIndex = socialCommentThreadIndex(notificationSocialComments);
       let commentItems = notificationSocialComments
         .filter(item => !item.deleted && safeString(item?.direction) !== 'outgoing')
