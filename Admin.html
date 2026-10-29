@@ -6736,7 +6736,7 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
 .api-connection-banner{
   position:fixed;
   left:50%;
-  bottom:16px;
+  top:12px;
   transform:translateX(-50%);
   z-index:10001;
   display:flex;
@@ -11699,6 +11699,8 @@ function renderThreadMessage(
             ? '🤖 Assistant IA MONDECO • Choix de prise en charge'
             : '🤖 IA MONDECO • Réponse automatique';
 
+  // V6.36 — label contient commercial_user_name (donnée saisie) : il est
+  // désormais échappé au rendu (escapeHtml(label) ci-dessous).
   const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
   const purgePart=type === 'incoming' ? 'incoming' : 'reply';
   const purgeKey=String(entry?.purgeKeys?.[purgePart]||'');
