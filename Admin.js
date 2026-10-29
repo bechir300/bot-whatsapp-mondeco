@@ -372,6 +372,48 @@ fs.mkdirSync(RECYCLE_DIR, { recursive: true });
 
 router.use(express.json({ limit: '20mb' }));
 
+// V6.36 — les erreurs HTTP 500 ne renvoient plus le message interne brut
+// (chemins, erreurs Node…) aux rôles non administrateurs : il est journalisé
+// et remplacé par un message générique. Les erreurs métier volontaires
+// (errorCode explicite, ex. FACEBOOK_TOKEN_EXPIRED) et les 4xx restent visibles.
+const GENERIC_INTERNAL_ERROR_MESSAGE =
+  'Une erreur interne est survenue. Réessayez ou contactez un administrateur.';
+
+function errorCodeIsBusinessCode(code) {
+  const value = safeString(code);
+  return Boolean(value) &&
+    /^[A-Z][A-Z0-9_]+$/.test(value) &&
+    !/^(E[A-Z]+$|ERR_|UND_ERR)/.test(value);
+}
+
+router.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = body => {
+    try {
+      if (
+        Number(res.statusCode) === 500 &&
+        body &&
+        typeof body === 'object' &&
+        !Array.isArray(body) &&
+        typeof body.error === 'string' &&
+        safeString(req.user?.role) !== 'admin' &&
+        !errorCodeIsBusinessCode(body.errorCode)
+      ) {
+        console.warn(
+          `⚠️ Erreur 500 masquée pour le client (${req.method} ${req.path}) :`,
+          body.error
+        );
+        const masked = { ...body, error: GENERIC_INTERNAL_ERROR_MESSAGE };
+        delete masked.details;
+        delete masked.stack;
+        return originalJson(masked);
+      }
+    } catch {}
+    return originalJson(body);
+  };
+  next();
+});
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -2365,9 +2407,10 @@ function writeJsonAtomic(filePath, data) {
   if (hadPrevious && !lowHeadroom) {
     backupJsonVersion(filePath);
   }
-  // V6.36 — l'ancien `.bak` est toujours retiré avant d'être recréé (évite
-  // tout lien résiduel vers le fichier actif).
-  deleteFileIfExists(backupPath);
+  // V6.36 — l'ancien `.bak` est retiré avant d'être recréé (évite tout lien
+  // résiduel vers le fichier actif). S'il n'existe aucune version active, le
+  // `.bak` est conservé : il peut être la seule copie restante.
+  if (hadPrevious) deleteFileIfExists(backupPath);
 
   const cleanupTemp = () => {
     try {
@@ -2427,7 +2470,7 @@ function writeJsonAtomic(filePath, data) {
     emergencyFreeDisposableStorage();
     // V6.36 — le nettoyage d'urgence a pu supprimer le `.bak` : le retirer
     // aussi de la nouvelle tentative pour libérer un maximum d'espace.
-    deleteFileIfExists(backupPath);
+    if (hadPrevious) deleteFileIfExists(backupPath);
 
     try {
       atomicAttempt();
@@ -2474,7 +2517,8 @@ function writeTextFileAtomic(filePath, content) {
 //   2. on tente `<fichier>.bak` ; s'il est valide, il est restauré
 //      (atomiquement) dans le fichier actif et ses données sont retournées ;
 //   3. sinon `fallback` est retourné et l'erreur est journalisée.
-// `onUnrecoverable` (optionnel) est appelé quand aucun backup n'est valide.
+// `onUnrecoverable` (optionnel) est appelé une fois par version corrompue
+// quand aucun backup n'est valide.
 // Une même version corrompue n'est mise en quarantaine qu'une seule fois.
 const jsonCorruptionHandled = new Map();
 
@@ -2482,11 +2526,19 @@ function readJsonFileSafe(filePath, fallback, { label = '', onUnrecoverable = nu
   const name = label || path.basename(safeString(filePath));
   const backupPath = `${filePath}.bak`;
 
-  if (!fileExistsWithContent(filePath)) return fallback;
+  if (!fileExistsWithContent(filePath)) {
+    // Un fichier présent mais vide (0 octet) n'est jamais produit par
+    // writeJsonAtomic : on tente alors le `.bak` s'il est valide.
+    let emptyExisting = false;
+    try { emptyExisting = fs.existsSync(filePath) && fs.statSync(filePath).size === 0; } catch {}
+    if (!emptyExisting || !fileExistsWithContent(backupPath)) return fallback;
+  }
 
   let primaryError = null;
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.length) throw new Error('fichier vide');
+    return JSON.parse(raw);
   } catch (error) {
     primaryError = error;
   }
@@ -2543,7 +2595,7 @@ function readJsonFileSafe(filePath, fallback, { label = '', onUnrecoverable = nu
   if (!alreadyHandled) {
     console.error(`🚨 ${name} corrompu et aucun backup valide : valeur par défaut utilisée (copie de quarantaine conservée).`);
   }
-  if (typeof onUnrecoverable === 'function') {
+  if (!alreadyHandled && typeof onUnrecoverable === 'function') {
     try { onUnrecoverable(primaryError); } catch {}
   }
   return fallback;
@@ -2776,6 +2828,49 @@ function upsertSocialPosts(records) {
   const merged = mergeSocialRecords(loadSocialPosts(), records, 'key');
   saveSocialPosts(merged);
   return merged;
+}
+
+// V6.36 — lecture-fusion-écriture : on relit le stock juste avant d'écrire
+// et on n'applique QUE la mutation demandée pour les clés concernées. Évite
+// d'écraser, avec un instantané pris avant un appel Meta (await), les
+// modifications faites entre-temps (webhooks, autres commerciaux…).
+// `updates` : Map clé → (commentaireActuel) => commentaireModifié.
+function updateSocialCommentsByKey(updates) {
+  const wanted = updates instanceof Map ? updates : new Map();
+  if (!wanted.size) return { changed:false, items:[] };
+  let changed = false;
+  const items = loadSocialComments().map(item => {
+    const fn = wanted.get(safeString(item?.key));
+    if (typeof fn !== 'function') return item;
+    const next = fn(item);
+    if (next && next !== item) {
+      changed = true;
+      return next;
+    }
+    return item;
+  });
+  if (changed) saveSocialComments(items);
+  return { changed, items };
+}
+
+const SOCIAL_COMMENT_PROFILE_FIELDS = ['authorAvatar','authorName','authorUsername','authorAvatarCheckedAt'];
+
+// V6.36 — fusionne uniquement les champs de profil (photo/nom) enrichis.
+function mergeSocialCommentProfiles(enriched) {
+  const updates = new Map();
+  for (const item of Array.isArray(enriched) ? enriched : []) {
+    const key = safeString(item?.key);
+    if (!key) continue;
+    const patch = {};
+    for (const field of SOCIAL_COMMENT_PROFILE_FIELDS) {
+      if (item[field] !== undefined) patch[field] = item[field];
+    }
+    updates.set(key, current => {
+      const differs = SOCIAL_COMMENT_PROFILE_FIELDS.some(field => patch[field] !== undefined && patch[field] !== current?.[field]);
+      return differs ? { ...current, ...patch } : current;
+    });
+  }
+  return updateSocialCommentsByKey(updates);
 }
 
 function socialCommentReadByUser(comment, user) {
@@ -3194,9 +3289,18 @@ function initializePersistentInstructions() {
     // 1. /data/instructions.json existe déjà
     if (fs.existsSync(INSTRUCTIONS_PATH)) {
       try {
-        const parsed = JSON.parse(
-          fs.readFileSync(INSTRUCTIONS_PATH, 'utf8') || '[]'
-        );
+        // V6.36 — lecture protégée : un instructions.json corrompu sans backup
+        // valide n'est plus écrasé par une migration/import automatique.
+        const safeParsed = readJsonFileSafe(INSTRUCTIONS_PATH, null, { label: 'instructions.json' });
+
+        if (safeParsed === null && jsonFileIsCorrupt(INSTRUCTIONS_PATH)) {
+          console.error(
+            '🚨 instructions.json corrompu : aucune migration automatique (copie de quarantaine conservée).'
+          );
+          return [];
+        }
+
+        const parsed = safeParsed === null ? [] : safeParsed;
 
         if (Array.isArray(parsed)) {
           if (parsed.length > 0) {
@@ -5635,6 +5739,90 @@ function commercialReplyLockInfo(user, state = {}, contact = '', nowMs = Date.no
   };
 }
 
+// V6.36 — destinataire réel d'un envoi commercial, dérivé côté serveur de la
+// conversation `contact` (anti-IDOR : le verrou d'attribution porte sur
+// `contact`, l'envoi doit donc partir vers le client de CETTE conversation).
+// Retourne { ok:true, channel, externalContact, exists } ou
+// { ok:false, status, error, errorCode }.
+// - commercial : la conversation doit exister ;
+// - autres rôles : une conversation inexistante n'est acceptée que comme
+//   envoi direct vers l'identifiant contenu dans `contact` lui-même ;
+// - tous : un `externalContact` fourni doit appartenir à la conversation.
+function resolveCommercialSendRecipient(user, contact, requestedChannel = '', providedExternal = '', deps = {}) {
+  const key = safeString(contact);
+  if (!key) {
+    return { ok:false, status:400, error:'Contact client obligatoire.', errorCode:'CONTACT_REQUIRED' };
+  }
+
+  const states = deps.states || loadConversationStatesAdmin();
+  const state = states[key] && typeof states[key] === 'object' ? states[key] : null;
+
+  let contactEntries = null;
+  const entriesForContact = () => {
+    if (contactEntries === null) {
+      try {
+        const log = typeof deps.loadLog === 'function' ? deps.loadLog() : loadWhatsAppLog();
+        contactEntries = (Array.isArray(log) ? log : []).filter(entry => safeString(entry?.contact) === key);
+      } catch {
+        contactEntries = [];
+      }
+    }
+    return contactEntries;
+  };
+
+  const exists = Boolean(state) || entriesForContact().length > 0;
+
+  if (!exists && safeString(user?.role) === 'commercial') {
+    return { ok:false, status:404, error:'Conversation introuvable.', errorCode:'CONVERSATION_NOT_FOUND' };
+  }
+
+  const prefixChannel = key.startsWith('instagram:')
+    ? 'instagram'
+    : key.startsWith('facebook:')
+      ? 'facebook'
+      : 'whatsapp';
+  const stateChannel = safeString(state?.channel).toLowerCase();
+  const channel = ['whatsapp','instagram','facebook'].includes(stateChannel) ? stateChannel : prefixChannel;
+
+  const wanted = safeString(requestedChannel).toLowerCase();
+  if (['whatsapp','instagram','facebook'].includes(wanted) && wanted !== channel) {
+    return { ok:false, status:400, error:'Canal incohérent avec cette conversation.', errorCode:'CHANNEL_MISMATCH' };
+  }
+
+  const normalizeExternal = value => channel === 'whatsapp'
+    ? normalizePhone(value)
+    : safeString(value).replace(/^(instagram|facebook):/i, '');
+
+  const keyExternal = normalizeExternal(key);
+  const defaultExternal = normalizeExternal(state?.externalContact) || keyExternal;
+  const provided = normalizeExternal(providedExternal);
+
+  if (!provided) {
+    return { ok:true, channel, externalContact: defaultExternal, exists };
+  }
+
+  const allowed = new Set(
+    [defaultExternal, keyExternal, normalizeExternal(state?.facebookPsid)].filter(Boolean)
+  );
+  if (!allowed.has(provided) && exists) {
+    for (const entry of entriesForContact()) {
+      const external = normalizeExternal(entry?.external_contact || entry?.externalContact);
+      if (external) allowed.add(external);
+    }
+  }
+
+  if (!allowed.has(provided)) {
+    return {
+      ok:false,
+      status:403,
+      error:'Destinataire refusé : il ne correspond pas à cette conversation.',
+      errorCode:'RECIPIENT_MISMATCH'
+    };
+  }
+
+  return { ok:true, channel, externalContact: provided, exists };
+}
+
 function acquireCommercialConversationReply(req, res, contact, channel = '') {
   if (safeString(req.user?.role) !== 'commercial') return true;
   const resolvedChannel = safeString(channel).toLowerCase() || conversationStateChannel(contact, {});
@@ -6713,6 +6901,14 @@ router.get(
 );
 
 
+// V6.36 — photos de profil référencées mais introuvables (disque + cloud).
+const deadProfilePictureFilenames = new Set();
+
+function profilePictureIsKnownDead(url) {
+  const name = path.basename(safeString(url).split('?')[0]);
+  return Boolean(name) && deadProfilePictureFilenames.has(name);
+}
+
 router.get(
   '/conversation-profile/:filename',
   requireAuth,
@@ -6735,20 +6931,14 @@ router.get(
     // Meta, même si le fichier réel avait été purgé du disque (nettoyage
     // 14 jours) après un échec de migration Cloudinary. On efface ici la
     // référence morte pour que la photo soit re-tentée au prochain cycle.
+    // V6.36 — un GET ne modifie plus conversation-state.json : le lien mort
+    // est seulement mémorisé (borné) et le rattrapage temps réel Facebook
+    // retélécharge la photo au prochain cycle.
     const facebookMatch = filename.match(/^facebook-([a-zA-Z0-9_-]+)\.[a-zA-Z0-9]+$/);
-    if (facebookMatch) {
-      const customerId = facebookMatch[1];
-      try {
-        updateConversationStateAdmin(`facebook:${customerId}`, state => {
-          if (safeString(state?.profilePicture)) {
-            console.warn(`⚠️ Photo profil Facebook ${customerId} : lien mort (${filename}), sera retentée.`);
-            return { ...state, profilePicture: '' };
-          }
-          return state;
-        });
-      } catch (error) {
-        console.warn('⚠️ Nettoyage lien photo profil Facebook impossible :', error.message);
-      }
+    if (facebookMatch && !deadProfilePictureFilenames.has(filename)) {
+      if (deadProfilePictureFilenames.size >= 5000) deadProfilePictureFilenames.clear();
+      deadProfilePictureFilenames.add(filename);
+      console.warn(`⚠️ Photo profil Facebook ${facebookMatch[1]} : lien mort (${filename}), sera retentée.`);
     }
 
     return res.sendStatus(404);
@@ -9565,10 +9755,16 @@ function wooPublicStatus(req = null) {
       req?.get?.('host')
     );
 
+  // V6.36 — PUBLIC_BASE_URL prioritaire quand elle est définie.
+  const publicBase =
+    publicBaseUrlFromEnvironment();
+
   const webhookUrl =
-    host
-      ? `${protocol}://${host}/admin/api/woocommerce/webhook`
-      : '';
+    publicBase
+      ? `${publicBase}/admin/api/woocommerce/webhook`
+      : host
+        ? `${protocol}://${host}/admin/api/woocommerce/webhook`
+        : '';
 
   return {
     configured:
@@ -11191,6 +11387,15 @@ async function processWooCommerceWebhook(
 function getWooWebhookDeliveryUrl(
   req
 ) {
+  // V6.36 — URL publique configurée prioritaire (l'en-tête Host est
+  // contrôlable par le client).
+  const publicBase =
+    publicBaseUrlFromEnvironment();
+
+  if (publicBase) {
+    return `${publicBase}/admin/api/woocommerce/webhook`;
+  }
+
   const forwardedProto =
     safeString(
       req.headers[
@@ -11214,6 +11419,18 @@ function getWooWebhookDeliveryUrl(
     `${protocol}://${host}` +
     '/admin/api/woocommerce/webhook'
   );
+}
+
+// V6.36 — URL publique du service (ex. https://bot.mondeco.tn), sans « / » final.
+function publicBaseUrlFromEnvironment() {
+  const value =
+    safeString(
+      process.env.PUBLIC_BASE_URL
+    ).replace(/\/+$/, '');
+
+  return /^https?:\/\/[^\s/]+/i.test(value)
+    ? value
+    : '';
 }
 
 async function installWooCommerceWebhooks(
@@ -11484,8 +11701,11 @@ router.post(
 );
 
 
+// V6.36 — diagnostic réservé aux administrateurs (WooCommerce livre ses
+// webhooks et son ping initial en POST, ce GET n'est pas nécessaire au flux).
 router.get(
   '/api/woocommerce/webhook',
+  requireAdmin,
   (req, res) => {
     return res
       .status(200)
@@ -13596,7 +13816,12 @@ router.post(
 
       const contact = safeString(req.body?.contact || req.body?.phone);
       if (!requireCommercialMessageChannelAccess(req, res, 'whatsapp')) return;
-      const externalContact = safeString(req.body?.externalContact) || normalizePhone(contact);
+      // V6.36 — le numéro appelé doit appartenir à la conversation `contact`.
+      const recipient = resolveCommercialSendRecipient(req.user, contact, 'whatsapp', req.body?.externalContact);
+      if (!recipient.ok) {
+        return res.status(recipient.status).json({ error: recipient.error, errorCode: recipient.errorCode });
+      }
+      const externalContact = recipient.externalContact;
       const phone = normalizePhone(externalContact);
       const sdp = safeString(req.body?.sdp);
 
@@ -13715,24 +13940,32 @@ router.post(
           req.body?.channel
         ).toLowerCase();
 
+      // V6.36 — canal et destinataire dérivés de la conversation `contact`
+      // (un externalContact étranger à la conversation est refusé).
+      const recipient =
+        resolveCommercialSendRecipient(
+          req.user,
+          contact,
+          requestedChannel,
+          req.body?.externalContact
+        );
+
+      if (!recipient.ok) {
+        return res
+          .status(recipient.status)
+          .json({
+            error: recipient.error,
+            errorCode: recipient.errorCode
+          });
+      }
+
       const channel =
-        requestedChannel === 'facebook' || contact.startsWith('facebook:')
-          ? 'facebook'
-          : requestedChannel === 'instagram' || contact.startsWith('instagram:')
-            ? 'instagram'
-            : 'whatsapp';
+        recipient.channel;
 
       if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        recipient.externalContact;
 
       const phone =
         channel === 'whatsapp'
@@ -13857,24 +14090,32 @@ router.post(
           req.body?.channel
         ).toLowerCase();
 
+      // V6.36 — canal et destinataire dérivés de la conversation `contact`
+      // (un externalContact étranger à la conversation est refusé).
+      const recipient =
+        resolveCommercialSendRecipient(
+          req.user,
+          contact,
+          requestedChannel,
+          req.body?.externalContact
+        );
+
+      if (!recipient.ok) {
+        return res
+          .status(recipient.status)
+          .json({
+            error: recipient.error,
+            errorCode: recipient.errorCode
+          });
+      }
+
       const channel =
-        requestedChannel === 'facebook' || contact.startsWith('facebook:')
-          ? 'facebook'
-          : requestedChannel === 'instagram' || contact.startsWith('instagram:')
-            ? 'instagram'
-            : 'whatsapp';
+        recipient.channel;
 
       if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        recipient.externalContact;
 
       if (channel === 'facebook') {
         return res
@@ -15174,6 +15415,38 @@ function saveConversationStatesAdmin(states) {
   conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
 }
 
+// V6.36 — champs réellement modifiés par un traitement (comparaison de
+// référence : les sous-objets non remplacés ne sont pas considérés modifiés).
+function conversationStatePatch(before, after) {
+  const base = before && typeof before === 'object' ? before : {};
+  const patch = {};
+  for (const [field, value] of Object.entries(after && typeof after === 'object' ? after : {})) {
+    if (base[field] !== value) patch[field] = value;
+  }
+  return patch;
+}
+
+// V6.36 — sauvegarde lecture-fusion-écriture pour les traitements longs
+// (synchronisations Meta avec de nombreux await) : on relit l'état courant et
+// on n'applique que les champs modifiés par le traitement depuis `baseStates`.
+// Les modifications faites entre-temps (webhooks, affectations, lectures)
+// sur les autres champs/conversations ne sont plus écrasées.
+function saveConversationStatePatchesAdmin(baseStates, workingStates) {
+  const fresh = loadConversationStatesAdmin();
+  let changed = false;
+  for (const [contact, after] of Object.entries(workingStates || {})) {
+    const before = baseStates?.[contact];
+    if (after === before || !after || typeof after !== 'object') continue;
+    const patch = conversationStatePatch(before, after);
+    if (!Object.keys(patch).length) continue;
+    const current = fresh[contact] && typeof fresh[contact] === 'object' ? fresh[contact] : {};
+    fresh[contact] = { ...current, ...patch };
+    changed = true;
+  }
+  if (changed) saveConversationStatesAdmin(fresh);
+  return fresh;
+}
+
 function updateConversationStateAdmin(
   contact,
   updater
@@ -15819,6 +16092,8 @@ async function runInstagramHistorySync() {
 
     const states =
       loadConversationStatesAdmin();
+    // V6.36 — base de comparaison pour les sauvegardes par fusion.
+    let statesBase = { ...states };
 
     const profileCache = new Map();
 
@@ -16171,9 +16446,12 @@ async function runInstagramHistorySync() {
           historyList
         );
 
-        saveConversationStatesAdmin(
+        // V6.36 — fusion ciblée (ne pas écraser les changements concurrents).
+        saveConversationStatePatchesAdmin(
+          statesBase,
           states
         );
+        statesBase = { ...states };
       }
 
       saveInstagramHistorySyncState({
@@ -17106,6 +17384,8 @@ async function runFacebookHistorySync() {
     const liveByKey = loadConversationMapFromJsonArrayMemorySafe(CONVERSATIONS_LOG_PATH);
 
     const states = loadConversationStatesAdmin();
+    // V6.36 — base de comparaison pour les sauvegardes par fusion.
+    let statesBase = { ...states };
 
     for (let start = 0; start < conversations.length; start += 2) {
       const batch = conversations.slice(start, start + 2);
@@ -17275,7 +17555,9 @@ async function runFacebookHistorySync() {
       if (shouldCheckpoint) {
         // Écriture progressive : pas de [...map.values()] + JSON.stringify géant.
         writeJsonArrayIterableAtomic(FACEBOOK_HISTORY_PATH, historyByKey.values());
-        saveConversationStatesAdmin(states);
+        // V6.36 — fusion ciblée (ne pas écraser les changements concurrents).
+        saveConversationStatePatchesAdmin(statesBase, states);
+        statesBase = { ...states };
       }
 
       saveFacebookHistorySyncState({
@@ -17680,6 +17962,10 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       : new Map();
 
     const states = loadConversationStatesAdmin();
+    // V6.36 — base de comparaison + entrées ajoutées au journal live, pour
+    // fusionner avec les fichiers relus au moment de l'écriture.
+    const statesBase = { ...states };
+    const addedLiveEntries = new Map();
     let changed = false;
 
     for (const conversation of conversations) {
@@ -17703,9 +17989,14 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         : {};
 
       let profile = {};
-      if (!safeString(state?.profileName) || !safeString(state?.profilePicture)) {
+      // V6.36 — une photo signalée « lien mort » est retéléchargée.
+      const pictureDead = profilePictureIsKnownDead(state?.profilePicture);
+      if (!safeString(state?.profileName) || !safeString(state?.profilePicture) || pictureDead) {
         try {
           profile = await getFacebookHistoryProfile(customerId);
+          if (pictureDead && safeString(profile?.profilePicture)) {
+            deadProfilePictureFilenames.delete(path.basename(safeString(state?.profilePicture).split('?')[0]));
+          }
         } catch (error) {
           // V6.35.2 : cette erreur était auparavant totalement silencieuse,
           // ce qui rendait impossible le diagnostic d'un nom/photo qui ne
@@ -17792,6 +18083,7 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
         earliest = earliest ? minIso(earliest, time) : time;
         if (realtimeWriteToLive) {
           liveByKey.set(conversationLogDedupeKey(entry), entry);
+          addedLiveEntries.set(conversationLogDedupeKey(entry), entry);
         } else {
           historyByKey.set(conversationLogDedupeKey(entry), entry);
         }
@@ -17845,7 +18137,13 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
 
     if (changed) {
       if (realtimeWriteToLive) {
-        const liveList = [...liveByKey.values()]
+        // V6.36 — relire le journal live (server.js y ajoute les messages
+        // pendant le rattrapage) et n'y ajouter que les entrées récupérées.
+        const freshLive = loadConversationMapFromJsonArrayMemorySafe(CONVERSATIONS_LOG_PATH);
+        for (const [entryKey, entry] of addedLiveEntries) {
+          if (!freshLive.has(entryKey)) freshLive.set(entryKey, entry);
+        }
+        const liveList = [...freshLive.values()]
           .sort((a, b) => new Date(a?.time || 0) - new Date(b?.time || 0));
         writeJsonAtomic(CONVERSATIONS_LOG_PATH, liveList);
       } else if (facebookRealtimeSyncJob.importedMessages > 0) {
@@ -17855,8 +18153,13 @@ async function runFacebookRealtimeRecovery({ force = false } = {}) {
       // une affectation/favori effectuée pendant le rattrapage.
       const freshestStates = loadConversationStatesAdmin();
       for (const [contact, state] of Object.entries(states)) {
+        // V6.36 — seules les conversations modifiées par ce rattrapage sont
+        // fusionnées, et uniquement avec les champs qu'il a changés.
+        if (state === statesBase[contact] || !state || typeof state !== 'object') continue;
+        const patch = conversationStatePatch(statesBase[contact], state);
+        if (!Object.keys(patch).length) continue;
         const freshest = freshestStates[contact] || {};
-        const merged = { ...freshest, ...state };
+        const merged = { ...freshest, ...patch };
 
         // V6.33.1 — le rattrapage Facebook peut finir après qu'un commercial
         // a lu/répondu. Préserver les horodatages les plus récents empêche
@@ -19245,9 +19548,8 @@ router.post('/api/social-comments/avatars/refresh', requireAuth, async (req,res)
     if (avatarScope) targets = targets.filter(item => channelScopeAllowsComment(avatarScope, item.channel));
     targets = targets.slice(0,60);
     const enriched = await enrichSocialCommentProfiles(targets, 40);
-    const map = new Map(enriched.map(item => [safeString(item.key), item]));
-    comments = comments.map(item => map.has(safeString(item.key)) ? { ...item, ...map.get(safeString(item.key)) } : item);
-    saveSocialComments(comments);
+    // V6.36 — relecture + fusion des seuls champs de profil après l'await Meta.
+    mergeSocialCommentProfiles(enriched);
     return res.json({ success:true, updated:enriched.filter(item=>safeString(item.authorAvatar)).length, items:enriched.map(item=>({key:item.key,authorAvatar:safeString(item.authorAvatar),authorName:safeString(item.authorName),authorUsername:safeString(item.authorUsername)})) });
   } catch (error) {
     console.warn('⚠️ Photos profils commentaires :', error.message);
@@ -19275,10 +19577,18 @@ router.get('/api/social-comments/:key', requireAuth, async (req,res) => {
     .sort((a,b) => (Date.parse(a.createdAt)||0) - (Date.parse(b.createdAt)||0));
   try {
     const enriched = await enrichSocialCommentProfiles(thread, 30);
-    const map = new Map(enriched.map(item => [safeString(item.key), item]));
-    comments = comments.map(item => map.has(safeString(item.key)) ? { ...item, ...map.get(safeString(item.key)) } : item);
-    saveSocialComments(comments);
-    thread = enriched;
+    // V6.36 — cache photo/nom rempli par fusion ciblée (aucun écrasement du
+    // stock par l'instantané lu avant les appels Meta).
+    const merged = mergeSocialCommentProfiles(enriched);
+    if (merged.changed) comments = merged.items;
+    const enrichedByKey = new Map(enriched.map(item => [safeString(item.key), item]));
+    thread = thread.map(item => {
+      const fresh = comments.find(entry => safeString(entry?.key) === safeString(item?.key)) || item;
+      const profile = enrichedByKey.get(safeString(item?.key)) || {};
+      const patch = {};
+      for (const field of SOCIAL_COMMENT_PROFILE_FIELDS) if (profile[field] !== undefined) patch[field] = profile[field];
+      return { ...fresh, ...patch };
+    });
     selected = comments.find(item => safeString(item?.key) === key) || selected;
   } catch {}
   const read = markSocialCommentRead(key, req.user) || selected;
@@ -19322,8 +19632,8 @@ router.post('/api/social-comments/:key/reply', requireAuth, async (req,res) => {
       data = await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}/replies`, { method:'POST', form:{ message:text } });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
     const now = new Date().toISOString();
-    comments[index] = { ...target, lastReply:text, lastReplyAt:now, answeredAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email), lastReplyByUserId:safeString(req.user?.id), lastReplyByEmail:safeString(req.user?.email) };
-    saveSocialComments(comments);
+    // V6.36 — relecture après l'appel Meta, mutation ciblée sur ce commentaire.
+    updateSocialCommentsByKey(new Map([[key, current => ({ ...current, lastReply:text, lastReplyAt:now, answeredAt:now, lastReplyBy:safeString(req.user?.name || req.user?.email), lastReplyByUserId:safeString(req.user?.id), lastReplyByEmail:safeString(req.user?.email) })]]));
     appendTeamActivity({
       type:'comment_reply', userId:safeString(req.user?.id), userName:safeString(req.user?.name || req.user?.email),
       channel:safeString(target.channel), commentKey:key, commentId:safeString(target.commentId), authorId:safeString(target.authorId), text
@@ -19360,8 +19670,9 @@ router.post('/api/social-comments/:key/hide', requireAuth, async (req,res) => {
     } else if (target.channel === 'instagram') {
       await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'POST', form:{ hide:hidden ? 'true':'false' } });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
-    comments[index] = { ...target, isHidden:hidden, updatedAt:new Date().toISOString() };
-    saveSocialComments(comments);
+    // V6.36 — relecture après l'appel Meta, mutation ciblée.
+    const hiddenAt = new Date().toISOString();
+    updateSocialCommentsByKey(new Map([[key, current => ({ ...current, isHidden:hidden, updatedAt:hiddenAt })]]));
     return res.json({ success:true, hidden });
   } catch (error) {
     return res.status(502).json({ error:`Meta : ${error.message}` });
@@ -19385,21 +19696,24 @@ router.delete('/api/social-comments/:key', requireAdmin, async (req,res) => {
       await instagramGraphRequestPath(`${encodeURIComponent(target.commentId)}`, { method:'DELETE' });
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
 
+    // V6.36 — relecture du stock après l'appel Meta (read-merge-write).
+    const freshComments = loadSocialComments();
+
     // Supprime physiquement le commentaire ET ses réponses locales descendantes.
     const removedIds = new Set([safeString(target.commentId)]);
     let grew = true;
     while (grew) {
       grew = false;
-      for (const item of comments) {
+      for (const item of freshComments) {
         if (safeString(item?.channel) !== safeString(target.channel) || safeString(item?.postId) !== safeString(target.postId)) continue;
         const parentId = safeString(item?.parentId);
         const id = safeString(item?.commentId);
         if (id && parentId && removedIds.has(parentId) && !removedIds.has(id)) { removedIds.add(id); grew = true; }
       }
     }
-    const removed = comments.filter(item => removedIds.has(safeString(item?.commentId)) && safeString(item?.channel) === safeString(target.channel));
+    const removed = freshComments.filter(item => removedIds.has(safeString(item?.commentId)) && safeString(item?.channel) === safeString(target.channel));
     rememberPurgedHashes(removed.map(socialCommentPurgeHash));
-    saveSocialComments(comments.filter(item => !removedIds.has(safeString(item?.commentId)) || safeString(item?.channel) !== safeString(target.channel)));
+    saveSocialComments(freshComments.filter(item => !removedIds.has(safeString(item?.commentId)) || safeString(item?.channel) !== safeString(target.channel)));
     return res.json({ success:true, permanentlyDeleted:true, removedLocal:removed.length, remoteDeleted:true });
   } catch (error) {
     return res.status(502).json({ error:`Meta : ${error.message}` });
@@ -19435,14 +19749,14 @@ router.post('/api/social-comments/:key/private-reply', requireAuth, async (req,r
     } else return res.status(400).json({ error:'Canal non pris en charge.' });
     const now = new Date().toISOString();
     const recipientId = safeString(data?.recipient_id);
-    comments[index] = {
-      ...target, privateReplySentAt:now, answeredAt:now, privateReplyMessage:text,
+    // V6.36 — relecture après l'appel Meta, mutation ciblée.
+    updateSocialCommentsByKey(new Map([[key, current => ({
+      ...current, privateReplySentAt:now, answeredAt:now, privateReplyMessage:text,
       privateReplyBy:safeString(req.user?.name || req.user?.email),
       privateReplyByUserId:safeString(req.user?.id),
       privateReplyByEmail:safeString(req.user?.email),
       privateRecipientId:recipientId
-    };
-    saveSocialComments(comments);
+    })]]));
     appendTeamActivity({
       type:'comment_private_reply', userId:safeString(req.user?.id), userName:safeString(req.user?.name || req.user?.email),
       channel:safeString(target.channel), commentKey:key, commentId:safeString(target.commentId), authorId:safeString(target.authorId), text
@@ -21365,6 +21679,21 @@ module.exports = {
     reconcileAnsweredConversationStates,
     socialCommentNeedsReply,
     socialCommentThreadIndex,
-    normalizePhone
+    normalizePhone,
+    // V6.36 — helpers de robustesse / sécurité testables unitairement.
+    readJsonFileSafe,
+    jsonFileIsCorrupt,
+    writeJsonAtomic,
+    writeTextFileAtomic,
+    fetchWithTimeout,
+    sessionIsExpired,
+    getLoginAttemptState,
+    registerLoginFailure,
+    clearLoginFailures,
+    purgeExpiredLoginAttempts,
+    loginAttempts,
+    resolveCommercialSendRecipient,
+    conversationStatePatch,
+    errorCodeIsBusinessCode
   }
 };
