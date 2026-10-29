@@ -6732,6 +6732,39 @@ body.comments-mode #page-conversations .inbox-center{background:#f5f3f0}.comment
   #page-conversations .inbox-header-action-icon{font-size:15px !important}
 }
 
+/* V6.36 — bandeau discret affiché après 2 échecs réseau consécutifs. */
+.api-connection-banner{
+  position:fixed;
+  left:50%;
+  bottom:16px;
+  transform:translateX(-50%);
+  z-index:10001;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  max-width:calc(100vw - 32px);
+  padding:9px 16px;
+  border:1px solid var(--red);
+  border-radius:999px;
+  background:var(--sidebar);
+  color:#fff;
+  box-shadow:var(--shadow);
+  font-size:12px;
+  font-weight:700;
+  pointer-events:none;
+}
+.api-connection-banner::before{
+  content:"";
+  flex:0 0 auto;
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:var(--red);
+}
+.api-connection-banner.hidden{
+  display:none;
+}
+
 </style>
 </head>
 
@@ -8343,6 +8376,266 @@ function escapeHtml(value){
     .replaceAll("'","&#039;");
 }
 
+// V6.36 — Filtre les URL provenant de données (Meta, WooCommerce, serveur)
+// avant de les injecter dans un href / src : seuls http(s), blob:,
+// data:image/ et les chemins relatifs passent. javascript:, vbscript:,
+// data:text/html… sont refusés (chaîne vide renvoyée).
+function safeUrl(value){
+  const raw = String(value ?? '').trim();
+  if(!raw) return '';
+  if(/^data:image\//i.test(raw)) return raw;
+  try{
+    const parsed = new URL(raw, window.location.href);
+    if(['http:','https:','blob:'].includes(parsed.protocol)) return raw;
+  }catch{}
+  return '';
+}
+
+// V6.36 — localStorage / sessionStorage peuvent lever une exception
+// (navigation privée Safari, quota plein, cookies bloqués) : tous les accès
+// passent par ces helpers qui ne cassent jamais l'interface.
+function storageArea(area){
+  return area === 'session' ? window.sessionStorage : window.localStorage;
+}
+function storageGet(key, fallback = '', area = 'local'){
+  try{
+    const value = storageArea(area).getItem(key);
+    return value === null ? fallback : value;
+  }catch{
+    return fallback;
+  }
+}
+function storageSet(key, value, area = 'local'){
+  try{
+    storageArea(area).setItem(key, String(value));
+    return true;
+  }catch{
+    return false;
+  }
+}
+function storageRemove(key, area = 'local'){
+  try{
+    storageArea(area).removeItem(key);
+  }catch{}
+}
+
+// V6.36 — Délégation des clics. Les boutons construits à partir de données
+// portent data-action="nom" + data-* (valeurs passées par escapeHtml) au
+// lieu de onclick="fn('${valeur}')" : dans un attribut onclick, escapeHtml
+// est inefficace car le parseur HTML décode les entités (&#039; → ') avant
+// que le JavaScript ne soit évalué. L'écoute se fait en phase de capture
+// pour fonctionner aussi dans les conteneurs qui stoppent la propagation
+// (panneau de notifications). data-stop="1" reproduit event.stopPropagation().
+const DATA_ACTIONS = Object.create(null);
+function registerDataActions(map){
+  Object.assign(DATA_ACTIONS, map);
+}
+function dispatchDataAction(event, attribute){
+  const element = event.target?.closest?.(`[${attribute}]`);
+  if(!element) return;
+  const handler = DATA_ACTIONS[element.getAttribute(attribute)];
+  if(typeof handler !== 'function') return;
+  if(element.dataset.stop === '1') event.stopPropagation();
+  try{
+    const result = handler(element.dataset, element, event);
+    if(result && typeof result.catch === 'function'){
+      result.catch(error => console.error(error));
+    }
+  }catch(error){
+    console.error(error);
+  }
+}
+document.addEventListener('click', event => dispatchDataAction(event, 'data-action'), true);
+document.addEventListener('change', event => dispatchDataAction(event, 'data-change-action'), true);
+
+// V6.36 — Évite de reconstruire un conteneur (et de faire clignoter les
+// avatars / perdre le focus) quand le HTML produit est identique au dernier
+// rendu, ou pendant qu'un champ de saisie de ce conteneur a le focus.
+// Le premier nœud rendu est mémorisé : si un autre code a remplacé le
+// contenu entre-temps (innerHTML direct), le rendu est refait.
+const lastRenderedHtml = new WeakMap();
+function renderHtmlIfChanged(container, html, { force = false } = {}){
+  if(!container) return false;
+  if(!force){
+    const previous = lastRenderedHtml.get(container);
+    if(
+      previous &&
+      previous.html === html &&
+      previous.node &&
+      previous.node === container.firstChild
+    ){
+      return false;
+    }
+    const active = document.activeElement;
+    if(
+      active &&
+      active !== container &&
+      container.contains(active) &&
+      active.matches?.('input,textarea,select,[contenteditable="true"]')
+    ){
+      return false;
+    }
+  }
+  container.innerHTML = html;
+  lastRenderedHtml.set(container, {html, node:container.firstChild});
+  return true;
+}
+function forgetRenderedHtml(container){
+  if(container) lastRenderedHtml.delete(container);
+}
+
+// V6.36 — État de la connexion au serveur. apiFetch incrémente
+// apiFailureEpoch à chaque échec réseau / 5xx (utilisé par createPoller pour
+// le backoff) et affiche un bandeau après 2 échecs réseau consécutifs.
+let apiFailureEpoch = 0;
+let apiConsecutiveNetworkFailures = 0;
+let apiBrowserOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
+function updateConnectionBanner(){
+  const lost = apiBrowserOffline || apiConsecutiveNetworkFailures >= 2;
+  let banner = document.getElementById('apiConnectionBanner');
+  if(!banner){
+    if(!lost) return;
+    banner = document.createElement('div');
+    banner.id = 'apiConnectionBanner';
+    banner.className = 'api-connection-banner hidden';
+    banner.setAttribute('role','status');
+    banner.setAttribute('aria-live','polite');
+    banner.textContent = 'Connexion perdue — nouvelle tentative…';
+    document.body.appendChild(banner);
+  }
+  banner.classList.toggle('hidden', !lost);
+}
+function noteApiNetworkFailure(){
+  apiFailureEpoch++;
+  apiConsecutiveNetworkFailures++;
+  updateConnectionBanner();
+}
+function noteApiReachable(){
+  if(apiConsecutiveNetworkFailures || apiBrowserOffline){
+    apiConsecutiveNetworkFailures = 0;
+    apiBrowserOffline = false;
+    updateConnectionBanner();
+  }
+}
+window.addEventListener('offline', () => {
+  apiBrowserOffline = true;
+  updateConnectionBanner();
+});
+window.addEventListener('online', () => {
+  apiBrowserOffline = false;
+  updateConnectionBanner();
+  // Relance immédiate des rafraîchissements dès que le réseau revient.
+  pollers.forEach(poller => poller.runSoon());
+});
+
+// V6.36 — Brouillon du composeur conservé (sessionStorage) quand la session
+// expire, puis restauré à la réouverture de la même conversation.
+const COMPOSER_DRAFT_KEY = 'mondecoComposerDraftBeforeLogin';
+function saveComposerDraftForRelogin(){
+  try{
+    const text = String(document.getElementById('conversationQuickReply')?.value || '');
+    if(!text.trim() || typeof selectedConversationContact === 'undefined' || !selectedConversationContact) return;
+    storageSet(COMPOSER_DRAFT_KEY, JSON.stringify({contact:selectedConversationContact,text,savedAt:new Date().toISOString()}), 'session');
+  }catch{}
+}
+function restoreComposerDraftAfterLogin(contact){
+  const raw = storageGet(COMPOSER_DRAFT_KEY, '', 'session');
+  if(!raw) return;
+  try{
+    const draft = JSON.parse(raw);
+    if(!draft || String(draft.contact || '') !== String(contact || '')) return;
+    const textarea = document.getElementById('conversationQuickReply');
+    if(!textarea) return;
+    if(!textarea.value) textarea.value = String(draft.text || '');
+    storageRemove(COMPOSER_DRAFT_KEY, 'session');
+    try{
+      autoResizeConversationComposer?.(textarea);
+      syncConversationPrimaryAction?.();
+    }catch{}
+  }catch{
+    storageRemove(COMPOSER_DRAFT_KEY, 'session');
+  }
+}
+
+// V6.36 — Planificateur unique des rafraîchissements réseau :
+// - setTimeout chaîné : une exécution ne chevauche jamais la précédente ;
+// - backoff exponentiel après échec (exception ou échec réseau/5xx signalé
+//   par apiFetch pendant l'exécution), plafonné à 60 s ;
+// - onglet masqué : intervalle hiddenIntervalMs (null = en pause) ;
+// - retour au premier plan / réseau rétabli : exécution immédiate si l'on
+//   a dépassé l'intervalle normal.
+const pollers = new Map();
+function createPoller(name, fn, intervalMs, options = {}){
+  const {
+    hiddenIntervalMs = intervalMs * 6,
+    initialDelayMs = intervalMs,
+    maxBackoffMs = 60000
+  } = options;
+  pollers.get(name)?.stop();
+  const poller = {name, timer:null, running:false, failures:0, stopped:false, lastRunAt:0};
+
+  function baseDelay(){
+    return document.hidden ? hiddenIntervalMs : intervalMs;
+  }
+  function nextDelay(){
+    const base = baseDelay();
+    if(base === null || base === undefined || !Number.isFinite(base)) return null;
+    if(!poller.failures) return base;
+    return Math.max(base, Math.min(maxBackoffMs, intervalMs * (2 ** poller.failures)));
+  }
+  function schedule(delay){
+    clearTimeout(poller.timer);
+    poller.timer = null;
+    if(poller.stopped || delay === null || delay === undefined) return;
+    poller.timer = setTimeout(run, Math.max(0, delay));
+  }
+  async function run(){
+    poller.timer = null;
+    if(poller.stopped || poller.running) return;
+    if(document.hidden && nextDelay() === null) return; // en pause tant que l'onglet est masqué
+    poller.running = true;
+    const epochAtStart = apiFailureEpoch;
+    let failed = false;
+    try{
+      await fn();
+      failed = apiFailureEpoch !== epochAtStart;
+    }catch(error){
+      failed = true;
+      console.debug(`Rafraîchissement ${name} :`, error?.message || error);
+    }finally{
+      poller.running = false;
+      poller.lastRunAt = Date.now();
+      poller.failures = failed ? Math.min(poller.failures + 1, 8) : 0;
+      schedule(nextDelay());
+    }
+  }
+
+  poller.stop = function(){
+    poller.stopped = true;
+    clearTimeout(poller.timer);
+    poller.timer = null;
+    pollers.delete(name);
+  };
+  poller.runSoon = function(){
+    if(poller.stopped || poller.running) return;
+    const elapsed = Date.now() - poller.lastRunAt;
+    schedule(Math.max(0, intervalMs - elapsed));
+  };
+  poller.runNow = function(){
+    if(poller.stopped || poller.running) return;
+    schedule(0);
+  };
+
+  pollers.set(name, poller);
+  schedule(initialDelayMs);
+  return poller;
+}
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden) return;
+  pollers.forEach(poller => poller.runSoon());
+});
+
 
 const PAGE_ROLES = {
   home:
@@ -8569,20 +8862,96 @@ navButtons.forEach(btn => {
   });
 });
 
+// V6.36 — apiFetch robuste :
+// - délai maximal (AbortController) : 20 s en lecture, 90 s pour les
+//   actions (POST/PUT/DELETE pouvant appeler Meta / l'IA), 180 s pour les
+//   envois de fichiers ; options.timeoutMs permet de le surcharger ;
+// - une réponse non JSON (page HTML d'un proxy, redirection de login…)
+//   lève une erreur claire au lieu de renvoyer {} ;
+// - 401 : le brouillon en cours est sauvegardé avant la redirection login ;
+// - état en ligne / hors ligne (bandeau après 2 échecs réseau consécutifs).
 async function apiFetch(url, options = {}){
-  const response = await fetch(url, options);
+  const { timeoutMs, ...fetchOptions } = options || {};
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const isUpload = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
+  const limitMs = Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : isUpload
+      ? 180000
+      : (method === 'GET' || method === 'HEAD')
+        ? 20000
+        : 90000;
 
-  if(response.status === 401){
-    location.href = '/admin/login';
-    throw new Error('Session expirée.');
+  const callerSignal = fetchOptions.signal || null;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  if(controller && callerSignal){
+    if(callerSignal.aborted) controller.abort();
+    else callerSignal.addEventListener('abort', () => controller.abort(), { once:true });
+  }
+  let timedOut = false;
+  const timer = controller
+    ? setTimeout(() => { timedOut = true; controller.abort(); }, limitMs)
+    : null;
+
+  const networkError = cause => {
+    if(!timedOut && callerSignal?.aborted) return cause;
+    noteApiNetworkFailure();
+    const error = new Error(
+      timedOut
+        ? `Le serveur ne répond pas (délai de ${Math.round(limitMs / 1000)} s dépassé). Réessayez.`
+        : 'Serveur injoignable. Vérifiez la connexion Internet puis réessayez.'
+    );
+    error.code = timedOut ? 'timeout' : 'network';
+    error.network = true;
+    error.cause = cause;
+    return error;
+  };
+
+  let response;
+  let text = '';
+  try{
+    response = await fetch(url, controller ? { ...fetchOptions, signal:controller.signal } : fetchOptions);
+
+    const redirectedToLogin =
+      response.redirected &&
+      /\/admin\/login(?:[?#]|$)/.test(String(response.url || ''));
+
+    if(response.status === 401 || redirectedToLogin){
+      noteApiReachable();
+      saveComposerDraftForRelogin();
+      location.href = '/admin/login';
+      const sessionError = new Error('Session expirée.');
+      sessionError.sessionExpired = true;
+      throw sessionError;
+    }
+
+    text = await response.text();
+  }catch(error){
+    if(error?.sessionExpired) throw error;
+    throw networkError(error);
+  }finally{
+    clearTimeout(timer);
   }
 
-  let data = null;
+  // 502/503/504 : proxy Railway ou serveur en redémarrage = connexion perdue.
+  if([502,503,504].includes(response.status)){
+    noteApiNetworkFailure();
+  }else{
+    noteApiReachable();
+    if(response.status >= 500) apiFailureEpoch++;
+  }
 
-  try{
-    data = await response.json();
-  }catch{
-    data = {};
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  const trimmed = text.trim();
+  let data = {};
+  let parsedJson = true;
+  if(trimmed){
+    try{
+      data = JSON.parse(trimmed);
+    }catch{
+      data = {};
+      parsedJson = false;
+    }
   }
 
   if(!response.ok){
@@ -8596,6 +8965,13 @@ async function apiFetch(url, options = {}){
     throw error;
   }
 
+  if(!parsedJson || (trimmed && !contentType.includes('json') && (data === null || typeof data !== 'object'))){
+    const error = new Error('Réponse inattendue du serveur (format non JSON). Rechargez la page ; si le problème persiste, reconnectez-vous.');
+    error.code = 'invalid_response';
+    error.status = response.status;
+    throw error;
+  }
+
   return data;
 }
 
@@ -8603,7 +8979,7 @@ async function refreshHome(){
   try{
     const [stats, storage, currentSettings] = await Promise.all([
       apiFetch(`${API}/stats`),
-      apiFetch(`${API}/storage-status`),
+      apiFetch(`${API}/storage-status`,{timeoutMs:60000}), // V6.36 — calcul disque potentiellement long
       apiFetch(`${API}/settings`)
     ]);
 
@@ -8830,8 +9206,8 @@ function renderProducts(){
           ${filtered.map(product => `
             <tr>
               <td>
-                ${product.image
-                  ? `<img class="product-thumb" src="${escapeHtml(product.image)}" alt="">`
+                ${safeUrl(product.image)
+                  ? `<img class="product-thumb" src="${escapeHtml(safeUrl(product.image))}" alt="">`
                   : '—'}
               </td>
               <td>
@@ -8852,8 +9228,8 @@ function renderProducts(){
                   : '<span class="status-pill off">Inactif</span>'}
               </td>
               <td>
-                <button class="btn small" onclick="editProduct('${product.id}')">Modifier</button>
-                <button class="btn small danger" onclick="deleteProduct('${product.id}')">Supprimer</button>
+                <button class="btn small" data-action="editProduct" data-id="${escapeHtml(product.id)}">Modifier</button>
+                <button class="btn small danger" data-action="deleteProduct" data-id="${escapeHtml(product.id)}">Supprimer</button>
               </td>
             </tr>
           `).join('')}
@@ -9092,21 +9468,21 @@ function renderInstructions(){
       <div class="instruction-actions">
         <button
           class="btn small"
-          onclick="toggleInstruction('${item.id}')"
+          data-action="toggleInstruction" data-id="${escapeHtml(item.id)}"
         >
           ${item.active !== false ? 'Désactiver' : 'Activer'}
         </button>
 
         <button
           class="btn small"
-          onclick="editInstruction('${item.id}')"
+          data-action="editInstruction" data-id="${escapeHtml(item.id)}"
         >
           Modifier
         </button>
 
         <button
           class="btn small danger"
-          onclick="deleteInstruction('${item.id}')"
+          data-action="deleteInstruction" data-id="${escapeHtml(item.id)}"
         >
           Supprimer
         </button>
@@ -9293,9 +9669,20 @@ let conversationRequestToken = 0;
 let selectedConversationPinnedUnread = false;
 let conversationNotificationUnread = 0;
 let conversationNotificationCursor =
-  localStorage.getItem('mondecoNotificationCursor') || '';
+  storageGet('mondecoNotificationCursor', ''); // V6.36 — accès stockage protégé
 let notificationAudioContext = null;
 const notificationSeenIds = new Set();
+// V6.36 — Ensemble borné : on ne garde que les ~500 derniers identifiants
+// (un Set conserve l'ordre d'insertion, les plus anciens sont retirés).
+const NOTIFICATION_SEEN_IDS_MAX = 500;
+function rememberNotificationSeen(id){
+  if(!id) return;
+  notificationSeenIds.delete(id);
+  notificationSeenIds.add(id);
+  while(notificationSeenIds.size > NOTIFICATION_SEEN_IDS_MAX){
+    notificationSeenIds.delete(notificationSeenIds.values().next().value);
+  }
+}
 let instagramHistoryAutoSyncChecked = false;
 let instagramHistoryStatusTimer = null;
 let instagramHistoryWasRunning = false;
@@ -9311,7 +9698,7 @@ let notificationPanelFilter = 'all';
 let interactionPendingCounts = {messages:0,comments:0,total:0,whatsapp:0,instagramMessages:0,facebookMessages:0,instagramComments:0,facebookComments:0};
 
 // V6.26 — Centre d'interactions : messages + commentaires.
-let inboxInteractionMode = localStorage.getItem('mondecoInboxInteractionMode') === 'comments' ? 'comments' : 'messages';
+let inboxInteractionMode = storageGet('mondecoInboxInteractionMode', '') === 'comments' ? 'comments' : 'messages';
 let conversationLoadGeneration = 0;
 let socialCommentsLoadGeneration = 0;
 let socialComments = [];
@@ -9396,7 +9783,7 @@ window.setInboxInteractionMode = async function(mode){
   // Invalide immédiatement toute requête de l'autre onglet encore en vol.
   if(inboxInteractionMode==='comments') conversationLoadGeneration++;
   else socialCommentsLoadGeneration++;
-  localStorage.setItem('mondecoInboxInteractionMode',inboxInteractionMode);
+  storageSet('mondecoInboxInteractionMode',inboxInteractionMode);
   document.body.classList.toggle('comments-mode',inboxInteractionMode==='comments');
   document.getElementById('inboxModeMessagesBtn')?.classList.toggle('active',inboxInteractionMode==='messages');
   document.getElementById('inboxModeCommentsBtn')?.classList.toggle('active',inboxInteractionMode==='comments');
@@ -9426,7 +9813,7 @@ window.setInboxInteractionMode = async function(mode){
 function socialCommentAvatar(comment, compact=false){
   const name=String(comment?.authorUsername||comment?.authorName||'?').replace(/^@/,'').trim();
   const initials=name?name.slice(0,2).toUpperCase():'?';
-  const picture=String(comment?.authorAvatar||'').trim();
+  const picture=safeUrl(comment?.authorAvatar); // V6.36 — URL filtrée
   const cls=compact?'comment-card-avatar':`social-comment-avatar ${escapeHtml(comment?.channel||'')}`;
   return `<span class="${cls}"><span>${escapeHtml(initials)}</span>${picture?`<img src="${escapeHtml(picture)}" alt="Photo profil" loading="lazy" onerror="this.remove()">`:''}</span>`;
 }
@@ -9438,19 +9825,20 @@ function renderSocialCommentsList(){
   setCommentFilterCounts(socialCommentCounts||{});
   if(!host) return;
   if(!socialComments.length){host.innerHTML='<div class="empty" style="margin:16px"><strong>Aucun commentaire</strong>Aucun commentaire chargé. La synchronisation va démarrer automatiquement. Si le compteur reste à 0, cliquez sur « Vérifier Meta » pour voir la permission manquante.</div>';return;}
-  host.innerHTML=socialComments.map(comment=>{
+  // V6.36 — liste reconstruite toutes les 5 s : DOM inchangé si le HTML est identique.
+  renderHtmlIfChanged(host,socialComments.map(comment=>{
     const post=comment?.post||{};
     const selected=selectedSocialCommentKey===comment.key;
     const unread=comment.read!==true;
     const pending=comment.pendingReply===true;
     const author=comment.authorUsername?`@${comment.authorUsername}`:(comment.authorName||'Client');
     const hint=String(post.caption||'').trim()||`${commentChannelLabel(comment.channel)} • publication ${post.postId||comment.postId||''}`;
-    return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" onclick="openSocialComment('${escapeHtml(comment.key)}')">
+    return `<button class="social-comment-item ${selected?'selected':''} ${unread?'unread':''} ${pending?'pending-reply':''}" type="button" data-action="openSocialComment" data-key="${escapeHtml(comment.key)}">
       ${socialCommentAvatar(comment)}
       <span class="social-comment-main"><span class="social-comment-top"><span class="social-comment-author">${escapeHtml(author)}</span><span class="comment-badge ${escapeHtml(comment.channel)}">${escapeHtml(commentChannelLabel(comment.channel))}</span>${comment.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}${pending?'<span class="comment-badge">À répondre</span>':'<span class="comment-badge comment-owned">✓ Traité</span>'}</span><span class="social-comment-preview">${escapeHtml(comment.text||'(commentaire sans texte)')}</span><span class="social-comment-posthint">📣 ${escapeHtml(hint.slice(0,120))}</span></span>
       <span class="social-comment-side"><span>${escapeHtml(formatShortTime(comment.createdAt))}</span>${unread?'<span class="comment-unread-dot" title="Non lu dans MONDECO"></span>':''}</span>
     </button>`;
-  }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:'');
+  }).join('')+(socialCommentsHasMore?`<button class="load-more-conversations" type="button" onclick="loadMoreSocialComments()">Afficher plus (${Math.max(0,socialCommentsTotal-socialComments.length)} restantes)</button>`:''));
 }
 
 async function loadSocialComments({append=false}={}){
@@ -9497,8 +9885,9 @@ function scheduleSocialAvatarRefresh(){
 
 function commentPostHtml(post, channel){
   const caption=String(post?.caption||'').trim();
-  const image=post?.thumbnailUrl||post?.mediaUrl||'';
-  const link=post?.permalink||post?.sourceUrl||'';
+  // V6.36 — URL Meta filtrées avant injection dans src / href.
+  const image=safeUrl(post?.thumbnailUrl||post?.mediaUrl||'');
+  const link=safeUrl(post?.permalink||post?.sourceUrl||'');
   const isVideo=/video|reel/i.test(String(post?.mediaType||''));
   return `<article class="social-post-card"><div class="social-post-head"><span class="social-post-channel"><span class="comment-badge ${escapeHtml(channel)}">${escapeHtml(commentChannelLabel(channel))}</span> Publication d’origine</span>${link?`<a class="social-post-link" href="${escapeHtml(link)}" target="_blank" rel="noopener">Voir sur ${escapeHtml(commentChannelLabel(channel))} ↗</a>`:''}</div>${image?`<img class="social-post-media" src="${escapeHtml(image)}" alt="Publication" loading="lazy" onerror="this.style.display='none'">`:`<div class="social-post-empty-media">${isVideo?'🎬':'📣'} Visuel non fourni par Meta</div>`}${caption?`<div class="social-post-caption">${escapeHtml(caption)}</div>`:'<div class="social-post-caption" style="color:#8b837c">Texte de publication non disponible dans le webhook. Lancez une synchronisation pour tenter de le récupérer.</div>'}</article>`;
 }
@@ -9506,7 +9895,7 @@ function commentPostHtml(post, channel){
 function renderSocialCommentCard(item, selectedKey, isReply=false){
   const author=item.authorUsername?`@${item.authorUsername}`:(item.authorName||'Client');
   const mine=item.direction==='outgoing'||String(item.authorName||'').toUpperCase()==='MONDECO';
-  return `<article class="comment-card ${isReply?'reply':''} ${item.key===selectedKey?'selected':''} ${item.isHidden?'hidden-comment':''}" onclick="selectSocialCommentTarget('${escapeHtml(item.key)}')"><div class="comment-card-author-row">${socialCommentAvatar(item,true)}<div class="comment-card-body"><div class="comment-card-head"><span class="comment-card-author">${escapeHtml(author)}${mine?'<span class="comment-badge comment-owned">MONDECO</span>':''}${item.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}</span><span class="comment-card-time">${escapeHtml(formatShortTime(item.createdAt))}</span></div><div class="comment-card-text">${escapeHtml(item.text||'(sans texte)')}</div><div class="comment-card-meta">${item.privateReplySentAt?'<span class="comment-badge">✉️ privé envoyé</span>':''}${Number(item.likeCount||0)>0?`<span class="comment-badge">♥ ${Number(item.likeCount)}</span>`:''}${item.deleted?'<span class="comment-badge">supprimé</span>':''}</div></div></div></article>`;
+  return `<article class="comment-card ${isReply?'reply':''} ${item.key===selectedKey?'selected':''} ${item.isHidden?'hidden-comment':''}" data-action="selectSocialCommentTarget" data-key="${escapeHtml(item.key)}"><div class="comment-card-author-row">${socialCommentAvatar(item,true)}<div class="comment-card-body"><div class="comment-card-head"><span class="comment-card-author">${escapeHtml(author)}${mine?'<span class="comment-badge comment-owned">MONDECO</span>':''}${item.isHidden?'<span class="comment-badge hidden">🙈 masqué</span>':''}</span><span class="comment-card-time">${escapeHtml(formatShortTime(item.createdAt))}</span></div><div class="comment-card-text">${escapeHtml(item.text||'(sans texte)')}</div><div class="comment-card-meta">${item.privateReplySentAt?'<span class="comment-badge">✉️ privé envoyé</span>':''}${Number(item.likeCount||0)>0?`<span class="comment-badge">♥ ${Number(item.likeCount)}</span>`:''}${item.deleted?'<span class="comment-badge">supprimé</span>':''}</div></div></div></article>`;
 }
 
 function socialCommentHasPublicReply(target){
@@ -9553,7 +9942,7 @@ function renderSocialCommentComposer(target){
 function renderSocialCommentDetail(data){
   const selected=data?.comment||{};const post=data?.post||{};const thread=Array.isArray(data?.thread)?data.thread:[];
   const header=document.getElementById('inboxConversationHeader');const detail=document.getElementById('conversationDetail');
-  if(header) header.innerHTML=`<div class="inbox-header-main"><button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()" aria-label="Retour aux commentaires">←</button><div class="inbox-header-avatar comment-header-photo ${escapeHtml(selected.channel||'')}"><span>${selected.channel==='instagram'?'IG':'FB'}</span>${selected.authorAvatar?`<img src="${escapeHtml(selected.authorAvatar)}" alt="Photo profil" onerror="this.remove()">`:''}</div><div class="inbox-header-copy"><strong>${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Client'))}</strong><span>${escapeHtml(commentChannelLabel(selected.channel))} • Commentaire sur publication</span></div></div><div class="inbox-header-actions"><button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()">👤 Contexte</button>${post?.permalink?`<a class="inbox-header-btn" href="${escapeHtml(post.permalink)}" target="_blank" rel="noopener">↗ Publication</a>`:''}</div>`;
+  if(header) header.innerHTML=`<div class="inbox-header-main"><button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()" aria-label="Retour aux commentaires">←</button><div class="inbox-header-avatar comment-header-photo ${escapeHtml(selected.channel||'')}"><span>${selected.channel==='instagram'?'IG':'FB'}</span>${safeUrl(selected.authorAvatar)?`<img src="${escapeHtml(safeUrl(selected.authorAvatar))}" alt="Photo profil" onerror="this.remove()">`:''}</div><div class="inbox-header-copy"><strong>${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Client'))}</strong><span>${escapeHtml(commentChannelLabel(selected.channel))} • Commentaire sur publication</span></div></div><div class="inbox-header-actions"><button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()">👤 Contexte</button>${safeUrl(post?.permalink)?`<a class="inbox-header-btn" href="${escapeHtml(safeUrl(post.permalink))}" target="_blank" rel="noopener">↗ Publication</a>`:''}</div>`;
   if(detail){detail.className='inbox-thread';detail.innerHTML=`<div class="comment-detail-shell">${commentPostHtml(post,selected.channel)}<div class="comment-thread-title"><strong>💭 Tous les commentaires de cette publication</strong><span>${thread.length} interaction${thread.length>1?'s':''}</span></div>${data?.refreshError?`<div class="social-comment-warning">⚠️ Mise à jour Meta partielle : ${escapeHtml(data.refreshError)}</div>`:''}${!post?.caption&&!post?.mediaUrl&&!post?.thumbnailUrl?'<div class="social-comment-warning">Meta a signalé le commentaire mais n’a pas encore fourni le contenu complet de la publication. Utilisez 💭 ↻ ou vérifiez les permissions de lecture des publications.</div>':''}<div class="comment-thread">${thread.length?(()=>{const ids=new Set(thread.map(item=>item.commentId));return thread.map(item=>renderSocialCommentCard(item,selectedSocialCommentKey,Boolean(item.parentId&&ids.has(item.parentId)))).join('')})():'<div class="empty">Aucun autre commentaire.</div>'}</div></div>`;}
   renderSocialCommentComposer(selected);
   const panel=document.getElementById('inboxCustomerPanel');if(panel)panel.innerHTML=`<div class="inbox-drawer-head"><div><strong>Contexte commentaire</strong><span>${escapeHtml(commentChannelLabel(selected.channel))}</span></div><button class="inbox-drawer-close" onclick="toggleCustomerPanel(false)">×</button></div><div style="padding:14px"><div class="customer-card"><strong>Client</strong><div class="manager-item-meta">${escapeHtml(selected.authorUsername?`@${selected.authorUsername}`:(selected.authorName||'Non identifié par Meta'))}</div></div><div class="customer-card" style="margin-top:10px"><strong>Publication</strong><div class="manager-item-meta">${escapeHtml(String(post?.caption||'').slice(0,220)||post?.postId||selected.postId||'—')}</div></div><div class="customer-card" style="margin-top:10px"><strong>Modération</strong><div class="manager-item-meta">${selected.isHidden?'Commentaire actuellement masqué':'Commentaire visible'}${selected.privateReplySentAt?' • Réponse privée déjà envoyée':''}</div></div></div>`;
@@ -9724,7 +10113,7 @@ window.diagnoseSocialComments=async function(){
   if(btn)btn.disabled=true;
   if(el){el.style.display='block';el.textContent='✓ Vérification des permissions Meta en cours…';}
   try{
-    const data=await apiFetch(`${API}/social-comments/diagnostic`);
+    const data=await apiFetch(`${API}/social-comments/diagnostic`,{timeoutMs:60000}); // V6.36 — appels Graph Meta
     const issues=Array.isArray(data?.issues)?data.issues:[];
     const fb=data?.facebook||{}, ig=data?.instagram||{};
     if(el){
@@ -9929,7 +10318,7 @@ async function refreshInstagramHistoryStatus({ autoStart = false } = {}){
     }
 
     if(instagramHistoryWasRunning && !running){
-      await loadConversations();
+      await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
     }
 
     instagramHistoryWasRunning = running;
@@ -10063,7 +10452,7 @@ async function refreshFacebookHistoryStatus({ autoStart = false } = {}){
     }
 
     if(facebookHistoryWasRunning && !running){
-      await loadConversations();
+      await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
     }
     facebookHistoryWasRunning = running;
 
@@ -10137,17 +10526,54 @@ function applyCommentChannelAccessUI(){
   }
 }
 
-async function loadConversations({ append = false } = {}){
+// V6.36 — Ordre serveur de la liste (même règle que /api/conversations) :
+// à répondre, puis non lus, puis date du dernier message.
+function compareConversationsServerOrder(a,b){
+  const pendingDelta = Number(b?.pendingReply === true) - Number(a?.pendingReply === true);
+  if(pendingDelta) return pendingDelta;
+  const unreadDelta = Number(Number(b?.unreadCount || 0) > 0) - Number(Number(a?.unreadCount || 0) > 0);
+  if(unreadDelta) return unreadDelta;
+  const aMs = conversationUiTimeMs(a?.lastTime);
+  const bMs = conversationUiTimeMs(b?.lastTime);
+  return bMs - aMs;
+}
+
+// V6.36 — Fusionne la première page fraîche dans la liste déjà chargée
+// (plusieurs pages « Afficher plus ») au lieu de revenir aux 80 premières :
+// les conversations reçues sont mises à jour / ajoutées ; les autres sont
+// conservées si elles se situent après la dernière conversation de la page
+// fraîche (pages suivantes) et retirées si elles auraient dû y figurer
+// (sorties du filtre, résolues ou expirées).
+function mergeConversationFirstPage(existing, freshItems, freshHasMore){
+  if(!freshHasMore || !freshItems.length) return freshItems;
+  const freshContacts = new Set(freshItems.map(item => item.contact));
+  const boundary = freshItems.slice().sort(compareConversationsServerOrder).at(-1);
+  const kept = existing.filter(item =>
+    !freshContacts.has(item.contact) &&
+    compareConversationsServerOrder(item, boundary) > 0
+  );
+  return [...freshItems, ...kept];
+}
+
+let conversationListQueryKey = '';
+
+async function loadConversations({ append = false, merge = false } = {}){
   const requestId=++conversationLoadGeneration;
   const inboxPageActive=document.getElementById('page-conversations')?.classList?.contains('active');
   // En mode Commentaires, les rafraîchissements de messages restent en arrière-plan et ne touchent jamais la liste visible.
   if(inboxPageActive && inboxInteractionMode!=='messages') return;
   try{
     const search = String(document.getElementById('conversationSearch')?.value || '').trim();
+    const queryKey = `${conversationFilter}|${search}`;
+    // V6.36 — fusion seulement si plusieurs pages sont chargées pour le même
+    // filtre / la même recherche ; sinon comportement historique (remplacement).
+    const mergeMode = !append && merge && queryKey === conversationListQueryKey && conversations.length > 80;
     const offset = append ? conversations.length : 0;
     const params = new URLSearchParams({
       paged:'1',
-      limit:'80',
+      // En fusion, on relit jusqu'à 200 conversations (plafond serveur) pour
+      // rafraîchir l'essentiel de ce qui est affiché en une seule requête.
+      limit: mergeMode ? String(Math.min(200, conversations.length)) : '80',
       offset:String(offset),
       filter:conversationFilter
     });
@@ -10169,11 +10595,20 @@ async function loadConversations({ append = false } = {}){
       conversationChannelAccess={...conversationChannelAccess,...data.access};
       applyConversationChannelAccessUI();
     }
+    // V6.36 — mémorise la position de défilement de la liste pour la rétablir après le rendu.
+    const listContainer = document.getElementById('conversationListContainer');
+    const listScrollTop = listContainer ? listContainer.scrollTop : 0;
+    const sameListQuery = queryKey === conversationListQueryKey;
     conversations = append
       ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
-      : items;
+      : mergeMode
+        ? mergeConversationFirstPage(conversations, items, data?.hasMore === true)
+        : items;
+    conversationListQueryKey = queryKey;
     conversationListTotal = Number(data?.total || conversations.length);
-    conversationListHasMore = data?.hasMore === true;
+    conversationListHasMore = mergeMode
+      ? data?.hasMore === true && conversations.length < conversationListTotal
+      : data?.hasMore === true;
     conversationServerCounts = data?.counts && typeof data.counts === 'object'
       ? data.counts
       : null;
@@ -10190,6 +10625,9 @@ async function loadConversations({ append = false } = {}){
       updateNotificationBadges();
     }
     renderConversationsList();
+    if(sameListQuery && listContainer && listContainer.scrollTop !== listScrollTop){
+      listContainer.scrollTop = listScrollTop;
+    }
     if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
       updateConversationFilterCounts();
     }
@@ -10402,11 +10840,12 @@ function conversationInitials(item){
 
 
 function conversationProfilePicture(item){
-  return String(
+  // V6.36 — URL filtrée (avatars Meta / cache serveur) avant injection dans src.
+  return safeUrl(
     item?.profilePicture ||
     item?.state?.profilePicture ||
     ''
-  ).trim();
+  );
 }
 
 function conversationAvatarHtml(item, extraClass = ''){
@@ -10846,7 +11285,7 @@ function renderConversationsList(){
             class="inbox-conversation-item ${urgent ? 'urgent' : ''} ${selected ? 'selected' : ''}"
             type="button"
             data-contact="${escapeHtml(item.contact)}"
-            onclick="openConversation('${escapeHtml(item.contact)}')"
+            data-action="openConversation"
           >
             ${conversationAvatarHtml(item, item.hasAdReferral ? 'ad' : '')}
 
@@ -11019,7 +11458,9 @@ function renderConversationHeader(
       </div>`
     : '';
 
-  header.innerHTML = `
+  // V6.36 — l'en-tête est recalculé toutes les 5 s (SLA) : on ne
+  // reconstruit le DOM que si le HTML change (évite le clignotement avatar).
+  renderHtmlIfChanged(header, `
     <div class="inbox-header-left">
       <button class="icon-btn inbox-mobile-back" type="button" onclick="backToInboxList()">←</button>
       ${conversationAvatarHtml(item, state.cameFromAd || state.adReferral ? 'ad' : '')}
@@ -11047,35 +11488,35 @@ function renderConversationHeader(
     </div>
 
     <div class="inbox-header-actions">
-      <button class="inbox-header-btn ${state.favorite ? 'active' : ''}" type="button" onclick="toggleConversationFavorite('${escapeHtml(contact)}', ${state.favorite ? 'false' : 'true'})" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 15 jours'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
+      <button class="inbox-header-btn ${state.favorite ? 'active' : ''}" type="button" data-action="toggleConversationFavorite" data-contact="${escapeHtml(contact)}" data-value="${state.favorite ? 'false' : 'true'}" title="${state.favorite ? 'Retirer des favoris' : 'Conserver cette discussion au-delà des 15 jours'}">${state.favorite ? '★ Favori' : '☆ Favori'}</button>
       <button class="inbox-header-btn inbox-customer-toggle" type="button" onclick="toggleCustomerPanel()" title="Afficher la fiche client"><span class="inbox-header-action-icon">👤</span><span class="inbox-header-action-label">Fiche client</span></button>
       ${channel === 'whatsapp'
-        ? `<button class="inbox-header-btn wa-call-header-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')" title="Appeler ce client sur WhatsApp"><span class="inbox-header-action-icon">📞</span><span class="inbox-header-action-label">Appel WhatsApp</span></button>`
+        ? `<button class="inbox-header-btn wa-call-header-btn" type="button" data-action="startWhatsAppCall" data-contact="${escapeHtml(contact)}" title="Appeler ce client sur WhatsApp"><span class="inbox-header-action-icon">📞</span><span class="inbox-header-action-label">Appel WhatsApp</span></button>`
         : ''}
       ${limitedCommercial
         ? `<span class="inbox-header-btn" style="cursor:default">💬 Réponse ouverte</span><span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Non affectée')}</span>`
         : `
-          <button class="inbox-header-btn ${state.priority ? 'active' : ''}" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})" title="Priorité">
+          <button class="inbox-header-btn ${state.priority ? 'active' : ''}" type="button" data-action="toggleConversationPriority" data-contact="${escapeHtml(contact)}" data-value="${state.priority ? 'false' : 'true'}" title="Priorité">
             ${state.priority ? '★ Priorité' : '☆ Priorité'}
           </button>
 
           ${['admin','responsable_commercial'].includes(currentUser?.role)
-            ? `<button class="inbox-header-btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}</button>`
+            ? `<button class="inbox-header-btn" type="button" data-action="assignConversation" data-contact="${escapeHtml(contact)}">👤 ${state.assignedTo ? escapeHtml(state.assignedTo) : 'Affecter'}</button>`
             : `<span class="inbox-header-btn" style="cursor:default">👤 ${escapeHtml(state.assignedTo || 'Affectée')}</span>`}
 
           ${facebook
             ? `<span class="inbox-header-btn ai" style="cursor:default">💬 Messenger actif</span>`
             : paused
-              ? `<button class="inbox-header-btn ai" type="button" onclick="reactivateConversationAI('${escapeHtml(contact)}')">🤖 Réactiver IA</button>`
-              : `<button class="inbox-header-btn takeover" type="button" onclick="takeOverConversation('${escapeHtml(contact)}')">👤 Prendre en main</button>`
+              ? `<button class="inbox-header-btn ai" type="button" data-action="reactivateConversationAI" data-contact="${escapeHtml(contact)}">🤖 Réactiver IA</button>`
+              : `<button class="inbox-header-btn takeover" type="button" data-action="takeOverConversation" data-contact="${escapeHtml(contact)}">👤 Prendre en main</button>`
           }
 
-          <button class="inbox-header-btn" type="button" onclick="toggleResolvedConversation('${escapeHtml(contact)}', ${state.resolved ? 'false' : 'true'})">
+          <button class="inbox-header-btn" type="button" data-action="toggleResolvedConversation" data-contact="${escapeHtml(contact)}" data-value="${state.resolved ? 'false' : 'true'}">
             ${state.resolved ? '↩ Réouvrir' : '✓ Terminer'}
           </button>
         `}
     </div>
-  `;
+  `);
 }
 
 function safeConversationMediaUrl(value){
@@ -11123,7 +11564,7 @@ function renderConversationAttachment(item){
 
   if(type === 'image' && url){
     return `
-      <a class="inbox-media-card" href="${escapeHtml(url)}" onclick="openMediaLightbox('${escapeHtml(url)}','${escapeHtml(name)}');return false">
+      <a class="inbox-media-card" href="${escapeHtml(url)}" data-action="openMediaLightbox" data-url="${escapeHtml(url)}" data-name="${escapeHtml(name)}">
         <img class="inbox-media-image" src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy">
         <div class="inbox-media-caption">📷 ${escapeHtml(name)}</div>
       </a>
@@ -11261,13 +11702,13 @@ function renderThreadMessage(
   const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
   const purgePart=type === 'incoming' ? 'incoming' : 'reply';
   const purgeKey=String(entry?.purgeKeys?.[purgePart]||'');
-  const deleteButton=currentUser?.role==='admin'&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage('${escapeHtml(purgeKey)}','${purgePart}')" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
+  const deleteButton=currentUser?.role==='admin'&&purgeKey?`<button class="inbox-message-delete" type="button" data-action="deleteConversationMessage" data-stop="1" data-key="${escapeHtml(purgeKey)}" data-part="${escapeHtml(purgePart)}" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
 
   return `
     <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
       <div class="inbox-message-wrap">
         <div class="inbox-message-label">
-          ${label}
+          ${escapeHtml(label)}
           ${type !== 'incoming' && !commercial && !facebookOutbound
             ? '<span class="ai-answer-badge">🤖 IA</span>'
             : facebookOutbound
@@ -11324,7 +11765,7 @@ function conversationSourceCardHtml(state = {}){
   const sourcePlatform=channelDisplayName(sourceChannel);
   const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
   if(ad){
-    const media=ad.storedMediaUrl||source?.previewUrl||ad.mediaUrl||'';
+    const media=safeUrl(ad.storedMediaUrl||source?.previewUrl||ad.mediaUrl||''); // V6.36
     const mediaType=String(source?.previewType||ad.mediaType||'').toLowerCase();
     const title=ad.adTitle||ad.headline||'';
     const product=ad.productHint||'';
@@ -11337,18 +11778,18 @@ function conversationSourceCardHtml(state = {}){
       : mediaType==='video'&&media
         ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
         : '';
-    return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${postId?`<div style="margin-top:4px"><b>Publication :</b> ${escapeHtml(postId)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`:''}</div>`;
+    return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${postId?`<div style="margin-top:4px"><b>Publication :</b> ${escapeHtml(postId)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(safeUrl(ad.sourceUrl))}" target="_blank" rel="noopener">Voir la publication ↗</a>`:''}</div>`;
   }
   if(!source||!source.type||source.type==='direct') return '';
   const icon=source.type==='story'?'⭕':source.type==='reel'?'🎬':source.type==='share'?'🔗':'🖼';
-  const media=source.previewUrl||source.url||'';
+  const media=safeUrl(source.previewUrl||source.url||''); // V6.36
   const mediaType=String(source.previewType||'').toLowerCase();
   const mediaHtml=mediaType==='image'&&media
     ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Contexte ${escapeHtml(sourcePlatform)}" loading="lazy">`
     : mediaType==='video'&&media
       ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
       : '';
-  return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||`Source ${sourcePlatform}`)}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
+  return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||`Source ${sourcePlatform}`)}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(safeUrl(source.url))}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
 }
 
 function conversationAdStickyHtml(state = {}){
@@ -11366,7 +11807,7 @@ function conversationAdStickyHtml(state = {}){
     ? `<img class="inbox-ad-origin-thumb" src="${escapeHtml(media)}" alt="Publicité d’origine" loading="lazy">`
     : '';
   const link=/^https?:\/\//i.test(String(ad.sourceUrl||''))
-    ? `<a class="inbox-ad-origin-link" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir ↗</a>`
+    ? `<a class="inbox-ad-origin-link" href="${escapeHtml(safeUrl(ad.sourceUrl))}" target="_blank" rel="noopener">Voir ↗</a>`
     : '';
   return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation"><div>${mediaHtml||'<div class="inbox-ad-origin-thumb" style="display:grid;place-items:center;font-size:20px">📣</div>'}</div><div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ${sourcePlatform} ISSU D’UNE PUBLICITÉ</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
 }
@@ -11577,7 +12018,7 @@ function buildConversationComposer(
           class="wa-send-btn ${composerChannel === 'whatsapp' ? 'is-mic' : ''}"
           id="conversationSendBtn"
           type="button"
-          onclick="conversationPrimaryAction('${escapeHtml(contact)}')"
+          data-action="conversationPrimaryAction" data-contact="${escapeHtml(contact)}"
           aria-label="${composerChannel === 'whatsapp' ? 'Enregistrer un message vocal' : 'Envoyer le message'}"
           title="${composerChannel === 'whatsapp' ? 'Message vocal' : 'Envoyer'}"
         >${composerChannel === 'whatsapp' ? `<svg class="wa-primary-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"></path></svg>` : `<svg class="wa-primary-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-5.2 16-3.1-6.7L4 12Z"></path><path d="m11.7 13.3 4.6-4.6"></path></svg>`}</button>
@@ -11648,7 +12089,8 @@ function renderCustomerPanel(
           ? 'En attente du choix'
           : '—';
 
-  panel.innerHTML = `
+  // V6.36 — pas de reconstruction si rien n'a changé (rafraîchissement auto).
+  renderHtmlIfChanged(panel, `
     <div class="inbox-drawer-head">
       <div><strong>Fiche client</strong><span>Informations & actions</span></div>
       <button class="inbox-drawer-close" type="button" onclick="toggleCustomerPanel(false)" aria-label="Fermer la fiche client" title="Fermer">×</button>
@@ -11681,8 +12123,8 @@ function renderCustomerPanel(
           <div class="inbox-panel-title">Publicité d'origine</div>
           ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
           ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
-          ${(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(ad.storedMediaUrl || state?.sourceContext?.previewUrl)}" alt="Visuel publicité" loading="lazy">` : ''}
-          ${/^https?:\/\//i.test(String(ad.sourceUrl || '')) ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>` : ''}
+          ${safeUrl(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(safeUrl(ad.storedMediaUrl || state?.sourceContext?.previewUrl))}" alt="Visuel publicité" loading="lazy">` : ''}
+          ${/^https?:\/\//i.test(String(ad.sourceUrl || '')) ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(safeUrl(ad.sourceUrl))}" target="_blank" rel="noopener">Voir la publication ↗</a>` : ''}
         </div>`
       : ''}
 
@@ -11693,28 +12135,28 @@ function renderCustomerPanel(
     <div class="inbox-panel-section">
       <div class="inbox-panel-title">Actions</div>
       ${channel === 'whatsapp'
-        ? `<div class="inbox-panel-actions" style="margin-bottom:8px"><button class="btn wa-call-panel-btn" type="button" onclick="startWhatsAppCall('${escapeHtml(contact)}')">📞 Appel WhatsApp</button></div>`
+        ? `<div class="inbox-panel-actions" style="margin-bottom:8px"><button class="btn wa-call-panel-btn" type="button" data-action="startWhatsAppCall" data-contact="${escapeHtml(contact)}">📞 Appel WhatsApp</button></div>`
         : ''}
       ${limitedCommercial
         ? `<div class="inbox-alert">💬 Vous pouvez répondre à ce client à tout moment, même si l’IA ou un autre commercial a déjà répondu. L’affectation, la priorité et le statut restent gérés par le commercial affecté, le responsable ou l’administrateur.</div>`
         : `<div class="inbox-panel-actions">
             ${['admin','responsable_commercial'].includes(currentUser?.role)
-              ? `<button class="btn" type="button" onclick="assignConversation('${escapeHtml(contact)}')">👤 Affecter la conversation</button>`
+              ? `<button class="btn" type="button" data-action="assignConversation" data-contact="${escapeHtml(contact)}">👤 Affecter la conversation</button>`
               : ''}
             ${['admin','responsable_commercial'].includes(currentUser?.role)
-              ? `<button class="btn" type="button" onclick="createTaskFromConversation('${escapeHtml(contact)}')">📋 Créer une tâche</button>`
+              ? `<button class="btn" type="button" data-action="createTaskFromConversation" data-contact="${escapeHtml(contact)}">📋 Créer une tâche</button>`
               : ''}
             ${channel === 'whatsapp'
               ? `<a class="btn" href="https://wa.me/${escapeHtml(conversationExternalContact(item))}" target="_blank" rel="noopener">WhatsApp ↗</a>`
               : facebook
                 ? `<span class="btn" style="cursor:default">Facebook • supervision</span>`
                 : `<span class="btn" style="cursor:default">Instagram DM</span>`}
-            <button class="btn" type="button" onclick="toggleConversationPriority('${escapeHtml(contact)}', ${state.priority ? 'false' : 'true'})">
+            <button class="btn" type="button" data-action="toggleConversationPriority" data-contact="${escapeHtml(contact)}" data-value="${state.priority ? 'false' : 'true'}">
               ${state.priority ? '★ Retirer priorité' : '☆ Mettre en priorité'}
             </button>
           </div>`}
     </div>
-  `;
+  `);
 }
 
 window.openConversation = async function(contact, targetMessageId = ''){
@@ -11816,78 +12258,14 @@ window.openConversation = async function(contact, targetMessageId = ''){
     state
   );
 
+  // V6.36 — rendu du fil factorisé (renderConversationThread) : même rendu
+  // pour l'ouverture, « messages plus anciens » et le rafraîchissement auto.
   const detail =
     document.getElementById(
       'conversationDetail'
     );
 
-  detail.className =
-    'inbox-thread';
-
-  const ad =
-    state.adReferral ||
-    null;
-
-  const adHtml = state?.adReferral
-    ? conversationAdStickyHtml(state)
-    : conversationSourceCardHtml(state);
-
-  const messages =
-    data.entries
-      .map(entry => {
-        const commercial =
-          String(
-            entry.source ||
-            ''
-          )
-            .startsWith(
-              'commercial'
-            );
-
-        return [
-          renderThreadMessage(
-            'incoming',
-            entry.incoming,
-            entry,
-            false
-          ),
-          renderThreadMessage(
-            'outgoing',
-            entry.reply,
-            entry,
-            commercial
-          ),
-          renderThreadSystemEvent(entry),
-          entry.image_reason
-            ? `
-              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
-                ${escapeHtml(entry.image_reason)}
-              </div>
-            `
-            : '',
-          entry.error
-            ? `
-              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
-                ${escapeHtml(entry.error)}
-              </div>
-            `
-            : ''
-        ]
-          .filter(Boolean)
-          .join('');
-      })
-      .join('');
-
-  detail.innerHTML = `
-    ${data.hasMore ? `<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages('${escapeHtml(contact)}','${escapeHtml(data.nextBefore || '')}')">Afficher les messages plus anciens</button>` : ''}
-    ${adHtml}
-    ${historyLimitNotice(data.entries)}
-    ${messages || `
-      <div class="inbox-empty-state">
-        <strong>Aucun échange enregistré</strong>
-      </div>
-    `}
-  `;
+  renderConversationThread(contact, data, { scroll:'none' });
 
   if(targetMessageId){
     requestAnimationFrame(() => {
@@ -11922,6 +12300,8 @@ window.openConversation = async function(contact, targetMessageId = ''){
   populateConversationQuickReplySelect();
   bindSmartKeyboardShortcuts();
   applyStoredComposerMode();
+  // V6.36 — brouillon sauvegardé avant une expiration de session.
+  restoreComposerDraftAfterLogin(contact);
 
   if(!targetMessageId){
     requestAnimationFrame(() => {
@@ -11930,34 +12310,121 @@ window.openConversation = async function(contact, targetMessageId = ''){
     });
   }
 
-  await loadConversations();
+  await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
 }
 
+// V6.36 — Clé de déduplication d'une entrée de fil (même règle qu'avant).
+function conversationEntryKey(entry){
+  return String(entry?.message_id||entry?.meta_message_id||`${entry?.time}|${entry?.incoming||''}|${entry?.reply||''}`);
+}
+
+// V6.36 — Fusionne plusieurs listes d'entrées (les listes suivantes,
+// plus fraîches, remplacent les entrées de même clé) puis trie par date.
+function mergeConversationEntries(...lists){
+  const byKey=new Map();
+  for(const list of lists){
+    for(const entry of (Array.isArray(list)?list:[])){
+      byKey.set(conversationEntryKey(entry),entry);
+    }
+  }
+  return [...byKey.values()].sort((a,b)=>conversationUiTimeMs(a.time)-conversationUiTimeMs(b.time));
+}
+
+function renderConversationEntryHtml(entry){
+  const commercial=String(entry?.source||'').startsWith('commercial');
+  return [
+    renderThreadMessage('incoming',entry.incoming,entry,false),
+    renderThreadMessage('outgoing',entry.reply,entry,commercial),
+    renderThreadSystemEvent(entry),
+    entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',
+    entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''
+  ].filter(Boolean).join('');
+}
+
+// V6.36 — Rendu unique du fil (auparavant dupliqué et divergent entre
+// openConversation, loadOlderConversationMessages et le rafraîchissement
+// automatique). Reprend le comportement d'openConversation : carte pub
+// collante si publicité, sinon carte de source ; bouton « plus anciens »
+// tant que le serveur en signale. scroll : 'none' (l'appelant gère),
+// 'preserve' (reste en bas si on y était, sinon ne bouge pas) ou
+// 'prepend' (garde à l'écran les messages visibles après ajout au-dessus).
+function renderConversationThread(contact, data, { scroll = 'preserve' } = {}){
+  const detail=document.getElementById('conversationDetail');
+  if(!detail) return false;
+  const state=data?.state||{};
+  const entries=Array.isArray(data?.entries)?data.entries:[];
+  const sourceHtml=state?.adReferral
+    ? conversationAdStickyHtml(state)
+    : conversationSourceCardHtml(state);
+  const messages=entries.map(renderConversationEntryHtml).join('');
+  const olderButton=data?.hasMore
+    ? `<button class="load-older-messages" type="button" data-action="loadOlderConversationMessages" data-contact="${escapeHtml(contact)}" data-before="${escapeHtml(data.nextBefore||'')}">Afficher les messages plus anciens</button>`
+    : '';
+  const html=`
+    ${olderButton}
+    ${sourceHtml}
+    ${historyLimitNotice(entries)}
+    ${messages || `
+      <div class="inbox-empty-state">
+        <strong>Aucun échange enregistré</strong>
+      </div>
+    `}
+  `;
+
+  const previousHeight=detail.scrollHeight;
+  const previousTop=detail.scrollTop;
+  const wasNearBottom=(detail.scrollHeight-detail.scrollTop-detail.clientHeight)<150;
+
+  detail.className='inbox-thread';
+  // Rien n'a changé : on ne reconstruit pas (pas de saut, pas de clignotement des médias).
+  if(!renderHtmlIfChanged(detail,html)) return false;
+
+  if(scroll==='prepend'){
+    detail.scrollTop=previousTop+(detail.scrollHeight-previousHeight);
+  }else if(scroll==='preserve'){
+    if(wasNearBottom){
+      requestAnimationFrame(()=>{detail.scrollTop=detail.scrollHeight;});
+    }else{
+      detail.scrollTop=previousTop;
+    }
+  }
+  return true;
+}
+
+let loadOlderConversationBusy=false;
 window.loadOlderConversationMessages = async function(contact, before){
-  if(!contact || !before) return;
+  if(!contact || !before || loadOlderConversationBusy) return;
+  // V6.36 — même jeton anti-course qu'openConversation / rafraîchissement :
+  // si l'utilisateur a changé de conversation pendant le chargement, la
+  // réponse est ignorée au lieu d'écraser la conversation affichée.
+  const tokenAtStart=conversationRequestToken;
+  const contactAtStart=selectedConversationContact;
+  if(contactAtStart!==contact) return;
+  loadOlderConversationBusy=true;
+  const button=document.querySelector('#conversationDetail .load-older-messages');
+  if(button) button.disabled=true;
   try{
     const older=await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}?limit=120&before=${encodeURIComponent(before)}`);
+    if(conversationRequestToken!==tokenAtStart||selectedConversationContact!==contactAtStart) return;
     const current=Array.isArray(selectedConversationData?.entries)?selectedConversationData.entries:[];
-    const merged=[...(older.entries||[]),...current];
-    const seen=new Set();
-    const entries=merged.filter(entry=>{
-      const key=String(entry.message_id||entry.meta_message_id||`${entry.time}|${entry.incoming||''}|${entry.reply||''}`);
-      if(seen.has(key))return false;seen.add(key);return true;
-    }).sort((a,b)=>conversationUiTimeMs(a.time)-conversationUiTimeMs(b.time));
     // Render older messages without losing already loaded ones.
-    selectedConversationData={...selectedConversationData,...older,entries};
-    const detail=document.getElementById('conversationDetail');
-    const state=selectedConversationData.state||{};
-    const sourceHtml=state?.adReferral?conversationAdStickyHtml(state):conversationSourceCardHtml(state);
-    const messages=entries.map(entry=>{
-      const commercial=String(entry.source||'').startsWith('commercial');
-      return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),renderThreadSystemEvent(entry),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
-    }).join('');
-    if(detail){
-      detail.innerHTML=`${older.hasMore?`<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages('${escapeHtml(contact)}','${escapeHtml(older.nextBefore||'')}')">Afficher les messages plus anciens</button>`:''}${sourceHtml}${historyLimitNotice(entries)}${messages}`;
-      detail.scrollTop=0;
+    const entries=mergeConversationEntries(older.entries||[],current);
+    selectedConversationData={
+      ...selectedConversationData,
+      entries,
+      hasMore:older.hasMore===true,
+      nextBefore:String(older.nextBefore||'')
+    };
+    renderConversationThread(contact,selectedConversationData,{scroll:'prepend'});
+  }catch(error){
+    if(conversationRequestToken===tokenAtStart&&selectedConversationContact===contactAtStart){
+      alert(`Impossible de charger les messages plus anciens : ${error.message}`);
     }
-  }catch(error){alert(`Impossible de charger les messages plus anciens : ${error.message}`);}
+  }finally{
+    loadOlderConversationBusy=false;
+    const stillThere=document.querySelector('#conversationDetail .load-older-messages');
+    if(stillThere) stillThere.disabled=false;
+  }
 };
 
 window.deleteConversationMessage=async function(purgeKey,part){
@@ -11969,7 +12436,7 @@ window.deleteConversationMessage=async function(purgeKey,part){
   if(!confirm('SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'))return;
   try{
     await apiFetch(`${API}/conversations/${encodeURIComponent(selectedConversationContact)}/messages/${encodeURIComponent(purgeKey)}?part=${encodeURIComponent(part)}`,{method:'DELETE'});
-    await loadConversations();
+    await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
     if(selectedConversationContact){
       try{await openConversation(selectedConversationContact);}catch{selectedConversationContact='';selectedConversationData=null;resetInteractionDetail();}
     }
@@ -12260,7 +12727,7 @@ window.toggleResolvedConversation = async function(
       }
     );
 
-    await loadConversations();
+    await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
 
     if(resolved){
       selectedConversationContact = '';
@@ -13487,7 +13954,7 @@ window.toggleCommercialComposer = function(){
         : 'Réduire la zone de réponse';
   }
 
-  localStorage.setItem(
+  storageSet(
     'mondecoComposerCompact',
     compact
       ? '1'
@@ -13519,14 +13986,15 @@ function applyStoredComposerMode(){
 
   if(composer.classList.contains('whatsapp-composer')){
     composer.classList.remove('is-compact');
-    localStorage.removeItem('mondecoComposerCompact');
+    storageRemove('mondecoComposerCompact');
     requestAnimationFrame(()=>syncConversationPrimaryAction());
     return;
   }
 
   const compact =
-    localStorage.getItem(
-      'mondecoComposerCompact'
+    storageGet(
+      'mondecoComposerCompact',
+      ''
     ) === '1';
 
   composer.classList.toggle(
@@ -13990,7 +14458,7 @@ function showClientBrowserNotification(event){
       };
     }catch(error){console.debug('Notification navigateur indisponible',error);}
   }
-  const soundEnabled=localStorage.getItem('mondecoNotificationSound')==='1'||('Notification' in window&&Notification.permission==='granted');
+  const soundEnabled=storageGet('mondecoNotificationSound','')==='1'||('Notification' in window&&Notification.permission==='granted');
   if(soundEnabled)playNotificationTone(kind,channel);
 }
 
@@ -14010,19 +14478,6 @@ async function softRefreshSelectedConversation(){
   const tokenAtRefreshStart =
     conversationRequestToken;
 
-  const textarea =
-    document.getElementById(
-      'conversationQuickReply'
-    );
-
-  const draft =
-    textarea?.value || '';
-
-  const fileName =
-    document.getElementById(
-      'conversationAttachmentName'
-    )?.textContent || '';
-
   try{
     const refreshParams = new URLSearchParams({limit:'120'});
     if(selectedConversationTargetMessageId){
@@ -14032,18 +14487,6 @@ async function softRefreshSelectedConversation(){
       await apiFetch(
         `${API}/conversations/${encodeURIComponent(selectedConversationContact)}?${refreshParams.toString()}`
       );
-
-    const currentEntries =
-      Array.isArray(
-        selectedConversationData?.entries
-      )
-        ? selectedConversationData.entries
-        : [];
-
-    const nextEntries =
-      Array.isArray(data.entries)
-        ? data.entries
-        : [];
 
     // V6.35.4 — Réponse en retard sur une conversation qui n'est plus
     // affichée (ou qu'une navigation plus récente a remplacée) : on
@@ -14055,36 +14498,34 @@ async function softRefreshSelectedConversation(){
       return;
     }
 
-    const changed =
-      nextEntries.length !==
-      currentEntries.length ||
-      String(
-        nextEntries.at(-1)?.time || ''
-      ) !==
-      String(
-        currentEntries.at(-1)?.time || ''
-      );
+    // V6.36 — Fusion au lieu de remplacement : la réponse ne contient que
+    // les 120 derniers messages. Les messages plus anciens déjà chargés via
+    // « Afficher les messages plus anciens » sont conservés, ainsi que le
+    // curseur de pagination ; seule la fenêtre récente est remplacée (ce qui
+    // reflète aussi les suppressions / modifications dans cette fenêtre).
+    const currentEntries =
+      Array.isArray(selectedConversationData?.entries)
+        ? selectedConversationData.entries
+        : [];
+    const freshEntries =
+      Array.isArray(data.entries)
+        ? data.entries
+        : [];
+    const freshOldestMs = freshEntries.length
+      ? Math.min(...freshEntries.map(entry => conversationUiTimeMs(entry.time)))
+      : Infinity;
+    const keptOlder = data.hasMore === true
+      ? currentEntries.filter(entry => conversationUiTimeMs(entry.time) <= freshOldestMs)
+      : [];
+    const entries = mergeConversationEntries(keptOlder, freshEntries);
+    const keepCursor = keptOlder.length > 0 && selectedConversationData && 'hasMore' in selectedConversationData;
 
-    if(!changed){
-      return;
-    }
-
-    const detail =
-      document.getElementById(
-        'conversationDetail'
-      );
-
-    const wasNearBottom =
-      detail
-        ? (
-            detail.scrollHeight -
-            detail.scrollTop -
-            detail.clientHeight
-          ) < 150
-        : true;
-
-    selectedConversationData =
-      data;
+    selectedConversationData = {
+      ...data,
+      entries,
+      hasMore: keepCursor ? selectedConversationData.hasMore === true : data.hasMore === true,
+      nextBefore: keepCursor ? String(selectedConversationData.nextBefore || '') : String(data.nextBefore || '')
+    };
 
     renderConversationHeader(
       selectedConversationContact,
@@ -14096,87 +14537,15 @@ async function softRefreshSelectedConversation(){
       data.state || {}
     );
 
-    const ad =
-      data.state?.adReferral ||
-      null;
-
-    const adHtml = conversationSourceCardHtml(data.state || {});
-
-    const messages =
-      nextEntries
-        .map(entry => {
-          const commercial =
-            String(
-              entry.source || ''
-            )
-              .startsWith(
-                'commercial'
-              );
-
-          return [
-            renderThreadMessage(
-              'incoming',
-              entry.incoming,
-              entry,
-              false
-            ),
-            renderThreadMessage(
-              'outgoing',
-              entry.reply,
-              entry,
-              commercial
-            ),
-            renderThreadSystemEvent(entry),
-            entry.image_reason
-              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`
-              : '',
-            entry.error
-              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`
-              : ''
-          ]
-            .filter(Boolean)
-            .join('');
-        })
-        .join('');
-
-    if(detail){
-      detail.innerHTML = `
-        ${adHtml}
-        ${historyLimitNotice(nextEntries)}
-        ${messages || '<div class="inbox-empty-state"><strong>Aucun échange enregistré</strong></div>'}
-      `;
-
-      const newTextarea =
-        document.getElementById(
-          'conversationQuickReply'
-        );
-
-      if(newTextarea){
-        newTextarea.value =
-          draft;
-      }
-
-      const attachmentLabel =
-        document.getElementById(
-          'conversationAttachmentName'
-        );
-
-      if(
-        attachmentLabel &&
-        fileName
-      ){
-        attachmentLabel.textContent =
-          fileName;
-      }
-
-      if(wasNearBottom){
-        requestAnimationFrame(() => {
-          detail.scrollTop =
-            detail.scrollHeight;
-        });
-      }
-    }
+    renderConversationThread(
+      selectedConversationContact,
+      selectedConversationData,
+      { scroll:'preserve' }
+    );
   }catch(error){
+    // V6.36 — les échecs réseau / 5xx sont déjà signalés au planificateur
+    // par apiFetch (backoff) : on ne relance pas l'erreur pour ne pas
+    // interrompre pollCommercialNotifications() qui appelle cette fonction.
     console.debug(
       'Actualisation discussion :',
       error.message
@@ -14187,14 +14556,14 @@ async function softRefreshSelectedConversation(){
 
 function seenTaskNotificationIds(){
   try{
-    const parsed=JSON.parse(localStorage.getItem('mondecoSeenTaskNotifications')||'[]');
+    const parsed=JSON.parse(storageGet('mondecoSeenTaskNotifications','[]')||'[]');
     return new Set(Array.isArray(parsed)?parsed:[]);
   }catch{return new Set();}
 }
 function rememberTaskNotification(id){
   if(!id)return;
   const seen=seenTaskNotificationIds();seen.add(String(id));
-  localStorage.setItem('mondecoSeenTaskNotifications',JSON.stringify([...seen].slice(-100)));
+  storageSet('mondecoSeenTaskNotifications',JSON.stringify([...seen].slice(-100)));
 }
 
 async function pollCommercialNotifications(){
@@ -14212,15 +14581,15 @@ async function pollCommercialNotifications(){
       if(eventId&&notificationSeenIds.has(eventId))continue;
       if(event?.kind==='report'){
         const reportDate=String(event.reportDate||'');
-        const lastReport=localStorage.getItem('mondecoLastReportNotification')||'';
-        if(reportDate&&lastReport===reportDate){if(eventId)notificationSeenIds.add(eventId);continue;}
-        if(reportDate)localStorage.setItem('mondecoLastReportNotification',reportDate);
+        const lastReport=storageGet('mondecoLastReportNotification','')||'';
+        if(reportDate&&lastReport===reportDate){rememberNotificationSeen(eventId);continue;}
+        if(reportDate)storageSet('mondecoLastReportNotification',reportDate);
       }else if(event?.kind==='task'){
         const taskId=String(event.taskId||eventId||'');
-        if(taskId&&seenTaskNotificationIds().has(taskId)){if(eventId)notificationSeenIds.add(eventId);continue;}
+        if(taskId&&seenTaskNotificationIds().has(taskId)){rememberNotificationSeen(eventId);continue;}
         rememberTaskNotification(taskId);
       }
-      if(eventId)notificationSeenIds.add(eventId);
+      rememberNotificationSeen(eventId);
       showClientBrowserNotification(event);
     }
     if(events.length&&document.getElementById('page-conversations')?.classList?.contains('active')){
@@ -14228,12 +14597,13 @@ async function pollCommercialNotifications(){
       if(inboxInteractionMode==='comments'){
         await loadSocialComments();
       }else{
-        await loadConversations();
+        // V6.36 — fusion : ne revient plus aux 80 premières conversations à chaque notification.
+        await loadConversations({merge:true});
         if(selectedConversationContact)await softRefreshSelectedConversation();
       }
     }
     conversationNotificationCursor=data.serverTime||new Date().toISOString();
-    localStorage.setItem('mondecoNotificationCursor',conversationNotificationCursor);
+    storageSet('mondecoNotificationCursor',conversationNotificationCursor);
     if(!document.getElementById('notificationPanelBackdrop')?.classList.contains('hidden'))await loadNotificationPanel();
   }catch(error){console.debug('Polling notifications :',error.message);}
 }
@@ -14265,11 +14635,12 @@ function renderNotificationPanel(){
   list.innerHTML=notificationPanelItems.map(item=>{
     const isComment=item.kind==='comment';
     const displayName=isComment?(item.username?`@${String(item.username).replace(/^@/,'')}`:(item.profileName||'Client')):conversationDisplayName(item);
+    // V6.36 — attributs data-* (délégation) au lieu d'un onclick construit à partir des identifiants.
     const action=isComment
-      ? `openNotificationSocialComment('${escapeHtml(item.id)}','${escapeHtml(item.commentKey||'')}')`
-      : `openNotificationConversation('${escapeHtml(item.id)}','${escapeHtml(item.contact)}','${escapeHtml(item.messageId||'')}')`;
+      ? `data-action="openNotificationSocialComment" data-id="${escapeHtml(item.id)}" data-key="${escapeHtml(item.commentKey||'')}"`
+      : `data-action="openNotificationConversation" data-id="${escapeHtml(item.id)}" data-contact="${escapeHtml(item.contact)}" data-message-id="${escapeHtml(item.messageId||'')}"`;
     const kindBadge=isComment?'<span class="notification-kind-badge">💭 commentaire</span>':'<span class="notification-kind-badge">💬 message</span>';
-    return `<button class="notification-item ${item.read?'':'unread'} ${item.pendingReply?'pending-reply':''}" type="button" onclick="${action}">${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}${kindBadge}</span><span class="notification-item-meta"><span class="notification-network-dot ${escapeHtml(item.channel||'')}"></span>${escapeHtml(channelDisplayName(item.channel))} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}${item.pendingReply?' • À répondre':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||(isComment?'Nouveau commentaire':'Nouveau message'))}</span>${item.attachmentPreview?`<img class="notification-item-thumb" src="${escapeHtml(item.attachmentPreview)}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
+    return `<button class="notification-item ${item.read?'':'unread'} ${item.pendingReply?'pending-reply':''}" type="button" ${action}>${conversationAvatarHtml(item)}<span class="notification-item-main"><span class="notification-item-name">${escapeHtml(displayName)}${item.read?'':'<span class="notification-unread-dot"></span>'}${kindBadge}</span><span class="notification-item-meta"><span class="notification-network-dot ${escapeHtml(item.channel||'')}"></span>${escapeHtml(channelDisplayName(item.channel))} • ${escapeHtml(formatShortTime(item.createdAt))}${item.urgent?' • ⚠ Commercial requis':''}${item.pendingReply?' • À répondre':''}</span><span class="notification-item-preview">${escapeHtml(item.preview||(isComment?'Nouveau commentaire':'Nouveau message'))}</span>${safeUrl(item.attachmentPreview)?`<img class="notification-item-thumb" src="${escapeHtml(safeUrl(item.attachmentPreview))}" alt="Aperçu" loading="lazy">`:''}</span><span class="notification-item-time">${escapeHtml(relativeTime(item.createdAt))}</span></button>`;
   }).join('');
 }
 
@@ -14312,7 +14683,7 @@ document.getElementById('enableNotificationsBtn').addEventListener('click', asyn
   if('Notification' in window&&Notification.permission==='default'){
     try{
       const permission=await Notification.requestPermission();
-      if(permission==='granted')localStorage.setItem('mondecoNotificationSound','1');
+      if(permission==='granted')storageSet('mondecoNotificationSound','1');
     }catch(error){console.debug('Autorisation notification :',error);}
   }
   await openNotificationPanel();
@@ -14376,7 +14747,7 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
         document.getElementById('page-conversations')?.classList?.contains('active') &&
         inboxInteractionMode === 'messages'
       ){
-        await loadConversations();
+        await loadConversations({merge:true}); // V6.36 — conserve les pages déjà chargées
         if(
           selectedConversationContact &&
           conversationChannel(
@@ -14415,21 +14786,28 @@ setTimeout(
   4500
 );
 
-facebookRealtimeRecoveryTimer = setInterval(
-  () => {
-    if(document.visibilityState === 'visible'){
-      syncFacebookRealtimeMessages();
-    }
-  },
-  30000
+// V6.36 — rafraîchissements migrés vers createPoller (pas de chevauchement,
+// backoff en cas d'erreur, ralenti / en pause quand l'onglet est masqué).
+// Rattrapage Facebook : en pause onglet masqué (comme avant).
+facebookRealtimeRecoveryTimer = createPoller(
+  'facebook-realtime',
+  () => syncFacebookRealtimeMessages(),
+  30000,
+  { hiddenIntervalMs:null }
 );
 
-setInterval(
+// Notifications : 5 s au premier plan, 30 s onglet masqué pour que le titre
+// et les badges restent à jour. Premier passage après 1,2 s (comme avant).
+createPoller(
+  'notifications',
   pollCommercialNotifications,
-  5000
+  5000,
+  { hiddenIntervalMs:30000, initialDelayMs:1200 }
 );
 
-setInterval(
+// Conversation ouverte : en pause onglet masqué, reprise immédiate au retour.
+createPoller(
+  'open-conversation',
   () => {
     if(
       selectedConversationContact &&
@@ -14437,15 +14815,11 @@ setInterval(
         ?.classList
         ?.contains('active')
     ){
-      softRefreshSelectedConversation();
+      return softRefreshSelectedConversation();
     }
   },
-  5000
-);
-
-setTimeout(
-  pollCommercialNotifications,
-  1200
+  5000,
+  { hiddenIntervalMs:null }
 );
 
 // ============================================================
@@ -14565,8 +14939,8 @@ function renderCommercialCorrections(){
 
         ${isPending ? `
           <div class="correction-actions">
-            <button class="btn primary small" onclick="approveCommercialCorrection('${item.id}')">Ajouter aux connaissances</button>
-            <button class="btn small" onclick="ignoreCommercialCorrection('${item.id}')">Ignorer</button>
+            <button class="btn primary small" data-action="approveCommercialCorrection" data-id="${escapeHtml(item.id)}">Ajouter aux connaissances</button>
+            <button class="btn small" data-action="ignoreCommercialCorrection" data-id="${escapeHtml(item.id)}">Ignorer</button>
           </div>
         ` : ''}
       </div>
@@ -14774,8 +15148,8 @@ function renderCustomizations(){
               <td>${escapeHtml(customStatusLabel(item.status))}</td>
               <td>${escapeHtml(formatDate(item.createdAt))}</td>
               <td>
-                ${item.resultImage
-                  ? `<a href="${escapeHtml(item.resultImage)}" target="_blank">Voir</a>`
+                ${safeUrl(item.resultImage)
+                  ? `<a href="${escapeHtml(safeUrl(item.resultImage))}" target="_blank" rel="noopener">Voir</a>`
                   : '—'}
               </td>
             </tr>
@@ -14901,14 +15275,14 @@ document.getElementById('customizationForm').addEventListener('submit', async ev
     result.innerHTML = `
       <div class="custom-result">
         <figure>
-          ${item.sourceImage
-            ? `<img src="${escapeHtml(item.sourceImage)}" alt="Référence">`
+          ${safeUrl(item.sourceImage)
+            ? `<img src="${escapeHtml(safeUrl(item.sourceImage))}" alt="Référence">`
             : '<div class="empty">Référence catalogue</div>'}
           <figcaption>Référence</figcaption>
         </figure>
 
         <figure>
-          <img src="${escapeHtml(item.resultImage)}" alt="Simulation">
+          <img src="${escapeHtml(safeUrl(item.resultImage))}" alt="Simulation">
           <figcaption>Simulation IA</figcaption>
         </figure>
       </div>
@@ -15570,8 +15944,8 @@ function formatBackupDate(value){
 async function loadBackupProtection(){
   try{
     const [status, list] = await Promise.all([
-      apiFetch(`${API}/backups/status`),
-      apiFetch(`${API}/backups`)
+      apiFetch(`${API}/backups/status`,{timeoutMs:60000}), // V6.36 — lecture volume
+      apiFetch(`${API}/backups`,{timeoutMs:60000})
     ]);
 
     backupState = {
@@ -15881,35 +16255,33 @@ async function sendPresenceHeartbeat(){
 }
 
 function startPresenceTracking(){
-  if(presenceHeartbeatTimer){
-    clearInterval(
-      presenceHeartbeatTimer
-    );
-  }
-
-  if(presenceRefreshTimer){
-    clearInterval(
-      presenceRefreshTimer
-    );
-  }
+  // V6.36 — pollers (createPoller) au lieu de setInterval.
+  presenceHeartbeatTimer?.stop?.();
+  presenceRefreshTimer?.stop?.();
+  presenceHeartbeatTimer = null;
+  presenceRefreshTimer = null;
 
   sendPresenceHeartbeat();
 
+  // Onglet masqué : 45 s, sous le seuil « en ligne » du serveur (75 s),
+  // pour qu'un commercial dont l'onglet est en arrière-plan reste en ligne.
   presenceHeartbeatTimer =
-    setInterval(
+    createPoller(
+      'presence-heartbeat',
       sendPresenceHeartbeat,
-      20000
+      20000,
+      { hiddenIntervalMs:45000 }
     );
 
   if(['admin','responsable_commercial'].includes(currentUser?.role)){
     loadTeamPresence();
 
     presenceRefreshTimer =
-      setInterval(
-        () => {
-          loadTeamPresence();
-        },
-        20000
+      createPoller(
+        'team-presence',
+        () => loadTeamPresence(),
+        20000,
+        { hiddenIntervalMs:120000 }
       );
   }
 }
@@ -15918,10 +16290,12 @@ document.addEventListener(
   'visibilitychange',
   () => {
     if(document.visibilityState === 'visible'){
-      sendPresenceHeartbeat();
+      // V6.36 — passe par les pollers (exécution immédiate, sans doublon
+      // si une requête est déjà en cours).
+      presenceHeartbeatTimer?.runNow?.();
 
       if(['admin','responsable_commercial'].includes(currentUser?.role)){
-        loadTeamPresence();
+        presenceRefreshTimer?.runNow?.();
       }
     }
   }
@@ -16173,7 +16547,7 @@ function renderTeamUsers(){
               <button
                 class="btn small"
                 type="button"
-                onclick="editTeamUser('${escapeHtml(user.id)}')"
+                data-action="editTeamUser" data-id="${escapeHtml(user.id)}"
               >
                 Modifier
               </button>
@@ -16181,7 +16555,7 @@ function renderTeamUsers(){
               <button
                 class="btn small"
                 type="button"
-                onclick="resetTeamUserPassword('${escapeHtml(user.id)}')"
+                data-action="resetTeamUserPassword" data-id="${escapeHtml(user.id)}"
               >
                 Mot de passe
               </button>
@@ -16189,7 +16563,7 @@ function renderTeamUsers(){
               <button
                 class="btn small"
                 type="button"
-                onclick="toggleTeamUserActive('${escapeHtml(user.id)}', ${user.active ? 'false' : 'true'})"
+                data-action="toggleTeamUserActive" data-id="${escapeHtml(user.id)}" data-value="${user.active ? 'false' : 'true'}"
               >
                 ${user.active ? 'Désactiver' : 'Activer'}
               </button>
@@ -16200,7 +16574,7 @@ function renderTeamUsers(){
                     <button
                       class="btn small danger"
                       type="button"
-                      onclick="deleteTeamUser('${escapeHtml(user.id)}')"
+                      data-action="deleteTeamUser" data-id="${escapeHtml(user.id)}"
                     >
                       Supprimer
                     </button>
@@ -16508,7 +16882,8 @@ async function loadTeamReport(){
 
   const report =
     await apiFetch(
-      `${API}/reports/commercial-daily-v2?date=${encodeURIComponent(date)}`
+      `${API}/reports/commercial-daily-v2?date=${encodeURIComponent(date)}`,
+      {timeoutMs:60000} // V6.36 — rapport complet potentiellement long
     );
 
   renderTeamReport(
@@ -16669,7 +17044,7 @@ function renderSimplePerformance(){
   if(!ranking.length){host.innerHTML='<tr><td colspan="12"><div class="empty">Aucun commercial.</div></td></tr>';return;}
   host.innerHTML=ranking.map(item=>{
     const by=item.byChannel||{};
-    return `<tr><td><span class="performance-rank">${performanceRankLabel(item)}</span></td><td><strong>${escapeHtml(item.name||item.email||'Commercial')}</strong><span class="performance-mini">${escapeHtml(item.email||'')}</span><span class="performance-mini">WA ${Number(by.whatsappMessages||0)} • IG msg ${Number(by.instagramMessages||0)} • FB msg ${Number(by.facebookMessages||0)} • IG com ${Number(by.instagramComments||0)} • FB com ${Number(by.facebookComments||0)}</span></td><td><span class="performance-score ${performanceScoreClass(item.score)}">${item.score===null||item.score===undefined?'—':`${Number(item.score)}/100`}</span><span class="performance-mini">Qualité ${Number(item.qualityRate||0)}% • Réactivité ${Number(item.responseCompliance||0)}%</span></td><td><strong>${Number(item.clientsTreated||0)}</strong><span class="performance-mini">${Number(item.conversations||0)} conversation(s)</span></td><td><strong>${Number(item.messageReplies||0)}</strong></td><td><strong>${Number(item.commentReplies||0)}</strong></td><td><strong class="performance-good">${Number(item.developedConversations||0)}</strong></td><td><strong>${Number(item.completeConversations||0)}</strong></td><td><strong class="${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)?'performance-alert':''}">${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)}</strong></td><td><strong class="${Number(item.slaLate||0)+Number(item.slaMissed||0)?'performance-alert':''}">${Number(item.slaLate||0)+Number(item.slaMissed||0)}</strong><span class="performance-mini">médiane ${item.medianFirstResponseSeconds?escapeHtml(formatCountdownMs(Number(item.medianFirstResponseSeconds)*1000)):'—'}</span></td><td><strong class="${Number(item.unanswered||0)?'performance-alert':''}">${Number(item.unanswered||0)}</strong></td><td><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(item.userId)}')">Rapport</button></td></tr>`
+    return `<tr><td><span class="performance-rank">${performanceRankLabel(item)}</span></td><td><strong>${escapeHtml(item.name||item.email||'Commercial')}</strong><span class="performance-mini">${escapeHtml(item.email||'')}</span><span class="performance-mini">WA ${Number(by.whatsappMessages||0)} • IG msg ${Number(by.instagramMessages||0)} • FB msg ${Number(by.facebookMessages||0)} • IG com ${Number(by.instagramComments||0)} • FB com ${Number(by.facebookComments||0)}</span></td><td><span class="performance-score ${performanceScoreClass(item.score)}">${item.score===null||item.score===undefined?'—':`${Number(item.score)}/100`}</span><span class="performance-mini">Qualité ${Number(item.qualityRate||0)}% • Réactivité ${Number(item.responseCompliance||0)}%</span></td><td><strong>${Number(item.clientsTreated||0)}</strong><span class="performance-mini">${Number(item.conversations||0)} conversation(s)</span></td><td><strong>${Number(item.messageReplies||0)}</strong></td><td><strong>${Number(item.commentReplies||0)}</strong></td><td><strong class="performance-good">${Number(item.developedConversations||0)}</strong></td><td><strong>${Number(item.completeConversations||0)}</strong></td><td><strong class="${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)?'performance-alert':''}">${Number(item.priceOnlyConversations||0)+Number(item.priceOnlyComments||0)}</strong></td><td><strong class="${Number(item.slaLate||0)+Number(item.slaMissed||0)?'performance-alert':''}">${Number(item.slaLate||0)+Number(item.slaMissed||0)}</strong><span class="performance-mini">médiane ${item.medianFirstResponseSeconds?escapeHtml(formatCountdownMs(Number(item.medianFirstResponseSeconds)*1000)):'—'}</span></td><td><strong class="${Number(item.unanswered||0)?'performance-alert':''}">${Number(item.unanswered||0)}</strong></td><td><button class="btn small" type="button" data-action="openSimpleDailyReport" data-id="${escapeHtml(item.userId)}">Rapport</button></td></tr>`
   }).join('');
 }
 
@@ -16681,7 +17056,7 @@ function renderSimpleTeamDashboard(){
   renderSimplePerformance();
   const host=document.getElementById('simpleTeamRows');if(!host)return;
   if(!users.length){host.innerHTML='<tr><td colspan="6"><div class="empty">Aucun commercial.</div></td></tr>';return;}
-  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div>${s.defaultAllAccess?'<div class="help" style="margin-top:6px;color:#2f7a4d;font-weight:700">Par défaut : tous les réseaux actifs. Décochez seulement ceux non planifiés aujourd’hui.</div>':''}</td><td><div class="simple-mission-box"><input type="text" data-simple-mission="${escapeHtml(user.id)}" value="${escapeHtml(s.mission||'')}" placeholder="Ex. Répondre WhatsApp la nuit"><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-cross-midnight">🌙 Mission de nuit / fin possible le lendemain</div>':''}</div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" onclick="saveSimpleTeamSchedule('${escapeHtml(user.id)}',this)">Enregistrer</button><button class="btn small" type="button" onclick="openSimpleDailyReport('${escapeHtml(user.id)}')">Rapport</button><button class="btn small" type="button" onclick="editTeamUser('${escapeHtml(user.id)}')">Compte</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
+  host.innerHTML=users.map(user=>{const p=user.presence||{};const s=simpleScheduleForRow(user);const channels=new Set(s.channels||[]);const night=simpleNightSchedule(s);const pending=Number(user.pendingAssigned||0);return `<tr data-simple-row="${escapeHtml(user.id)}"><td><div class="simple-person"><div class="simple-avatar">${escapeHtml(userInitials(user.name,user.email))}</div><div><strong>${escapeHtml(user.name||user.email)}</strong><span>${escapeHtml(user.email||'')}</span>${user.active===false?'<span style="color:#b34b37;font-weight:800">Compte désactivé</span>':''}</div></div></td><td><span class="simple-status ${escapeHtml(simplePresenceClass(p))}" data-simple-presence="${escapeHtml(user.id)}"><i></i>${escapeHtml(simplePresenceLabel(p))}</span><div class="help">${escapeHtml(p.lastPage||'')}</div></td><td><div class="simple-channel-set"><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="whatsapp_messages" ${channels.has('whatsapp_messages')?'checked':''}> WA msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_messages" ${channels.has('instagram_messages')?'checked':''}> IG msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="instagram_comments" ${channels.has('instagram_comments')?'checked':''}> IG com</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_messages" ${channels.has('facebook_messages')?'checked':''}> FB msg</label><label class="simple-channel-check"><input type="checkbox" data-simple-user="${escapeHtml(user.id)}" data-channel="facebook_comments" ${channels.has('facebook_comments')?'checked':''}> FB com</label></div>${s.defaultAllAccess?'<div class="help" style="margin-top:6px;color:#2f7a4d;font-weight:700">Par défaut : tous les réseaux actifs. Décochez seulement ceux non planifiés aujourd’hui.</div>':''}</td><td><div class="simple-mission-box"><input type="text" data-simple-mission="${escapeHtml(user.id)}" value="${escapeHtml(s.mission||'')}" placeholder="Ex. Répondre WhatsApp la nuit"><div class="simple-hours"><input type="time" data-simple-start="${escapeHtml(user.id)}" value="${escapeHtml(s.startTime||'09:00')}"><span>→</span><input type="time" data-simple-end="${escapeHtml(user.id)}" value="${escapeHtml(s.endTime||'18:00')}"></div>${night?'<div class="simple-cross-midnight">🌙 Mission de nuit / fin possible le lendemain</div>':''}</div></td><td><div class="simple-metric simple-pending ${pending?'warn':'ok'}"><strong>${pending}</strong><span>${Number(user.lateAssigned||0)} en retard</span></div></td><td><div class="simple-team-row-actions"><button class="btn small" type="button" data-action="saveSimpleTeamSchedule" data-id="${escapeHtml(user.id)}">Enregistrer</button><button class="btn small" type="button" data-action="openSimpleDailyReport" data-id="${escapeHtml(user.id)}">Rapport</button><button class="btn small" type="button" data-action="editTeamUser" data-id="${escapeHtml(user.id)}">Compte</button></div><span class="simple-save-state" data-simple-save-state="${escapeHtml(user.id)}"></span></td></tr>`}).join('');
 }
 
 window.saveSimpleTeamSchedule=async function(userId,button){
@@ -16695,7 +17070,7 @@ window.saveSimpleTeamSchedule=async function(userId,button){
   try{await apiFetch(`${API}/team/simple-schedule/${encodeURIComponent(userId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:simpleTeamDate(),channels,startTime,endTime,mission,active:channels.length>0})});if(state)state.textContent=channels.length?'✓ Mission enregistrée':'✓ Accès retirés';await loadSimpleTeamDashboard(false)}catch(error){if(state)state.textContent='Erreur';alert(error.message)}finally{if(button){button.disabled=false;button.textContent=old||'Enregistrer'}setTimeout(()=>{if(state)state.textContent=''},1800)}
 };
 
-window.openSimpleDailyReport=async function(userId){simpleTeamReportUserId=userId;const date=simpleTeamDate();openModal('teamDailyReportModal');const body=document.getElementById('simpleDailyReportBody');if(body)body.innerHTML='<div class="empty">Chargement du compte rendu...</div>';try{const report=await apiFetch(`${API}/team/commercial-report/${encodeURIComponent(userId)}?date=${encodeURIComponent(date)}`);renderSimpleDailyReport(report)}catch(error){if(body)body.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`}};
+window.openSimpleDailyReport=async function(userId){simpleTeamReportUserId=userId;const date=simpleTeamDate();openModal('teamDailyReportModal');const body=document.getElementById('simpleDailyReportBody');if(body)body.innerHTML='<div class="empty">Chargement du compte rendu...</div>';try{const report=await apiFetch(`${API}/team/commercial-report/${encodeURIComponent(userId)}?date=${encodeURIComponent(date)}`,{timeoutMs:60000});renderSimpleDailyReport(report)}catch(error){if(body)body.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`}};
 function renderSimpleDailyReport(report){
   const d=report?.day||{};const p=report?.performance||{};const user=report?.user||{};const title=document.getElementById('simpleReportTitle');const sub=document.getElementById('simpleReportSubtitle');
   if(title)title.textContent=`Compte rendu — ${user.name||user.email||'Commercial'}`;
@@ -16755,7 +17130,7 @@ async function loadTeamSchedules(){
 function renderTeamSchedules(){
   const host=document.getElementById('scheduleList');if(!host)return;
   if(!teamSchedules.length){host.innerHTML='<div class="empty">Aucun planning pour cette date.</div>';return;}
-  host.innerHTML=teamSchedules.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')}</strong><div class="manager-item-meta">${escapeHtml(item.date)} • ${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)} • SLA ${Number(item.slaMinutes||5)} min</div></div><span class="badge">${(item.channels||[]).map(channelDisplayName).join(' + ')}</span></div>${item.mission?`<div style="margin-top:7px">${escapeHtml(item.mission)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editSchedule('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteSchedule('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');
+  host.innerHTML=teamSchedules.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')}</strong><div class="manager-item-meta">${escapeHtml(item.date)} • ${escapeHtml(item.startTime)}–${escapeHtml(item.endTime)} • SLA ${Number(item.slaMinutes||5)} min</div></div><span class="badge">${(item.channels||[]).map(channelDisplayName).join(' + ')}</span></div>${item.mission?`<div style="margin-top:7px">${escapeHtml(item.mission)}</div>`:''}<div class="manager-item-actions"><button class="btn" type="button" data-action="editSchedule" data-id="${escapeHtml(item.id)}">Modifier</button><button class="btn danger" type="button" data-action="deleteSchedule" data-id="${escapeHtml(item.id)}">Supprimer</button></div></div>`).join('');
 }
 
 window.editSchedule=async function(id){
@@ -16775,7 +17150,7 @@ document.getElementById('scheduleForm')?.addEventListener('submit',async event=>
 
 async function loadTeamTasks(){setTodayInputs();const date=document.getElementById('taskDate')?.value||tunisDateKey();try{teamTasks=await apiFetch(`${API}/tasks?date=${encodeURIComponent(date)}`);renderTeamTasks();}catch(error){console.warn(error.message);}return teamTasks;}
 
-function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(item.channel))}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}${item.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" onclick="openLinkedTaskConversation('${escapeHtml(item.conversationContact)}','${escapeHtml(item.conversationMessageId||'')}')">💬 Ouvrir ${escapeHtml(item.clientName||'la conversation')}</button></div>`:''}<div class="manager-item-actions"><button class="btn" type="button" onclick="editTask('${escapeHtml(item.id)}')">Modifier</button><button class="btn danger" type="button" onclick="deleteTask('${escapeHtml(item.id)}')">Supprimer</button></div></div>`).join('');}
+function renderTeamTasks(){const host=document.getElementById('taskList');if(!host)return;if(!teamTasks.length){host.innerHTML='<div class="empty">Aucune tâche pour cette date.</div>';return;}host.innerHTML=teamTasks.map(item=>`<div class="manager-item"><div class="manager-item-head"><div><strong>${escapeHtml(item.userName||'Commercial')} — ${escapeHtml(item.title)}</strong><div class="manager-item-meta">${escapeHtml(item.date)} ${item.startTime?`• ${escapeHtml(item.startTime)}`:''} ${item.dueTime?`→ ${escapeHtml(item.dueTime)}`:''} • ${item.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(item.channel))}</div></div><span class="badge">${escapeHtml(item.status)}</span></div>${item.details?`<div style="margin-top:7px">${escapeHtml(item.details)}</div>`:''}${item.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" data-action="openLinkedTaskConversation" data-contact="${escapeHtml(item.conversationContact)}" data-message-id="${escapeHtml(item.conversationMessageId||'')}">💬 Ouvrir ${escapeHtml(item.clientName||'la conversation')}</button></div>`:''}<div class="manager-item-actions"><button class="btn" type="button" data-action="editTask" data-id="${escapeHtml(item.id)}">Modifier</button><button class="btn danger" type="button" data-action="deleteTask" data-id="${escapeHtml(item.id)}">Supprimer</button></div></div>`).join('');}
 window.editTask=async function(id){
   const item=teamTasks.find(x=>x.id===id);if(!item)return;
   const title=prompt('Tâche :',item.title||'');if(title===null)return;
@@ -16800,7 +17175,7 @@ document.getElementById('taskDate')?.addEventListener('change',loadTeamTasks);
 document.getElementById('operationsDate')?.addEventListener('change',()=>{const date=document.getElementById('operationsDate').value;for(const id of ['scheduleDate','taskDate']){const el=document.getElementById(id);if(el)el.value=date;}Promise.all([loadTeamSchedules(),loadTeamTasks(),loadTeamOperations(),loadTeamPresence()]);});
 
 async function loadMyWorkday(){setTodayInputs();const date=document.getElementById('myWorkDate')?.value||tunisDateKey();try{const data=await apiFetch(`${API}/my-workday?date=${encodeURIComponent(date)}`);renderMyWorkday(data);}catch(error){const host=document.getElementById('myWorkTasks');if(host)host.innerHTML=`<div class="empty">${escapeHtml(error.message)}</div>`;}}
-function renderMyWorkday(data){const attendance=data?.attendance||{};const presence=data?.presence||{};const setText=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=String(value??'—');};setText('myPresenceOnline',formatPresenceDuration(attendance.onlineMs));setText('myPresenceOffline',formatPresenceDuration(attendance.offlineMs));setText('myPresenceSessions',Number(attendance.sessions||0));setText('myPresenceBasis',attendance.basis==='planning'?'Planning':'Activité');setText('myPresenceStatus',presence.status==='online'?'🟢 En ligne':presence.status==='idle'?'🟠 Inactif':'⚪ Hors ligne');const cards=document.getElementById('myWorkScheduleCards');const shifts=data?.schedules||[];if(cards){cards.innerHTML=shifts.length?shifts.map(s=>`<div class="workday-card"><strong>${escapeHtml(s.startTime)} → ${escapeHtml(s.endTime)}</strong><div class="manager-item-meta">Pause ${escapeHtml(s.breakStart||'—')}–${escapeHtml(s.breakEnd||'—')} • SLA ${Number(s.slaMinutes||5)} min</div><div class="workday-platforms">${(s.channels||[]).map(c=>`<span class="badge">${channelDisplayName(c)}</span>`).join('')}</div>${s.mission?`<div style="margin-top:10px">${escapeHtml(s.mission)}</div>`:''}</div>`).join(''):'<div class="empty">Aucun horaire planifié.</div>';}const host=document.getElementById('myWorkTasks');const tasks=data?.tasks||[];if(host){host.innerHTML=tasks.length?tasks.map(t=>`<div class="task-row"><div><strong>${escapeHtml(t.title)}</strong><div class="manager-item-meta">${t.startTime?escapeHtml(t.startTime):'—'} ${t.dueTime?`→ ${escapeHtml(t.dueTime)}`:''} • ${t.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(t.channel))}</div>${t.details?`<div style="margin-top:5px">${escapeHtml(t.details)}</div>`:''}${t.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" onclick="openLinkedTaskConversation('${escapeHtml(t.conversationContact)}','${escapeHtml(t.conversationMessageId||'')}')">💬 Ouvrir la conversation</button></div>`:''}</div><select class="task-status-select" onchange="updateMyTask('${escapeHtml(t.id)}',this.value)"><option value="todo" ${t.status==='todo'?'selected':''}>À faire</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>En cours</option><option value="done" ${t.status==='done'?'selected':''}>Terminée</option><option value="late" ${t.status==='late'?'selected':''}>En retard</option></select></div>`).join(''):'<div class="empty">Aucune tâche pour cette date.</div>';}}
+function renderMyWorkday(data){const attendance=data?.attendance||{};const presence=data?.presence||{};const setText=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=String(value??'—');};setText('myPresenceOnline',formatPresenceDuration(attendance.onlineMs));setText('myPresenceOffline',formatPresenceDuration(attendance.offlineMs));setText('myPresenceSessions',Number(attendance.sessions||0));setText('myPresenceBasis',attendance.basis==='planning'?'Planning':'Activité');setText('myPresenceStatus',presence.status==='online'?'🟢 En ligne':presence.status==='idle'?'🟠 Inactif':'⚪ Hors ligne');const cards=document.getElementById('myWorkScheduleCards');const shifts=data?.schedules||[];if(cards){cards.innerHTML=shifts.length?shifts.map(s=>`<div class="workday-card"><strong>${escapeHtml(s.startTime)} → ${escapeHtml(s.endTime)}</strong><div class="manager-item-meta">Pause ${escapeHtml(s.breakStart||'—')}–${escapeHtml(s.breakEnd||'—')} • SLA ${Number(s.slaMinutes||5)} min</div><div class="workday-platforms">${(s.channels||[]).map(c=>`<span class="badge">${channelDisplayName(c)}</span>`).join('')}</div>${s.mission?`<div style="margin-top:10px">${escapeHtml(s.mission)}</div>`:''}</div>`).join(''):'<div class="empty">Aucun horaire planifié.</div>';}const host=document.getElementById('myWorkTasks');const tasks=data?.tasks||[];if(host){host.innerHTML=tasks.length?tasks.map(t=>`<div class="task-row"><div><strong>${escapeHtml(t.title)}</strong><div class="manager-item-meta">${t.startTime?escapeHtml(t.startTime):'—'} ${t.dueTime?`→ ${escapeHtml(t.dueTime)}`:''} • ${t.channel==='both'?'WhatsApp + Instagram':escapeHtml(channelDisplayName(t.channel))}</div>${t.details?`<div style="margin-top:5px">${escapeHtml(t.details)}</div>`:''}${t.conversationContact?`<div style="margin-top:7px"><button class="btn small" type="button" data-action="openLinkedTaskConversation" data-contact="${escapeHtml(t.conversationContact)}" data-message-id="${escapeHtml(t.conversationMessageId||'')}">💬 Ouvrir la conversation</button></div>`:''}</div><select class="task-status-select" data-change-action="updateMyTask" data-id="${escapeHtml(t.id)}"><option value="todo" ${t.status==='todo'?'selected':''}>À faire</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>En cours</option><option value="done" ${t.status==='done'?'selected':''}>Terminée</option><option value="late" ${t.status==='late'?'selected':''}>En retard</option></select></div>`).join(''):'<div class="empty">Aucune tâche pour cette date.</div>';}}
 window.updateMyTask=async function(id,status){try{await apiFetch(`${API}/tasks/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});await loadMyWorkday();}catch(error){alert(error.message);}};
 document.getElementById('refreshMyWorkBtn')?.addEventListener('click',loadMyWorkday);document.getElementById('myWorkDate')?.addEventListener('change',loadMyWorkday);
 
@@ -16816,9 +17191,61 @@ document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(butto
   });
 });
 
-if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
+// V6.36 — poller (en pause onglet masqué) au lieu de setInterval.
+if(!socialCommentsLiveTimer){socialCommentsLiveTimer=createPoller('social-comments-status',()=>{if(document.getElementById('page-conversations')?.classList.contains('active'))return refreshSocialCommentsStatus();},12000,{hiddenIntervalMs:null});}
 
-if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
+// V6.36 — minuterie purement visuelle (aucun appel réseau) : ignorée quand
+// l'onglet est masqué. Le rechargement réseau de l'onglet Équipe passe par
+// un poller séparé (sans chevauchement, backoff, pause onglet masqué).
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.hidden)return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){renderSocialCommentsList();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}},5000);}
+createPoller('team-operations',()=>{if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))return loadTeamOperations();},5000,{hiddenIntervalMs:null});
+
+// ============================================================
+// V6.36 — ACTIONS DÉLÉGUÉES (data-action / data-change-action)
+// ============================================================
+// Mêmes fonctions et mêmes arguments que les anciens onclick inline ;
+// les valeurs viennent de dataset (déjà décodées, jamais évaluées en JS).
+registerDataActions({
+  editProduct: d => window.editProduct(d.id),
+  deleteProduct: d => window.deleteProduct(d.id),
+  toggleInstruction: d => window.toggleInstruction(d.id),
+  editInstruction: d => window.editInstruction(d.id),
+  deleteInstruction: d => window.deleteInstruction(d.id),
+  openSocialComment: d => window.openSocialComment(d.key),
+  selectSocialCommentTarget: d => window.selectSocialCommentTarget(d.key),
+  openConversation: d => window.openConversation(d.contact),
+  toggleConversationFavorite: d => window.toggleConversationFavorite(d.contact, d.value === 'true'),
+  toggleConversationPriority: d => window.toggleConversationPriority(d.contact, d.value === 'true'),
+  toggleResolvedConversation: d => window.toggleResolvedConversation(d.contact, d.value === 'true'),
+  startWhatsAppCall: d => window.startWhatsAppCall(d.contact),
+  assignConversation: d => window.assignConversation(d.contact),
+  reactivateConversationAI: d => window.reactivateConversationAI(d.contact),
+  takeOverConversation: d => window.takeOverConversation(d.contact),
+  createTaskFromConversation: d => window.createTaskFromConversation(d.contact),
+  conversationPrimaryAction: d => window.conversationPrimaryAction(d.contact),
+  openMediaLightbox: (d, el, event) => {
+    event.preventDefault();
+    window.openMediaLightbox(d.url, d.name);
+  },
+  deleteConversationMessage: d => window.deleteConversationMessage(d.key, d.part),
+  loadOlderConversationMessages: d => window.loadOlderConversationMessages(d.contact, d.before),
+  openNotificationConversation: d => window.openNotificationConversation(d.id, d.contact, d.messageId || ''),
+  openNotificationSocialComment: d => window.openNotificationSocialComment(d.id, d.key || ''),
+  approveCommercialCorrection: d => window.approveCommercialCorrection(d.id),
+  ignoreCommercialCorrection: d => window.ignoreCommercialCorrection(d.id),
+  editTeamUser: d => window.editTeamUser(d.id),
+  resetTeamUserPassword: d => window.resetTeamUserPassword(d.id),
+  toggleTeamUserActive: d => window.toggleTeamUserActive(d.id, d.value === 'true'),
+  deleteTeamUser: d => window.deleteTeamUser(d.id),
+  openSimpleDailyReport: d => window.openSimpleDailyReport(d.id),
+  saveSimpleTeamSchedule: (d, el) => window.saveSimpleTeamSchedule(d.id, el),
+  editSchedule: d => window.editSchedule(d.id),
+  deleteSchedule: d => window.deleteSchedule(d.id),
+  openLinkedTaskConversation: d => window.openLinkedTaskConversation(d.contact, d.messageId || ''),
+  editTask: d => window.editTask(d.id),
+  deleteTask: d => window.deleteTask(d.id),
+  updateMyTask: (d, el) => window.updateMyTask(d.id, el.value)
+});
 
 // ============================================================
 // LOGOUT / INIT
