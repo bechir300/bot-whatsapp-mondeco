@@ -4158,6 +4158,7 @@ migrateSecureImageModeV676();
 initializeQuickReplies();
 initializeUsers();
 syncBootstrapAdminFromEnvironment();
+warnIfLegacyDefaultAdminPassword();
 ensureDailySnapshot();
 
 // V6.33.1 — surveillance préventive. Le Volume est contrôlé périodiquement
@@ -4412,7 +4413,8 @@ function loadPersistentSessions() {
   let items = [];
   try {
     if (fs.existsSync(SESSIONS_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(SESSIONS_PATH, 'utf8') || '[]');
+      // V6.36 — lecture protégée (quarantaine + restauration .bak).
+      const parsed = readJsonFileSafe(SESSIONS_PATH, [], { label: 'sessions.json' });
       items = Array.isArray(parsed) ? parsed : [];
     }
   } catch (error) {
@@ -4657,46 +4659,55 @@ function sanitizeUserForClient(user) {
 }
 
 function loadUsers() {
-  try {
-    if (
-      !fs.existsSync(
-        USERS_PATH
-      )
-    ) {
-      return [];
-    }
-
-    const parsed =
-      JSON.parse(
-        fs.readFileSync(
-          USERS_PATH,
-          'utf8'
-        ) ||
-        '[]'
-      );
-
-    return Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
-  } catch (error) {
-    console.warn(
-      '⚠️ Lecture users.json :',
-      error.message
+  // V6.36 — lecture protégée : un users.json corrompu est mis en quarantaine
+  // et restauré depuis `.bak` si possible ; sinon il est laissé en place
+  // (jamais remplacé par un compte bootstrap) et l'erreur est journalisée.
+  const parsed =
+    readJsonFileSafe(
+      USERS_PATH,
+      [],
+      {
+        label: 'users.json',
+        onUnrecoverable: () => {
+          console.error(
+            '🚨 users.json corrompu sans backup valide : comptes indisponibles, écriture bloquée. Restaurez le fichier depuis la copie .corrupt-* ou un snapshot.'
+          );
+        }
+      }
     );
 
-    return [];
-  }
+  return Array.isArray(
+    parsed
+  )
+    ? parsed
+    : [];
 }
 
 function saveUsers(users) {
+  // V6.36 — ne jamais écraser un users.json illisible (perte de tous les comptes).
+  if (jsonFileIsCorrupt(USERS_PATH)) {
+    throw new Error(
+      'users.json est corrompu : sauvegarde bloquée pour protéger les comptes existants.'
+    );
+  }
+
   writeJsonAtomic(
     USERS_PATH,
     Array.isArray(users)
       ? users
       : []
   );
+}
+
+// V6.36 — mot de passe aléatoire (20 caractères, sans caractères ambigus).
+function generateRandomPassword(length = 20) {
+  const alphabet =
+    'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!@#%+=';
+  let output = '';
+  for (let i = 0; i < length; i += 1) {
+    output += alphabet[crypto.randomInt(alphabet.length)];
+  }
+  return output;
 }
 
 function initializeUsers() {
@@ -4707,12 +4718,28 @@ function initializeUsers() {
     return;
   }
 
+  // V6.36 — users.json présent mais illisible (et sans backup valide) :
+  // surtout ne pas le remplacer par un nouveau compte bootstrap.
+  if (jsonFileIsCorrupt(USERS_PATH)) {
+    console.error(
+      '🚨 users.json corrompu : aucun compte administrateur initial créé. Restaurez le fichier puis redémarrez.'
+    );
+    return;
+  }
+
   const now =
     new Date().toISOString();
 
+  // V6.36 — sans ADMIN_PASSWORD, mot de passe aléatoire affiché une seule fois.
+  const generatedPassword =
+    ADMIN_PASSWORD
+      ? ''
+      : generateRandomPassword(20);
+
   const credentials =
     hashUserPassword(
-      ADMIN_PASSWORD
+      ADMIN_PASSWORD ||
+      generatedPassword
     );
 
   const initialAdmin = {
@@ -4745,6 +4772,22 @@ function initializeUsers() {
   console.log(
     `👤 Compte administrateur initial créé : ${ADMIN_EMAIL}`
   );
+
+  if (generatedPassword) {
+    console.warn(
+      [
+        '',
+        '============================================================',
+        '🔑 ADMIN_PASSWORD non défini : mot de passe administrateur aléatoire généré.',
+        `   E-mail       : ${ADMIN_EMAIL}`,
+        `   Mot de passe : ${generatedPassword}`,
+        '   Ce mot de passe ne sera plus jamais affiché. Connectez-vous et',
+        '   changez-le immédiatement, ou définissez ADMIN_PASSWORD (12+ caractères).',
+        '============================================================',
+        ''
+      ].join('\n')
+    );
+  }
 }
 
 
@@ -4759,6 +4802,29 @@ function adminEnvironmentFingerprint() {
 }
 
 function syncBootstrapAdminFromEnvironment() {
+  // V6.36 — sans ADMIN_PASSWORD, ne jamais créer ni réinitialiser un compte
+  // avec un mot de passe connu : les comptes existants restent inchangés.
+  if (!ADMIN_PASSWORD) {
+    console.warn(
+      '⚠️ ADMIN_PASSWORD non défini : synchronisation du compte administrateur ignorée (mots de passe existants conservés).'
+    );
+    return;
+  }
+
+  if (ADMIN_PASSWORD.length < ADMIN_PASSWORD_MIN_LENGTH) {
+    console.warn(
+      `⚠️ ADMIN_PASSWORD trop court (${ADMIN_PASSWORD.length} caractères) : utilisez au moins ${ADMIN_PASSWORD_MIN_LENGTH} caractères.`
+    );
+  }
+
+  // V6.36 — users.json illisible : ne rien écraser.
+  if (jsonFileIsCorrupt(USERS_PATH)) {
+    console.error(
+      '🚨 users.json corrompu : synchronisation ADMIN_PASSWORD ignorée.'
+    );
+    return;
+  }
+
   const fingerprint =
     adminEnvironmentFingerprint();
 
@@ -4876,6 +4942,40 @@ function syncBootstrapAdminFromEnvironment() {
   } catch (error) {
     console.warn(
       '⚠️ Sauvegarde empreinte identifiants admin :',
+      error.message
+    );
+  }
+}
+
+// V6.36 — alerte si un administrateur utilise encore l'ancien mot de passe
+// par défaut. Aucun changement automatique (cela bloquerait le propriétaire).
+function warnIfLegacyDefaultAdminPassword() {
+  try {
+    const exposed =
+      loadUsers().filter(
+        user =>
+          user?.role === 'admin' &&
+          user?.active !== false &&
+          verifyUserPassword(
+            LEGACY_DEFAULT_ADMIN_PASSWORD,
+            user
+          )
+      );
+
+    for (const user of exposed) {
+      console.error(
+        [
+          '',
+          '🚨🚨🚨 ALERTE SÉCURITÉ 🚨🚨🚨',
+          `Le compte administrateur ${safeString(user.email)} utilise encore l'ancien mot de passe par défaut public.`,
+          'Changez-le immédiatement (Admin > Utilisateurs) ou définissez ADMIN_PASSWORD (12+ caractères) dans Railway.',
+          ''
+        ].join('\n')
+      );
+    }
+  } catch (error) {
+    console.warn(
+      '⚠️ Vérification mot de passe par défaut impossible :',
       error.message
     );
   }
@@ -11494,7 +11594,8 @@ function startWooCommerceAutoSync() {
     `🔄 WooCommerce auto-sync : toutes les ${WOOCOMMERCE_SYNC_MINUTES} min`
   );
 
-  setTimeout(
+  // V6.36 — timers de module en unref() (tests / arrêt propre).
+  const wooStartupTimer = setTimeout(
     () => {
       runWooCommerceSync(
         'startup'
@@ -11509,6 +11610,7 @@ function startWooCommerceAutoSync() {
     },
     20000
   );
+  wooStartupTimer.unref?.();
 
   wooSyncIntervalHandle =
     setInterval(
@@ -11530,6 +11632,7 @@ function startWooCommerceAutoSync() {
       },
       intervalMs
     );
+  wooSyncIntervalHandle.unref?.();
 }
 
 startWooCommerceAutoSync();
