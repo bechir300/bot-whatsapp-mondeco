@@ -6696,9 +6696,10 @@ async function sendWhatsAppMessage(
 }
 
 // V6.36.17 — Envoi d'un template WhatsApp approuvé pour reprendre contact
-// lorsque la fenêtre de service de 24 h est terminée. Le template est statique
-// (sans variable) : le contenu est défini et validé dans WhatsApp Manager.
-async function sendWhatsAppTemplate(to, templateName, languageCode = 'fr') {
+// lorsque la fenêtre de service de 24 h est terminée. Le contenu est défini et
+// validé dans WhatsApp Manager ; bodyParameters remplit ses variables {{1}}, {{2}}…
+// (vide pour le modèle de relance, qui n'en a pas).
+async function sendWhatsAppTemplate(to, templateName, languageCode = 'fr', bodyParameters = []) {
   if (!WHATSAPP_TOKEN) throw new Error('WHATSAPP_TOKEN manquant.');
   if (!PHONE_NUMBER_ID) throw new Error('PHONE_NUMBER_ID manquant.');
 
@@ -6731,7 +6732,13 @@ async function sendWhatsAppTemplate(to, templateName, languageCode = 'fr') {
         type:'template',
         template:{
           name:cleanTemplateName,
-          language:{code:cleanLanguage}
+          language:{code:cleanLanguage},
+          ...(bodyParameters.length ? {
+            components:[{
+              type:'body',
+              parameters:bodyParameters.map(text => ({ type:'text', text:safeString(text) }))
+            }]
+          } : {})
         }
       })
     }
@@ -11700,6 +11707,133 @@ if (
 ) {
   purgeResolvedStatesTimer.unref();
 }
+
+// ============================================================
+// DEMANDE D'AVIS APRÈS LIVRAISON (WooCommerce)
+// ============================================================
+
+// Le site mondeco.tn appelle cette route un jour après le passage d'une
+// commande en « Terminée » (mu-plugin mondeco-review-request.php). Hors de la
+// fenêtre de 24 h, WhatsApp n'accepte qu'un modèle approuvé :
+// WHATSAPP_REVIEW_TEMPLATE_NAME, avec 3 variables dans le corps
+// ({{1}} prénom, {{2}} produit, {{3}} lien vers le formulaire d'avis).
+// Tant que ce nom est vide, la route répond 503 sans rien envoyer.
+// Secret partagé avec le site : REVIEW_REQUEST_SECRET, ou le fichier
+// REVIEW_REQUEST_SECRET_FILE (par défaut /etc/mondeco/review-secret).
+
+const WHATSAPP_REVIEW_TEMPLATE_NAME =
+  safeString(process.env.WHATSAPP_REVIEW_TEMPLATE_NAME);
+
+const WHATSAPP_REVIEW_TEMPLATE_LANGUAGE =
+  safeString(process.env.WHATSAPP_REVIEW_TEMPLATE_LANGUAGE) || 'fr';
+
+const REVIEW_REQUEST_SECRET_FILE =
+  safeString(process.env.REVIEW_REQUEST_SECRET_FILE) || '/etc/mondeco/review-secret';
+
+const REVIEW_REQUESTS_PATH =
+  path.join(DATA_DIR, 'review-requests.jsonl');
+
+// Commandes déjà traitées : une seule demande d'avis par commande.
+const reviewRequestedOrders = new Set();
+
+try {
+  if (fs.existsSync(REVIEW_REQUESTS_PATH)) {
+    for (const line of fs.readFileSync(REVIEW_REQUESTS_PATH, 'utf8').split(/\r?\n/)) {
+      try {
+        const orderId = safeString(JSON.parse(line)?.orderId);
+        if (orderId) reviewRequestedOrders.add(orderId);
+      } catch {
+        // Ligne vide ou illisible : ignorée.
+      }
+    }
+  }
+} catch (error) {
+  console.warn('⚠️ Demandes d’avis non chargées :', error.message);
+}
+
+function reviewRequestSecret() {
+  const fromEnv = safeString(process.env.REVIEW_REQUEST_SECRET);
+  if (fromEnv) return fromEnv;
+
+  try {
+    return safeString(fs.readFileSync(REVIEW_REQUEST_SECRET_FILE, 'utf8'));
+  } catch {
+    return '';
+  }
+}
+
+function sameSecret(received, expected) {
+  const a = Buffer.from(safeString(received));
+  const b = Buffer.from(safeString(expected));
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Numéros saisis au paiement : « 29 055 512 », « +216 29055512 », « 0021629055512 ».
+function normalizeTunisianPhone(value) {
+  let digits = normalizePhone(value);
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length === 8) digits = `216${digits}`;
+  return /^216\d{8}$/.test(digits) ? digits : '';
+}
+
+app.post('/api/review-request', async (req, res) => {
+  const expected = reviewRequestSecret();
+
+  if (!expected || !sameSecret(req.get('X-Mondeco-Secret'), expected)) {
+    return res.status(403).json({ success: false, error: 'Accès refusé' });
+  }
+
+  if (!WHATSAPP_REVIEW_TEMPLATE_NAME) {
+    return res.status(503).json({ success: false, error: 'WHATSAPP_REVIEW_TEMPLATE_NAME non configuré' });
+  }
+
+  const orderId = safeString(req.body?.orderId);
+  const phone = normalizeTunisianPhone(req.body?.phone);
+  const firstName = safeString(req.body?.firstName).slice(0, 40) || 'cher client';
+  const productName = safeString(req.body?.productName).slice(0, 120);
+  const reviewUrl = safeString(req.body?.reviewUrl);
+
+  if (!orderId || !phone || !productName || !/^https:\/\/mondeco\.tn\//.test(reviewUrl)) {
+    return res.status(400).json({ success: false, error: 'Commande, téléphone tunisien, produit ou lien invalide' });
+  }
+
+  if (reviewRequestedOrders.has(orderId)) {
+    return res.json({ success: true, duplicate: true });
+  }
+
+  try {
+    const data = await sendWhatsAppTemplate(
+      phone,
+      WHATSAPP_REVIEW_TEMPLATE_NAME,
+      WHATSAPP_REVIEW_TEMPLATE_LANGUAGE,
+      [firstName, productName, reviewUrl]
+    );
+
+    const messageId = safeString(data?.messages?.[0]?.id) || null;
+    const time = new Date().toISOString();
+
+    reviewRequestedOrders.add(orderId);
+    appendJsonLine(REVIEW_REQUESTS_PATH, { orderId, phone, productName, messageId, time });
+
+    logConversation({
+      message_id: messageId,
+      contact: phone,
+      external_contact: phone,
+      channel: 'whatsapp',
+      action: 'review_request_sent',
+      reply: `⭐ Demande d’avis (commande ${orderId}) : ${productName} — ${reviewUrl}`,
+      reply_sent: true,
+      source: 'woocommerce',
+      time
+    });
+
+    console.log(`⭐ Demande d’avis envoyée (commande ${orderId}) → ${maskPhoneForLog(phone)}`);
+    return res.json({ success: true, messageId });
+  } catch (error) {
+    console.error(`❌ Demande d’avis (commande ${orderId}) :`, error.message);
+    return res.status(error.statusCode || 502).json({ success: false, error: error.message });
+  }
+});
 
 // ============================================================
 // TEST IA
