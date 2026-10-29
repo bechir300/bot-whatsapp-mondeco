@@ -473,6 +473,32 @@ function storageSpaceInfo() {
   }
 }
 
+// V6.36 — fetch avec délai maximal (AbortController). Le délai couvre aussi
+// la lecture du corps de la réponse ; le timer est unref() pour ne jamais
+// retenir le process. Un `signal` fourni par l'appelant est respecté.
+const FETCH_DEFAULT_TIMEOUT_MS = 15000;
+const FETCH_UPLOAD_TIMEOUT_MS = 60000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const external = options?.signal;
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(1000, Number(timeoutMs) || FETCH_DEFAULT_TIMEOUT_MS)
+  );
+  timer.unref?.();
+  try {
+    return await fetch(url, { ...(options || {}), signal: controller.signal });
+  } catch (error) {
+    clearTimeout(timer);
+    throw error;
+  }
+}
+
 function humanBytes(bytes) {
   const value = Math.max(0, Number(bytes || 0));
   if (value < 1024) return `${value} B`;
@@ -646,7 +672,8 @@ async function proxyCloudAsset(req, res, entry, { profile = false } = {}) {
   try {
     const headers = {};
     if (safeString(req.headers?.range)) headers.Range = req.headers.range;
-    const upstream = await fetch(entry.secureUrl, { headers });
+    // V6.36 — délai maximal (proxy média Cloudinary).
+    const upstream = await fetchWithTimeout(entry.secureUrl, { headers }, 120000);
     if (!upstream.ok && upstream.status !== 206) return false;
     res.status(upstream.status);
     for (const name of ['content-type','content-length','content-range','accept-ranges','etag','last-modified']) {
@@ -15274,14 +15301,16 @@ async function instagramGraphGet(url) {
     throw new Error('INSTAGRAM_ACCESS_TOKEN manquant.');
   }
 
-  const response = await fetch(
+  // V6.36 — délai maximal sur l'appel Graph Instagram.
+  const response = await fetchWithTimeout(
     url,
     {
       headers: {
         Authorization:
           `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
       }
-    }
+    },
+    GRAPH_REQUEST_TIMEOUT_MS
   );
 
   let data = {};
@@ -15587,7 +15616,8 @@ async function persistInstagramHistoryProfilePicture(
   if (!url || !scopedId) return '';
 
   try {
-    const response = await fetch(url);
+    // V6.36 — téléchargement d'avatar borné dans le temps.
+    const response = await fetchWithTimeout(url);
     if (!response.ok) return '';
 
     const buffer = Buffer.from(
@@ -16880,7 +16910,8 @@ async function persistFacebookHistoryProfilePicture(remoteUrl, customerId) {
   if (!url || !scopedId) return '';
 
   try {
-    const response = await fetch(url);
+    // V6.36 — téléchargement d'avatar borné dans le temps.
+    const response = await fetchWithTimeout(url);
     if (!response.ok) return '';
     const buffer = Buffer.from(await response.arrayBuffer());
     if (!buffer.length || buffer.length > 5 * 1024 * 1024) return '';
@@ -17423,7 +17454,8 @@ async function facebookRealtimeWebhookStatus({ tryRepair = false } = {}) {
   };
 
   const subscribeFields = async fields => {
-    const response = await fetch(endpoint, {
+    // V6.36 — délai maximal sur l'abonnement webhook Meta.
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${FACEBOOK_MESSENGER_TOKEN}`,
