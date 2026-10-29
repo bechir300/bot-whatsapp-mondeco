@@ -1,7 +1,7 @@
 Nom de l'entreprise : Mondeco (Mondeco.tn)
 Secteur : Vente de meubles modernes et élégants pour la maison
 Site web : mondeco.tn
-Showrooms : La Soukra, Sfax, Ezzahra, Sousse
+Showrooms : La Soukra, Sfax, Ezzahra, Sousse, Nabeul
 Zone de production : Usine basée à Tunis
 
 Produits/Services :
@@ -24,7 +24,7 @@ Q: Livrez-vous partout en Tunisie ?
 R: Oui, nous livrons partout en Tunisie directement depuis notre usine à Tunis.
 
 Q: Où sont vos showrooms ?
-R: Nos showrooms sont à La Soukra, Sfax, Ezzahra et Sousse.
+R: Nos showrooms sont à La Soukra, Sfax, Ezzahra, Sousse et Nabeul.
 
 Q: Proposez-vous des meubles pour les mariages ?
 R: Oui, nous avons un Pack Mariage pour aménager votre nid douillet avec des ensembles harmonieux et abordables.
