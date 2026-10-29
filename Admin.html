@@ -4315,7 +4315,96 @@ tbody tr:hover{
     grid-column:1 / -1;
   }
 }
-\n\n/* ==========================================================\n   MONDECO V6.17 — Présence équipe en temps réel\n   ========================================================== */\n.team-presence-btn{\n  display:inline-flex;\n  align-items:center;\n  gap:7px;\n  white-space:nowrap;\n}\n.team-presence-btn.is-filtering{\n  background:#11100f;\n  border-color:#11100f;\n  color:#fff;\n}\n.presence-count{\n  display:inline-grid;\n  min-width:20px;\n  height:20px;\n  padding:0 5px;\n  place-items:center;\n  border-radius:999px;\n  background:#e9f8ef;\n  color:#12733f;\n  font-size:9px;\n  font-weight:900;\n}\n.team-presence-btn.is-filtering .presence-count{\n  background:#fff;\n  color:#11100f;\n}\n.team-presence-line{\n  display:flex !important;\n  align-items:center;\n  gap:6px;\n  margin-top:6px !important;\n  color:#5f5953 !important;\n  font-size:8.8px !important;\n  white-space:normal !important;\n}\n.presence-dot{\n  display:inline-block;\n  flex:0 0 auto;\n  width:8px;\n  height:8px;\n  border-radius:50%;\n  background:#96908a;\n}\n.presence-dot.online{\n  background:#18a85a;\n  box-shadow:0 0 0 3px rgba(24,168,90,.12);\n}\n.presence-dot.idle{\n  background:#e69b22;\n  box-shadow:0 0 0 3px rgba(230,155,34,.12);\n}\n.presence-dot.offline{\n  background:#aaa49e;\n}\n.team-user-row.presence-online{\n  border-color:#bfe8cf;\n  background:#fbfffc;\n}\n.team-user-row.presence-idle{\n  border-color:#f1d8ac;\n}\n.presence-page{\n  color:#8b847d;\n  font-size:8px;\n}\n.team-presence-empty{\n  padding:18px;\n  border:1px dashed var(--line);\n  border-radius:11px;\n  text-align:center;\n  color:var(--muted);\n  font-size:10px;\n}\n@media(max-width:620px){\n  .team-date-field{\n    width:100%;\n  }\n  .team-presence-btn{\n    flex:1 1 auto;\n    justify-content:center;\n  }\n}\n
+
+/* V6.36 — bloc réparé : il avait été collé avec des retours à la ligne
+   littéraux (antislash + n) qui invalidaient tous ses sélecteurs. */
+/* ==========================================================
+   MONDECO V6.17 — Présence équipe en temps réel
+   ========================================================== */
+.team-presence-btn{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  white-space:nowrap;
+}
+.team-presence-btn.is-filtering{
+  background:#11100f;
+  border-color:#11100f;
+  color:#fff;
+}
+.presence-count{
+  display:inline-grid;
+  min-width:20px;
+  height:20px;
+  padding:0 5px;
+  place-items:center;
+  border-radius:999px;
+  background:#e9f8ef;
+  color:#12733f;
+  font-size:9px;
+  font-weight:900;
+}
+.team-presence-btn.is-filtering .presence-count{
+  background:#fff;
+  color:#11100f;
+}
+.team-presence-line{
+  display:flex !important;
+  align-items:center;
+  gap:6px;
+  margin-top:6px !important;
+  color:#5f5953 !important;
+  font-size:8.8px !important;
+  white-space:normal !important;
+}
+.presence-dot{
+  display:inline-block;
+  flex:0 0 auto;
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#96908a;
+}
+.presence-dot.online{
+  background:#18a85a;
+  box-shadow:0 0 0 3px rgba(24,168,90,.12);
+}
+.presence-dot.idle{
+  background:#e69b22;
+  box-shadow:0 0 0 3px rgba(230,155,34,.12);
+}
+.presence-dot.offline{
+  background:#aaa49e;
+}
+.team-user-row.presence-online{
+  border-color:#bfe8cf;
+  background:#fbfffc;
+}
+.team-user-row.presence-idle{
+  border-color:#f1d8ac;
+}
+.presence-page{
+  color:#8b847d;
+  font-size:8px;
+}
+.team-presence-empty{
+  padding:18px;
+  border:1px dashed var(--line);
+  border-radius:11px;
+  text-align:center;
+  color:var(--muted);
+  font-size:10px;
+}
+@media(max-width:620px){
+  .team-date-field{
+    width:100%;
+  }
+  .team-presence-btn{
+    flex:1 1 auto;
+    justify-content:center;
+  }
+}
+
 
 /* ==========================================================
    MONDECO V6.16.2 — Sidebar toujours accessible

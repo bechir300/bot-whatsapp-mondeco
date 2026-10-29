@@ -292,10 +292,17 @@ const INSTRUCTIONS_MIGRATION_MARKER = path.join(
 
 const ADMIN_HTML_PATH = path.join(APP_DIR, 'Admin.html');
 
+// V6.36 — plus aucun mot de passe administrateur par défaut codé en dur.
+// Sans ADMIN_PASSWORD, aucun compte n'est créé ni réinitialisé avec un mot de
+// passe connu (voir initializeUsers / syncBootstrapAdminFromEnvironment).
 const ADMIN_PASSWORD = (
   process.env.ADMIN_PASSWORD ||
-  'mondeco2026'
+  ''
 ).trim();
+const ADMIN_PASSWORD_MIN_LENGTH = 12;
+// Ancien mot de passe par défaut : uniquement utilisé pour détecter un compte
+// qui l'utiliserait encore (avertissement au démarrage), jamais pour en créer.
+const LEGACY_DEFAULT_ADMIN_PASSWORD = 'mondeco2026';
 
 const ADMIN_EMAIL = (
   process.env.ADMIN_EMAIL ||
@@ -965,7 +972,8 @@ function pruneMessageIdIndexForStorageRescue() {
     const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
     if (lines.length <= MAX_MESSAGE_ID_LINES) return 0;
     const kept = lines.slice(-MAX_MESSAGE_ID_LINES);
-    fs.writeFileSync(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`, 'utf8');
+    // V6.36 — réécriture atomique (tmp + rename).
+    writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`);
     const afterSize = Number(fs.statSync(MESSAGE_ID_INDEX_PATH).size || 0);
     return Math.max(0, beforeSize - afterSize);
   } catch (error) {
@@ -1248,7 +1256,8 @@ function pruneConversationEventsByRetention(favoriteContacts = retentionProtecte
         }
 
         if (keptLines.length) {
-          fs.writeFileSync(fullPath, `${keptLines.join('\n')}\n`);
+          // V6.36 — réécriture atomique (tmp + rename).
+          writeTextFileAtomic(fullPath, `${keptLines.join('\n')}\n`);
           const nextSize = Number(fs.statSync(fullPath).size || 0);
           freed += Math.max(0, Number(stat.size || 0) - nextSize);
         } else {
@@ -2296,6 +2305,11 @@ function writeJsonAtomic(filePath, data) {
   // V6.33.1 : écriture atomique avec garde-fou ENOSPC.
   // Quand le Volume manque d'espace, on supprime d'abord uniquement les caches
   // et sauvegardes régénérables puis on retente une seule fois.
+  // V6.36 — plus aucune écriture directe dans le fichier cible (même en
+  // ENOSPC) : un crash pendant cette écriture laissait un JSON tronqué.
+  // Le fichier temporaire est fsync avant le rename, et un `.bak` de la
+  // version précédente est conservé via un lien physique (aucune copie :
+  // l'ancien contenu reste simplement référencé par le `.bak`).
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   const backupPath = `${filePath}.bak`;
   const serialized = JSON.stringify(data, null, 2);
@@ -2308,25 +2322,25 @@ function writeJsonAtomic(filePath, data) {
   const keepFullBackup =
     !lowHeadroom &&
     (!COMPACT_STORAGE_MODE || serializedBytes <= VERSIONED_BACKUP_MAX_BYTES);
+  // V6.36 — en mode compact, les gros fichiers gardent aussi un `.bak` tant que
+  // la marge de stockage le permet (le Storage Rescue peut le supprimer).
+  const keepLinkedBackup =
+    !lowHeadroom &&
+    (
+      keepFullBackup ||
+      !spaceBefore ||
+      spaceBefore.freeBytes >= serializedBytes + STORAGE_RESCUE_TARGET_FREE_BYTES
+    );
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
-  if (fileExistsWithContent(filePath) && !lowHeadroom) {
+  const hadPrevious = fileExistsWithContent(filePath);
+  if (hadPrevious && !lowHeadroom) {
     backupJsonVersion(filePath);
-
-    if (keepFullBackup) {
-      try {
-        fs.copyFileSync(filePath, backupPath);
-      } catch (error) {
-        console.warn('⚠️ Backup JSON impossible :', error.message);
-      }
-    } else {
-      deleteFileIfExists(backupPath);
-    }
-  } else if (lowHeadroom) {
-    // Ne pas créer une nouvelle copie quand le Volume est déjà proche de la limite.
-    deleteFileIfExists(backupPath);
   }
+  // V6.36 — l'ancien `.bak` est toujours retiré avant d'être recréé (évite
+  // tout lien résiduel vers le fichier actif).
+  deleteFileIfExists(backupPath);
 
   const cleanupTemp = () => {
     try {
@@ -2334,9 +2348,45 @@ function writeJsonAtomic(filePath, data) {
     } catch {}
   };
 
+  const writeTempDurably = () => {
+    const fd = fs.openSync(tempPath, 'w');
+    try {
+      fs.writeSync(fd, serialized, null, 'utf8');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+
   const atomicAttempt = () => {
-    fs.writeFileSync(tempPath, serialized, 'utf8');
-    fs.renameSync(tempPath, filePath);
+    writeTempDurably();
+    let renamedPreviousToBackup = false;
+    if (hadPrevious && keepLinkedBackup && !fs.existsSync(backupPath)) {
+      try {
+        fs.linkSync(filePath, backupPath);
+      } catch (linkError) {
+        // Système de fichiers sans liens physiques : rename de l'ancienne
+        // version vers `.bak` juste avant de poser la nouvelle.
+        try {
+          fs.renameSync(filePath, backupPath);
+          renamedPreviousToBackup = true;
+        } catch (renameError) {
+          console.warn(`⚠️ Backup .bak impossible pour ${path.basename(filePath)} :`, renameError.message);
+        }
+      }
+    }
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch (renameError) {
+      if (renamedPreviousToBackup) {
+        try { fs.renameSync(backupPath, filePath); } catch {}
+      }
+      throw renameError;
+    }
+    try {
+      const dirFd = fs.openSync(path.dirname(filePath), 'r');
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    } catch {}
   };
 
   try {
@@ -2348,24 +2398,22 @@ function writeJsonAtomic(filePath, data) {
 
     console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
     emergencyFreeDisposableStorage();
+    // V6.36 — le nettoyage d'urgence a pu supprimer le `.bak` : le retirer
+    // aussi de la nouvelle tentative pour libérer un maximum d'espace.
+    deleteFileIfExists(backupPath);
 
     try {
       atomicAttempt();
       return;
     } catch (retryError) {
       cleanupTemp();
-      if (safeString(retryError?.code) !== 'ENOSPC') throw retryError;
-
-      // Dernier recours : lorsqu'on compacte un gros JSON vers une version plus
-      // petite, l'écriture directe libère les blocs de l'ancien fichier au fur
-      // et à mesure. Ce mode n'est utilisé qu'en situation ENOSPC.
-      let currentSize = 0;
-      try { currentSize = fs.existsSync(filePath) ? Number(fs.statSync(filePath).size || 0) : 0; } catch {}
-      if (currentSize > serializedBytes) {
-        console.warn(`🛟 Compactage direct d'urgence : ${path.basename(filePath)} ${humanBytes(currentSize)} → ${humanBytes(serializedBytes)}.`);
-        fs.writeFileSync(filePath, serialized, 'utf8');
-        return;
-      }
+      // V6.36 — l'ancien « compactage direct d'urgence » (écriture non
+      // atomique dans le fichier cible) a été supprimé : on préfère échouer
+      // proprement en conservant la dernière version valide.
+      console.error(
+        `❌ Écriture atomique impossible pour ${path.basename(filePath)} (${safeString(retryError?.code) || 'erreur'}) : dernière version valide conservée.`,
+        retryError?.message || retryError
+      );
       throw retryError;
     }
   } finally {
@@ -2373,40 +2421,122 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
-function readJsonArray(filePath, label) {
+// V6.36 — réécriture atomique d'un fichier texte (JSONL, index) : tmp + fsync
+// + rename, pour ne jamais laisser un journal à moitié écrit.
+function writeTextFileAtomic(filePath, content) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    const fd = fs.openSync(tempPath, 'w');
+    try {
+      fs.writeSync(fd, String(content ?? ''), null, 'utf8');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {}
+  }
+}
+
+// V6.36 — lecture JSON sans perte silencieuse.
+// Si un fichier existant et non vide est illisible :
+//   1. il est copié en quarantaine `<fichier>.corrupt-<horodatage>` ;
+//   2. on tente `<fichier>.bak` ; s'il est valide, il est restauré
+//      (atomiquement) dans le fichier actif et ses données sont retournées ;
+//   3. sinon `fallback` est retourné et l'erreur est journalisée.
+// `onUnrecoverable` (optionnel) est appelé quand aucun backup n'est valide.
+// Une même version corrompue n'est mise en quarantaine qu'une seule fois.
+const jsonCorruptionHandled = new Map();
+
+function readJsonFileSafe(filePath, fallback, { label = '', onUnrecoverable = null } = {}) {
+  const name = label || path.basename(safeString(filePath));
   const backupPath = `${filePath}.bak`;
 
-  function read(candidate) {
-    if (!fileExistsWithContent(candidate)) return null;
+  if (!fileExistsWithContent(filePath)) return fallback;
 
-    const parsed = JSON.parse(
-      fs.readFileSync(candidate, 'utf8')
-    );
-
-    return Array.isArray(parsed) ? parsed : [];
-  }
-
+  let primaryError = null;
   try {
-    const data = read(filePath);
-    return data === null ? [] : data;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (error) {
-    console.error(`❌ Lecture ${label} impossible :`, error.message);
-
-    try {
-      const backup = read(backupPath);
-      if (backup !== null) {
-        console.warn(`♻️ ${label} restauré depuis backup`);
-        return backup;
-      }
-    } catch (backupError) {
-      console.error(
-        `❌ Backup ${label} invalide :`,
-        backupError.message
-      );
-    }
-
-    return [];
+    primaryError = error;
   }
+
+  let signature = '';
+  try {
+    const stat = fs.statSync(filePath);
+    signature = `${stat.size}:${stat.mtimeMs}`;
+  } catch {}
+
+  const alreadyHandled = jsonCorruptionHandled.get(filePath) === signature;
+  if (!alreadyHandled) {
+    if (jsonCorruptionHandled.size > 500) jsonCorruptionHandled.clear();
+    jsonCorruptionHandled.set(filePath, signature);
+    console.error(`❌ ${name} illisible (JSON corrompu) :`, primaryError?.message || primaryError);
+    const quarantinePath = `${filePath}.corrupt-${timestampId()}`;
+    try {
+      fs.copyFileSync(filePath, quarantinePath);
+      console.error(`🧯 Copie de quarantaine conservée : ${path.basename(quarantinePath)}`);
+    } catch (copyError) {
+      console.error(`❌ Quarantaine impossible pour ${name} :`, copyError.message);
+    }
+  }
+
+  let backupData;
+  let backupValid = false;
+  try {
+    if (fileExistsWithContent(backupPath)) {
+      backupData = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+      backupValid = true;
+    }
+  } catch (backupError) {
+    if (!alreadyHandled) {
+      console.error(`❌ Backup ${name} invalide :`, backupError.message);
+    }
+  }
+
+  if (backupValid) {
+    // Restauration atomique du backup dans le fichier actif : les lectures
+    // suivantes et la prochaine sauvegarde repartent de données valides.
+    const restoreTemp = `${filePath}.${process.pid}.${Date.now()}.restore.tmp`;
+    try {
+      fs.copyFileSync(backupPath, restoreTemp);
+      fs.renameSync(restoreTemp, filePath);
+      jsonCorruptionHandled.delete(filePath);
+      console.warn(`♻️ ${name} restauré depuis ${path.basename(backupPath)}`);
+    } catch (restoreError) {
+      try { if (fs.existsSync(restoreTemp)) fs.unlinkSync(restoreTemp); } catch {}
+      console.error(`❌ Restauration ${name} depuis backup impossible :`, restoreError.message);
+    }
+    return backupData;
+  }
+
+  if (!alreadyHandled) {
+    console.error(`🚨 ${name} corrompu et aucun backup valide : valeur par défaut utilisée (copie de quarantaine conservée).`);
+  }
+  if (typeof onUnrecoverable === 'function') {
+    try { onUnrecoverable(primaryError); } catch {}
+  }
+  return fallback;
+}
+
+// V6.36 — vrai si le fichier existe, n'est pas vide et n'est pas un JSON valide.
+function jsonFileIsCorrupt(filePath) {
+  if (!fileExistsWithContent(filePath)) return false;
+  try {
+    JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function readJsonArray(filePath, label) {
+  // V6.36 — délégué à readJsonFileSafe (quarantaine + restauration .bak).
+  const data = readJsonFileSafe(filePath, [], { label });
+  return Array.isArray(data) ? data : [];
 }
 
 
@@ -2432,7 +2562,8 @@ function loadPurgedRecordHashes() {
   let hashes = [];
   try {
     if (fs.existsSync(PURGED_RECORD_HASHES_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8') || '{}');
+      // V6.36 — lecture protégée : perdre ces empreintes réimporterait des éléments supprimés.
+      const parsed = readJsonFileSafe(PURGED_RECORD_HASHES_PATH, {}, { label: 'purged-record-hashes.json' });
       hashes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.hashes) ? parsed.hashes : []);
     }
   } catch (error) {
@@ -3961,9 +4092,8 @@ function getBotSettings() {
       initializeSettings();
     }
 
-    const parsed = JSON.parse(
-      fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
-    );
+    // V6.36 — lecture protégée (quarantaine + restauration .bak).
+    const parsed = readJsonFileSafe(SETTINGS_PATH, {}, { label: 'settings.json' });
 
     return normalizeSettings(parsed);
   } catch (error) {
@@ -4254,11 +4384,19 @@ function getBusinessContext() {
 // V6.33.1 — Sessions commerciales persistantes.
 // Le cookie contient un token aléatoire; seul son SHA-256 est stocké sur le Volume.
 // Un redéploiement Railway ne déconnecte donc plus les utilisateurs déjà connectés.
+// V6.36 — durée absolue par défaut ramenée de 30 à 14 jours
+// (MONDECO_SESSION_DAYS reste prioritaire) + expiration après inactivité
+// (MONDECO_SESSION_IDLE_HOURS, 12 h par défaut).
 const SESSION_DURATION_DAYS = Math.max(
   1,
-  Math.min(90, Number(process.env.MONDECO_SESSION_DAYS || 30) || 30)
+  Math.min(90, Number(process.env.MONDECO_SESSION_DAYS || 14) || 14)
 );
 const SESSION_DURATION = SESSION_DURATION_DAYS * 24 * 60 * 60 * 1000;
+const SESSION_IDLE_HOURS = Math.max(
+  1,
+  Math.min(24 * 90, Number(process.env.MONDECO_SESSION_IDLE_HOURS || 12) || 12)
+);
+const SESSION_IDLE_TIMEOUT_MS = SESSION_IDLE_HOURS * 60 * 60 * 1000;
 const SESSION_PERSIST_MIN_INTERVAL_MS = 60 * 1000;
 let sessionStoreDirty = false;
 let sessionStoreLastPersistAt = 0;
@@ -4287,15 +4425,39 @@ function loadPersistentSessions() {
     const userId = safeString(item?.userId);
     const expiresAt = Number(item?.expiresAt || 0);
     if (!tokenHash || !userId || !expiresAt || expiresAt <= now) continue;
-    map.set(tokenHash, {
+    const session = {
       userId,
       createdAt: Number(item?.createdAt || now),
       lastSeenAt: Number(item?.lastSeenAt || item?.createdAt || now),
+      // V6.36 — les sessions antérieures (sans lastUsedAt) repartent d'une
+      // fenêtre d'inactivité complète à partir du redémarrage.
+      lastUsedAt: Number(item?.lastUsedAt || 0) || now,
       lastPage: normalizePresencePage(item?.lastPage || ''),
       expiresAt
-    });
+    };
+    if (sessionIsExpired(session, now)) continue;
+    map.set(tokenHash, session);
   }
   return map;
+}
+
+// V6.36 — expiration absolue (expiresAt) OU inactivité supérieure à
+// SESSION_IDLE_TIMEOUT_MS (dernier usage authentifié ou heartbeat).
+function sessionIsExpired(session, now = Date.now()) {
+  if (!session) return true;
+  const expiresAt =
+    typeof session === 'number'
+      ? session
+      : Number(session?.expiresAt || 0);
+  if (!expiresAt || expiresAt <= now) return true;
+  if (typeof session !== 'object') return false;
+  const lastActivity = Math.max(
+    Number(session.lastUsedAt || 0),
+    Number(session.lastSeenAt || 0),
+    Number(session.createdAt || 0)
+  );
+  if (!lastActivity) return false;
+  return now - lastActivity > SESSION_IDLE_TIMEOUT_MS;
 }
 
 const sessions = loadPersistentSessions();
@@ -4312,6 +4474,7 @@ function persistSessions(force = false) {
       userId: safeString(session?.userId),
       createdAt: Number(session?.createdAt || now),
       lastSeenAt: Number(session?.lastSeenAt || session?.createdAt || now),
+      lastUsedAt: Number(session?.lastUsedAt || session?.lastSeenAt || session?.createdAt || now),
       lastPage: normalizePresencePage(session?.lastPage || ''),
       expiresAt: Number(session?.expiresAt || 0)
     }))
@@ -4337,6 +4500,12 @@ const PRESENCE_IDLE_MS = 5 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 8;
 const LOGIN_BLOCK_MS =
   15 * 60 * 1000;
+// V6.36 — second compteur par e-mail (10 échecs / 15 min) + fenêtre glissante
+// et plafond mémoire de la Map des tentatives.
+const LOGIN_EMAIL_MAX_FAILURES = 10;
+const LOGIN_FAILURE_WINDOW_MS =
+  15 * 60 * 1000;
+const LOGIN_ATTEMPTS_MAX_ENTRIES = 10000;
 
 const ALLOWED_USER_ROLES =
   new Set([
@@ -4814,20 +4983,8 @@ function cleanupSessions() {
     ]
     of sessions.entries()
   ) {
-    const expiresAt =
-      typeof session ===
-        'number'
-        ? session
-        : Number(
-            session
-              ?.expiresAt ||
-            0
-          );
-
-    if (
-      !expiresAt ||
-      expiresAt <= now
-    ) {
+    // V6.36 — expiration absolue ou inactivité.
+    if (sessionIsExpired(session, now)) {
       sessions.delete(token);
       sessionStoreDirty = true;
     }
@@ -4975,20 +5132,8 @@ function getAuthenticatedUser(req) {
     return null;
   }
 
-  const expiresAt =
-    typeof session ===
-      'number'
-      ? session
-      : Number(
-          session.expiresAt ||
-          0
-        );
-
-  if (
-    !expiresAt ||
-    expiresAt <=
-      Date.now()
-  ) {
+  // V6.36 — expiration absolue ou inactivité (MONDECO_SESSION_IDLE_HOURS).
+  if (sessionIsExpired(session)) {
     sessions.delete(sessionKey);
     sessionStoreDirty = true;
     persistSessions(true);
@@ -5020,6 +5165,18 @@ function getAuthenticatedUser(req) {
     persistSessions(true);
 
     return null;
+  }
+
+  // V6.36 — dernier usage authentifié (base du délai d'inactivité). Marqué
+  // « dirty » au plus une fois par minute ; persistance toujours limitée par
+  // SESSION_PERSIST_MIN_INTERVAL_MS.
+  if (typeof session === 'object') {
+    const now = Date.now();
+    if (now - Number(session.lastUsedAt || 0) >= SESSION_PERSIST_MIN_INTERVAL_MS) {
+      sessionStoreDirty = true;
+    }
+    session.lastUsedAt = now;
+    persistSessions(false);
   }
 
   return user;
@@ -5580,102 +5737,188 @@ function secureCookie(req) {
 }
 
 
+// V6.36 — l'IP vient de req.ip (server.js active `trust proxy`), jamais
+// directement de l'en-tête X-Forwarded-For contrôlable par le client.
 function loginAttemptKey(req) {
-  return (
+  return `ip:${
     safeString(
-      req.headers[
-        'x-forwarded-for'
-      ]
-    )
-      .split(',')[0]
-      .trim() ||
-    safeString(
-      req.ip
+      req?.ip ||
+      req?.socket?.remoteAddress
     ) ||
     'unknown'
-  );
+  }`;
 }
 
-function getLoginAttemptState(req) {
-  const key =
-    loginAttemptKey(
-      req
-    );
+function loginEmailAttemptKey(email) {
+  const normalized =
+    normalizeEmail(email);
+
+  return normalized
+    ? `email:${normalized.slice(0, 254)}`
+    : '';
+}
+
+function readLoginAttempt(key, now = Date.now()) {
+  const empty = {
+    failures: 0,
+    firstFailureAt: 0,
+    blockedUntil: 0
+  };
+
+  if (!key) return empty;
 
   const current =
-    loginAttempts.get(
-      key
-    ) || {
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
+    loginAttempts.get(key);
 
-  if (
-    current.blockedUntil &&
-    current.blockedUntil <=
-      Date.now()
-  ) {
-    loginAttempts.delete(
-      key
-    );
+  if (!current) return empty;
 
-    return {
-      key,
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
+  const blockedUntil =
+    Number(current.blockedUntil || 0);
+
+  const expired =
+    blockedUntil
+      ? blockedUntil <= now
+      : now - Number(current.firstFailureAt || 0) > LOGIN_FAILURE_WINDOW_MS;
+
+  if (expired) {
+    loginAttempts.delete(key);
+    return empty;
   }
 
   return {
-    key,
-    ...current
-  };
-}
-
-function registerLoginFailure(req) {
-  const state =
-    getLoginAttemptState(
-      req
-    );
-
-  const failures =
-    Number(
-      state.failures ||
-      0
-    ) +
-    1;
-
-  const blockedUntil =
-    failures >=
-      LOGIN_MAX_FAILURES
-      ? Date.now() +
-        LOGIN_BLOCK_MS
-      : 0;
-
-  loginAttempts.set(
-    state.key,
-    {
-      failures,
-      blockedUntil
-    }
-  );
-
-  return {
-    failures,
+    failures: Number(current.failures || 0),
+    firstFailureAt: Number(current.firstFailureAt || now),
     blockedUntil
   };
 }
 
-function clearLoginFailures(req) {
+function purgeExpiredLoginAttempts(now = Date.now()) {
+  for (const key of [...loginAttempts.keys()]) {
+    readLoginAttempt(key, now);
+  }
+
+  // Plafond dur : on retire les entrées les plus anciennes (ordre d'insertion).
+  if (loginAttempts.size > LOGIN_ATTEMPTS_MAX_ENTRIES) {
+    const excess =
+      loginAttempts.size - LOGIN_ATTEMPTS_MAX_ENTRIES;
+    let removed = 0;
+    for (const key of loginAttempts.keys()) {
+      if (removed >= excess) break;
+      loginAttempts.delete(key);
+      removed += 1;
+    }
+  }
+}
+
+function getLoginAttemptState(req, email = '') {
+  const now = Date.now();
+  const key =
+    loginAttemptKey(req);
+  const emailKey =
+    loginEmailAttemptKey(email);
+  const ipState =
+    readLoginAttempt(key, now);
+  const emailState =
+    readLoginAttempt(emailKey, now);
+
+  return {
+    key,
+    emailKey,
+    failures:
+      ipState.failures,
+    emailFailures:
+      emailState.failures,
+    blockedUntil:
+      Math.max(
+        ipState.blockedUntil,
+        emailState.blockedUntil
+      )
+  };
+}
+
+function registerLoginFailure(req, email = '') {
+  const now = Date.now();
+  const result = {
+    failures: 0,
+    emailFailures: 0,
+    blockedUntil: 0
+  };
+
+  const counters = [
+    [loginAttemptKey(req), LOGIN_MAX_FAILURES, 'failures'],
+    [loginEmailAttemptKey(email), LOGIN_EMAIL_MAX_FAILURES, 'emailFailures']
+  ];
+
+  for (const [key, maxFailures, field] of counters) {
+    if (!key) continue;
+    const state =
+      readLoginAttempt(key, now);
+    const failures =
+      state.failures + 1;
+    const blockedUntil =
+      failures >= maxFailures
+        ? now + LOGIN_BLOCK_MS
+        : 0;
+
+    // delete + set : l'entrée passe en fin d'ordre d'insertion (plafond LRU).
+    loginAttempts.delete(key);
+    loginAttempts.set(key, {
+      failures,
+      firstFailureAt:
+        state.firstFailureAt || now,
+      blockedUntil
+    });
+
+    result[field] = failures;
+    result.blockedUntil =
+      Math.max(result.blockedUntil, blockedUntil);
+  }
+
+  if (loginAttempts.size > LOGIN_ATTEMPTS_MAX_ENTRIES) {
+    purgeExpiredLoginAttempts(now);
+  }
+
+  return result;
+}
+
+function clearLoginFailures(req, email = '') {
   loginAttempts.delete(
     loginAttemptKey(
       req
     )
   );
+
+  const emailKey =
+    loginEmailAttemptKey(email);
+
+  if (emailKey) {
+    loginAttempts.delete(emailKey);
+  }
+}
+
+// V6.36 — purge périodique, sans retenir le process (tests / arrêt propre).
+const loginAttemptsPurgeTimer = setInterval(() => {
+  try { purgeExpiredLoginAttempts(); } catch {}
+}, 5 * 60 * 1000);
+loginAttemptsPurgeTimer.unref?.();
+
+// V6.36 — empreinte factice : quand l'e-mail est inconnu, on exécute quand
+// même un scrypt complet pour ne pas révéler l'existence du compte par le
+// temps de réponse.
+let loginDummyPasswordRecord = null;
+
+function getLoginDummyPasswordRecord() {
+  if (!loginDummyPasswordRecord) {
+    const credentials =
+      hashUserPassword(
+        crypto.randomBytes(24).toString('hex')
+      );
+    loginDummyPasswordRecord = {
+      passwordSalt: credentials.salt,
+      passwordHash: credentials.hash
+    };
+  }
+  return loginDummyPasswordRecord;
 }
 
 function createSessionForUser(
@@ -5697,6 +5940,8 @@ function createSessionForUser(
       createdAt:
         Date.now(),
       lastSeenAt:
+        Date.now(),
+      lastUsedAt:
         Date.now(),
       lastPage:
         'connexion',
@@ -5897,9 +6142,16 @@ router.get('/login', (req, res) => {
 });
 
 router.post('/login', (req, res) => {
+  const email =
+    normalizeEmail(
+      req.body?.email
+    );
+
+  // V6.36 — blocage par IP (req.ip) ET par e-mail.
   const attemptState =
     getLoginAttemptState(
-      req
+      req,
+      email
     );
 
   if (
@@ -5913,11 +6165,6 @@ router.post('/login', (req, res) => {
           'Trop de tentatives. Réessayez dans quelques minutes.'
       });
   }
-
-  const email =
-    normalizeEmail(
-      req.body?.email
-    );
 
   const password =
     safeString(
@@ -5948,17 +6195,25 @@ router.post('/login', (req, res) => {
         email
     );
 
+  // V6.36 — la vérification scrypt est toujours exécutée (compte factice si
+  // l'e-mail est inconnu) pour un temps de réponse uniforme.
+  const passwordValid =
+    verifyUserPassword(
+      password,
+      index === -1
+        ? getLoginDummyPasswordRecord()
+        : users[index]
+    );
+
   if (
     index === -1 ||
     users[index].active ===
       false ||
-    !verifyUserPassword(
-      password,
-      users[index]
-    )
+    !passwordValid
   ) {
     registerLoginFailure(
-      req
+      req,
+      email
     );
 
     return res
@@ -5970,7 +6225,8 @@ router.post('/login', (req, res) => {
   }
 
   clearLoginFailures(
-    req
+    req,
+    email
   );
 
   users[index] = {
@@ -5979,9 +6235,18 @@ router.post('/login', (req, res) => {
       new Date().toISOString()
   };
 
-  saveUsers(
-    users
-  );
+  // V6.36 — lastLoginAt est informatif : un échec d'écriture ne doit pas
+  // empêcher la connexion.
+  try {
+    saveUsers(
+      users
+    );
+  } catch (error) {
+    console.warn(
+      '⚠️ Mise à jour lastLoginAt impossible :',
+      error.message
+    );
+  }
 
   createSessionForUser(
     req,
@@ -7668,7 +7933,8 @@ function appendSlaEvent(event) {
 function loadDailyReports() {
   try {
     if (!fs.existsSync(DAILY_REPORTS_PATH)) return {};
-    const parsed = JSON.parse(fs.readFileSync(DAILY_REPORTS_PATH, 'utf8') || '{}');
+    // V6.36 — lecture protégée (quarantaine + restauration .bak).
+    const parsed = readJsonFileSafe(DAILY_REPORTS_PATH, {}, { label: 'daily-reports.json' });
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (error) {
     console.warn('⚠️ Lecture daily-reports.json :', error.message);
@@ -7683,7 +7949,8 @@ function saveDailyReports(items) {
 function loadAttendance() {
   try {
     if (!fs.existsSync(ATTENDANCE_PATH)) return {};
-    const parsed = JSON.parse(fs.readFileSync(ATTENDANCE_PATH, 'utf8') || '{}');
+    // V6.36 — lecture protégée (quarantaine + restauration .bak).
+    const parsed = readJsonFileSafe(ATTENDANCE_PATH, {}, { label: 'attendance-log.json' });
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (error) {
     console.warn('⚠️ Lecture attendance-log.json :', error.message);
@@ -9106,12 +9373,12 @@ function loadWooCommerceSyncState() {
       };
     }
 
+    // V6.36 — lecture protégée (quarantaine + restauration .bak).
     const parsed =
-      JSON.parse(
-        fs.readFileSync(
-          WOOCOMMERCE_SYNC_PATH,
-          'utf8'
-        ) || '{}'
+      readJsonFileSafe(
+        WOOCOMMERCE_SYNC_PATH,
+        {},
+        { label: 'woocommerce-sync.json' }
       );
 
     return {
@@ -14746,12 +15013,12 @@ function loadConversationStatesAdmin() {
       // sauvegarderait pas ensuite.
       return { ...conversationStatesCacheAdmin };
     }
-    const parsed = JSON.parse(
-      fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
-    );
+    // V6.36 — lecture protégée : un JSON corrompu est mis en quarantaine et
+    // le `.bak` est restauré au lieu de repartir silencieusement de {}.
+    const parsed = readJsonFileSafe(CONVERSATION_STATE_PATH_ADMIN, {}, { label: 'conversation-state.json' });
     const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
     conversationStatesCacheAdmin = result;
-    conversationStatesCacheStampAdmin = stamp;
+    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN) || stamp;
     return { ...result };
   } catch (error) {
     console.warn('⚠️ Lecture conversation-state.json :', error.message);
@@ -14816,7 +15083,8 @@ function notificationUserKey(user) {
 function loadNotificationsStore() {
   try {
     if (!fs.existsSync(NOTIFICATIONS_PATH)) return { items: [] };
-    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
+    // V6.36 — lecture protégée (quarantaine + restauration .bak).
+    const parsed = readJsonFileSafe(NOTIFICATIONS_PATH, {}, { label: 'notifications.json' });
     return {
       items: Array.isArray(parsed?.items) ? parsed.items : []
     };
@@ -14879,12 +15147,7 @@ function loadInstagramHistorySyncState() {
       return {};
     }
 
-    const parsed = JSON.parse(
-      fs.readFileSync(
-        INSTAGRAM_HISTORY_SYNC_STATE_PATH,
-        'utf8'
-      ) || '{}'
-    );
+    const parsed = readJsonFileSafe(INSTAGRAM_HISTORY_SYNC_STATE_PATH, {}); // V6.36
 
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed
@@ -15925,9 +16188,7 @@ let facebookHistorySyncJob = {
 function loadFacebookHistorySyncState() {
   try {
     if (!fs.existsSync(FACEBOOK_HISTORY_SYNC_STATE_PATH)) return {};
-    const parsed = JSON.parse(
-      fs.readFileSync(FACEBOOK_HISTORY_SYNC_STATE_PATH, 'utf8') || '{}'
-    );
+    const parsed = readJsonFileSafe(FACEBOOK_HISTORY_SYNC_STATE_PATH, {}); // V6.36
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed
       : {};
@@ -16956,9 +17217,7 @@ const FACEBOOK_REALTIME_MIN_GAP_MS = 25000;
 function loadFacebookRealtimeSyncState() {
   try {
     if (!fs.existsSync(FACEBOOK_REALTIME_SYNC_STATE_PATH)) return {};
-    const parsed = JSON.parse(
-      fs.readFileSync(FACEBOOK_REALTIME_SYNC_STATE_PATH, 'utf8') || '{}'
-    );
+    const parsed = readJsonFileSafe(FACEBOOK_REALTIME_SYNC_STATE_PATH, {}); // V6.36
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed
       : {};
@@ -18026,7 +18285,7 @@ let socialCommentsSyncJob = {
 function loadSocialCommentsSyncState() {
   try {
     if (!fs.existsSync(SOCIAL_COMMENTS_SYNC_STATE_PATH)) return {};
-    const parsed = JSON.parse(fs.readFileSync(SOCIAL_COMMENTS_SYNC_STATE_PATH,'utf8') || '{}');
+    const parsed = readJsonFileSafe(SOCIAL_COMMENTS_SYNC_STATE_PATH, {}); // V6.36
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch { return {}; }
 }
@@ -19839,7 +20098,8 @@ function rewritePersistentConversationEventsForPurge(targetHash, part) {
         } else output.push(line);
       } catch { output.push(line); }
     }
-    if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+    // V6.36 — réécriture atomique (tmp + rename).
+    if (changed) writeTextFileAtomic(filePath, output.length ? `${output.join('\n')}\n` : '');
   }
   return removed;
 }
@@ -19849,7 +20109,8 @@ function purgeMessageIdsFromIndex(entry = {}) {
   if (!ids.size || !fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
   const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH,'utf8').split(/\r?\n/).filter(Boolean);
   const next = lines.filter(line => !ids.has(safeString(line)));
-  if (next.length !== lines.length) fs.writeFileSync(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '', 'utf8');
+  // V6.36 — réécriture atomique (tmp + rename).
+  if (next.length !== lines.length) writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '');
   return lines.length - next.length;
 }
 
@@ -20958,5 +21219,17 @@ module.exports = {
   processSocialCommentWebhookEntry,
   ensureStorageHeadroom,
   storeCloudAssetBuffer,
-  cloudManifestEntry
+  cloudManifestEntry,
+  requireAuth,
+  requireAdmin,
+  // Fonctions pures exposées pour les tests automatisés (test/).
+  _internals: {
+    conversationTimeMs,
+    conversationEntryNeedsDirection,
+    conversationNeedsReplyFromEntries,
+    reconcileAnsweredConversationStates,
+    socialCommentNeedsReply,
+    socialCommentThreadIndex,
+    normalizePhone
+  }
 };
