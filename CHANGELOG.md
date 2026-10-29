@@ -1,4 +1,13 @@
-MONDECO V6.19.5
+# Journal des versions
+
+Le numéro de version de référence est celui de `package.json`.
+
+## 6.36.0 — Corrections de l'audit
+
+Voir la pull request « Audit : corrections sécurité, fiabilité et interface » pour le détail.
+
+## 6.19.5
+
 
 AJOUTS
 - Photo de profil Instagram dans le Centre de pilotage.
