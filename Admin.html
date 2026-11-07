@@ -7012,6 +7012,18 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
   outline-offset:2px;
 }
 </style>
+<style>
+/* Messages enregistrés (page de gestion des réponses rapides) */
+.quick-reply-manager-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.quick-reply-manager-toolbar input{flex:1 1 220px;max-width:420px}
+.quick-reply-manager-card{margin-bottom:12px}
+.quick-reply-manager-card.inactive{opacity:.65}
+.quick-reply-manager-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:10px}
+.quick-reply-manager-card textarea{min-height:110px;width:100%}
+.quick-reply-manager-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px}
+.quick-reply-manager-actions .checkbox-line{margin-right:auto}
+@media (max-width:640px){.quick-reply-manager-grid{grid-template-columns:1fr}}
+</style>
 </head>
 
 <body>
@@ -7091,6 +7103,10 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 2a5 5 0 0 1 5 5v2a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/><path d="M6 12v1a6 6 0 0 0 12 0v-1"/><path d="M12 19v3M9 22h6"/></svg></span>
         <span>Réponses IA</span>
         <span id="aiAlertsNavBadge" class="nav-count hidden">0</span>
+      </button>
+      <button data-page="quick-replies">
+        <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H8l-4 4z"/><path d="M9 3v4l2-1.5L13 7V3"/></svg></span>
+        <span>Messages enregistrés</span>
       </button>
       <button data-page="wa-report">
         <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-7"/></svg></span>
@@ -7302,6 +7318,32 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
     <!-- ================================================== -->
     <!-- INSTRUCTIONS -->
     <!-- ================================================== -->
+
+    <!-- Messages enregistrés : les réponses rapides (/raccourci) proposées
+         aux commerciaux dans les conversations, modifiables ici une par une. -->
+    <section id="page-quick-replies" class="page">
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">Messages enregistrés</h2>
+          <p class="page-subtitle">
+            Les réponses rapides proposées dans les conversations (/raccourci). Modifiez le texte puis appuyez sur Enregistrer.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" type="button" onclick="newQuickReplyManagerItem()">
+            + Nouveau message
+          </button>
+        </div>
+      </div>
+
+      <div class="card quick-reply-manager-toolbar">
+        <strong id="quickReplyManagerCount">0 message enregistré</strong>
+        <input id="quickReplyManagerSearch" type="search" placeholder="Rechercher un raccourci, un titre ou un texte" oninput="filterQuickReplyManager(this.value)">
+      </div>
+
+      <div id="quickReplyManagerList" style="margin-top:16px"></div>
+    </section>
 
     <section id="page-instructions" class="page">
       <div class="page-header">
@@ -8980,6 +9022,8 @@ const PAGE_ROLES = {
     ['admin','editor'],
   'ai-replies':
     ['admin','editor','responsable_commercial','commercial'],
+  'quick-replies':
+    ['admin','editor','responsable_commercial','commercial'],
   'wa-report':
     ['admin'],
   settings:
@@ -9514,6 +9558,7 @@ function showPage(name){
   if(name === 'woocommerce') loadWooCommerceStatus();
   if(name === 'instructions') loadInstructions();
   if(name === 'ai-replies') loadAiReplies();
+  if(name === 'quick-replies') loadQuickRepliesPage();
   if(name === 'conversations'){
     // V6.26 : recharge le dernier type d'interaction utilisé sans écraser
     // la liste Commentaires par la liste Messages.
@@ -14214,6 +14259,198 @@ window.deleteConversationQuickReply = async function(){
   }
 };
 
+
+
+// ============================================================
+// Messages enregistrés — page de gestion (menu)
+// Liste toutes les réponses rapides de /data/quick-replies.json, modifiables
+// une par une (raccourci, titre, texte, proposée ou non aux commerciaux).
+// Même API que le menu de la conversation : /api/quick-replies.
+// ============================================================
+let quickReplyManagerFilter = '';
+let quickReplyManagerDraft = false;
+
+function quickReplyManagerSearchText(value){
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
+function quickReplyManagerCard(item){
+  const id = item ? item.id : 'new';
+  const active = !item || item.active !== false;
+
+  return `
+    <div class="card quick-reply-manager-card ${active ? '' : 'inactive'}" data-id="${escapeHtml(id)}">
+      <div class="quick-reply-manager-grid">
+        <div class="field">
+          <label>Raccourci</label>
+          <input data-field="shortcut" value="${escapeHtml(item?.shortcut || '')}" placeholder="adresse">
+        </div>
+        <div class="field">
+          <label>Titre *</label>
+          <input data-field="title" value="${escapeHtml(item?.title || '')}" placeholder="Adresse des showrooms">
+        </div>
+      </div>
+      <div class="field">
+        <label>Message *</label>
+        <textarea data-field="content" rows="5">${escapeHtml(item?.content || '')}</textarea>
+      </div>
+      <div class="quick-reply-manager-actions">
+        <label class="checkbox-line">
+          <input data-field="active" type="checkbox" ${active ? 'checked' : ''}>
+          Proposé dans les conversations
+        </label>
+        ${item
+          ? `<button class="btn small danger" type="button" onclick="deleteQuickReplyManagerItem(${jsArg(id)})">Supprimer</button>`
+          : `<button class="btn small" type="button" onclick="cancelQuickReplyManagerDraft()">Annuler</button>`}
+        <button class="btn small primary" type="button" onclick="saveQuickReplyManagerItem(${jsArg(id)})">Enregistrer</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderQuickReplyManager(){
+  const list = document.getElementById('quickReplyManagerList');
+  const label = document.getElementById('quickReplyManagerCount');
+  if(!list) return;
+
+  const total = quickReplies.length;
+  if(label){
+    label.textContent = `${total} message${total > 1 ? 's' : ''} enregistré${total > 1 ? 's' : ''}`;
+  }
+
+  const query = quickReplyManagerSearchText(quickReplyManagerFilter).trim();
+  const items = quickReplies
+    .filter(item => !query || quickReplyManagerSearchText(`${item.shortcut} ${item.title} ${item.content}`).includes(query))
+    .sort((a, b) => String(a.shortcut || a.title || '').localeCompare(String(b.shortcut || b.title || ''), 'fr', { numeric:true }));
+
+  const draft = quickReplyManagerDraft ? quickReplyManagerCard(null) : '';
+
+  if(!items.length && !draft){
+    list.innerHTML = `
+      <div class="empty">
+        <strong>${query ? 'Aucun message trouvé' : 'Aucun message enregistré'}</strong>
+        ${query ? 'Essayez un autre mot.' : 'Ajoutez votre premier message avec « + Nouveau message ».'}
+      </div>
+    `;
+    return;
+  }
+
+  list.innerHTML = draft + items.map(item => quickReplyManagerCard(item)).join('');
+}
+
+window.loadQuickRepliesPage = async function(){
+  await loadQuickReplies({ force:true });
+  renderQuickReplyManager();
+};
+
+window.filterQuickReplyManager = function(value){
+  quickReplyManagerFilter = String(value || '');
+  renderQuickReplyManager();
+};
+
+window.newQuickReplyManagerItem = function(){
+  quickReplyManagerDraft = true;
+  renderQuickReplyManager();
+  document.querySelector('.quick-reply-manager-card[data-id="new"] [data-field="title"]')?.focus();
+};
+
+window.cancelQuickReplyManagerDraft = function(){
+  quickReplyManagerDraft = false;
+  renderQuickReplyManager();
+};
+
+window.saveQuickReplyManagerItem = async function(id){
+  const card = document.querySelector(`.quick-reply-manager-card[data-id="${CSS.escape(String(id))}"]`);
+  if(!card) return;
+
+  const field = name => card.querySelector(`[data-field="${name}"]`);
+  const payload = {
+    shortcut: String(field('shortcut')?.value || '').trim().replace(/^\/+/, ''),
+    title: String(field('title')?.value || '').trim(),
+    content: String(field('content')?.value || '').trim(),
+    active: Boolean(field('active')?.checked)
+  };
+
+  if(!payload.title || !payload.content){
+    alert('Le titre et le message sont obligatoires.');
+    return;
+  }
+
+  const button = card.querySelector('.btn.primary');
+  if(button){
+    button.disabled = true;
+    button.textContent = 'Enregistrement…';
+  }
+
+  try{
+    const isNew = id === 'new';
+    const saved = await apiFetch(
+      isNew ? `${API}/quick-replies` : `${API}/quick-replies/${encodeURIComponent(id)}`,
+      {
+        method: isNew ? 'POST' : 'PUT',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    // Un nouveau message peut être créé inactif : l'API de création l'active
+    // toujours, on applique donc le choix ensuite.
+    if(isNew && saved?.id && !payload.active){
+      await apiFetch(`${API}/quick-replies/${encodeURIComponent(saved.id)}`, {
+        method:'PUT',
+        headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({ active:false })
+      });
+    }
+
+    await loadQuickReplies({ force:true });
+    populateConversationQuickReplySelect();
+
+    if(isNew){
+      quickReplyManagerDraft = false;
+      renderQuickReplyManager();
+      return;
+    }
+
+    // Les autres cartes gardent leurs modifications non enregistrées : on ne
+    // met à jour que celle-ci.
+    const item = quickReplies.find(reply => reply.id === id);
+    if(item){
+      field('shortcut').value = item.shortcut || '';
+      card.classList.toggle('inactive', item.active === false);
+    }
+    if(button){
+      button.textContent = 'Enregistré ✓';
+      setTimeout(() => {
+        button.textContent = 'Enregistrer';
+        button.disabled = false;
+      }, 1500);
+    }
+  }catch(error){
+    alert(error.message || 'Enregistrement impossible.');
+    if(button){
+      button.textContent = 'Enregistrer';
+      button.disabled = false;
+    }
+  }
+};
+
+window.deleteQuickReplyManagerItem = async function(id){
+  const item = quickReplies.find(reply => reply.id === id);
+  if(!await uiConfirm(`Supprimer « ${item?.title || 'ce message'} » ?`)) return;
+
+  try{
+    await apiFetch(`${API}/quick-replies/${encodeURIComponent(id)}`, { method:'DELETE' });
+    await loadQuickReplies({ force:true });
+    populateConversationQuickReplySelect();
+    renderQuickReplyManager();
+  }catch(error){
+    alert(error.message || 'Suppression impossible.');
+  }
+};
 
 
 // ============================================================
