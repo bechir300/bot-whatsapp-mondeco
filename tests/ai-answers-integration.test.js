@@ -74,6 +74,11 @@ console.info = quiet;
 console.error = quiet;
 require(serverPath);
 const S = globalThis.__srv;
+// Les écritures groupées (ai-history.json…) sont vidées à la sortie par le
+// serveur : le dossier temporaire est supprimé après elles.
+process.on('exit', () => {
+  try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
+});
 
 const AD_BODY = '💍 قرب عرسك ومازلت تلوج على بيت نوم أنيق وعصري؟ 😍 ✨ اكتشف Chambre Bianca من MONDECO: تصميم عصري وتفاصيل راقية. 🚚 التوصيل و التركيب في كامل الجمهورية. 📲 ابعثلنا BIANCA على WhatsApp باش تعرف السعر والتفاصيل.';
 const BAD_MODEL_TEXT = 'La Chambre à coucher Bianca (comprenant un lit et deux tables de nuit) est au prix de 2800 dt.';
@@ -293,12 +298,8 @@ async function test(label, fn) {
 
   say(`\n${passed} test(s) ai-answers (intégration) OK`);
   try { S.httpServer.close(); } catch {}
-  setTimeout(() => {
-    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
-    process.exit(0);
-  }, 100);
+  setTimeout(() => process.exit(0), 100);
 })().catch(error => {
   say(`ÉCHEC ${error && error.stack ? error.stack : error}`);
-  try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
   process.exit(1);
 });
