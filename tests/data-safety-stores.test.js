@@ -195,6 +195,90 @@ const freshDir = () => {
       db.close();
     });
 
+    await test('V6.46 — JSON vide (0 octet) + SQLite indisponible → mémoire reprise du .bak, IA en pause gardée, .bak jamais écrasé par {}', () => {
+      const dir = freshDir();
+      const jsonPath = path.join(dir, 'conversation-state.json');
+      const bak = { 21698000001: { channel: 'whatsapp', humanPaused: true, manualTakeover: true, assignedUserId: 'u-1' } };
+      fs.writeFileSync(jsonPath, '');
+      fs.writeFileSync(`${jsonPath}.bak`, JSON.stringify(bak));
+      const control = switchableDb(path.join(dir, 'mondeco.db'));
+      // Écriture comme Admin.js : copie du fichier actuel vers .bak avant rename.
+      const write = (target, data) => {
+        if (fs.existsSync(target) && fs.statSync(target).size) fs.copyFileSync(target, `${target}.bak`);
+        writeJsonAtomic(target, data);
+      };
+      const store = createConversationStateStore({
+        jsonPath,
+        openDb: control.openDb,
+        writeJson: write,
+        writeDebounceMs: 60 * 60 * 1000,
+        jsonMinIntervalMs: 0,
+        sqliteRetryMs: 0,
+        logger: quiet
+      });
+      assert.strictEqual(store.get('21698000001').humanPaused, true, 'prise en main reprise du .bak');
+      assert.strictEqual(store.get('21698000001').assignedUserId, 'u-1');
+      store.update('21698000001', current => ({ ...current, lastCustomerAt: '2026-11-12T10:00:00.000Z', awaitingResponse: true }));
+      store.flush();
+      store.flush();
+      assert.strictEqual(fs.readFileSync(jsonPath, 'utf8'), '', 'JSON non réécrit tant que l’état est incomplet');
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(`${jsonPath}.bak`, 'utf8')), bak, '.bak intact');
+      assert.strictEqual(store.stats().jsonHeldForOverlay, true);
+      // La base revient : reprise faite, JSON de nouveau écrit (avec le .bak).
+      control.available = true;
+      store.update('21698000002', current => ({ ...current, channel: 'whatsapp' }));
+      store.flush();
+      const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      assert.strictEqual(json['21698000001'].humanPaused, true);
+      assert.strictEqual(json['21698000001'].awaitingResponse, true);
+      assert.ok(json['21698000002']);
+      assert.strictEqual(store.stats().jsonHeldForOverlay, false);
+      control.db.close();
+    });
+
+    await test('V6.46 — conversation absente du JSON, touchée pendant la panne SQLite → prise en main / affectation / pub de la ligne SQLite gardées', async () => {
+      const dir = freshDir();
+      const jsonPath = path.join(dir, 'conversation-state.json');
+      const dbPath = path.join(dir, 'mondeco.db');
+      fs.writeFileSync(jsonPath, JSON.stringify({ autre: { channel: 'whatsapp' } }));
+      const past = new Date(Date.now() - 60 * 1000);
+      fs.utimesSync(jsonPath, past, past);
+      const seed = createDb(dbPath);
+      seed.prepare('INSERT INTO conversation_states (contact, data, updated_at) VALUES (?, ?, ?)').run('21698000007', JSON.stringify({
+        channel: 'whatsapp', humanPaused: true, manualTakeover: true, assignedUserId: 'u-7', adReferral: { adId: '120' }, unreadCount: 0
+      }), Date.now());
+      seed.close();
+      const control = switchableDb(dbPath);
+      const store = createConversationStateStore({
+        jsonPath,
+        openDb: control.openDb,
+        writeJson: writeJsonAtomic,
+        writeDebounceMs: 60 * 60 * 1000,
+        jsonMinIntervalMs: 60 * 60 * 1000,
+        sqliteRetryMs: 0,
+        logger: quiet
+      });
+      // Pendant la panne : le client écrit (état construit à partir de {}).
+      store.update('21698000007', current => ({ ...current, channel: 'whatsapp', lastCustomerAt: '2026-11-12T10:00:00.000Z', awaitingResponse: true, unreadCount: (current.unreadCount || 0) + 1 }));
+      control.available = true;
+      store.update('autre', current => ({ ...current, note: 'x' }));
+      const merged = store.get('21698000007');
+      assert.strictEqual(merged.humanPaused, true);
+      assert.strictEqual(merged.manualTakeover, true);
+      assert.strictEqual(merged.assignedUserId, 'u-7');
+      assert.deepStrictEqual(merged.adReferral, { adId: '120' });
+      assert.strictEqual(merged.awaitingResponse, true, 'champ écrit pendant la panne gardé');
+      assert.strictEqual(merged.unreadCount, 1);
+      store.flush();
+      const row = sqliteRow(control.db, '21698000007');
+      assert.strictEqual(row.humanPaused, true);
+      assert.strictEqual(row.assignedUserId, 'u-7');
+      assert.strictEqual(row.lastCustomerAt, '2026-11-12T10:00:00.000Z');
+      await store.backgroundFullSync();
+      assert.strictEqual(sqliteRow(control.db, '21698000007').manualTakeover, true);
+      control.db.close();
+    });
+
     await test('G29 : magasin JSON vide (0 octet) → repris depuis le .bak (avant : {} puis réécrit)', () => {
       const dir = freshDir();
       const filePath = path.join(dir, 'ai-history.json');

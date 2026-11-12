@@ -1022,7 +1022,10 @@ function removePathForStorageRescue(targetPath, label = '') {
 // les snapshots, de tous les .bak et versions JSON, de la corbeille, du
 // dossier des photos de profil et des médias clients de plus de 7 jours,
 // et le snapshot quotidien était sauté.
-// - 'critical' : écriture impossible, ou moins de MONDECO_STORAGE_CRITICAL_FREE_MB ;
+// - 'critical' : écriture impossible faute d'espace (ENOSPC/EDQUOT), ou moins
+//                de MONDECO_STORAGE_CRITICAL_FREE_MB ;
+// - 'unwritable' : écriture impossible pour une autre raison (droits,
+//                volume en lecture seule…) : alerte, aucune suppression ;
 // - 'low'      : moins de MONDECO_STORAGE_RESCUE_FREE_MB ;
 // - 'ok'       : sinon (espace inconnu mais écriture possible = 'ok').
 // En urgence, on supprime du plus jetable au plus précieux, du plus ancien
@@ -1069,8 +1072,25 @@ function storageHasHeadroom(minFreeBytes) {
   return space.freeBytes >= minFreeBytes;
 }
 
+// V6.46 — Un test d'écriture en échec n'est un manque d'ESPACE que pour
+// ENOSPC / EDQUOT, ou si statfs confirme moins que la marge critique. Les
+// autres erreurs (EACCES après un changement d'utilisateur ou de volume,
+// EROFS, EMFILE…) donnent le niveau 'unwritable' : alerte, mais AUCUNE
+// suppression (avant : niveau 'critical' → dernier snapshot, dernières
+// versions JSON et .bak des données supprimés à chaque démarrage avec 50 Go
+// libres, délai de grâce de rétention annulé).
+const STORAGE_SPACE_ERROR_CODES = new Set(['ENOSPC', 'EDQUOT']);
+
+function storageProbeIsSpaceFailure(probe, space = storageSpaceInfo()) {
+  if (!probe || probe.writable !== false) return false;
+  if (STORAGE_SPACE_ERROR_CODES.has(safeString(probe.errorCode).toUpperCase())) return true;
+  return Boolean(space && space.freeBytes < STORAGE_CRITICAL_FREE_BYTES);
+}
+
 function storageLevel(space = storageSpaceInfo(), probe = storageWriteProbe()) {
-  if (probe && probe.writable === false) return 'critical';
+  if (probe && probe.writable === false) {
+    return storageProbeIsSpaceFailure(probe, space) ? 'critical' : 'unwritable';
+  }
   if (!space) return 'ok';
   if (space.freeBytes < STORAGE_CRITICAL_FREE_BYTES) return 'critical';
   if (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES) return 'low';
@@ -1189,11 +1209,18 @@ function compactExistingSnapshotBinaryCopies() {
 
 // Garde les `keep` snapshots les plus récents ; supprime les autres du plus
 // ancien au plus récent, en s'arrêtant dès que `enough()` est vrai.
+// V6.46 — Sauvegarde restaurée récemment : jamais supprimée par l'entretien
+// (keep ≥ 1) ; en dernier recours (keep = 0), supprimée en dernier.
 function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS, enough = null) {
   let freed = 0;
   try {
     const snapshots = listFullSnapshots();
-    const removable = snapshots.slice(Math.max(0, keep)).reverse();
+    const restoredToKeep = restoredSnapshotIdsToKeep(snapshots);
+    const candidates = snapshots.slice(Math.max(0, keep)).reverse();
+    const removable = [
+      ...candidates.filter(snapshot => !restoredToKeep.has(snapshot.id)),
+      ...(keep > 0 ? [] : candidates.filter(snapshot => restoredToKeep.has(snapshot.id)))
+    ];
     for (const snapshot of removable) {
       if (typeof enough === 'function' && enough()) break;
       freed += removePathForStorageRescue(
@@ -1403,18 +1430,49 @@ function pruneMessageIdIndexForStorageRescue() {
   }
 }
 
+// V6.46 — Dernier recours borné : une écriture en attente (octets connus)
+// ou, sans taille connue, le minimum pour pouvoir écrire de nouveau.
+const STORAGE_LAST_RESORT_MIN_BYTES = 1024 * 1024;
+const STORAGE_LAST_RESORT_MARGIN_BYTES = 8 * 1024;
+
+function storageHasRoomFor(neededBytes) {
+  const probe = storageWriteProbe();
+  if (!probe.writable) return false;
+  const space = storageSpaceInfo();
+  if (!space) return true;
+  return space.freeBytes >= Math.ceil(Math.max(0, Number(neededBytes) || 0) * 1.35) + STORAGE_LAST_RESORT_MARGIN_BYTES;
+}
+
 // Libère uniquement des caches et sauvegardes régénérables, sans toucher aux
 // produits, instructions, utilisateurs, tâches, favoris ni conversation-state.
 // V6.46 — Par paliers, du plus jetable au plus précieux, arrêt dès que la
 // marge cible (MONDECO_STORAGE_RESCUE_FREE_MB) est retrouvée.
 // `allowMediaPurge` : action explicite d'un administrateur uniquement.
-function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence' } = {}) {
+// V6.46 — `neededBytes` : taille de l'écriture refusée (ENOSPC). Le dernier
+// recours (dernières versions JSON, .bak des données, dernier snapshot) ne
+// libère plus que la place de CETTE écriture (avant : jusqu'à la marge
+// critique de 16–40 Mo, inatteignable sur un disque plein → toutes les
+// dernières sauvegardes supprimées pour quelques Ko) ; sans écriture en
+// attente, il ne s'exécute que si plus rien ne peut être écrit. Aucune
+// suppression quand l'écriture échoue pour une autre raison que l'espace.
+function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence', neededBytes = 0 } = {}) {
   if (storageEmergencyCleanupRunning) return 0;
+  const initialProbe = storageWriteProbe();
+  if (initialProbe.writable === false && storageLevel(storageSpaceInfo(), initialProbe) === 'unwritable') {
+    console.error(
+      `🚨 Storage Rescue (${reason}) : écriture impossible dans ${DATA_DIR} ` +
+      `(code=${initialProbe.errorCode || 'inconnu'}) sans manque d'espace : aucun fichier supprimé. ` +
+      'Vérifiez les droits et le montage du volume.'
+    );
+    return 0;
+  }
   storageEmergencyCleanupRunning = true;
   let freed = 0;
   const steps = [];
   const enough = () => storageHasHeadroom(STORAGE_RESCUE_TARGET_FREE_BYTES);
-  const stillCritical = () => !storageHasHeadroom(STORAGE_CRITICAL_FREE_BYTES);
+  const lastResortBytes = Number(neededBytes) > 0 ? Number(neededBytes) : STORAGE_LAST_RESORT_MIN_BYTES;
+  const lastResortAllowed = () => Number(neededBytes) > 0 || !storageWriteProbe().writable;
+  const stillCritical = () => !storageHasRoomFor(lastResortBytes);
   const step = (label, fn) => {
     const bytes = Number(fn() || 0);
     if (bytes > 0) {
@@ -1433,8 +1491,9 @@ function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urg
     if (!enough()) step('.bak des caches', () => cleanupLooseBackupFilesForEmergency({ includeCore: false, enough }));
     if (!enough()) step('photos de profil inutilisées', () => pruneUnreferencedProfilePictures({ enough }));
 
-    // Dernier recours : l'espace reste CRITIQUE malgré tout le reste.
-    if (stillCritical()) {
+    // Dernier recours : l'écriture en attente (ou toute écriture) reste
+    // impossible malgré tout le reste.
+    if (!enough() && lastResortAllowed() && stillCritical()) {
       console.error(
         `🚨 Stockage critique (${reason}) : suppression des dernières sauvegardes pour permettre l'enregistrement des messages. ` +
         'Libérez de l’espace ou agrandissez le volume au plus vite.'
@@ -1459,13 +1518,13 @@ function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urg
   return freed;
 }
 
-function ensureStorageHeadroom() {
+function ensureStorageHeadroom({ neededBytes = 0 } = {}) {
   const space = storageSpaceInfo();
   const probe = storageWriteProbe();
   const critical = storageLevel(space, probe) === 'critical';
 
   if (!critical) return { cleaned: false, freedBytes: 0, space, writable: probe.writable };
-  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC' });
+  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC', neededBytes });
   const after = storageSpaceInfo();
   const afterProbe = storageWriteProbe();
   return {
@@ -1830,7 +1889,8 @@ function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRet
   freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
 
   if (!skipConversationRetention) {
-    freed += pruneSafeConversationCaches({ emergency: level !== 'ok' });
+    // V6.46 — 'unwritable' (droits, montage) n'est pas un manque d'espace.
+    freed += pruneSafeConversationCaches({ emergency: level === 'critical' || level === 'low' });
   }
 
   freed += pruneNotificationsForStorageRescue();
@@ -1853,6 +1913,16 @@ function runStartupStorageRescue() {
   // MONDECO_STORAGE_CRITICAL_FREE_MB), plus de ratio : un disque « rempli à
   // 80 % » avec des Go libres n'est pas en manque d'espace.
   const level = storageLevel(before, beforeProbe);
+  // V6.46 — 'unwritable' (EACCES, EROFS…) : rien n'est supprimé et le délai
+  // de grâce de rétention n'est pas annulé ; ensurePersistenceSafety()
+  // arrête ensuite le démarrage avec le code d'erreur.
+  if (level === 'unwritable') {
+    console.error(
+      `🚨 Storage Rescue (démarrage) : ${DATA_DIR} n'est pas accessible en écriture ` +
+      `(code=${beforeProbe.errorCode || 'inconnu'}) alors que l'espace libre suffit : aucune sauvegarde supprimée.`
+    );
+    return;
+  }
   const lowSpace = level !== 'ok';
 
   const retentionReady = retention15MigrationReady();
@@ -2324,6 +2394,9 @@ function listFullSnapshots() {
         reason:
           meta.reason ||
           'manual',
+        // V6.46 — date de la dernière restauration de cette sauvegarde.
+        restoredAt:
+          safeString(meta.restoredAt),
         productCount:
           Number(meta.productCount || 0),
         instructionCount:
@@ -2339,6 +2412,46 @@ function listFullSnapshots() {
     );
 }
 
+// V6.46 — Sauvegarde restaurée (restoredAt dans snapshot-meta.json) : gardée
+// par la rotation tant qu'aucun snapshot plus récent de l'état restauré
+// n'existe (une copie « before-restore-… » ne compte pas : c'est l'état
+// abandonné). Avant, en mode compact (1 snapshot), le redémarrage suivant
+// supprimait la bonne sauvegarde et ne gardait que la copie de l'état
+// dont l'administrateur venait de revenir.
+function isBeforeRestoreSnapshot(snapshot) {
+  return safeString(snapshot?.reason).startsWith('before-restore-');
+}
+
+function restoredSnapshotIdsToKeep(snapshots = listFullSnapshots()) {
+  const kept = new Set();
+  let latest = null;
+  for (const snapshot of snapshots) {
+    const restoredMs = Date.parse(safeString(snapshot?.restoredAt));
+    if (!Number.isFinite(restoredMs)) continue;
+    if (!latest || restoredMs > latest.restoredMs) latest = { id: snapshot.id, restoredMs };
+  }
+  if (!latest) return kept;
+  const newerGoodSnapshot = snapshots.some(snapshot =>
+    snapshot.id !== latest.id &&
+    !isBeforeRestoreSnapshot(snapshot) &&
+    Date.parse(safeString(snapshot.createdAt)) > latest.restoredMs
+  );
+  if (!newerGoodSnapshot) kept.add(latest.id);
+  return kept;
+}
+
+function markSnapshotRestored(snapshotDir) {
+  try {
+    const meta = snapshotMetadata(snapshotDir);
+    writeTextFileAtomic(
+      path.join(snapshotDir, 'snapshot-meta.json'),
+      JSON.stringify({ ...meta, restoredAt: new Date().toISOString() }, null, 2)
+    );
+  } catch (error) {
+    console.warn('⚠️ Restauration : date de restauration non enregistrée :', error.message);
+  }
+}
+
 // V6.46 — `protectIds` : snapshots jamais supprimés par ce nettoyage
 // (sauvegarde en cours de restauration et sa copie de protection).
 function pruneFullSnapshots({ protectIds = [] } = {}) {
@@ -2349,6 +2462,7 @@ function pruneFullSnapshots({ protectIds = [] } = {}) {
       .map(safeString)
       .filter(Boolean)
   );
+  for (const id of restoredSnapshotIdsToKeep(snapshots)) protectedIds.add(id);
 
   for (
     const snapshot
@@ -2743,6 +2857,9 @@ function restoreFullSnapshot(snapshotId) {
 
   markInstructionsMigrationDone();
   reloadMemoryCachesAfterRestore();
+  // V6.46 — Gardée par les rotations suivantes (redémarrage compris) tant
+  // qu'aucun snapshot plus récent de l'état restauré n'existe.
+  markSnapshotRestored(snapshotDir);
 
   // Rotation seulement maintenant, sans jamais supprimer la sauvegarde
   // restaurée ni la copie de protection.
@@ -2820,17 +2937,23 @@ function estimateFullSnapshotBytes() {
   return total;
 }
 
-function ensureDailySnapshot() {
+let dailySnapshotSkipLoggedDay = '';
+function ensureDailySnapshot({ quiet = false } = {}) {
   // V6.46 — Ignoré seulement si l'espace libre ABSOLU ne suffit pas pour
   // deux fois la taille du snapshot en plus de la marge critique (avant :
   // ignoré dès que moins de 25 % du disque était libre, même avec des Go).
+  // `quiet` (surveillance périodique) : au plus une alerte par jour.
   const space = storageSpaceInfo();
   const needed = STORAGE_CRITICAL_FREE_BYTES + 2 * estimateFullSnapshotBytes();
   if (space && space.freeBytes < needed) {
-    console.error(
-      `🚨 Snapshot quotidien ignoré : marge de stockage insuffisante (${humanBytes(space.freeBytes)} libres, ` +
-      `${humanBytes(needed)} nécessaires).`
-    );
+    const day = new Date().toISOString().slice(0, 10);
+    if (!quiet || dailySnapshotSkipLoggedDay !== day) {
+      dailySnapshotSkipLoggedDay = day;
+      console.error(
+        `🚨 Snapshot quotidien ignoré : marge de stockage insuffisante (${humanBytes(space.freeBytes)} libres, ` +
+        `${humanBytes(needed)} nécessaires).`
+      );
+    }
     return;
   }
   try {
@@ -2839,9 +2962,12 @@ function ensureDailySnapshot() {
         .toISOString()
         .slice(0, 10);
 
+    // V6.46 — Une copie « before-restore-… » (état abandonné lors d'une
+    // restauration) ne compte pas comme snapshot du jour.
     const existsToday =
       listFullSnapshots()
         .some(snapshot =>
+          !isBeforeRestoreSnapshot(snapshot) &&
           String(
             snapshot.createdAt
           ).slice(0, 10) === today
@@ -2935,7 +3061,7 @@ function writeJsonAtomic(filePath, data) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
 
     console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
-    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}` });
+    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}`, neededBytes: serializedBytes });
 
     try {
       atomicAttempt();
@@ -3029,6 +3155,35 @@ function quarantineCorruptDataFile(filePath, label, { copy = false } = {}) {
     console.error(`❌ ${label} illisible non mis de côté :`, error.message);
     return '';
   }
+}
+
+// V6.46 — Reprise d'un fichier JSON vide (0 octet) ou illisible depuis son
+// .bak valide (`accept(parsed)` vrai) : le fichier illisible est d'abord mis
+// de côté (.corrupt-<date>), puis le .bak est recopié à sa place (les
+// écritures suivantes ne repartent jamais d'une valeur vide et ne copient
+// jamais une version illisible sur le .bak). Renvoie la valeur du .bak, ou
+// null si aucun .bak valide n'existe.
+function recoverJsonFileFromBackup(filePath, label, accept, reason) {
+  const backupPath = `${filePath}.bak`;
+  let backup = null;
+  try {
+    if (!fileExistsWithContent(backupPath)) return null;
+    backup = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+  } catch (error) {
+    console.error(`❌ ${path.basename(backupPath)} invalide :`, error.message);
+    return null;
+  }
+  if (typeof accept === 'function' && !accept(backup)) return null;
+  if (fileExistsWithContent(filePath)) quarantineCorruptDataFile(filePath, label);
+  try {
+    const temp = `${filePath}.${process.pid}.${Date.now()}.restore.tmp`;
+    fs.copyFileSync(backupPath, temp);
+    fs.renameSync(temp, filePath);
+  } catch (error) {
+    console.warn(`⚠️ ${label} : copie du .bak impossible :`, error.message);
+  }
+  console.error(`♻️ ${label} ${reason} : restauré depuis ${path.basename(backupPath)}.`);
+  return backup;
 }
 
 // V6.46 — Un fichier vide (0 octet) est traité comme un fichier illisible :
@@ -3128,7 +3283,10 @@ function loadPurgedRecordHashes() {
   try {
     if (fs.existsSync(PURGED_RECORD_HASHES_PATH)) {
       raw = fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8');
-      const parsed = JSON.parse(raw || '{}');
+      // V6.46 — Fichier vide (0 octet) : traité comme illisible (reprise du
+      // .bak), jamais comme « aucune empreinte ».
+      if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+      const parsed = JSON.parse(raw);
       hashes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.hashes) ? parsed.hashes : []);
     }
   } catch (error) {
@@ -4718,9 +4876,12 @@ function getBotSettings() {
     const stamp = fileChangeStamp(SETTINGS_PATH);
     if (botSettingsCache && stamp === botSettingsCacheStamp) return botSettingsCache;
 
-    const parsed = JSON.parse(
-      fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
-    );
+    const raw = fs.readFileSync(SETTINGS_PATH, 'utf8');
+    // V6.46 — Fichier vide (0 octet) : traité comme illisible (reprise du
+    // .bak). Avant : réglages par défaut (IA réactivée alors que le .bak
+    // disait aiEnabled:false).
+    if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+    const parsed = JSON.parse(raw);
 
     botSettingsCache = normalizeSettings(parsed);
     botSettingsCacheStamp = stamp;
@@ -4731,7 +4892,23 @@ function getBotSettings() {
       error.message
     );
 
-    return normalizeSettings(DEFAULT_SETTINGS);
+    const backup = recoverJsonFileFromBackup(
+      SETTINGS_PATH,
+      'settings.json',
+      value => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+      'illisible ou vide'
+    );
+    if (backup) {
+      botSettingsCache = normalizeSettings(backup);
+      botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
+      return botSettingsCache;
+    }
+
+    // Aucun .bak valide : réglages par défaut, gardés jusqu'au prochain
+    // changement du fichier (une seule alerte, pas une par message).
+    botSettingsCache = normalizeSettings(DEFAULT_SETTINGS);
+    botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
+    return botSettingsCache;
   }
 }
 
@@ -4781,12 +4958,22 @@ function runStorageGuardTick() {
   storagePeriodicGuardRunning = true;
   try {
     const space = storageSpaceInfo();
-    const level = storageLevel(space, storageWriteProbe());
+    const probe = storageWriteProbe();
+    const level = storageLevel(space, probe);
     const critical = level === 'critical';
+    if (level === 'unwritable') {
+      // V6.46 — Droits / montage : alerte, aucune suppression.
+      console.error(`🚨 Storage Guard : ${DATA_DIR} n'est pas accessible en écriture (code=${probe.errorCode || 'inconnu'}) ; aucune sauvegarde supprimée.`);
+      return;
+    }
     const low = level !== 'ok';
     if (!low) {
       try { pruneMessageIdIndexForStorageRescue(); } catch {}
       ensureStorageBallast();
+      // V6.46 — Snapshot du jour recréé dès que l'espace est revenu (avant :
+      // seulement au démarrage — après un disque plein, plus aucune
+      // sauvegarde des comptes ni des produits jusqu'au redémarrage).
+      try { ensureDailySnapshot({ quiet: true }); } catch {}
       return;
     }
 
@@ -5398,25 +5585,44 @@ function loadUsers() {
     return Array.isArray(parsed) ? parsed : [];
   };
 
-  try {
-    const result = read(USERS_PATH) || [];
-    usersCache = result;
-    usersCacheStamp = stamp;
+  // V6.46 — users.json vide (0 octet) ou illisible : comptes repris du
+  // .bak, recopié à la place du fichier actif. Avant, un fichier vide était
+  // lu comme « aucun compte » : l'administrateur d'amorçage était recréé
+  // seul et la 2e écriture copiait [admin] sur users.json.bak — les comptes
+  // des commerciaux étaient perdus définitivement.
+  const recover = reason => {
+    const backup = recoverJsonFileFromBackup(USERS_PATH, 'users.json', Array.isArray, reason);
+    if (backup === null) return null;
+    usersCache = backup;
+    usersCacheStamp = fileChangeStamp(USERS_PATH);
     usersStoreUnreadable = false;
-    return result;
+    return backup;
+  };
+
+  let emptyFile = false;
+  try {
+    const result = read(USERS_PATH);
+    if (result !== null) {
+      usersCache = result;
+      usersCacheStamp = stamp;
+      usersStoreUnreadable = false;
+      return result;
+    }
+    emptyFile = true;
   } catch (error) {
     console.error('❌ Lecture users.json impossible :', error.message);
   }
 
-  try {
-    const backup = read(`${USERS_PATH}.bak`);
-    if (backup !== null) {
-      console.warn('♻️ users.json restauré depuis users.json.bak');
-      usersStoreUnreadable = false;
-      return backup;
-    }
-  } catch (backupError) {
-    console.error('❌ users.json.bak invalide :', backupError.message);
+  const backup = recover(emptyFile ? 'vide (0 octet)' : 'illisible');
+  if (backup !== null) return backup;
+
+  if (emptyFile) {
+    // Fichier vide sans .bak valide : rien à protéger (comportement antérieur).
+    console.error('❌ users.json vide (0 octet) et aucun users.json.bak valide.');
+    usersCache = [];
+    usersCacheStamp = stamp;
+    usersStoreUnreadable = false;
+    return [];
   }
 
   usersStoreUnreadable = true;
@@ -19365,6 +19571,10 @@ function conversationStateStore() {
         Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
       ),
       slowLogMs: 500,
+      // V6.46 — /health « degraded » tant que la dernière écriture SQLite a échoué.
+      onWriteResult: (ok, error) => {
+        try { sqliteConnection.noteWrite(ok, error); } catch {}
+      },
       logger: console
     });
   }
@@ -25075,7 +25285,35 @@ function conversationPurgeNeedles(target = {}) {
   return [JSON.stringify(value).slice(1, -1)];
 }
 
-async function purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles = []) {
+// V6.46 — Fichier raccourci pendant la réécriture (restauration, rotation
+// externe) : nouvel essai planifié sur la même file (avant : abandon
+// silencieux, le texte supprimé restait sur disque, seulement masqué).
+const CONVERSATION_PURGE_REWRITE_MAX_RETRIES = 3;
+const CONVERSATION_PURGE_REWRITE_RETRY_MS = Math.max(10, Number(process.env.MONDECO_PURGE_REWRITE_RETRY_MS) || 5000);
+
+function retryConversationEventsPurgeLater(filePath, targetHash, part, needles, attempt) {
+  if (attempt > CONVERSATION_PURGE_REWRITE_MAX_RETRIES) {
+    console.error(
+      `❌ Suppression définitive : ${path.basename(filePath)} encore modifié pendant la réécriture après ` +
+      `${CONVERSATION_PURGE_REWRITE_MAX_RETRIES} essai(s) ; le message reste masqué à l'affichage mais présent dans ce journal. Relancez la suppression.`
+    );
+    return;
+  }
+  const timer = setTimeout(() => {
+    serializeConversationEventsRewrite(
+      () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles, attempt)
+    )
+      .then(removed => {
+        if (!removed) return;
+        try { resetInboxCachesAfterMessageChange(); } catch {}
+        console.log(`🗑 Suppression définitive : ${removed} copie(s) retirée(s) de ${path.basename(filePath)} (nouvel essai).`);
+      })
+      .catch(error => console.error(`❌ Suppression définitive (nouvel essai) ${path.basename(filePath)} :`, error.message));
+  }, CONVERSATION_PURGE_REWRITE_RETRY_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+async function purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles = [], attempt = 0) {
   let readSize = 0;
   try {
     readSize = Number((await fs.promises.stat(filePath)).size || 0);
@@ -25124,7 +25362,8 @@ async function purgeTargetFromConversationEventsFile(filePath, targetHash, part,
     // fichier d'un seul coup.
     const currentSize = Number(fs.statSync(filePath).size || 0);
     if (currentSize < readSize) {
-      console.warn(`⚠️ Suppression définitive : ${path.basename(filePath)} modifié pendant la réécriture, nouvelle tentative plus tard.`);
+      console.warn(`⚠️ Suppression définitive : ${path.basename(filePath)} modifié pendant la réécriture, nouvelle tentative dans ${Math.round(CONVERSATION_PURGE_REWRITE_RETRY_MS / 1000)} s.`);
+      retryConversationEventsPurgeLater(filePath, targetHash, part, needles, attempt + 1);
       return 0;
     }
     if (currentSize > readSize) {

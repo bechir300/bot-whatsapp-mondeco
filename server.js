@@ -662,13 +662,15 @@ function conversationChannel(contact, state = null) {
   return 'whatsapp';
 }
 
-function withStorageRetry(operation, label = 'écriture') {
+// V6.46 — `neededBytes` : taille de l'écriture refusée, pour que le dernier
+// recours de Storage Rescue ne libère que la place nécessaire.
+function withStorageRetry(operation, label = 'écriture', neededBytes = 0) {
   try {
     return operation();
   } catch (error) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
     console.warn(`🛟 ENOSPC (${label}) : tentative de libération automatique du Volume.`);
-    try { ensureStorageHeadroom(); } catch {}
+    try { ensureStorageHeadroom({ neededBytes }); } catch {}
     return operation();
   }
 }
@@ -726,7 +728,7 @@ function writeJsonAtomic(filePath, data) {
   };
 
   try {
-    withStorageRetry(attempt, path.basename(filePath));
+    withStorageRetry(attempt, path.basename(filePath), serializedBytes);
   } catch (error) {
     // En ultime recours, un fichier JSON existant plus grand que la nouvelle
     // version peut être compacté directement : le truncate libère immédiatement
@@ -1653,6 +1655,10 @@ const HISTORY_WRITE_RETRY_MS = 15000;
 let pendingHistoryLogWriteTimer = null;
 let pendingHistoryLogToWrite = null;
 let pendingHistoryLogSince = 0;
+// V6.46 — Après un échec d'écriture (disque plein…), aucun nouvel essai
+// avant cette date : chaque nouveau message ne relance plus une réécriture
+// complète du journal (et un nettoyage d'urgence) tout de suite.
+let historyLogRetryNotBefore = 0;
 // V6.46 — Entrées ajoutées depuis la dernière écriture réussie : reprises
 // si le fichier est réécrit entre-temps par Admin.js (rétention, purge,
 // rattrapage Facebook…) au lieu d'être perdues.
@@ -1675,10 +1681,13 @@ function flushHistoryLogWrite() {
       pendingHistoryLogSince = 0;
       historyLogUnflushed = [];
     }
+    historyLogRetryNotBefore = 0;
   } catch (error) {
     // V6.46 — Les entrées restent en attente (avant : perdues jusqu'au
-    // message suivant) ; nouvel essai automatique.
+    // message suivant) ; nouvel essai automatique dans 15 s, que de
+    // nouveaux messages arrivent ou non.
     console.error('❌ Écriture différée conversation-log.json (nouvel essai) :', error.message);
+    historyLogRetryNotBefore = Date.now() + HISTORY_WRITE_RETRY_MS;
     pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, HISTORY_WRITE_RETRY_MS);
     if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
   }
@@ -1686,6 +1695,9 @@ function flushHistoryLogWrite() {
 
 function scheduleHistoryLogWrite() {
   if (!pendingHistoryLogSince) pendingHistoryLogSince = Date.now();
+  // V6.46 — Attente après échec en cours : le nouvel essai déjà planifié
+  // n'est ni annulé ni avancé.
+  if (historyLogRetryNotBefore > Date.now() && pendingHistoryLogWriteTimer) return;
   if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
   const waited = Date.now() - pendingHistoryLogSince;
   const delay = Math.max(0, Math.min(HISTORY_WRITE_DEBOUNCE_MS, HISTORY_WRITE_MAX_DELAY_MS - waited));

@@ -297,6 +297,42 @@ function captureLogger() {
       assert.ok(/not a database/.test(bad.probe().error), bad.probe().error);
     });
 
+    await test('V6.46 — base ouverte et lisible mais écriture impossible (lecture seule / verrou) : /health « degraded » jusqu’à la prochaine écriture réussie', async () => {
+      const Database = require('better-sqlite3');
+      const { createConversationStateStore } = require('../lib/conversation-state-store');
+      const dbPath = path.join(tmpRoot, 'lecture-seule.db');
+      const seed = new Database(dbPath);
+      seed.exec('CREATE TABLE IF NOT EXISTS conversation_states (contact TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+      seed.close();
+      const logger = captureLogger();
+      const connection = createSqliteConnection({
+        dbPath,
+        openDatabase: filePath => new Database(filePath, { readonly: true, timeout: 500 }),
+        logger
+      });
+      const store = createConversationStateStore({
+        jsonPath: path.join(tmpRoot, 'etat-lecture-seule.json'),
+        openDb: () => connection.get(),
+        writeJson: () => {},
+        writeDebounceMs: 60 * 60 * 1000,
+        jsonMinIntervalMs: 60 * 60 * 1000,
+        onWriteResult: (ok, error) => connection.noteWrite(ok, error),
+        logger
+      });
+      assert.strictEqual(connection.probe().ok, true, 'lecture possible');
+      for (let i = 0; i < 6; i++) store.update('21698000001', current => ({ ...current, unreadCount: i + 1 }));
+      const probe = connection.probe();
+      assert.strictEqual(probe.ok, false, 'avant : « ok » (HTTP 200)');
+      assert.ok(/écriture impossible : attempt to write a readonly database/.test(probe.error), probe.error);
+      const writeErrors = logger.lines.error.filter(line => line.includes('écriture SQLite impossible'));
+      assert.strictEqual(writeErrors.length, 1, `une seule ligne d’erreur pour 6 écritures (${writeErrors.length})`);
+      assert.ok(store.stats().sqliteLastWriteError.includes('readonly'));
+      // Verrou levé / droits corrigés : la prochaine écriture réussie remet « ok ».
+      connection.noteWrite(true);
+      assert.strictEqual(connection.probe().ok, true, 'écriture réussie : de nouveau « ok »');
+      connection.get().close();
+    });
+
     console.log(`\n${passed} test(s) exploitation (unitaires) OK`);
   } catch (error) {
     console.error('FAIL', error);

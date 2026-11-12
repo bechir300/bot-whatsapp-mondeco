@@ -18,6 +18,7 @@ process.env.DATA_DIR = DATA_DIR;
 process.env.ADMIN_EMAIL = 'test-admin@mondeco.test';
 process.env.ADMIN_PASSWORD = 'mot-de-passe-de-test-123';
 process.env.MONDECO_STORAGE_BALLAST_MB = '1';
+process.env.MONDECO_PURGE_REWRITE_RETRY_MS = '50';
 delete process.env.MONDECO_STORAGE_MODE;
 delete process.env.RAILWAY_VOLUME_MOUNT_PATH;
 delete process.env.RAILWAY_ENVIRONMENT_NAME;
@@ -85,7 +86,8 @@ Module.prototype._compile = function compileWithTestExports(content, filename) {
   getConversationStateSingle, updateConversationStateAdmin, readConversationStatesAdminCached,
   flushConversationStatesWrite, conversationEntryPartPurgeHash, writeJsonAtomic, runStorageGuardTick,
   ensureStorageBallast, STORAGE_BALLAST_PATH, MAX_NOTIFICATION_ITEMS, MESSAGE_ID_INDEX_PATH, SNAPSHOTS_DIR,
-  loadPurgedRecordHashes, PURGED_RECORD_HASHES_PATH };`;
+  loadPurgedRecordHashes, PURGED_RECORD_HASHES_PATH, pruneFullSnapshotsForStorageRescue, loadUsers, getBotSettings,
+  USERS_PATH, SETTINGS_PATH, purgeConversationMessagePart };`;
   }
   return originalCompile.call(this, content, filename);
 };
@@ -151,6 +153,16 @@ async function test(label, fn) {
     assert.strictEqual(A.getConversationStateSingle(STATE_CONTACT).assignedTo, 'Ancien');
   });
 
+  await test('V6.46 — sauvegarde restaurée gardée par la rotation (redémarrage en mode compact) tant qu’aucun snapshot plus récent de l’état restauré n’existe', () => {
+    const restoredMeta = A.listFullSnapshots().find(item => item.id === SNAP);
+    assert.ok(restoredMeta.restoredAt, 'date de restauration enregistrée dans snapshot-meta.json');
+    // Rotation « 1 snapshot » (mode compact, démarrage suivant).
+    A.pruneFullSnapshotsForStorageRescue(1);
+    const ids = A.listFullSnapshots().map(item => item.id);
+    assert.ok(ids.includes(SNAP), 'sauvegarde restaurée conservée (avant : supprimée au redémarrage)');
+    assert.strictEqual(ids.length, 2, 'copie de protection (la plus récente) gardée aussi');
+  });
+
   await test('G23 : snapshot vide ou endommagé → erreur, rien n’est modifié', () => {
     write('backups/snapshots/snapshot-20261112-090000-000/snapshot-meta.json', { createdAt: new Date(Date.now() - 1000).toISOString() });
     assert.throws(() => A.restoreFullSnapshot('snapshot-20261112-090000-000'), /Sauvegarde vide/);
@@ -185,18 +197,89 @@ async function test(label, fn) {
     assert.ok(exists('conversation-media/2026-10/customer-photo-sofa.jpg'));
     assert.ok(exists('conversation-media/2026-10/client-non-favori.jpg'), 'aucun média supprimé automatiquement');
     const snapshots = A.listFullSnapshots();
-    assert.strictEqual(snapshots.length, 1, 'un snapshot (le plus récent) gardé');
+    assert.strictEqual(snapshots.length, 2, 'le snapshot le plus récent et la sauvegarde restaurée gardés');
+    assert.ok(snapshots.some(item => item.id === SNAP));
     assert.ok(logs.some(line => line.startsWith('error') && /Storage Rescue \(test bas\)/.test(line)), 'suppressions signalées en console.error (alerte)');
   });
 
   await test('G25 : espace CRITIQUE (10 Mo, ENOSPC) → dernier recours sur les sauvegardes, jamais sur les médias ni les photos affichées', () => {
     disk.free = 10 * MB;
-    A.emergencyFreeDisposableStorage({ reason: 'test ENOSPC' });
+    // Sans écriture en attente et avec écriture encore possible : aucun dernier recours.
+    A.emergencyFreeDisposableStorage({ reason: 'test sans écriture en attente' });
+    assert.ok(A.listFullSnapshots().length >= 1, 'dernières sauvegardes gardées sans écriture refusée');
+    assert.ok(exists('products.json.bak'));
+    // Écriture refusée de 20 Mo (espace simulé constant) : dernier recours complet.
+    A.emergencyFreeDisposableStorage({ reason: 'test ENOSPC', neededBytes: 20 * MB });
     assert.strictEqual(A.listFullSnapshots().length, 0, 'dernier snapshot supprimé seulement en critique');
     assert.ok(!exists('products.json.bak'));
     assert.ok(exists('conversation-media/2026-10/client-non-favori.jpg'), 'médias jamais supprimés automatiquement');
     assert.ok(exists('conversation-profile/avatar-utilise.jpg'));
     assert.ok(logs.some(line => line.startsWith('error') && /Stockage critique \(test ENOSPC\)/.test(line)));
+    disk.free = 15 * GB;
+  });
+
+  await test('V6.46 — espace revenu : snapshot du jour recréé par la surveillance (avant : seulement au redémarrage)', () => {
+    assert.strictEqual(A.listFullSnapshots().length, 0);
+    disk.free = 15 * GB;
+    A.runStorageGuardTick();
+    const snapshots = A.listFullSnapshots();
+    assert.strictEqual(snapshots.length, 1);
+    assert.strictEqual(snapshots[0].reason, 'automatic-daily');
+  });
+
+  await test('V6.46 — disque plein, petite écriture refusée : le dernier recours s’arrête dès que la place suffit (dernier snapshot et .bak des données gardés)', () => {
+    write('products.json.bak', [{ id: 'p1', name: 'Lit Bianca' }]);
+    age(write('backups/json/products/products-20261103-120000-000.json', '[]'), 2);
+    age(write('backups/json/settings/settings-20261003-120000-000.json', '{}'), 1);
+    const jsonVersions = () => ['products', 'settings'].flatMap(dir => {
+      const full = path.join(DATA_DIR, 'backups/json', dir);
+      return fs.existsSync(full) ? fs.readdirSync(full) : [];
+    });
+    const versionsBefore = jsonVersions().length;
+    disk.free = 0;
+    const originalUnlinkSync = fs.unlinkSync;
+    fs.unlinkSync = function patchedUnlink(target, ...rest) {
+      const result = originalUnlinkSync.call(this, target, ...rest);
+      // Chaque version JSON supprimée libère un bloc de 64 Ko.
+      if (String(target).includes(`${path.sep}backups${path.sep}json${path.sep}`)) disk.free += 64 * 1024;
+      return result;
+    };
+    try {
+      A.emergencyFreeDisposableStorage({ reason: 'test petite écriture', neededBytes: 1024 });
+    } finally {
+      fs.unlinkSync = originalUnlinkSync;
+    }
+    assert.strictEqual(jsonVersions().length, versionsBefore - 1, 'une seule version JSON supprimée');
+    assert.ok(exists('products.json.bak'), '.bak des produits gardé');
+    assert.strictEqual(A.listFullSnapshots().length, 1, 'dernier snapshot gardé');
+    disk.free = 15 * GB;
+  });
+
+  await test('V6.46 — écriture impossible SANS manque d’espace (EACCES, 50 Go libres) : niveau « unwritable », aucune sauvegarde supprimée', () => {
+    disk.free = 50 * GB;
+    write('settings.json.bak', { aiEnabled: true });
+    const originalWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = function patchedWriteFile(target, ...rest) {
+      if (String(target).includes('.write-test-')) {
+        const error = new Error(`EACCES: permission denied, open '${target}'`);
+        error.code = 'EACCES';
+        throw error;
+      }
+      return originalWriteFileSync.call(this, target, ...rest);
+    };
+    let freed;
+    try {
+      assert.strictEqual(A.storageLevel(), 'unwritable');
+      freed = A.emergencyFreeDisposableStorage({ reason: 'test EACCES' });
+      A.runSafeStorageMaintenance({ reason: 'test EACCES' });
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+    }
+    assert.strictEqual(freed, 0);
+    assert.strictEqual(A.listFullSnapshots().length, 1, 'dernier snapshot gardé');
+    assert.ok(exists('products.json.bak'), '.bak des données gardé');
+    assert.ok(exists('backups/json/settings/settings-20261003-120000-000.json') || exists('backups/json/products/products-20261103-120000-000.json'), 'dernière version JSON gardée');
+    assert.ok(logs.some(line => line.startsWith('error') && /test EACCES.*aucun fichier supprimé/.test(line)));
     disk.free = 15 * GB;
   });
 
@@ -291,6 +374,58 @@ async function test(label, fn) {
     const set = A.loadPurgedRecordHashes();
     assert.ok(set.has(h1) && set.has(h2));
     assert.ok(fs.readdirSync(DATA_DIR).some(name => name.startsWith('.purged-record-hashes.json.corrupt-')));
+  });
+
+  await test('V6.46 — users.json, settings.json et empreintes de suppression vides (0 octet) → repris du .bak', () => {
+    const users = [
+      { id: 'u-admin', email: 'test-admin@mondeco.test', role: 'admin', active: true },
+      { id: 'c1', email: 'c1@mondeco.test', role: 'commercial', active: true },
+      { id: 'c2', email: 'c2@mondeco.test', role: 'commercial', active: true }
+    ];
+    const usersBefore = fs.readFileSync(A.USERS_PATH, 'utf8');
+    fs.writeFileSync(`${A.USERS_PATH}.bak`, JSON.stringify(users));
+    fs.writeFileSync(A.USERS_PATH, '');
+    assert.deepStrictEqual(A.loadUsers().map(user => user.id), ['u-admin', 'c1', 'c2'], 'comptes des commerciaux gardés');
+    assert.strictEqual(JSON.parse(fs.readFileSync(A.USERS_PATH, 'utf8')).length, 3, 'fichier actif réparé depuis le .bak');
+    fs.writeFileSync(A.USERS_PATH, usersBefore);
+
+    fs.writeFileSync(`${A.SETTINGS_PATH}.bak`, JSON.stringify({ aiEnabled: false }));
+    fs.writeFileSync(A.SETTINGS_PATH, '');
+    assert.strictEqual(A.getBotSettings().aiEnabled, false, 'IA toujours désactivée (avant : réglages par défaut, IA réactivée)');
+    assert.strictEqual(JSON.parse(fs.readFileSync(A.SETTINGS_PATH, 'utf8')).aiEnabled, false);
+
+    const hash = 'd'.repeat(64);
+    fs.writeFileSync(`${A.PURGED_RECORD_HASHES_PATH}.bak`, JSON.stringify({ version: 1, hashes: [hash] }));
+    fs.writeFileSync(A.PURGED_RECORD_HASHES_PATH, '');
+    assert.ok(A.loadPurgedRecordHashes().has(hash), 'empreinte reprise du .bak');
+  });
+
+  await test('V6.46 — suppression définitive : journal raccourci pendant la réécriture → nouvel essai automatique, texte effacé', async () => {
+    const contact = '21698555777';
+    const today = new Date().toISOString().slice(0, 10);
+    const t1 = new Date(Date.now() - 30 * 1000).toISOString();
+    const target = { contact, channel: 'whatsapp', message_id: 'wamid.SECRET2', time: t1, incoming: 'mon code secret 4242', direction: 'incoming' };
+    const other = { contact, channel: 'whatsapp', message_id: 'wamid.KEEP2', time: t1, incoming: 'bonjour', direction: 'incoming' };
+    const eventsPath = path.join(DATA_DIR, 'conversation-events', `conversation-events-${today}.jsonl`);
+    fs.writeFileSync(eventsPath, `${JSON.stringify(other)}\n${JSON.stringify(target)}\n`);
+    const originalWriteFile = fs.promises.writeFile;
+    let shrunk = false;
+    fs.promises.writeFile = async function patched(file, ...rest) {
+      if (!shrunk && String(file).endsWith('.purge.tmp')) {
+        shrunk = true;
+        // Restauration / rotation externe : fichier remplacé par une version plus courte.
+        fs.writeFileSync(eventsPath, `${JSON.stringify(target)}\n`);
+      }
+      return originalWriteFile.call(this, file, ...rest);
+    };
+    try {
+      await A.purgeConversationMessagePart(target, 'incoming');
+    } finally {
+      fs.promises.writeFile = originalWriteFile;
+    }
+    assert.ok(shrunk);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.ok(!fs.readFileSync(eventsPath, 'utf8').includes('mon code secret 4242'), 'texte effacé au nouvel essai');
   });
 
   await test('réserve d’espace recréée quand l’espace redevient suffisant', () => {

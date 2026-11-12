@@ -178,6 +178,35 @@ function eventLines() {
     assert.strictEqual(JSON.parse(lines[1]).message_id, 'wamid.NEXT', 'événement suivant lisible');
   });
 
+  await test('V6.46 — échec d’écriture de conversation-log.json : nouvel essai après 15 s, pas une réécriture complète à chaque message', async () => {
+    S.flushHistoryLogWrite();
+    const originalRenameSync = fs.renameSync;
+    let attempts = 0;
+    fs.renameSync = function patchedRename(from, to, ...rest) {
+      if (String(to) === S.HISTORY_PATH) {
+        attempts++;
+        const error = new Error('ENOSPC: no space left on device, rename');
+        error.code = 'ENOSPC';
+        throw error;
+      }
+      return originalRenameSync.call(this, from, to, ...rest);
+    };
+    try {
+      inbound('21698666001', 'wamid.F0', 'premier');
+      S.flushHistoryLogWrite();
+      const afterFirst = attempts;
+      assert.ok(afterFirst >= 1, 'écriture tentée');
+      for (let i = 1; i <= 5; i++) inbound('21698666001', `wamid.F${i}`, `pendant l’échec ${i}`);
+      await new Promise(resolve => setTimeout(resolve, 2200));
+      assert.strictEqual(attempts, afterFirst, `aucune réécriture avant le délai (tentatives : ${attempts})`);
+    } finally {
+      fs.renameSync = originalRenameSync;
+    }
+    S.flushHistoryLogWrite();
+    const ids = JSON.parse(fs.readFileSync(S.HISTORY_PATH, 'utf8')).map(entry => entry.message_id);
+    for (let i = 0; i <= 5; i++) assert.ok(ids.includes(`wamid.F${i}`), `wamid.F${i} écrit ensuite`);
+  });
+
   await test('G29 : conversation-log.json illisible → mis de côté (.corrupt-*), jamais écrasé par une seule entrée', () => {
     S.flushHistoryLogWrite();
     const truncated = fs.readFileSync(S.HISTORY_PATH, 'utf8').slice(0, 80);
