@@ -551,6 +551,21 @@ fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
 fs.mkdirSync(RECYCLE_DIR, { recursive: true });
 
+// V6.45 — Protection CSRF : toute requête qui modifie des données sous
+// /admin (POST, PUT, PATCH, DELETE) doit venir de l'application elle-même
+// (Origin/Referer, Sec-Fetch-Site ou en-tête X-Mondeco-Client d'apiFetch).
+// Vérifiée avant toute route (et avant multer pour les envois de fichiers).
+// Seul le webhook WooCommerce (serveur à serveur, signé) est exempté.
+// Voir lib/origin-guard.js (ADMIN_ORIGIN_CHECK, ADMIN_ALLOWED_ORIGINS).
+const ADMIN_ORIGIN_GUARD_OPTIONS = require('./lib/origin-guard').originGuardOptionsFromEnv(process.env, {
+  label: 'admin',
+  exemptPaths: ['/api/woocommerce/webhook']
+});
+router.use(require('./lib/origin-guard').createOriginGuard(ADMIN_ORIGIN_GUARD_OPTIONS));
+if (ADMIN_ORIGIN_GUARD_OPTIONS.mode !== 'enforce') {
+  console.warn(`⚠️ ADMIN_ORIGIN_CHECK=${ADMIN_ORIGIN_GUARD_OPTIONS.mode} : la protection CSRF de /admin ne bloque pas les requêtes d'autres origines.`);
+}
+
 router.use(express.json({ limit: '20mb' }));
 
 // ============================================================
@@ -2762,7 +2777,7 @@ function attachmentDirectionForPurge(entry = {}) {
   return 'incoming';
 }
 
-function applyConversationPurgeTombstones(entry = {}) {
+function applyConversationPurgeTombstones(entry = {}, options = {}) {
   if (!entry || typeof entry !== 'object') return null;
   const hashes = loadPurgedRecordHashes();
   const incomingHash = conversationEntryPartPurgeHash(entry,'incoming');
@@ -2793,6 +2808,11 @@ function applyConversationPurgeTombstones(entry = {}) {
       changed = true;
     }
   }
+
+  // V6.45 — Messages masqués (suppression réversible) : remplacés à la
+  // lecture par une mention visible, sans jamais toucher aux fichiers.
+  // Désactivé lors d'une réécriture de fichier (purge définitive).
+  if (options.soft !== false) next = applyConversationSoftDeletions(next, incomingHash, replyHash);
 
   const meaningful = Boolean(
     safeString(next?.incoming) || safeString(next?.reply) ||
@@ -4712,7 +4732,6 @@ function loadPersistentSessions() {
 }
 
 const sessions = loadPersistentSessions();
-const loginAttempts = new Map();
 
 function persistSessions(force = false) {
   if (!sessionStoreDirty && !force) return;
@@ -4750,6 +4769,14 @@ const PRESENCE_IDLE_MS = 5 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 8;
 const LOGIN_BLOCK_MS =
   15 * 60 * 1000;
+// V6.45 — Seuil par adresse IP (tous comptes) et délai maximal appliqué
+// à un compte visé depuis de nombreuses adresses (voir lib/login-throttle.js).
+const LOGIN_IP_MAX_FAILURES = 30;
+const LOGIN_EMAIL_MAX_DELAY_MS = (() => {
+  const raw = safeString(process.env.LOGIN_EMAIL_MAX_DELAY_MS);
+  const value = raw === '' ? 8000 : Number(raw);
+  return Number.isFinite(value) ? Math.max(0, Math.min(30000, value)) : 8000;
+})();
 
 const ALLOWED_USER_ROLES =
   new Set([
@@ -6107,114 +6134,31 @@ function secureCookie(req) {
 // V6.37 — req.ip tient compte de `trust proxy` (server.js). Lire
 // X-Forwarded-For directement permettait de contourner la limite en
 // changeant cet en-tête à chaque essai.
-function loginAttemptKey(req) {
-  return `ip:${safeString(req.ip) || 'unknown'}`;
+// V6.45 — Limite par couple (e-mail, IP) et par IP, plus un simple délai
+// progressif par e-mail : un attaquant ne peut plus bloquer un compte réel
+// (voir lib/login-throttle.js).
+const loginThrottle = require('./lib/login-throttle').createLoginThrottle({
+  pairMaxFailures: LOGIN_MAX_FAILURES,
+  ipMaxFailures: LOGIN_IP_MAX_FAILURES,
+  blockMs: LOGIN_BLOCK_MS,
+  windowMs: LOGIN_BLOCK_MS,
+  emailSoftThreshold: LOGIN_MAX_FAILURES,
+  emailMaxDelayMs: LOGIN_EMAIL_MAX_DELAY_MS
+});
+
+function loginClientIp(req) {
+  return safeString(req.ip) || 'unknown';
 }
 
-// Limite complémentaire par compte : bloque une attaque distribuée sur
-// plusieurs adresses IP visant le même e-mail.
-function loginEmailAttemptKey(email) {
-  return `email:${normalizeEmail(email)}`;
-}
-
-function getLoginAttemptState(
-  req,
-  key = loginAttemptKey(req)
-) {
-
-  const current =
-    loginAttempts.get(
-      key
-    ) || {
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
-
-  if (
-    current.blockedUntil &&
-    current.blockedUntil <=
-      Date.now()
-  ) {
-    loginAttempts.delete(
-      key
-    );
-
-    return {
-      key,
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
-  }
-
-  return {
-    key,
-    ...current
-  };
-}
-
-function registerLoginFailure(
-  req,
-  key = loginAttemptKey(req)
-) {
-  const state =
-    getLoginAttemptState(
-      req,
-      key
-    );
-
-  const failures =
-    Number(
-      state.failures ||
-      0
-    ) +
-    1;
-
-  const blockedUntil =
-    failures >=
-      LOGIN_MAX_FAILURES
-      ? Date.now() +
-        LOGIN_BLOCK_MS
-      : 0;
-
-  loginAttempts.set(
-    state.key,
-    {
-      failures,
-      blockedUntil,
-      lastFailureAt:
-        Date.now()
-    }
-  );
-
-  return {
-    failures,
-    blockedUntil
-  };
-}
-
-function clearLoginFailures(
-  req,
-  key = loginAttemptKey(req)
-) {
-  loginAttempts.delete(
-    key
-  );
+function maskEmailForLog(email) {
+  const [local, domain] = safeString(email).split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 1)}***@${domain}`;
 }
 
 // Purge des compteurs expirés : sans elle, la Map grossissait sans limite.
 const loginAttemptsSweepTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, state] of loginAttempts.entries()) {
-    const lastActivity = Math.max(
-      Number(state?.blockedUntil || 0),
-      Number(state?.lastFailureAt || 0) + LOGIN_BLOCK_MS
-    );
-    if (lastActivity <= now) loginAttempts.delete(key);
-  }
+  loginThrottle.sweep();
 }, 5 * 60 * 1000);
 if (typeof loginAttemptsSweepTimer.unref === 'function') loginAttemptsSweepTimer.unref();
 
@@ -6426,7 +6370,7 @@ const emailInput=document.getElementById('email');
 const passwordInput=document.getElementById('password');
 const togglePassword=document.getElementById('togglePassword');
 togglePassword.addEventListener('click',()=>{const show=passwordInput.type==='password';passwordInput.type=show?'text':'password';togglePassword.textContent=show?'◌':'◉';});
-form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:emailInput.value,password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'E-mail ou mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
+form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json','X-Mondeco-Client':'admin'},body:JSON.stringify({email:emailInput.value,password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'E-mail ou mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
 </script>
 </body>
 </html>
@@ -6443,24 +6387,7 @@ router.get('/login', (req, res) => {
     .send(renderLoginPage());
 });
 
-router.post('/login', (req, res) => {
-  const attemptState =
-    getLoginAttemptState(
-      req
-    );
-
-  if (
-    attemptState.blockedUntil >
-    Date.now()
-  ) {
-    return res
-      .status(429)
-      .json({
-        error:
-          'Trop de tentatives. Réessayez dans quelques minutes.'
-      });
-  }
-
+router.post('/login', async (req, res) => {
   const email =
     normalizeEmail(
       req.body?.email
@@ -6470,6 +6397,22 @@ router.post('/login', (req, res) => {
     safeString(
       req.body?.password
     );
+
+  const ip = loginClientIp(req);
+
+  // V6.45 — Blocage seulement pour cette adresse IP (ou ce couple
+  // e-mail + IP) : le même compte reste accessible depuis un autre poste.
+  const attempt = loginThrottle.check({ ip, email });
+
+  if (attempt.blocked) {
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(attempt.retryAfterMs / 1000))));
+    return res
+      .status(429)
+      .json({
+        error:
+          'Trop de tentatives. Réessayez dans quelques minutes.'
+      });
+  }
 
   if (
     !email ||
@@ -6483,24 +6426,11 @@ router.post('/login', (req, res) => {
       });
   }
 
-  const emailAttemptKey =
-    loginEmailAttemptKey(
-      email
-    );
-
-  if (
-    getLoginAttemptState(
-      req,
-      emailAttemptKey
-    ).blockedUntil >
-    Date.now()
-  ) {
-    return res
-      .status(429)
-      .json({
-        error:
-          'Trop de tentatives. Réessayez dans quelques minutes.'
-      });
+  // Délai progressif (jamais de refus) quand ce compte subit de nombreux
+  // échecs depuis plusieurs adresses : freine une attaque distribuée sans
+  // empêcher le vrai titulaire de se connecter.
+  if (attempt.delayMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, attempt.delayMs));
   }
 
   const users =
@@ -6529,14 +6459,11 @@ router.post('/login', (req, res) => {
       false ||
     !passwordValid
   ) {
-    registerLoginFailure(
-      req
-    );
+    const failure = loginThrottle.registerFailure({ ip, email });
 
-    registerLoginFailure(
-      req,
-      emailAttemptKey
-    );
+    if (failure.emailThrottleStarted) {
+      console.warn(`🛡️ Connexion : ${failure.emailFailures} échecs récents pour ${maskEmailForLog(email)} (plusieurs postes possibles) — délai progressif appliqué, sans blocage du compte.`);
+    }
 
     return res
       .status(401)
@@ -6546,14 +6473,7 @@ router.post('/login', (req, res) => {
       });
   }
 
-  clearLoginFailures(
-    req
-  );
-
-  clearLoginFailures(
-    req,
-    emailAttemptKey
-  );
+  loginThrottle.registerSuccess({ ip, email });
 
   users[index] = {
     ...users[index],
@@ -14732,6 +14652,53 @@ router.get(
 // API RÉPONSES RAPIDES COMMERCIALES
 // ============================================================
 
+// V6.45 — Les réponses rapides partent telles quelles chez les clients (y
+// compris automatiquement vers les prospects publicitaires). Seuls les
+// administrateurs, responsables commerciaux et éditeurs (contenu IA) les
+// créent, modifient ou suppriment ; les commerciaux les utilisent en
+// lecture seule. Chaque changement est tracé (auteur, date, ancien texte)
+// dans le journal d'activité de l'équipe.
+const QUICK_REPLY_EDITOR_ROLES = new Set(['admin', 'responsable_commercial', 'editor']);
+const QUICK_REPLIES_MAX_ITEMS = 500;
+
+function requireQuickReplyEditor(req, res, next) {
+  if (QUICK_REPLY_EDITOR_ROLES.has(safeString(req.user?.role))) return next();
+  return res.status(403).json({
+    error: 'Lecture seule : seuls un administrateur, un responsable commercial ou un éditeur peuvent modifier les réponses rapides.',
+    errorCode: 'QUICK_REPLY_READ_ONLY'
+  });
+}
+
+function quickReplyActor(req) {
+  return {
+    id: safeString(req.user?.id),
+    name: safeString(req.user?.name || req.user?.email)
+  };
+}
+
+function quickReplyAuditSnapshot(item = {}) {
+  return {
+    title: safeString(item?.title),
+    shortcut: safeString(item?.shortcut),
+    content: safeString(item?.content).slice(0, 4000),
+    active: item?.active !== false
+  };
+}
+
+function auditQuickReplyChange(req, type, item = {}, extra = {}) {
+  const actor = quickReplyActor(req);
+  return appendTeamActivity({
+    type,
+    userId: actor.id,
+    userName: actor.name,
+    userRole: safeString(req.user?.role),
+    quickReplyId: safeString(item?.id),
+    shortcut: safeString(item?.shortcut),
+    title: safeString(item?.title),
+    ...extra
+  });
+}
+
 router.get(
   '/api/quick-replies',
   requireAuth,
@@ -14753,9 +14720,35 @@ router.get(
   }
 );
 
+// V6.45 — Historique des modifications (journal d'activité de l'équipe) :
+// qui a créé, modifié, importé ou supprimé une réponse rapide, avec l'ancien
+// et le nouveau texte. Lecture directe des fichiers journaliers (pas de
+// migration de l'ancien journal unique).
+router.get(
+  '/api/quick-replies/history',
+  requireAuth,
+  requireQuickReplyEditor,
+  (req, res) => {
+    const days = Math.min(90, Math.max(1, Number(req.query?.days) || 30));
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const today = dateKeyInTimezone(new Date(), timezone);
+    const items = [];
+    for (let offset = 0; offset < days; offset += 1) {
+      const filePath = teamActivityDayPath(teamDateAdd(today, -offset));
+      if (!fs.existsSync(filePath)) continue;
+      forEachJsonlRecordSync(filePath, item => {
+        if (safeString(item?.type).startsWith('quick_reply_')) items.push(item);
+      });
+    }
+    items.sort((a, b) => safeString(b?.time).localeCompare(safeString(a?.time)));
+    return res.json({ items: items.slice(0, 500) });
+  }
+);
+
 router.post(
   '/api/quick-replies',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const title =
       safeString(req.body?.title);
@@ -14796,8 +14789,21 @@ router.post(
         });
     }
 
+    // V6.45 — Plus d'éviction silencieuse des plus anciennes réponses
+    // (saveQuickReplies ne garde que les 500 dernières).
+    if (items.length >= QUICK_REPLIES_MAX_ITEMS) {
+      return res
+        .status(409)
+        .json({
+          error:
+            `Limite de ${QUICK_REPLIES_MAX_ITEMS} réponses rapides atteinte : supprimez-en avant d’en ajouter.`
+        });
+    }
+
     const now =
       new Date().toISOString();
+
+    const actor = quickReplyActor(req);
 
     const item = {
       id: crypto.randomUUID(),
@@ -14807,11 +14813,16 @@ router.post(
       active: true,
       source: 'manual',
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+      updatedBy: actor.id,
+      updatedByName: actor.name
     };
 
     items.push(item);
     saveQuickReplies(items);
+    auditQuickReplyChange(req, 'quick_reply_create', item, { after: quickReplyAuditSnapshot(item) });
 
     return res
       .status(201)
@@ -14824,6 +14835,7 @@ router.post(
 router.post(
   '/api/quick-replies/import',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
     if (!incoming.length) {
@@ -14836,7 +14848,12 @@ router.post(
     );
     let imported = 0;
     let skipped = 0;
+    // V6.45 — Import en ajout seul : au-delà de la limite, les nouvelles
+    // réponses sont ignorées au lieu d'évincer les réponses existantes.
+    let skippedForLimit = 0;
     const now = new Date().toISOString();
+    const actor = quickReplyActor(req);
+    const importedShortcuts = [];
 
     for (const raw of incoming) {
       const title = safeString(raw?.title);
@@ -14844,6 +14861,11 @@ router.post(
       const shortcut = normalizeQuickReplyShortcut(raw?.shortcut || title);
       if (!title || !content || !shortcut || usedShortcuts.has(shortcut)) {
         skipped += 1;
+        continue;
+      }
+      if (items.length >= QUICK_REPLIES_MAX_ITEMS) {
+        skipped += 1;
+        skippedForLimit += 1;
         continue;
       }
       items.push({
@@ -14854,20 +14876,32 @@ router.post(
         active: true,
         source: 'manual-import',
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+        updatedBy: actor.id,
+        updatedByName: actor.name
       });
       usedShortcuts.add(shortcut);
+      importedShortcuts.push(shortcut);
       imported += 1;
     }
 
-    if (imported) saveQuickReplies(items);
-    return res.json({ success: true, imported, skipped, total: items.length });
+    if (imported) {
+      saveQuickReplies(items);
+      auditQuickReplyChange(req, 'quick_reply_import', {}, {
+        imported,
+        shortcuts: importedShortcuts.slice(0, 500)
+      });
+    }
+    return res.json({ success: true, imported, skipped, skippedForLimit, total: items.length });
   }
 );
 
 router.put(
   '/api/quick-replies/:id',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const items =
       loadQuickReplies();
@@ -14930,6 +14964,9 @@ router.put(
         });
     }
 
+    const before = quickReplyAuditSnapshot(items[index]);
+    const actor = quickReplyActor(req);
+
     items[index] = {
       ...items[index],
       title,
@@ -14939,10 +14976,16 @@ router.put(
         req.body?.active ??
         items[index].active,
       updatedAt:
-        new Date().toISOString()
+        new Date().toISOString(),
+      updatedBy: actor.id,
+      updatedByName: actor.name
     };
 
     saveQuickReplies(items);
+    auditQuickReplyChange(req, 'quick_reply_update', items[index], {
+      before,
+      after: quickReplyAuditSnapshot(items[index])
+    });
 
     return res.json(
       items[index]
@@ -14953,6 +14996,7 @@ router.put(
 router.delete(
   '/api/quick-replies/:id',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const items =
       loadQuickReplies();
@@ -14972,7 +15016,10 @@ router.delete(
         });
     }
 
+    const removed = items.find(item => item.id === req.params.id) || {};
     saveQuickReplies(next);
+    // Le texte supprimé reste dans le journal : récupérable par un admin.
+    auditQuickReplyChange(req, 'quick_reply_delete', removed, { before: quickReplyAuditSnapshot(removed) });
 
     return res.json({
       success: true
@@ -15610,7 +15657,9 @@ router.post(
 
       const contact = safeString(req.body?.contact || req.body?.phone);
       if (!requireCommercialMessageChannelAccess(req, res, 'whatsapp')) return;
-      const externalContact = safeString(req.body?.externalContact) || normalizePhone(contact);
+      // V6.45 — Numéro appelé déduit de la conversation (comme les envois).
+      const externalContact = commercialSendRecipient(req, res, contact, 'whatsapp');
+      if (externalContact === null) return;
       const phone = normalizePhone(externalContact);
       const sdp = safeString(req.body?.sdp);
 
@@ -15704,6 +15753,52 @@ router.post(
   }
 );
 
+// V6.45 — Le destinataire réel est déduit côté serveur de la conversation
+// dont les droits ont été vérifiés (contact). Avant, les droits étaient
+// contrôlés sur body.contact mais le message partait vers
+// body.externalContact : un commercial pouvait viser une conversation
+// « leurre » et écrire au client d'un collègue malgré le verrou.
+// Un externalContact différent du contact est refusé (400).
+function commercialSendRecipient(req, res, contact, channel) {
+  const cleanContact = safeString(contact);
+  const derived =
+    channel === 'instagram'
+      ? cleanContact.replace(/^instagram:/, '')
+      : channel === 'facebook'
+        ? cleanContact.replace(/^facebook:/, '')
+        : normalizePhone(cleanContact);
+  const requested = safeString(req.body?.externalContact);
+  if (!derived) {
+    res.status(400).json({ error: 'Contact client obligatoire.' });
+    return null;
+  }
+  const sameTarget = (left, right) =>
+    channel === 'whatsapp'
+      ? Boolean(normalizePhone(left)) && normalizePhone(left) === normalizePhone(right)
+      : Boolean(safeString(left)) && safeString(left) === safeString(right);
+
+  if (!requested || sameTarget(requested, derived)) return derived;
+
+  // Anciennes conversations sociales : identifiant externe mémorisé côté
+  // serveur pour ce contact (état SQLite ou cache Admin, tant que les deux
+  // ne sont pas unifiés).
+  const storedCandidates = [
+    safeString((getConversationStateSingle(cleanContact) || {})?.externalContact),
+    safeString(readConversationStatesAdminCached()?.[cleanContact]?.externalContact)
+  ].filter(Boolean);
+  const stored = storedCandidates.find(candidate => sameTarget(requested, candidate));
+  if (stored) {
+    return channel === 'whatsapp' ? normalizePhone(stored) : stored;
+  }
+
+  console.warn(`🛡️ Envoi commercial refusé : destinataire différent de la conversation (utilisateur ${safeString(req.user?.id) || 'inconnu'}, canal ${channel}).`);
+  res.status(400).json({
+    error: 'Destinataire incohérent avec la conversation ouverte. Rechargez la conversation puis réessayez.',
+    errorCode: 'RECIPIENT_MISMATCH'
+  });
+  return null;
+}
+
 router.post(
   '/api/commercial/send',
   requireAuth,
@@ -15740,17 +15835,13 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
-
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        commercialSendRecipient(req, res, contact, channel);
+
+      if (externalContact === null) return;
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const phone =
         channel === 'whatsapp'
@@ -15899,17 +15990,13 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
-
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        commercialSendRecipient(req, res, contact, channel);
+
+      if (externalContact === null) return;
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       if (channel === 'facebook') {
         return res
@@ -16044,7 +16131,10 @@ router.post(
       if (channel !== 'whatsapp') {
         return res.status(400).json({ error: 'Les fiches produit et les boutons sont disponibles uniquement sur WhatsApp.' });
       }
-      const externalContact = normalizePhone(safeString(req.body?.externalContact) || contact);
+      // V6.45 — Destinataire déduit de la conversation vérifiée.
+      const recipient = commercialSendRecipient(req, res, contact, channel);
+      if (recipient === null) return;
+      const externalContact = normalizePhone(recipient);
       if (!externalContact) return res.status(400).json({ error: 'Numéro client obligatoire.' });
 
       const kind = safeString(req.body?.kind) === 'product' ? 'product' : 'buttons';
@@ -16120,10 +16210,13 @@ router.post(
       // V6.36.8 — Stickers WhatsApp uniquement pour l'instant.
       const channel = 'whatsapp';
 
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
+      const externalContact =
+        commercialSendRecipient(req, res, contact, channel);
+      if (externalContact === null) return;
+
       if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
-      const externalContact =
-        safeString(req.body?.externalContact) || normalizePhone(contact);
       const phone = normalizePhone(externalContact);
       const stickerId = safeString(req.body?.stickerId);
 
@@ -17355,7 +17448,7 @@ let inboxTombstoneMemo = new WeakMap();
 let inboxTombstoneStamp = '';
 
 function inboxCleanEntry(entry) {
-  const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
+  const stamp = `${fileChangeStamp(PURGED_RECORD_HASHES_PATH)}|${messageSoftDeletionsStamp()}`;
   if (stamp !== inboxTombstoneStamp) {
     inboxTombstoneMemo = new WeakMap();
     inboxTombstoneStamp = stamp;
@@ -23198,7 +23291,7 @@ function rewriteConversationArrayFileForPurge(filePath, targetHash, part) {
     const hash = conversationEntryPartPurgeHash(original, part);
     if (hash !== targetHash) { next.push(original); continue; }
     removed += 1;
-    const transformed = applyConversationPurgeTombstones(original);
+    const transformed = applyConversationPurgeTombstones(original, { soft:false });
     if (transformed) next.push(transformed);
   }
   if (removed) writeJsonAtomic(filePath, next);
@@ -23226,7 +23319,7 @@ function rewritePersistentConversationEventsForPurge(targetHash, part) {
           if (conversationEntryPartPurgeHash(original, part) === targetHash) {
             removed += 1;
             changed = true;
-            const transformed = applyConversationPurgeTombstones(original);
+            const transformed = applyConversationPurgeTombstones(original, { soft:false });
             if (transformed) output.push(JSON.stringify(transformed));
           } else output.push(line);
         } catch { output.push(line); }
@@ -23269,9 +23362,19 @@ async function rebuildConversationStateAfterPurge(contact) {
   let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === safeString(contact));
   entries = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
   if (!entries.length) {
-    delete states[contact];
+    // V6.45 — Plus de suppression de la conversation quand son dernier
+    // message est purgé : affectation, origine publicitaire et fiche client
+    // sont conservées (seuls les compteurs de messages sont remis à zéro).
+    if (!Object.keys(current).length) return {};
+    states[contact] = {
+      ...current,
+      unreadCount:0,
+      lastUnreadMessageId:'',
+      awaitingResponse:false,
+      updatedAt:new Date().toISOString()
+    };
     saveConversationStatesAdmin(states);
-    return {};
+    return states[contact];
   }
   const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
   const evidence = conversationDirectionalEvidence(entries, cleanState);
@@ -23296,8 +23399,10 @@ async function rebuildConversationStateAfterPurge(contact) {
   return states[contact];
 }
 
-async function purgeConversationMessagePart(target, part) {
-  const targetHash = conversationEntryPartPurgeHash(target, part);
+async function purgeConversationMessagePart(target, part, knownHash = '') {
+  // V6.45 — knownHash : empreinte d'origine d'un message masqué (l'entrée
+  // affichée porte la mention « Message masqué », pas le texte d'origine).
+  const targetHash = safeString(knownHash) || conversationEntryPartPurgeHash(target, part);
   if (!targetHash) throw new Error('Empreinte de message invalide.');
   rememberPurgedHashes([targetHash]);
   let removed = 0;
@@ -23311,6 +23416,19 @@ async function purgeConversationMessagePart(target, part) {
   persistentConversationEventsCache = { stamp:'', entries:[] };
   const state = await rebuildConversationStateAfterPurge(safeString(target?.contact));
   return { targetHash, removed, state };
+}
+
+// V6.45 — Réponses IA : un commercial ne voit (et ne traite) que les
+// canaux de son planning du jour, comme dans la boîte de réception. Les
+// autres rôles gardent la même portée que dans la boîte de réception.
+function aiRepliesEntryChannel(entry) {
+  return conversationStateChannel(safeString(entry?.contact), { channel: safeString(entry?.channel) });
+}
+
+function aiRepliesChannelFilter(user) {
+  if (safeString(user?.role) !== 'commercial') return () => true;
+  const scope = plannedChannelSetForUser(user);
+  return entry => channelScopeAllowsMessage(scope, aiRepliesEntryChannel(entry));
 }
 
 router.post('/api/ai-replies/resolve-alert', requireAuth, (req, res) => {
@@ -23333,6 +23451,9 @@ router.post('/api/ai-replies/resolve-alert', requireAuth, (req, res) => {
       const matchesId = messageId && safeString(entry?.message_id) === messageId;
       const matchesTime = !messageId && time && safeString(entry?.time) === time;
       if (matchesId || matchesTime) {
+        if (!aiRepliesChannelFilter(req.user)(entry)) {
+          return res.status(403).json({ error: 'Accès refusé : ce canal de messages ne fait pas partie de votre planning du jour.' });
+        }
         entry.alertResolved = true;
         entry.alertResolvedAt = new Date().toISOString();
         entry.alertResolvedBy = safeString(req.user?.name || req.user?.email || 'Équipe MONDECO');
@@ -23362,9 +23483,11 @@ router.get('/api/ai-replies/alert-count', requireAuth, (req, res) => {
     // Évite de relire + JSON.parse ~16 Mo à chaque polling du badge.
     // Le cache est automatiquement rechargé lorsque le stamp du fichier change.
     const entries = loadPerformanceConversationsLogCached();
+    const allowedChannel = aiRepliesChannelFilter(req.user);
     let count = 0;
     for (const entry of entries) {
       if (
+        allowedChannel(entry) &&
         Array.isArray(entry?.alertFlags) &&
         entry.alertFlags.length > 0 &&
         !entry?.alertResolved
@@ -23394,7 +23517,8 @@ router.get('/api/ai-replies', requireAuth, (req, res) => {
       return res.json({ replies: [], stats: { total: 0, byChannel: {}, transferRate: 0, alerts: 0 } });
     }
     const raw = JSON.parse(fs.readFileSync(logPath, 'utf8') || '[]');
-    const entries = Array.isArray(raw) ? raw : [];
+    // V6.45 — Commercial : uniquement les canaux de son planning du jour.
+    const entries = (Array.isArray(raw) ? raw : []).filter(aiRepliesChannelFilter(req.user));
 
     const isRealAiReply = entry => safeString(entry?.action) === 'ai_reply' && safeString(entry?.reply);
     const hasAlert = entry => Array.isArray(entry?.alertFlags) && entry.alertFlags.length > 0 && !entry?.alertResolved;
@@ -23669,9 +23793,13 @@ router.get('/api/conversations/:contact', requireAuth, async (req, res) => {
       },
       entries: entries.map(entry => ({
         ...entry,
+        // V6.45 — Pas de clé de suppression pour une partie déjà masquée
+        // (restauration : entry.softDeleted[part].id, administrateurs).
+        // Entrée partiellement masquée : clé calculée sur le texte d'origine
+        // (softDeleted.keys), pas sur la mention affichée.
         purgeKeys:{
-          incoming: (safeString(entry?.incoming) || attachmentDirectionForPurge(entry) === 'incoming') ? conversationEntryPartPurgeHash(entry,'incoming') : '',
-          reply: (safeString(entry?.reply) || attachmentDirectionForPurge(entry) === 'outgoing') ? conversationEntryPartPurgeHash(entry,'reply') : ''
+          incoming: !entry?.softDeleted?.incoming && (safeString(entry?.incoming) || attachmentDirectionForPurge(entry) === 'incoming') ? (safeString(entry?.softDeleted?.keys?.incoming) || conversationEntryPartPurgeHash(entry,'incoming')) : '',
+          reply: !entry?.softDeleted?.reply && (safeString(entry?.reply) || attachmentDirectionForPurge(entry) === 'outgoing') ? (safeString(entry?.softDeleted?.keys?.reply) || conversationEntryPartPurgeHash(entry,'reply')) : ''
         }
       })),
       hasMore,
@@ -23809,33 +23937,357 @@ router.post('/api/conversations/:contact/profile/suggest', requireAuth, async (r
   }
 });
 
+// ============================================================
+// V6.45 — SUPPRESSION RÉVERSIBLE (MASQUAGE) D'UN MESSAGE
+// ============================================================
+// Avant : n'importe quel commercial pouvait effacer définitivement
+// n'importe quel message de n'importe quelle conversation, sans trace, et
+// la conversation disparaissait de la boîte de réception une fois vide.
+// Désormais :
+// - un commercial ne peut masquer que les messages d'une conversation qui
+//   lui est affectée (et d'un canal de son planning) ;
+// - le message est MASQUÉ, jamais effacé : les fichiers ne changent pas,
+//   l'affichage montre « 🗑 Message masqué par … », la conversation reste
+//   dans la boîte de réception ; un administrateur peut le restaurer ;
+// - chaque masquage, restauration ou purge est tracé (journal d'activité
+//   de l'équipe + message-deletions.json : qui, quand, aperçu du texte) ;
+// - la suppression définitive (?permanent=1) reste possible pour un
+//   administrateur uniquement (ex. demande d'effacement d'un client).
+const MESSAGE_SOFT_DELETIONS_MAX_ITEMS = 20000;
+
+function messageSoftDeletionsPath() {
+  return path.join(DATA_DIR, 'message-deletions.json');
+}
+
+function activeMessageSoftDeletionMap(items = []) {
+  const map = new Map();
+  for (const item of items) {
+    const key = safeString(item?.purgeKey);
+    if (!key || item?.restoredAt || item?.purgedAt) continue;
+    map.set(key, item);
+  }
+  return map;
+}
+
+// Cache porté par la fonction (déclaration hissée) : utilisable même par
+// un appel très matinal, sans variable « let » en zone morte.
+function loadMessageSoftDeletionsState() {
+  const now = Date.now();
+  const cached = loadMessageSoftDeletionsState.cache;
+  if (cached && now - cached.checkedAt < 1000) return cached;
+  const filePath = messageSoftDeletionsPath();
+  const stamp = fileChangeStamp(filePath);
+  if (cached && cached.stamp === stamp) {
+    cached.checkedAt = now;
+    return cached;
+  }
+  let items = [];
+  let readError = false;
+  try {
+    if (fs.existsSync(filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8') || '{}');
+      items = Array.isArray(parsed?.items) ? parsed.items : (Array.isArray(parsed) ? parsed : []);
+    }
+  } catch (error) {
+    console.warn('⚠️ Lecture des messages masqués :', error.message);
+    readError = true;
+    if (cached) {
+      cached.checkedAt = now;
+      return cached;
+    }
+  }
+  const state = { stamp, checkedAt: now, items, active: activeMessageSoftDeletionMap(items), readError };
+  loadMessageSoftDeletionsState.cache = state;
+  return state;
+}
+
+function messageSoftDeletionsStamp() {
+  return loadMessageSoftDeletionsState().stamp;
+}
+
+function saveMessageSoftDeletions(items) {
+  const state = loadMessageSoftDeletionsState();
+  if (state.readError) {
+    // Ne jamais écraser un journal illisible par une liste partielle.
+    throw new Error('Journal des messages masqués illisible : opération annulée.');
+  }
+  let next = Array.isArray(items) ? items : [];
+  if (next.length > MESSAGE_SOFT_DELETIONS_MAX_ITEMS) {
+    // On retire d'abord les plus anciens éléments déjà restaurés ou purgés.
+    let excess = next.length - MESSAGE_SOFT_DELETIONS_MAX_ITEMS;
+    next = next.filter(item => {
+      if (excess > 0 && (item?.restoredAt || item?.purgedAt)) {
+        excess -= 1;
+        return false;
+      }
+      return true;
+    });
+  }
+  const filePath = messageSoftDeletionsPath();
+  writeJsonAtomic(filePath, { version: 1, items: next });
+  loadMessageSoftDeletionsState.cache = {
+    stamp: fileChangeStamp(filePath),
+    checkedAt: Date.now(),
+    items: next,
+    active: activeMessageSoftDeletionMap(next),
+    readError: false
+  };
+}
+
+function publicMessageSoftDeletionInfo(record = {}) {
+  return {
+    id: safeString(record.id),
+    deletedAt: safeString(record.deletedAt),
+    deletedByName: safeString(record.deletedByName)
+  };
+}
+
+function applyConversationSoftDeletions(entry, incomingHash, replyHash) {
+  const active = loadMessageSoftDeletionsState().active;
+  if (!active.size || !entry || typeof entry !== 'object') return entry;
+  const incomingRecord = incomingHash ? active.get(incomingHash) : null;
+  const replyRecord = replyHash ? active.get(replyHash) : null;
+  if (!incomingRecord && !replyRecord) return entry;
+
+  const direction = attachmentDirectionForPurge(entry);
+  const next = { ...entry };
+  const softDeleted = { keys: { incoming: incomingHash, reply: replyHash } };
+
+  if (incomingRecord && (safeString(next.incoming) || (direction === 'incoming' && Array.isArray(next.attachments) && next.attachments.length))) {
+    next.incoming = safeString(incomingRecord.label) || '🗑 Message masqué';
+    if (direction === 'incoming') {
+      next.attachments = [];
+      next.attachment_type = '';
+      next.attachment_url = '';
+    }
+    softDeleted.incoming = publicMessageSoftDeletionInfo(incomingRecord);
+  }
+  if (replyRecord && (safeString(next.reply) || (direction === 'outgoing' && Array.isArray(next.attachments) && next.attachments.length))) {
+    next.reply = safeString(replyRecord.label) || '🗑 Message masqué';
+    if (direction === 'outgoing') {
+      next.attachments = [];
+      next.attachment_type = '';
+      next.attachment_url = '';
+    }
+    softDeleted.reply = publicMessageSoftDeletionInfo(replyRecord);
+  }
+  if (!softDeleted.incoming && !softDeleted.reply) return entry;
+  next.softDeleted = softDeleted;
+  return next;
+}
+
+function messageSoftDeletionLabel(actorName, iso) {
+  let when = '';
+  try {
+    when = new Date(iso).toLocaleString('fr-FR', {
+      timeZone: safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis'),
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {}
+  return `🗑 Message masqué par ${safeString(actorName) || 'un membre de l’équipe'}${when ? ` le ${when}` : ''}`;
+}
+
+// Après un masquage ou une restauration, l'Inbox est relue depuis les
+// fichiers (comme après une purge) : les entrées en cache sont déjà
+// « nettoyées » et ne peuvent pas être démasquées sur place.
+function resetInboxCachesAfterMessageChange() {
+  combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
+  persistentConversationEventsCache = { stamp:'', entries:[] };
+}
+
+// Un commercial ne masque que dans une conversation de son planning du
+// jour ET qui lui est affectée. Tant que l'état des conversations existe
+// en double (cache Admin écrit en différé + SQLite lu par server.js),
+// l'affectation est acceptée si l'une des deux sources la confirme : sinon
+// un commercial à qui l'on vient d'affecter une conversation serait refusé
+// pendant quelques secondes alors que l'interface lui montre le bouton.
+function requireCommercialMessageHideAccess(req, res, contact) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const cleanContact = safeString(contact);
+  const adminState = readConversationStatesAdminCached()?.[cleanContact] || {};
+  const sqliteState = getConversationStateSingle(cleanContact) || {};
+  const channel = conversationStateChannel(cleanContact, { channel: safeString(adminState?.channel || sqliteState?.channel) });
+  if (!requireCommercialMessageChannelAccess(req, res, channel)) return false;
+  if (conversationAssignedToUser(adminState, req.user) || conversationAssignedToUser(sqliteState, req.user)) return true;
+  res.status(403).json({
+    error: 'Lecture seule : seuls les messages d’une conversation qui vous est affectée peuvent être masqués.',
+    errorCode: 'CONVERSATION_NOT_ASSIGNED'
+  });
+  return false;
+}
+
+function messageDeletionActor(req) {
+  return {
+    userId: safeString(req.user?.id),
+    userName: safeString(req.user?.name || req.user?.email),
+    userRole: safeString(req.user?.role)
+  };
+}
+
+function entryPartPreview(entry = {}, part = 'incoming') {
+  const text = safeString(part === 'incoming' ? entry?.incoming : entry?.reply);
+  if (text) return text.slice(0, 1000);
+  const attachments = Array.isArray(entry?.attachments) ? entry.attachments : [];
+  return attachments.length ? `[${attachments.length} pièce(s) jointe(s)]` : '';
+}
+
+async function findConversationEntryForDeletion(contact, purgeKey, part) {
+  let target = (await loadWhatsAppLog()).find(entry =>
+    safeString(entry?.contact) === contact && (
+      conversationEntryPartPurgeHash(entry, part) === purgeKey ||
+      safeString(entry?.softDeleted?.keys?.[part]) === purgeKey
+    )
+  );
+  if (!target) {
+    target = await findArchivedConversationEntryForPurge(contact, purgeKey, part);
+  }
+  return target || null;
+}
+
 router.delete('/api/conversations/:contact/messages/:purgeKey', requireCommercialAccess, async (req,res) => {
   try {
     const contact = safeString(req.params.contact);
     const purgeKey = safeString(req.params.purgeKey);
     const part = safeString(req.query?.part).toLowerCase();
+    const permanent = ['1','true','oui','yes'].includes(safeString(req.query?.permanent ?? req.body?.permanent).toLowerCase());
     if (!contact || !purgeKey || !['incoming','reply'].includes(part)) {
       return res.status(400).json({ error:'Message ou type de suppression invalide.' });
     }
-    let target = (await loadWhatsAppLog()).find(entry =>
-      safeString(entry?.contact) === contact && conversationEntryPartPurgeHash(entry,part) === purgeKey
-    );
-    if (!target) {
-      target = await findArchivedConversationEntryForPurge(contact,purgeKey,part);
+    if (permanent && safeString(req.user?.role) !== 'admin') {
+      return res.status(403).json({ error:'Suppression définitive réservée aux administrateurs. Le message peut être masqué.' });
     }
+    // Un commercial : canal de son planning ET conversation qui lui est affectée.
+    if (!requireCommercialMessageHideAccess(req, res, contact)) return;
+
+    const target = await findConversationEntryForDeletion(contact, purgeKey, part);
     if (!target) return res.status(404).json({ error:'Message introuvable ou déjà supprimé.' });
-    const result = await purgeConversationMessagePart(target,part);
+
+    const actor = messageDeletionActor(req);
+    const channel = conversationStateChannel(contact, { channel: safeString(target?.channel) });
+    // Empreinte d'origine (texte réel) : différente de celle de l'entrée
+    // affichée quand la partie est déjà masquée.
+    const softRecord = target?.softDeleted?.[part] ? target.softDeleted[part] : null;
+    const originalKey = softRecord ? safeString(target?.softDeleted?.keys?.[part]) || purgeKey : purgeKey;
+
+    if (permanent) {
+      const result = await purgeConversationMessagePart(target, part, softRecord ? originalKey : '');
+      const state = loadMessageSoftDeletionsState();
+      const items = state.items.map(item =>
+        safeString(item?.purgeKey) === originalKey && !item?.purgedAt
+          ? { ...item, purgedAt: new Date().toISOString(), purgedByUserId: actor.userId, purgedByName: actor.userName, preview: '' }
+          : item
+      );
+      if (items.some((item, index) => item !== state.items[index])) saveMessageSoftDeletions(items);
+      appendTeamActivity({
+        type: 'message_purge',
+        ...actor,
+        contact,
+        channel,
+        part,
+        purgeKey: originalKey,
+        messageId: safeString(target?.message_id || target?.meta_message_id),
+        removedLocal: result.removed
+      });
+      return res.json({
+        success:true,
+        permanentlyDeleted:true,
+        removedLocal:result.removed,
+        // Les APIs de messagerie privées ne fournissent pas ici un unsend business générique.
+        remoteDeleted:false,
+        state:result.state
+      });
+    }
+
+    const existing = softRecord || loadMessageSoftDeletionsState().active.get(purgeKey);
+    if (existing) {
+      return res.status(409).json({ error:'Ce message est déjà masqué.', deletionId: safeString(existing.id) });
+    }
+
+    const now = new Date().toISOString();
+    const record = {
+      id: crypto.randomUUID(),
+      contact,
+      channel,
+      part,
+      purgeKey,
+      messageId: safeString(target?.message_id || target?.meta_message_id),
+      entryTime: safeString(target?.time || target?.created_time || target?.timestamp),
+      preview: entryPartPreview(target, part),
+      deletedAt: now,
+      deletedByUserId: actor.userId,
+      deletedByName: actor.userName,
+      deletedByRole: actor.userRole,
+      label: messageSoftDeletionLabel(actor.userName, now)
+    };
+    saveMessageSoftDeletions([...loadMessageSoftDeletionsState().items, record]);
+    resetInboxCachesAfterMessageChange();
+    appendTeamActivity({
+      type: 'message_hide',
+      ...actor,
+      contact,
+      channel,
+      part,
+      purgeKey,
+      deletionId: record.id,
+      messageId: record.messageId
+    });
     return res.json({
       success:true,
-      permanentlyDeleted:true,
-      removedLocal:result.removed,
-      // Les APIs de messagerie privées ne fournissent pas ici un unsend business générique.
-      remoteDeleted:false,
-      state:result.state
+      hidden:true,
+      permanentlyDeleted:false,
+      recoverable:true,
+      deletionId:record.id,
+      remoteDeleted:false
     });
   } catch (error) {
-    console.error('❌ Suppression définitive message :', error);
-    return res.status(500).json({ error:'Suppression définitive impossible : '+safeString(error?.message) });
+    console.error('❌ Suppression message :', error);
+    return res.status(500).json({ error:'Suppression impossible : '+safeString(error?.message) });
+  }
+});
+
+// V6.45 — Messages masqués : liste et restauration (administrateurs).
+router.get('/api/message-deletions', requireAdmin, (req, res) => {
+  const contact = safeString(req.query?.contact);
+  const includeClosed = safeString(req.query?.all) === '1';
+  const items = loadMessageSoftDeletionsState().items
+    .filter(item => (!contact || safeString(item?.contact) === contact) && (includeClosed || (!item?.restoredAt && !item?.purgedAt)))
+    .slice(-500)
+    .reverse();
+  return res.json({ items });
+});
+
+router.post('/api/message-deletions/:id/restore', requireAdmin, (req, res) => {
+  try {
+    const id = safeString(req.params.id);
+    const state = loadMessageSoftDeletionsState();
+    const record = state.items.find(item => safeString(item?.id) === id);
+    if (!record) return res.status(404).json({ error:'Message masqué introuvable.' });
+    if (record.purgedAt) return res.status(409).json({ error:'Ce message a été supprimé définitivement.' });
+    if (record.restoredAt) return res.json({ success:true, alreadyRestored:true });
+    const actor = messageDeletionActor(req);
+    const now = new Date().toISOString();
+    saveMessageSoftDeletions(state.items.map(item =>
+      item === record ? { ...item, restoredAt: now, restoredByUserId: actor.userId, restoredByName: actor.userName } : item
+    ));
+    // Le texte d'origine n'est pas en mémoire : relecture des sources.
+    resetInboxCachesAfterMessageChange();
+    appendTeamActivity({
+      type: 'message_restore',
+      ...actor,
+      contact: safeString(record.contact),
+      channel: safeString(record.channel),
+      part: safeString(record.part),
+      purgeKey: safeString(record.purgeKey),
+      deletionId: id
+    });
+    return res.json({ success:true, restored:true });
+  } catch (error) {
+    console.error('❌ Restauration message :', error);
+    return res.status(500).json({ error:'Restauration impossible : '+safeString(error?.message) });
   }
 });
 
