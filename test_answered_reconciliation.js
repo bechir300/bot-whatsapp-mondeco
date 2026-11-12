@@ -1,31 +1,26 @@
 'use strict';
+// Réponse humaine / Meta prouvée après le dernier message client.
+// V6.46 — Teste les VRAIES fonctions d'Admin.js (tests/helpers/source-functions.js),
+// avec la même règle que reconcileAnsweredConversationStates
+// (latestHumanMs >= latestInboundMs), et non plus une copie collée ici.
 const assert = require('assert');
-const safeString = v => v === undefined || v === null ? '' : String(v).trim();
-const timeMs = v => { const n=Date.parse(safeString(v)); return Number.isFinite(n)?n:NaN; };
-function entryFlags(entry){
-  const direction=safeString(entry.direction||entry.attachment_direction).toLowerCase();
-  const senderKind=safeString(entry.sender_kind).toLowerCase();
-  const source=safeString(entry.source).toLowerCase();
-  const action=safeString(entry.action).toLowerCase();
-  const incoming=Boolean(safeString(entry.incoming));
-  const reply=Boolean(safeString(entry.reply));
-  const inbound=direction==='incoming'||senderKind==='client'||incoming;
-  const outbound=direction==='outgoing'||entry.reply_sent===true||source.startsWith('commercial')||action==='ai_reply'||action==='commercial_reply'||(!inbound&&reply);
-  return {inbound,outbound};
+const { loadFunctions } = require('./tests/helpers/source-functions');
+
+const { conversationDirectionalEvidence } = loadFunctions('Admin.js', [
+  'safeString',
+  'conversationTimeMs',
+  'normalizedConversationTime',
+  'conversationEntryComparator',
+  'conversationEntryNeedsDirection',
+  'conversationEntryIsBusinessReply',
+  'conversationDirectionalEvidence'
+]);
+
+function answered(entries, state = {}) {
+  const evidence = conversationDirectionalEvidence(entries, state);
+  return evidence.latestInboundMs > 0 && evidence.latestHumanMs >= evidence.latestInboundMs;
 }
-function business(entry){
-  const flags=entryFlags(entry); if(!flags.outbound) return false;
-  const source=safeString(entry.source).toLowerCase();
-  const action=safeString(entry.action).toLowerCase();
-  const senderKind=safeString(entry.sender_kind).toLowerCase();
-  return Boolean(source.startsWith('commercial')||action==='commercial_reply'||senderKind==='human'||senderKind==='meta'||safeString(entry.commercial_user_id)||safeString(entry.commercial_user_name)||safeString(entry.facebook_response_owner));
-}
-function answered(entries,state={}){
-  let inMs=0,bizMs=0;
-  for(const e of entries){ const ms=timeMs(e.time); if(!Number.isFinite(ms)) continue; const f=entryFlags(e); if(f.inbound) inMs=Math.max(inMs,ms); if(business(e)) bizMs=Math.max(bizMs,ms); }
-  const st=timeMs(state.lastCustomerAt); if(Number.isFinite(st)) inMs=Math.max(inMs,st);
-  return inMs>0 && bizMs>=inMs;
-}
+
 const inbound={incoming:'bonjour',direction:'incoming',sender_kind:'client',time:'2026-08-11T10:00:00Z'};
 assert.equal(answered([inbound,{reply:'ok',reply_sent:true,source:'commercial_admin',action:'commercial_reply',time:'2026-08-11T10:05:00Z'}]),true,'admin reply');
 assert.equal(answered([inbound,{reply:'ok',reply_sent:true,source:'commercial_whatsapp_app',action:'commercial_reply',time:'2026-08-11T10:05:00Z'}]),true,'WhatsApp Business reply');

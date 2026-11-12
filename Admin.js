@@ -131,16 +131,21 @@ const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.js
 // setConversationStateSingle) utilisent SQLite directement pour les accès
 // à une seule conversation — le vrai point chaud de performance.
 const SQLITE_DB_PATH = path.join(DATA_DIR, 'mondeco.db');
-let sqliteDb = null;
 
-function getSqliteDb() {
-  if (sqliteDb) return sqliteDb;
-  try {
-    const Database = require('better-sqlite3');
-    sqliteDb = new Database(SQLITE_DB_PATH);
-    sqliteDb.pragma('journal_mode = WAL');
-    sqliteDb.pragma('synchronous = NORMAL');
-    sqliteDb.exec(`
+// V6.46 — Ouverture mémorisée (lib/sqlite-health.js) : un échec n'est plus
+// retenté (require + new Database + log) à chaque accès mais après une
+// attente croissante, n'est écrit qu'une fois (une seule alerte) et
+// apparaît dans /health (« degraded », HTTP 503). Même base, mêmes pragmas.
+const {
+  createSqliteConnection: createSqliteConnectionV646,
+  registerSqliteConnection: registerSqliteConnectionV646
+} = require('./lib/sqlite-health');
+const sqliteConnection = registerSqliteConnectionV646(createSqliteConnectionV646({
+  dbPath: SQLITE_DB_PATH,
+  initialize(db) {
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.exec(`
       CREATE TABLE IF NOT EXISTS conversation_states (
         contact TEXT PRIMARY KEY,
         data TEXT NOT NULL,
@@ -148,12 +153,12 @@ function getSqliteDb() {
       );
       CREATE INDEX IF NOT EXISTS idx_conversation_states_updated_at ON conversation_states(updated_at);
     `);
-    console.log('✅ SQLite (mondeco.db) initialisé.');
-  } catch (error) {
-    console.error('❌ Initialisation SQLite échouée :', error.message);
-    sqliteDb = null;
-  }
-  return sqliteDb;
+  },
+  logger: console
+}));
+
+function getSqliteDb() {
+  return sqliteConnection.get();
 }
 
 // V6.45 — Lecture d'UNE conversation sur la source de vérité partagée
@@ -1485,49 +1490,8 @@ function pruneConversationHistoryByRetention() {
 
 function pruneConversationEventsByRetention(favoriteContacts = retentionProtectedConversationContacts()) {
   // Historique permanent : les journaux append-only ne sont jamais purgés automatiquement.
+  // V6.46 — Le code de purge qui suivait ce `return 0` (jamais exécuté) a été retiré.
   return 0;
-  let freed = 0;
-  try {
-    if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
-    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
-    for (const entry of fs.readdirSync(CONVERSATION_EVENTS_DIR, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const match = /^conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(entry.name);
-      if (!match) continue;
-      const dayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
-      if (!Number.isFinite(dayMs) || dayMs >= cutoff) continue;
-
-      const fullPath = path.join(CONVERSATION_EVENTS_DIR, entry.name);
-      try {
-        const stat = fs.statSync(fullPath);
-        const lines = fs.readFileSync(fullPath, 'utf8').split(/\r?\n/).filter(Boolean);
-        const keptLines = [];
-
-        for (const line of lines) {
-          try {
-            const event = JSON.parse(line);
-            if (favoriteContacts.has(safeString(event?.contact))) keptLines.push(line);
-          } catch {
-            // Une ligne illisible n'est pas conservée dans un journal déjà hors rétention.
-          }
-        }
-
-        if (keptLines.length) {
-          fs.writeFileSync(fullPath, `${keptLines.join('\n')}\n`);
-          const nextSize = Number(fs.statSync(fullPath).size || 0);
-          freed += Math.max(0, Number(stat.size || 0) - nextSize);
-        } else {
-          fs.unlinkSync(fullPath);
-          freed += Number(stat.size || 0);
-        }
-      } catch (error) {
-        console.warn('⚠️ Storage Rescue : ancien journal conversation non nettoyé :', error.message);
-      }
-    }
-  } catch (error) {
-    console.warn('⚠️ Storage Rescue : rétention conversation-events impossible :', error.message);
-  }
-  return freed;
 }
 
 function pruneSafeConversationCaches({ emergency = false } = {}) {
@@ -5593,6 +5557,12 @@ function roleCanAccess(
     '/api/conversations',
     '/api/commercial/send',
     '/api/commercial/send-media',
+    // V6.46 — Stickers : refusés (403) aux commerciaux et responsables
+    // alors que la route applique les mêmes contrôles qu'un envoi texte
+    // (destinataire déduit de la conversation, verrou de réponse).
+    '/api/commercial/send-sticker',
+    '/api/stickers',
+    '/sticker-preview',
     '/api/whatsapp/calls',
     '/api/notifications',
     '/api/quick-replies',
@@ -6623,20 +6593,9 @@ router.get('/api/stickers', requireAuth, (req, res) => {
   });
 });
 
-// V6.36.5 — Service worker minimal, requis par les navigateurs Android/
-// Chrome pour autoriser l'installation ("Ajouter à l'écran d'accueil").
-// Ne met rien en cache pour l'instant (MONDECO doit toujours afficher des
-// données fraîches) — juste ce qu'il faut pour être reconnu comme
-// installable, sans changer le comportement réseau existant.
-router.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.send(
-    "self.addEventListener('install', () => self.skipWaiting());\n" +
-    "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n" +
-    "self.addEventListener('fetch', () => {});\n"
-  );
-});
+// V6.46 — Le second /sw.js (service worker écrit ici en dur) a été retiré :
+// il n'était jamais servi, Express répondant avec la première route
+// (pwa-assets/sw.js, plus haut), au contenu équivalent.
 
 router.get('/', requireAuth, (req, res) => {
   if (!fs.existsSync(ADMIN_HTML_PATH)) {
@@ -20734,7 +20693,11 @@ router.post('/api/facebook-realtime/sync', requireAuth, async (req, res) => {
 // (application WhatsApp uniquement). C'etait la VRAIE source des
 // messages Facebook continuant d'arriver malgre la suppression des
 // donnees et le blocage du webhook.
-if (false && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
+// V6.46 — Plus de `if (false)` écrit en dur : ces tâches suivent les mêmes
+// interrupteurs que les webhooks (FACEBOOK_WEBHOOK_ENABLED,
+// INSTAGRAM_WEBHOOK_ENABLED ; défaut false = comportement inchangé).
+const SOCIAL_CHANNELS_ENABLED_V646 = require('./lib/runtime-check').resolveChannelFlags(process.env);
+if (SOCIAL_CHANNELS_ENABLED_V646.facebook && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
   const initialFacebookRealtimeTimer = setTimeout(() => {
     runFacebookRealtimeRecovery({ force: true }).catch(() => {});
   }, 12000);
@@ -20754,15 +20717,24 @@ if (false && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
 const SOCIAL_COMMENTS_POLL_MS = 15 * 60 * 1000;
 // Patch session (13/10) - job serveur commentaires Facebook/Instagram
 // desactive (application WhatsApp uniquement).
-if (false && FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) {
+// V6.46 — Synchronisés seulement pour le(s) canal(aux) activé(s).
+const SOCIAL_COMMENTS_SYNC_CHANNEL_V646 =
+  SOCIAL_CHANNELS_ENABLED_V646.facebook && SOCIAL_CHANNELS_ENABLED_V646.instagram
+    ? 'all'
+    : SOCIAL_CHANNELS_ENABLED_V646.facebook
+      ? 'facebook'
+      : SOCIAL_CHANNELS_ENABLED_V646.instagram
+        ? 'instagram'
+        : '';
+if (SOCIAL_COMMENTS_SYNC_CHANNEL_V646 && FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) {
   const initialSocialCommentsTimer = setTimeout(() => {
-    runSocialCommentsSync('all').catch(() => {});
+    runSocialCommentsSync(SOCIAL_COMMENTS_SYNC_CHANNEL_V646).catch(() => {});
   }, 20000);
   if (typeof initialSocialCommentsTimer.unref === 'function') {
     initialSocialCommentsTimer.unref();
   }
   const socialCommentsTimer = setInterval(() => {
-    runSocialCommentsSync('all').catch(() => {});
+    runSocialCommentsSync(SOCIAL_COMMENTS_SYNC_CHANNEL_V646).catch(() => {});
   }, SOCIAL_COMMENTS_POLL_MS);
   if (typeof socialCommentsTimer.unref === 'function') {
     socialCommentsTimer.unref();

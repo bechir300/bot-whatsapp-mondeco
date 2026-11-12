@@ -50,11 +50,21 @@ Corrections :
 Banc d'essai (38 435 conversations, trafic simulé), pire blocage du serveur : 2,77 s avec la version d'origine, 1,03 s en V6.37.2, **0,06 s en V6.37.3**.
 
 **Recommandations propres au VPS :**
-1. **Ne plus modifier le code directement sur le serveur.** Modifier sur GitHub (ou en local), puis `git pull` sur le VPS. Les ~90 fichiers `*.BACKUP-*` du dossier montrent que l'historique des modifications n'existait que sous forme de copies : git le fait mieux, et ils sont désormais ignorés.
+1. **Ne plus modifier le code directement sur le serveur.** Modifier sur GitHub (ou en local), puis déployer sur le VPS le tag de la version (V6.46 : procédure « Mise à jour » du `README.md` ; `main` et `vps-production` sont obsolètes). Les ~90 fichiers `*.BACKUP-*` du dossier montrent que l'historique des modifications n'existait que sous forme de copies : git le fait mieux, et ils sont désormais ignorés.
 2. **Séparer les données du code** : définir `DATA_DIR=/opt/mondeco/data` et y déplacer les fichiers de données et `mondeco.db`, application arrêtée. Une mise à jour du code ne risque alors plus d'écraser des données.
 3. Lancer l'application avec un **utilisateur dédié** (pas root), via systemd ou pm2, derrière Nginx en HTTPS.
 4. Appliquer les mises à jour de sécurité d'Ubuntu (92 en attente, dont 21 de sécurité) : `apt update && apt upgrade`, puis redémarrer en dehors des heures d'affluence.
-5. Définir `ADMIN_PASSWORD` (12 caractères minimum) et `META_APP_SECRET`, puis `WEBHOOK_SIGNATURE_REQUIRED=true`.
+5. Définir `ADMIN_PASSWORD` (12 caractères minimum) et `META_APP_SECRET`. Depuis V6.45, la signature devient obligatoire dès qu'un App Secret existe : laisser `WEBHOOK_SIGNATURE_REQUIRED` **vide** et supprimer toute ligne `WEBHOOK_SIGNATURE_REQUIRED=false`.
+
+**Exploitation (V6.46) :**
+- **Node.js 22 LTS obligatoire** (22 ou plus) : `better-sqlite3` 13 plante sous Node.js 20 (erreur de segmentation au premier message, après l'accusé envoyé à Meta : message perdu, sans log). `npm ci` (`engine-strict`) et le démarrage refusent désormais une version trop ancienne, avec un message clair. La dépendance inutilisée `undici` est retirée.
+- `.env` lu dans le dossier de l'application (et non plus le dossier courant : un service systemd/pm2 lancé ailleurs démarrait sans secrets, avec les données dans le dossier du code).
+- `/health` : `degraded` (HTTP 503) avec la raison si le dossier des données n'est pas inscriptible, si `mondeco.db` est illisible ou, en production, si la configuration WhatsApp manque ; version et commit déployés ; âge du dernier webhook ; plus de version de Node.
+- Base SQLite indisponible : signalée une seule fois (alerte), retentée avec une attente croissante au lieu d'être rouverte (et journalisée) à chaque accès ; elle est ouverte dès le démarrage.
+- Exception non rattrapée : l'alerte `ALERT_WEBHOOK_URL` part avant l'arrêt (elle était perdue).
+- Instagram / Facebook : `INSTAGRAM_WEBHOOK_ENABLED`, `FACEBOOK_WEBHOOK_ENABLED` (défaut false, WhatsApp uniquement depuis le 13/10) remplacent les `if (false)` écrits en dur ; les webhooks ignorés sont journalisés et comptés.
+- `HOST` (défaut `0.0.0.0`) : `127.0.0.1` sur un VPS derrière Nginx local.
+- `npm test` vérifie la syntaxe de tous les fichiers `.js`, teste les vraies fonctions d'`Admin.js` et démarre le vrai serveur ; la CI couvre Node.js 22 et 24.
 
 _Note : les numéros de version 6.36 à 6.39 cités dans les sections suivantes sont ceux de la branche d'audit. Dans cette version, tout ce qui a été repris est regroupé en 6.37.0._
 

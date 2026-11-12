@@ -1,8 +1,16 @@
 // MONDECO - Pin showroom automatique (en plus de la reponse IA)
 const fs = require('fs');
+const path = require('path');
 const loc = require('./location-showrooms');
 
-const OFF_FLAG = '/data/showroom-pin.off';
+// V6.46 — Interrupteur d'arrêt cherché dans le dossier des données
+// (DATA_DIR, même règle que server.js) ; l'ancien emplacement /data reste lu.
+const DATA_DIR = (
+  process.env.DATA_DIR ||
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  __dirname
+).trim();
+const OFF_FLAGS = [path.join(DATA_DIR, 'showroom-pin.off'), '/data/showroom-pin.off'];
 const COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const sent = new Map();
 
@@ -36,7 +44,7 @@ function detectShowroom(text) {
 }
 
 async function maybeSendPin(o) {
-  if (fs.existsSync(OFF_FLAG)) return false;
+  if (OFF_FLAGS.some(file => fs.existsSync(file))) return false;
   const id = detectShowroom(o.text);
   if (!id) return false;
   const key = o.to + ':' + id;

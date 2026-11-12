@@ -7,12 +7,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # V6.46 — Version minimale prise en charge (engines : >=22, 22 LTS en
+        # production) et version suivante. Node 20 n'est plus accepté :
+        # better-sqlite3 13 y plante (erreur de segmentation).
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      # npm test : syntaxe de TOUS les fichiers .js + tests, dont le
+      # démarrage réel du serveur (tests/ops-boot.test.js : /health,
+      # webhook WhatsApp, base SQLite ouverte avec le vrai module natif).
       - run: npm test
       - run: npm audit --omit=dev --audit-level=high

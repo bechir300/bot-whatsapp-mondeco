@@ -13,7 +13,15 @@
 // - Pause IA après intervention humaine (si webhook echo disponible)
 // ============================================================
 
-require('dotenv').config();
+// V6.46 — Vérifications de démarrage (lib/runtime-check.js), AVANT tout
+// autre module : version de Node prise en charge (sinon arrêt immédiat avec
+// un message clair : better-sqlite3 plante sous Node 20 au premier message,
+// après l'accusé 200 envoyé à Meta), puis .env lu dans le dossier de
+// l'application (et non plus dans le dossier courant : systemd/pm2 lancés
+// depuis un autre dossier démarraient sans secrets ni DATA_DIR).
+const runtimeCheck = require('./lib/runtime-check');
+runtimeCheck.assertSupportedNode();
+const APP_ENV_LOAD = runtimeCheck.loadAppEnv(__dirname);
 
 // V6.37 — Installé avant tout autre module : les logs d'Admin.js passent
 // aussi par le format structuré, l'identifiant de corrélation et les alertes.
@@ -57,6 +65,10 @@ const {
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
 const { createMetaSendTransport, isPreflightNetworkFailure: isMetaPreflightNetworkFailure } = require('./lib/meta-send-transport');
 const { createInboundJournal } = require('./lib/inbound-journal');
+// V6.46 — /health réel (lib/health.js) et état de la base SQLite ouverte par
+// Admin.js (lib/sqlite-health.js, même instance de module).
+const { createDataDirProbe, buildHealthReport } = require('./lib/health');
+const { sharedSqliteConnection } = require('./lib/sqlite-health');
 const messagingRules = require('./lib/messaging-rules');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const {
@@ -467,15 +479,48 @@ const CLOUDFLARE_IMAGE_HEIGHT =
 // LOGS DÉMARRAGE
 // ============================================================
 
+// V6.46 — Version réellement déployée (package.json + commit Git), pour les
+// logs et /health (la bannière affichait « V6.33.1 » écrit en dur), et
+// canaux réellement traités (INSTAGRAM_WEBHOOK_ENABLED,
+// FACEBOOK_WEBHOOK_ENABLED ; WhatsApp uniquement par défaut).
+const APP_VERSION = runtimeCheck.readAppVersion(__dirname);
+const APP_COMMIT = runtimeCheck.readGitCommit(__dirname);
+const CHANNELS_ENABLED = runtimeCheck.resolveChannelFlags(process.env);
+const SERVER_STARTED_AT_MS = Date.now();
+
 console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.33.1');
+console.log(
+  `🚀 MONDECO ${runtimeCheck.channelsLabel(CHANNELS_ENABLED).toUpperCase()} V${APP_VERSION}` +
+  (APP_COMMIT ? ` (commit ${APP_COMMIT})` : '')
+);
 console.log(
   '=============================================='
 );
 console.log('Node :', process.version);
+console.log(
+  'Fichier .env :',
+  APP_ENV_LOAD.loaded.length
+    ? APP_ENV_LOAD.loaded.join(' + ')
+    : `aucun (${APP_ENV_LOAD.appEnvPath} absent : variables du système uniquement)`
+);
+if (APP_ENV_LOAD.fromCwdOnly) {
+  console.warn(
+    `⚠️ .env lu dans le dossier courant (${process.cwd()}) et non dans le dossier de l'application : ` +
+    `déplacez-le dans ${APP_ENV_LOAD.appEnvPath}.`
+  );
+}
+for (const failure of APP_ENV_LOAD.errors) {
+  console.error(`❌ Fichier .env illisible (${failure.file}) : ${failure.error}`);
+}
+console.log(
+  'Canaux traités :',
+  `${runtimeCheck.channelsLabel(CHANNELS_ENABLED)}` +
+  (CHANNELS_ENABLED.instagram ? '' : ' — webhooks Instagram ignorés (INSTAGRAM_WEBHOOK_ENABLED)') +
+  (CHANNELS_ENABLED.facebook ? '' : ' — webhooks Facebook ignorés (FACEBOOK_WEBHOOK_ENABLED)')
+);
 console.log(
   'VERIFY_TOKEN :',
   VERIFY_TOKEN ? '✅ OK' : '❌ MANQUANT'
@@ -539,6 +584,26 @@ console.log(
   '=============================================='
 );
 console.log('');
+
+// V6.46 — Configuration indispensable au bot WhatsApp. En production
+// (NODE_ENV=production), un manque est une erreur (alerte
+// ALERT_WEBHOOK_URL) et /health répond « degraded » (HTTP 503) ; ailleurs,
+// simple avertissement. Le serveur démarre dans tous les cas (le centre de
+// pilotage reste accessible pour corriger).
+const REQUIRED_CONFIG = {
+  VERIFY_TOKEN: Boolean(VERIFY_TOKEN),
+  WHATSAPP_TOKEN: Boolean(WHATSAPP_TOKEN),
+  PHONE_NUMBER_ID: Boolean(PHONE_NUMBER_ID)
+};
+const REQUIRED_CONFIG_ENFORCED =
+  String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const MISSING_REQUIRED_CONFIG = Object.keys(REQUIRED_CONFIG).filter(name => !REQUIRED_CONFIG[name]);
+if (MISSING_REQUIRED_CONFIG.length) {
+  console[REQUIRED_CONFIG_ENFORCED ? 'error' : 'warn'](
+    `${REQUIRED_CONFIG_ENFORCED ? '🚨' : '⚠️'} Configuration incomplète : ${MISSING_REQUIRED_CONFIG.join(', ')} manquant(s) ` +
+    `(fichier attendu : ${APP_ENV_LOAD.appEnvPath}). Les messages WhatsApp ne peuvent pas être vérifiés ou envoyés.`
+  );
+}
 
 // ============================================================
 // HELPERS
@@ -8828,25 +8893,53 @@ async function checkWhetherBotShouldReply(
 // ============================================================
 
 app.get('/', (req, res) => {
+  // V6.46 — Canaux réellement traités (WhatsApp uniquement par défaut).
   res
     .status(200)
     .send(
-      '✅ MONDECO Omnicanal WhatsApp + Instagram + Facebook actif.'
+      `✅ MONDECO ${runtimeCheck.channelsLabel(CHANNELS_ENABLED)} actif.`
     );
 });
+
+// V6.46 — /health : « ok » (HTTP 200) ou « degraded » (HTTP 503) avec les
+// raisons (dossier des données non inscriptible, base SQLite indisponible,
+// configuration indispensable absente en production). Version de
+// l'application et commit déployé ; plus aucune version de Node (lib/health.js).
+// Âge du dernier webhook Meta accepté : information seulement (la nuit,
+// aucun message n'est normal).
+const probeDataDirForHealth = createDataDirProbe(DATA_DIR);
+const lastWebhookAtMs = { any: 0, whatsapp: 0 };
+const ignoredWebhookCounts = {};
 
 app.get('/health', (req, res) => {
   const settings =
     getBotSettings();
 
-  res
-    .status(200)
-    .json({
-      status: 'ok',
-      service:
-        'bot-whatsapp-mondeco',
-      node:
-        process.version,
+  let sqliteCheck;
+  try {
+    const connection = sharedSqliteConnection();
+    sqliteCheck = connection
+      ? connection.probe()
+      : { ok: false, error: 'connexion SQLite non initialisée' };
+  } catch (error) {
+    sqliteCheck = { ok: false, error: String(error?.message || error).slice(0, 300) };
+  }
+
+  const report = buildHealthReport({
+    service: 'bot-whatsapp-mondeco',
+    version: APP_VERSION,
+    commit: APP_COMMIT,
+    startedAtMs: SERVER_STARTED_AT_MS,
+    dataDir: probeDataDirForHealth(),
+    sqlite: sqliteCheck,
+    config: {
+      required: REQUIRED_CONFIG,
+      enforce: REQUIRED_CONFIG_ENFORCED
+    },
+    lastWebhook: lastWebhookAtMs,
+    channels: CHANNELS_ENABLED,
+    ignoredWebhooks: ignoredWebhookCounts,
+    ai: {
       ai_enabled:
         settings.aiEnabled,
       ai_provider:
@@ -8860,10 +8953,14 @@ app.get('/health', (req, res) => {
       ai_model:
         GEMINI_API_KEY
           ? GEMINI_MODEL
-          : GROQ_MODEL,
-      timestamp:
-        new Date().toISOString()
-    });
+          : GROQ_MODEL
+    }
+  });
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res
+    .status(report.httpStatus)
+    .json(report.body);
 });
 
 // V6.37 — Routes de diagnostic et de test : réservées aux administrateurs
@@ -9136,6 +9233,10 @@ app.post('/webhook', (req, res) => {
           : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
   );
 
+  // V6.46 — Âge du dernier webhook accepté, affiché par /health.
+  lastWebhookAtMs.any = Date.now();
+  if (object === 'whatsapp_business_account') lastWebhookAtMs.whatsapp = lastWebhookAtMs.any;
+
   // V6.45 — Chaque message WhatsApp est inscrit dans le journal des
   // messages entrants (écriture synchrone) AVANT l'accusé 200 : Meta ne le
   // renverra jamais, un arrêt pendant le traitement ne le perd plus (il est
@@ -9148,9 +9249,23 @@ app.post('/webhook', (req, res) => {
   // dans les logs afin d'éviter d'exposer des messages clients sur Railway.
   res.sendStatus(200);
 
-  // Patch session (13/10) - Instagram desactive, application WhatsApp uniquement.
-  if (object === 'instagram') { return; }
-  if (false) {
+  // V6.46 — Canaux pilotés par INSTAGRAM_WEBHOOK_ENABLED et
+  // FACEBOOK_WEBHOOK_ENABLED (défaut false : depuis le 13/10, application
+  // WhatsApp uniquement). Un webhook ignoré est journalisé et compté
+  // (/health), et non plus jeté sans trace par un `if (false)` écrit en dur.
+  if (
+    (object === 'instagram' && !CHANNELS_ENABLED.instagram) ||
+    (object === 'page' && !CHANNELS_ENABLED.facebook)
+  ) {
+    ignoredWebhookCounts[object] = (ignoredWebhookCounts[object] || 0) + 1;
+    console.log(
+      `ℹ️ Webhook ${object === 'instagram' ? 'Instagram' : 'Facebook'} ignoré : canal désactivé ` +
+      `(${object === 'instagram' ? 'INSTAGRAM_WEBHOOK_ENABLED' : 'FACEBOOK_WEBHOOK_ENABLED'}=false).`
+    );
+    return;
+  }
+
+  if (object === 'instagram') {
     processInstagramWebhook(
       req.body
     ).catch(error => {
@@ -9176,9 +9291,7 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
-  // Patch session (13/10) - Facebook desactive, application WhatsApp uniquement.
-  if (object === 'page') { return; }
-  if (false) {
+  if (object === 'page') {
     processFacebookWebhook(
       req.body
     ).catch(error => {
@@ -13941,6 +14054,8 @@ app.use(
   }
 );
 
+// Promesse rejetée sans gestionnaire : journalisée en erreur, donc envoyée
+// à ALERT_WEBHOOK_URL (alertes groupées) ; le serveur continue.
 process.on(
   'unhandledRejection',
   reason => {
@@ -13955,16 +14070,26 @@ process.on(
 // avant de quitter (le gestionnaire de processus redémarre l'application).
 // Les messages en cours de traitement restent dans inbound-journal.jsonl et
 // sont rejoués au démarrage.
+// V6.46 — L'alerte ALERT_WEBHOOK_URL est envoyée AVANT de quitter (elle
+// était perdue : la sortie immédiate ne laissait pas partir l'envoi groupé),
+// et le serveur cesse d'accepter des connexions pendant ce temps
+// (lib/runtime-check.js, createFatalErrorHandler).
 process.on(
   'uncaughtException',
-  error => {
-    console.error(
-      '❌ Exception non rattrapée (arrêt) :',
+  runtimeCheck.createFatalErrorHandler({
+    log: error => console.error(
+      `❌ Exception non rattrapée (arrêt) — MONDECO V${APP_VERSION}${APP_COMMIT ? ` (${APP_COMMIT})` : ''} :`,
       error
-    );
-    try { flushAllPendingWrites(); } catch {}
-    process.exit(1);
-  }
+    ),
+    stopAccepting: () => {
+      // httpServer n'existe pas encore si l'exception survient au démarrage
+      // (ReferenceError rattrapée par createFatalErrorHandler).
+      httpServer.close();
+    },
+    flushWrites: () => flushAllPendingWrites(),
+    flushAlerts: () => consoleLogger.flushAlerts(),
+    alertTimeoutMs: 4000
+  })
 );
 
 // ============================================================
@@ -13979,18 +14104,33 @@ try {
   console.error('❌ Reprise des messages entrants au démarrage :', error?.message || error);
 }
 
+// V6.46 — Base SQLite ouverte AVANT d'accepter des webhooks : un module
+// natif incompatible ou une base illisible se voit au démarrage (log, alerte,
+// /health « degraded ») et non au premier message client.
+try {
+  const sqliteAtBoot = sharedSqliteConnection();
+  if (sqliteAtBoot) sqliteAtBoot.get();
+} catch (error) {
+  console.error('❌ Ouverture SQLite au démarrage :', error?.message || error);
+}
+
+// V6.46 — Adresse d'écoute : HOST (défaut 0.0.0.0, comportement inchangé,
+// indispensable sur Railway/Docker). Sur un VPS avec Nginx local, HOST=127.0.0.1
+// empêche l'accès direct en HTTP au port de l'application.
+const LISTEN_HOST = String(process.env.HOST || '').trim() || '0.0.0.0';
+
 const httpServer = app.listen(
   PORT,
-  '0.0.0.0',
+  LISTEN_HOST,
   () => {
     console.log(
       '=============================================='
     );
     console.log(
-      '✅ SERVEUR MONDECO DÉMARRÉ'
+      `✅ SERVEUR MONDECO V${APP_VERSION} DÉMARRÉ`
     );
     console.log(
-      `✅ Port : ${PORT}`
+      `✅ Port : ${PORT} (adresse ${LISTEN_HOST})`
     );
     console.log(
       '✅ Health : /health'
