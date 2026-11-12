@@ -23,6 +23,7 @@ delete process.env.META_TOKEN_EXTRA_HOSTS;
 
 const adReferralLib = require('../lib/ad-referral');
 const adVisualLib = require('../lib/ad-visual');
+const { createConversationStateStore } = require('../lib/conversation-state-store');
 const { canSendMetaToken, metaMediaHeaders, metaTokenHosts } = require('../lib/meta-token-host');
 
 const quiet = { log() {}, warn() {}, error() {} };
@@ -103,7 +104,19 @@ const adminSource = fs.readFileSync(path.join(root, 'Admin.js'), 'utf8');
 
 // Contexte « serveur » : vraies fonctions de server.js, état en mémoire.
 function createServerHarness({ token = 'WA-TOKEN', mediaDir }) {
-  const store = new Map();
+  // V6.45 — Source de vérité partagée réelle (paquet messagerie,
+  // lib/conversation-state-store.js), sans SQLite : server.js
+  // (updateConversationState → updateConversationStateAdmin) écrit les
+  // visuels de pub par la même mise à jour atomique qu'en production.
+  const stateStore = createConversationStateStore({
+    jsonPath: path.join(tmpRoot, `server-harness-state-${Date.now()}.json`),
+    openDb: () => null,
+    writeJson: () => {},
+    slim: adReferralLib.slimConversationState,
+    writeDebounceMs: 60 * 60 * 1000,
+    jsonMinIntervalMs: 60 * 60 * 1000,
+    logger: quiet
+  });
   const context = vm.createContext({
     console: quiet,
     fs,
@@ -113,7 +126,6 @@ function createServerHarness({ token = 'WA-TOKEN', mediaDir }) {
     Promise,
     Map,
     setTimeout,
-    store,
     WHATSAPP_TOKEN: token,
     CONVERSATION_MEDIA_DIR: mediaDir,
     MAX_CONVERSATION_MEDIA_BYTES: 20 * 1024 * 1024,
@@ -122,8 +134,9 @@ function createServerHarness({ token = 'WA-TOKEN', mediaDir }) {
     normalizeChannel: value => String(value || 'whatsapp'),
     conversationChannel: () => 'whatsapp',
     conversationExternalId: contact => contact,
-    getConversationStateSingle: contact => (store.has(contact) ? JSON.parse(JSON.stringify(store.get(contact))) : null),
-    setConversationStateSingle: (contact, state) => store.set(contact, JSON.parse(JSON.stringify(state))),
+    getConversationStateSingle: contact => stateStore.get(contact),
+    setConversationStateSingle: (contact, state) => stateStore.set(contact, state),
+    updateConversationStateAdmin: (contact, updater) => stateStore.update(contact, updater),
     loadConversationStates: () => ({}),
     saveConversationStates: () => {},
     slimConversationState: adReferralLib.slimConversationState,
