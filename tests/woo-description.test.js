@@ -248,7 +248,9 @@ try {
     const named = require('../product-named');
     assert.ok(named.modelWords().has('bianca'), 'mot modèle lu depuis DATA_DIR');
     const feed = require('../catalog-feed').buildFeed();
-    assert.ok(feed.includes('"w1"'));
+    // V6.46 — identifiant WooCommerce (celui du pixel du site), plus l'UUID local.
+    assert.ok(feed.includes('"60068"'));
+    assert.ok(!feed.includes('"w1"'));
     assert.ok(!feed.includes('"m1"'), 'doublon manuel exclu du flux Meta');
     assert.ok(feed.includes('Etagère Métallique – INDUS'));
   });

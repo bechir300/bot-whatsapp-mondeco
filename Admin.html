@@ -7782,6 +7782,12 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
           <input id="correctionProductNote" type="text" placeholder="Pourquoi cette correction ?">
         </div>
 
+        <!-- V6.46 — prix d'une fiche du site : figé seulement sur demande -->
+        <label class="checkbox-line">
+          <input id="correctionLockPrice" type="checkbox">
+          Prix d'un produit du site : le figer (prioritaire sur mondeco.tn jusqu'au prochain changement de prix sur le site)
+        </label>
+
         <button class="btn primary" id="saveProductCorrectionBtn">Valider la correction produit</button>
       </div>
 
@@ -8712,6 +8718,12 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
             <input id="productPromoPrice" name="promoPrice" placeholder="Ex. 3890">
           </div>
         </div>
+
+        <!-- V6.46 — fiche synchronisée avec mondeco.tn : prix figé sur demande -->
+        <label class="checkbox-line hidden" id="productLockPriceLine">
+          <input id="productLockPrice" type="checkbox">
+          Figer le prix et la promotion saisis (prioritaires sur mondeco.tn jusqu'au prochain changement de prix sur le site)
+        </label>
 
         <div class="grid grid-2">
           <div class="field">
@@ -9891,6 +9903,7 @@ function renderProducts(){
               </td>
               <td>
                 <strong>${escapeHtml(product.name)}</strong>
+                ${productSiteBadges(product)}
               </td>
               <td>${escapeHtml(product.category || '—')}</td>
               <td>
@@ -9908,7 +9921,12 @@ function renderProducts(){
               </td>
               <td>
                 <button class="btn small" onclick="editProduct(${jsArg(product.id)})">Modifier</button>
-                <button class="btn small danger" onclick="deleteProduct(${jsArg(product.id)})">Supprimer</button>
+                ${productHasSiteCorrections(product)
+                  ? `<button class="btn small" onclick="resetProductToSite(${jsArg(product.id)})" title="Retirer les corrections et le masquage : valeurs de mondeco.tn">Rendre au site</button>`
+                  : ''}
+                ${product.deletedByAdmin === true
+                  ? ''
+                  : `<button class="btn small danger" onclick="deleteProduct(${jsArg(product.id)})">Supprimer</button>`}
               </td>
             </tr>
           `).join('')}
@@ -9917,6 +9935,52 @@ function renderProducts(){
     </div>
   `;
 }
+
+// V6.46 — Fiches synchronisées avec mondeco.tn : origine, corrections
+// volontaires (gardées malgré la synchronisation) et masquage par l'équipe.
+const PRODUCT_FIELD_LABELS = {
+  name:'nom', category:'catégorie', price:'prix figé', promoPrice:'promo figée',
+  availability:'disponibilité', dimensions:'dimensions', composition:'composition',
+  colors:'couleurs', showrooms:'showrooms', description:'description',
+  productUrl:'lien produit', categoryUrl:'lien catégorie'
+};
+
+function productHasSiteCorrections(product){
+  return product?.syncSource === 'woocommerce' && (
+    product.hiddenByAdmin === true ||
+    Object.keys(product.overrides || {}).length > 0
+  );
+}
+
+function productSiteBadges(product){
+  if(product?.syncSource !== 'woocommerce') return '';
+  const badges = ['<span class="status-pill" title="Prix, stock et textes repris de mondeco.tn à chaque synchronisation">Géré par le site</span>'];
+  const fields = Object.keys(product.overrides || {});
+  if(fields.length){
+    const labels = fields.map(field => PRODUCT_FIELD_LABELS[field] || field).join(', ');
+    badges.push(`<span class="status-pill off" title="Valeurs corrigées par l'équipe, gardées malgré la synchronisation">Corrigé : ${escapeHtml(labels)}</span>`);
+  }
+  if(product.deletedByAdmin === true){
+    badges.push('<span class="status-pill off" title="Supprimé ici : reste masqué pour l\'IA et le catalogue, toujours en ligne sur mondeco.tn">Supprimé (masqué)</span>');
+  }else if(product.hiddenByAdmin === true){
+    badges.push('<span class="status-pill off" title="Désactivé par l\'équipe : reste inactif malgré la synchronisation">Masqué par l\'équipe</span>');
+  }
+  return `<br><small>${badges.join(' ')}</small>`;
+}
+
+window.resetProductToSite = async function(id){
+  const product = products.find(item => item.id === id);
+  if(!product) return;
+  if(!await uiConfirm(`Rendre « ${product.name} » au site ? Les corrections et le masquage sont retirés : les valeurs de mondeco.tn reviennent.`)){
+    return;
+  }
+  try{
+    await apiFetch(`${API}/products/${encodeURIComponent(id)}/site-reset`, { method:'POST' });
+    await loadProducts();
+  }catch(error){
+    alert(error.message);
+  }
+};
 
 function availabilityLabel(value){
   const labels = {
@@ -9934,6 +9998,8 @@ function resetProductForm(){
   document.getElementById('productForm').reset();
   document.getElementById('productId').value = '';
   document.getElementById('productActive').checked = true;
+  document.getElementById('productLockPrice').checked = false;
+  document.getElementById('productLockPriceLine').classList.add('hidden');
   document.getElementById('productAvailability').value = 'unknown';
   document.getElementById('productModalTitle').textContent = 'Ajouter un produit';
   document.getElementById('productImage').required = true;
@@ -9999,6 +10065,9 @@ window.editProduct = function(id){
   document.getElementById('productCustomDimensions').checked = product.customizableDimensions === true;
   document.getElementById('productCustomCorner').checked = product.customizableCorner === true;
   document.getElementById('productActive').checked = product.active !== false;
+  // V6.46 — case « Figer le prix » pour les fiches du site uniquement.
+  document.getElementById('productLockPriceLine').classList.toggle('hidden', product.syncSource !== 'woocommerce');
+  document.getElementById('productLockPrice').checked = Boolean(product.overrides?.price || product.overrides?.promoPrice);
   document.getElementById('productModalTitle').textContent = `Modifier ${product.name}`;
   document.getElementById('productImage').required = !product.image;
 
@@ -10015,7 +10084,11 @@ window.deleteProduct = async function(id){
   const product = products.find(item => item.id === id);
   if(!product) return;
 
-  if(!await uiConfirm(`Supprimer le produit « ${product.name} » ?`)){
+  // V6.46 — produit du site : masqué (pas supprimé de mondeco.tn).
+  const fromSite = product.syncSource === 'woocommerce';
+  if(!await uiConfirm(fromSite
+    ? `« ${product.name} » vient de mondeco.tn : il sera masqué pour l'IA et le catalogue Meta (il reste en ligne sur le site). Continuer ?`
+    : `Supprimer le produit « ${product.name} » ?`)){
     return;
   }
 
@@ -10054,6 +10127,8 @@ document.getElementById('productForm').addEventListener('submit', async event =>
   formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked);
   formData.append('customizableCorner', document.getElementById('productCustomCorner').checked);
   formData.append('active', document.getElementById('productActive').checked);
+  // V6.46 — prix figé (fiche du site) sur demande explicite.
+  formData.append('lockPrice', document.getElementById('productLockPrice').checked);
 
   const image = document.getElementById('productImage').files?.[0];
 
@@ -10062,7 +10137,7 @@ document.getElementById('productForm').addEventListener('submit', async event =>
   }
 
   try{
-    await apiFetch(
+    const saved = await apiFetch(
       id
         ? `${API}/products/${id}`
         : `${API}/products`,
@@ -10071,6 +10146,9 @@ document.getElementById('productForm').addEventListener('submit', async event =>
         body: formData
       }
     );
+
+    // V6.46 — modification d'une fiche du site qui sera reprise du site.
+    if(saved?.warning) alert(saved.warning);
 
     closeModal('productModal');
     await loadProducts();
@@ -15903,10 +15981,16 @@ window.openProductCardComposer = function(contact){
     const promo = waPriceText(selected.promoPrice);
     const lines = [];
     if(intro.value.trim()) lines.push(intro.value.trim(), '');
-    lines.push(selected.name);
-    if(promo && price && promo !== price) lines.push(`💰 ${promo} au lieu de ${price}`);
-    else if(promo || price) lines.push(`💰 ${promo || price}`);
-    if(selected.dimensions) lines.push(`📐 ${selected.dimensions}`);
+    // V6.46 — texte exact de la fiche (couleurs, disponibilité en mots,
+    // promotion en vigueur), fourni par le serveur.
+    if(selected.cardBody){
+      lines.push(String(selected.cardBody).replace(/\*([^*\n]+)\*/g, '$1').replace(/~([^~\n]+)~/g, '$1'));
+    }else{
+      lines.push(selected.name);
+      if(promo && price && promo !== price) lines.push(`💰 ${promo} au lieu de ${price}`);
+      else if(promo || price) lines.push(`💰 ${promo || price}`);
+      if(selected.dimensions) lines.push(`📐 ${selected.dimensions}`);
+    }
     preview.innerHTML = waInteractiveBubbleHtml({
       image: selected.hasImage ? imageUrl(selected) : '',
       header: selected.hasImage ? '' : selected.name,
@@ -17449,16 +17533,21 @@ document.getElementById('saveProductCorrectionBtn').addEventListener('click', as
   }
 
   try{
-    await apiFetch(`${API}/commercial-corrections/product`, {
+    const lockPrice = Boolean(document.getElementById('correctionLockPrice')?.checked);
+    const result = await apiFetch(`${API}/commercial-corrections/product`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({productId, field, value, note})
+      body:JSON.stringify({productId, field, value, note, lockPrice})
     });
 
     document.getElementById('correctionProductValue').value = '';
     document.getElementById('correctionProductNote').value = '';
+    if(document.getElementById('correctionLockPrice')) document.getElementById('correctionLockPrice').checked = false;
 
-    alert('Fiche produit corrigée. La prochaine réponse IA utilisera cette nouvelle valeur.');
+    // V6.46 — avertissement du serveur (valeur reprise du site…).
+    alert(result?.warning
+      ? `Fiche produit corrigée.\n\n${result.warning}`
+      : 'Fiche produit corrigée. La prochaine réponse IA utilisera cette nouvelle valeur.');
 
     await loadProducts();
     await loadCommercialCorrections();
@@ -17942,6 +18031,24 @@ document.getElementById('wooSyncBtn').addEventListener('click', async () => {
     alert(
       `Synchronisation terminée : ${result.fetched} produit(s) reçus, ${result.created} créé(s), ${result.updated} modifié(s), ${result.deactivated} désactivé(s).`
     );
+
+    // V6.46 — garde-fou : beaucoup de produits absents du site d'un coup.
+    // La désactivation n'a lieu qu'après confirmation explicite.
+    if(result.deactivationSkipped && /aucune désactivation/.test(result.deactivationSkipped)){
+      if(await uiConfirm(`${result.deactivationSkipped}\n\nCes produits ont-ils vraiment été retirés de mondeco.tn ? Les désactiver maintenant ?`)){
+        const confirmed = await apiFetch(`${API}/woocommerce/sync`, {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ allowMassDeactivation:true })
+        });
+        wooStatus = confirmed.status || wooStatus;
+        renderWooCommerceStatus();
+        await loadProducts();
+        alert(`${confirmed.deactivated} produit(s) désactivé(s).`);
+      }
+    }else if(result.deactivationSkipped){
+      alert(result.deactivationSkipped);
+    }
   }catch(error){
     alert(
       `Synchronisation impossible : ${error.message}`
@@ -18011,8 +18118,14 @@ document.getElementById('wooInstallWebhooksBtn').addEventListener('click', async
         .filter(item => item.status === 'already_exists')
         .length;
 
+    // V6.46 — webhooks désactivés par WooCommerce : réactivés.
+    const reactivated =
+      (result.webhooks || [])
+        .filter(item => item.status === 'reactivated')
+        .length;
+
     alert(
-      `Webhooks prêts : ${created} créé(s), ${existing} déjà présent(s).`
+      `Webhooks prêts : ${created} créé(s), ${reactivated} réactivé(s), ${existing} déjà présent(s).`
     );
 
     await loadWooCommerceStatus();

@@ -208,7 +208,14 @@ app.use(
   express.json({
     limit: '5mb',
     verify(req, res, buffer) {
-      if (req.originalUrl === '/webhook') {
+      // V6.46 — Corps brut gardé aussi pour le webhook WooCommerce : sa
+      // signature HMAC porte sur les octets envoyés par PHP (« \/ »,
+      // « é »), qu'un JSON.stringify ne reproduit jamais.
+      const urlPath = String(req.originalUrl || '').split('?')[0];
+      if (
+        urlPath === '/webhook' ||
+        urlPath === '/admin/api/woocommerce/webhook'
+      ) {
         req.rawBody = Buffer.from(buffer);
       }
     }
@@ -11632,6 +11639,10 @@ function handleHumanMessageEcho(value) {
 // défaut) : quand la réponse de l'IA cite un seul produit du catalogue dont
 // le prix est connu, sa fiche (photo, prix, bouton « Voir le produit ») est
 // envoyée juste après. Une erreur ici n'affecte jamais la réponse texte.
+// V6.46 — Photo : fichier local, sinon l'image JPEG/PNG du site (fiches
+// synchronisées) ; jamais de fiche pour un produit en rupture.
+const { loadProductImage } = require('./lib/product-image');
+
 async function maybeSendAiProductCard(from, reply, inboundAtMs = NaN) {
   try {
     if (getBotSettings()?.aiProductCards !== true) return;
@@ -11646,15 +11657,23 @@ async function maybeSendAiProductCard(from, reply, inboundAtMs = NaN) {
     if (aiAutoSendBlockReason(from, inboundAtMs)) return;
 
     let file = null;
-    const imagePath = getLocalProductImagePath(product);
-    if (imagePath && fs.existsSync(imagePath)) {
-      const buffer = fs.readFileSync(imagePath);
-      const mime = imageMimeFromBuffer(buffer);
-      // WhatsApp refuse le WebP : la fiche part alors avec un titre texte.
-      if (mime === 'image/jpeg' || mime === 'image/png') {
-        file = { buffer, mimetype: mime, originalname: mime === 'image/png' ? 'produit.png' : 'produit.jpg' };
+    // WhatsApp refuse le WebP : la fiche part alors avec un titre texte.
+    try {
+      const image = await loadProductImage(product, {
+        localPath: getLocalProductImagePath(product)
+      });
+      if (image) {
+        file = {
+          buffer: image.buffer,
+          mimetype: image.mimetype,
+          originalname: image.mimetype === 'image/png' ? 'produit.png' : 'produit.jpg'
+        };
       }
+    } catch (error) {
+      console.warn('⚠️ Photo de la fiche produit IA indisponible :', error.message);
     }
+    // Le téléchargement de la photo a pu prendre quelques secondes.
+    if (aiAutoSendBlockReason(from, inboundAtMs)) return;
 
     const built = buildProductCard(product, { hasImage: Boolean(file) });
     const result = await sendWhatsAppInteractive(from, built.interactive, file);
