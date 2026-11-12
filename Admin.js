@@ -667,6 +667,7 @@ function storageSpaceInfo() {
       totalBytes,
       freeBytes,
       usedBytes,
+      blockSize,
       freeRatio: totalBytes > 0 ? freeBytes / totalBytes : null
     };
   } catch {
@@ -1087,6 +1088,14 @@ function storageProbeIsSpaceFailure(probe, space = storageSpaceInfo()) {
   return Boolean(space && space.freeBytes < STORAGE_CRITICAL_FREE_BYTES);
 }
 
+// V6.46 — Test d'écriture refusé pour une autre raison que l'espace
+// (EACCES, EROFS…), même avec peu d'espace libre : supprimer des fichiers
+// ne le rendra jamais possible (aucun dernier recours, délai de grâce gardé).
+function storageProbeFailsWithoutSpaceError(probe) {
+  return Boolean(probe) && probe.writable === false &&
+    !STORAGE_SPACE_ERROR_CODES.has(safeString(probe.errorCode).toUpperCase());
+}
+
 function storageLevel(space = storageSpaceInfo(), probe = storageWriteProbe()) {
   if (probe && probe.writable === false) {
     return storageProbeIsSpaceFailure(probe, space) ? 'critical' : 'unwritable';
@@ -1430,17 +1439,41 @@ function pruneMessageIdIndexForStorageRescue() {
   }
 }
 
-// V6.46 — Dernier recours borné : une écriture en attente (octets connus)
-// ou, sans taille connue, le minimum pour pouvoir écrire de nouveau.
-const STORAGE_LAST_RESORT_MIN_BYTES = 1024 * 1024;
-const STORAGE_LAST_RESORT_MARGIN_BYTES = 8 * 1024;
+// V6.46 — Dernier recours borné à la place réelle de l'écriture refusée
+// (octets arrondis au bloc du système de fichiers). Avant : 1,35 × la
+// taille + 8 Ko, soit 3 blocs pour une écriture de 49 octets — chaque
+// petite sauvegarde supprimée ne libérant qu'un bloc de 4 Ko, la dernière
+// version JSON, les .bak des données ET le dernier snapshot partaient.
+function storageBytesOnDisk(bytes, blockSize) {
+  const block = Math.max(512, Number(blockSize) || 4096);
+  const size = Math.max(1, Number(bytes) || 0);
+  return Math.ceil(size / block) * block;
+}
 
 function storageHasRoomFor(neededBytes) {
   const probe = storageWriteProbe();
   if (!probe.writable) return false;
   const space = storageSpaceInfo();
   if (!space) return true;
-  return space.freeBytes >= Math.ceil(Math.max(0, Number(neededBytes) || 0) * 1.35) + STORAGE_LAST_RESORT_MARGIN_BYTES;
+  return space.freeBytes >= storageBytesOnDisk(neededBytes, space.blockSize);
+}
+
+// V6.46 — Fichiers de statistiques / caches régénérables : leur écriture
+// refusée ne justifie jamais de supprimer le dernier snapshot, les .bak des
+// données ni les dernières versions JSON.
+const STORAGE_LAST_RESORT_SKIPPED_FILES = new Set([
+  'ai-usage.json',
+  'ai-history.json',
+  'sla-events.json',
+  'daily-reports.json',
+  'ai-eval-runs.json',
+  'team-activity.jsonl',
+  'cloud-media-migration.json'
+]);
+
+function storageLastResortSkipped(target) {
+  const name = path.basename(safeString(target));
+  return Boolean(name) && STORAGE_LAST_RESORT_SKIPPED_FILES.has(name);
 }
 
 // Libère uniquement des caches et sauvegardes régénérables, sans toucher aux
@@ -1450,12 +1483,14 @@ function storageHasRoomFor(neededBytes) {
 // `allowMediaPurge` : action explicite d'un administrateur uniquement.
 // V6.46 — `neededBytes` : taille de l'écriture refusée (ENOSPC). Le dernier
 // recours (dernières versions JSON, .bak des données, dernier snapshot) ne
-// libère plus que la place de CETTE écriture (avant : jusqu'à la marge
-// critique de 16–40 Mo, inatteignable sur un disque plein → toutes les
-// dernières sauvegardes supprimées pour quelques Ko) ; sans écriture en
-// attente, il ne s'exécute que si plus rien ne peut être écrit. Aucune
-// suppression quand l'écriture échoue pour une autre raison que l'espace.
-function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence', neededBytes = 0 } = {}) {
+// libère plus que la place de CETTE écriture, arrondie au bloc (avant :
+// jusqu'à la marge critique de 16–40 Mo, inatteignable sur un disque plein
+// → toutes les dernières sauvegardes supprimées pour quelques Ko). Sans
+// écriture en attente de taille connue (surveillance, démarrage), pour un
+// fichier de statistiques (`target` : ai-usage.json…) ou quand l'écriture
+// échoue pour une autre raison que l'espace (EACCES, EROFS), il ne
+// s'exécute jamais.
+function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence', neededBytes = 0, target = '' } = {}) {
   if (storageEmergencyCleanupRunning) return 0;
   const initialProbe = storageWriteProbe();
   if (initialProbe.writable === false && storageLevel(storageSpaceInfo(), initialProbe) === 'unwritable') {
@@ -1470,8 +1505,11 @@ function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urg
   let freed = 0;
   const steps = [];
   const enough = () => storageHasHeadroom(STORAGE_RESCUE_TARGET_FREE_BYTES);
-  const lastResortBytes = Number(neededBytes) > 0 ? Number(neededBytes) : STORAGE_LAST_RESORT_MIN_BYTES;
-  const lastResortAllowed = () => Number(neededBytes) > 0 || !storageWriteProbe().writable;
+  const lastResortBytes = Math.max(0, Number(neededBytes) || 0);
+  const lastResortAllowed = () =>
+    lastResortBytes > 0 &&
+    !storageLastResortSkipped(target) &&
+    !storageProbeFailsWithoutSpaceError(storageWriteProbe());
   const stillCritical = () => !storageHasRoomFor(lastResortBytes);
   const step = (label, fn) => {
     const bytes = Number(fn() || 0);
@@ -1518,13 +1556,13 @@ function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urg
   return freed;
 }
 
-function ensureStorageHeadroom({ neededBytes = 0 } = {}) {
+function ensureStorageHeadroom({ neededBytes = 0, target = '' } = {}) {
   const space = storageSpaceInfo();
   const probe = storageWriteProbe();
   const critical = storageLevel(space, probe) === 'critical';
 
   if (!critical) return { cleaned: false, freedBytes: 0, space, writable: probe.writable };
-  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC', neededBytes });
+  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC', neededBytes, target });
   const after = storageSpaceInfo();
   const afterProbe = storageWriteProbe();
   return {
@@ -1929,7 +1967,9 @@ function runStartupStorageRescue() {
   // V6.33.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
-  const emergencyRetentionOverride = lowSpace && !retentionReady;
+  // V6.46 — Sauf si l'écriture échoue pour une autre raison que l'espace
+  // (EACCES, EROFS) : supprimer des conversations n'y changerait rien.
+  const emergencyRetentionOverride = lowSpace && !retentionReady && !storageProbeFailsWithoutSpaceError(beforeProbe);
   const result = runSafeStorageMaintenance({
     forceEmergency: level === 'critical',
     skipConversationRetention: !retentionReady && !emergencyRetentionOverride,
@@ -3061,7 +3101,7 @@ function writeJsonAtomic(filePath, data) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
 
     console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
-    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}`, neededBytes: serializedBytes });
+    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}`, neededBytes: serializedBytes, target: filePath });
 
     try {
       atomicAttempt();
@@ -3157,6 +3197,30 @@ function quarantineCorruptDataFile(filePath, label, { copy = false } = {}) {
   }
 }
 
+// V6.46 — Erreur de LECTURE passagère (trop de fichiers ouverts, E/S,
+// droits, verrou…) : le fichier n'est pas abîmé. Seuls un fichier vide
+// (0 octet) ou un JSON invalide (SyntaxError) justifient de le mettre de
+// côté et de reprendre son .bak ; sinon on garde la dernière valeur connue
+// (ou le .bak en mémoire pour cet appel) sans rien écrire ni mémoriser.
+// Avant : un seul EMFILE remplaçait définitivement users.json / settings.json
+// par leur .bak (IA réactivée, compte désactivé réactivé, compte récent
+// supprimé).
+function jsonReadErrorIsTransient(error) {
+  const code = safeString(error?.code);
+  return Boolean(code) && code !== 'ENOENT' && !(error instanceof SyntaxError);
+}
+
+function readJsonBackupQuietly(filePath, accept) {
+  try {
+    const backupPath = `${filePath}.bak`;
+    if (!fileExistsWithContent(backupPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+    return typeof accept === 'function' && !accept(parsed) ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
 // V6.46 — Reprise d'un fichier JSON vide (0 octet) ou illisible depuis son
 // .bak valide (`accept(parsed)` vrai) : le fichier illisible est d'abord mis
 // de côté (.corrupt-<date>), puis le .bak est recopié à sa place (les
@@ -3245,6 +3309,12 @@ function readJsonArray(filePath, label) {
   } catch (error) {
     console.error(`❌ Lecture ${label} impossible :`, error.message);
 
+    if (jsonReadErrorIsTransient(error)) {
+      // Erreur passagère : fichier gardé tel quel, .bak lu en mémoire
+      // seulement pour cet appel.
+      return readJsonBackupQuietly(filePath, Array.isArray) || [];
+    }
+
     const backup = readBackup();
     if (backup !== null) {
       quarantineCorruptDataFile(filePath, label);
@@ -3295,6 +3365,12 @@ function loadPurgedRecordHashes() {
     // conservé à part. Avant : liste vide, puis réécrite avec la seule
     // nouvelle empreinte — les messages supprimés pouvaient revenir.
     console.error('❌ Lecture empreintes suppression :', error.message);
+    if (jsonReadErrorIsTransient(error)) {
+      // Erreur passagère : dernière liste connue (ou .bak), rien mémorisé.
+      if (purgedRecordHashesCache.stamp) return purgedRecordHashesCache.set;
+      const backup = readJsonBackupQuietly(PURGED_RECORD_HASHES_PATH);
+      return new Set(((Array.isArray(backup) ? backup : backup?.hashes) || []).map(safeString).filter(Boolean));
+    }
     const recovered = new Set(String(raw).match(/[0-9a-f]{64}/g) || []);
     try {
       const backup = JSON.parse(fs.readFileSync(`${PURGED_RECORD_HASHES_PATH}.bak`, 'utf8'));
@@ -4892,6 +4968,15 @@ function getBotSettings() {
       error.message
     );
 
+    if (jsonReadErrorIsTransient(error)) {
+      // V6.46 — Erreur passagère : dernière valeur connue (sinon le .bak
+      // en mémoire), fichier gardé, rien mémorisé : l'appel suivant relit
+      // le vrai fichier.
+      if (botSettingsCache) return botSettingsCache;
+      const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+      return normalizeSettings(readJsonBackupQuietly(SETTINGS_PATH, isObject) || DEFAULT_SETTINGS);
+    }
+
     const backup = recoverJsonFileFromBackup(
       SETTINGS_PATH,
       'settings.json',
@@ -4920,6 +5005,10 @@ function saveBotSettings(settings) {
     SETTINGS_PATH,
     normalized
   );
+  // V6.46 — Mémoire à jour de ce qui vient d'être écrit (une lecture
+  // suivante en erreur passagère ne renvoie jamais la version d'avant).
+  botSettingsCache = normalized;
+  botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
 
   return normalized;
 }
@@ -4953,6 +5042,8 @@ ensureDailySnapshot();
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
 // V6.46 — Niveau décidé sur l'espace libre absolu (plus de ratio) ; quand
 // tout va bien : index message_id plafonné et réserve d'espace recréée.
+// V6.46 — Niveau constaté au passage précédent de la surveillance.
+let storageGuardPreviousLevel = '';
 function runStorageGuardTick() {
   if (storagePeriodicGuardRunning) return;
   storagePeriodicGuardRunning = true;
@@ -4967,13 +5058,22 @@ function runStorageGuardTick() {
       return;
     }
     const low = level !== 'ok';
+    const previousLevel = storageGuardPreviousLevel;
+    storageGuardPreviousLevel = level;
     if (!low) {
       try { pruneMessageIdIndexForStorageRescue(); } catch {}
       ensureStorageBallast();
       // V6.46 — Snapshot du jour recréé dès que l'espace est revenu (avant :
       // seulement au démarrage — après un disque plein, plus aucune
       // sauvegarde des comptes ni des produits jusqu'au redémarrage).
-      try { ensureDailySnapshot({ quiet: true }); } catch {}
+      // Seulement au retour à « ok » après un incident ou s'il n'existe plus
+      // aucun snapshot : jamais à chaque passage (en mode compact, le seul
+      // snapshot de la veille serait remplacé juste après minuit par l'état
+      // du moment, même abîmé par une synchro ou une suppression de masse).
+      const recovered = Boolean(previousLevel) && previousLevel !== 'ok';
+      if (recovered || !listFullSnapshots().some(snapshot => !isBeforeRestoreSnapshot(snapshot))) {
+        try { ensureDailySnapshot({ quiet: true }); } catch {}
+      }
       return;
     }
 
@@ -4982,7 +5082,9 @@ function runStorageGuardTick() {
       skipConversationRetention: false,
       reason: 'surveillance'
     });
-    if (critical) markRetention15MigrationApplied();
+    // V6.46 — Délai de grâce gardé si l'écriture échoue pour une autre
+    // raison que l'espace (EACCES, EROFS).
+    if (critical && !storageProbeFailsWithoutSpaceError(probe)) markRetention15MigrationApplied();
     console.log('🧹 Storage Guard périodique', {
       critical,
       freed: humanBytes(result.freedBytes),
@@ -5611,6 +5713,14 @@ function loadUsers() {
     emptyFile = true;
   } catch (error) {
     console.error('❌ Lecture users.json impossible :', error.message);
+    if (jsonReadErrorIsTransient(error)) {
+      // V6.46 — Erreur passagère : dernière liste connue (sinon le .bak)
+      // pour cet appel, fichier gardé, rien mémorisé (l'appel suivant relit
+      // users.json) ; écritures bloquées jusqu'à la prochaine lecture
+      // réussie (jamais d'écrasement par une version plus ancienne).
+      usersStoreUnreadable = true;
+      return usersCache || readJsonBackupQuietly(USERS_PATH, Array.isArray) || [];
+    }
   }
 
   const backup = recover(emptyFile ? 'vide (0 octet)' : 'illisible');

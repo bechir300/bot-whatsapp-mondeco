@@ -87,7 +87,7 @@ Module.prototype._compile = function compileWithTestExports(content, filename) {
   flushConversationStatesWrite, conversationEntryPartPurgeHash, writeJsonAtomic, runStorageGuardTick,
   ensureStorageBallast, STORAGE_BALLAST_PATH, MAX_NOTIFICATION_ITEMS, MESSAGE_ID_INDEX_PATH, SNAPSHOTS_DIR,
   loadPurgedRecordHashes, PURGED_RECORD_HASHES_PATH, pruneFullSnapshotsForStorageRescue, loadUsers, getBotSettings,
-  USERS_PATH, SETTINGS_PATH, purgeConversationMessagePart };`;
+  USERS_PATH, SETTINGS_PATH, purgeConversationMessagePart, runStartupStorageRescue };`;
   }
   return originalCompile.call(this, content, filename);
 };
@@ -227,6 +227,19 @@ async function test(label, fn) {
     assert.strictEqual(snapshots[0].reason, 'automatic-daily');
   });
 
+  await test('V6.46 — surveillance avec l’espace « ok » sans incident : le seul snapshot (de la veille) n’est pas remplacé juste après minuit', () => {
+    const [only] = A.listFullSnapshots();
+    const metaPath = path.join(A.SNAPSHOTS_DIR, only.id, 'snapshot-meta.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    fs.writeFileSync(metaPath, JSON.stringify({ ...meta, createdAt: new Date(Date.now() - DAY).toISOString() }));
+    disk.free = 15 * GB;
+    A.runStorageGuardTick();
+    A.runStorageGuardTick();
+    const after = A.listFullSnapshots();
+    assert.deepStrictEqual(after.map(item => item.id), [only.id], 'snapshot de la veille gardé (avant : remplacé par « automatic-daily » du jour)');
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+  });
+
   await test('V6.46 — disque plein, petite écriture refusée : le dernier recours s’arrête dès que la place suffit (dernier snapshot et .bak des données gardés)', () => {
     write('products.json.bak', [{ id: 'p1', name: 'Lit Bianca' }]);
     age(write('backups/json/products/products-20261103-120000-000.json', '[]'), 2);
@@ -280,6 +293,91 @@ async function test(label, fn) {
     assert.ok(exists('products.json.bak'), '.bak des données gardé');
     assert.ok(exists('backups/json/settings/settings-20261003-120000-000.json') || exists('backups/json/products/products-20261103-120000-000.json'), 'dernière version JSON gardée');
     assert.ok(logs.some(line => line.startsWith('error') && /test EACCES.*aucun fichier supprimé/.test(line)));
+    disk.free = 15 * GB;
+  });
+
+  await test('V6.46 — disque réellement plein (blocs de 4 Ko) : 49 octets de ai-usage.json ou écriture sans taille → aucun dernier recours ; ligne de message → un seul fichier supprimé', () => {
+    write('products.json.bak', [{ id: 'p1', name: 'Lit Bianca' }]);
+    write('users.json.bak', [{ id: 'u-admin', role: 'admin' }]);
+    age(write('backups/json/users/users-20261104-120000-000.json', '[]'), 1);
+    age(write('backups/json/tasks/tasks-20261104-120000-000.json', '[]'), 1);
+    try { fs.unlinkSync(A.STORAGE_BALLAST_PATH); } catch {}
+    const versions = () => ['products', 'settings', 'users', 'tasks'].flatMap(dir => {
+      const full = path.join(DATA_DIR, 'backups/json', dir);
+      return fs.existsSync(full) ? fs.readdirSync(full).map(name => `${dir}/${name}`) : [];
+    });
+    const snapshotsBefore = A.listFullSnapshots().map(item => item.id);
+    assert.strictEqual(snapshotsBefore.length, 1);
+    const originalUnlinkSync = fs.unlinkSync;
+    const originalWriteFileSync = fs.writeFileSync;
+    // Chaque fichier supprimé libère ses blocs de 4 Ko (au moins un) ; le
+    // test d'écriture échoue (ENOSPC) tant qu'aucun bloc n'est libre.
+    fs.unlinkSync = function patchedUnlink(target, ...rest) {
+      let size = 0;
+      try { size = fs.statSync(target).size; } catch {}
+      const result = originalUnlinkSync.call(this, target, ...rest);
+      if (!String(target).includes('.write-test-')) disk.free += Math.max(1, Math.ceil(size / 4096)) * 4096;
+      return result;
+    };
+    fs.writeFileSync = function patchedWriteFile(target, ...rest) {
+      if (String(target).includes('.write-test-') && disk.free < 4096) {
+        const error = new Error(`ENOSPC: no space left on device, open '${target}'`);
+        error.code = 'ENOSPC';
+        throw error;
+      }
+      return originalWriteFileSync.call(this, target, ...rest);
+    };
+    let versionsBefore;
+    try {
+      disk.free = 0;
+      versionsBefore = versions();
+      assert.ok(versionsBefore.length >= 3, versionsBefore.join(','));
+      A.emergencyFreeDisposableStorage({ reason: 'ENOSPC ai-usage.json', neededBytes: 49, target: 'ai-usage.json' });
+      A.emergencyFreeDisposableStorage({ reason: 'surveillance' });
+      assert.deepStrictEqual(versions(), versionsBefore, 'aucune dernière version JSON supprimée pour un compteur ou sans écriture en attente');
+      assert.ok(exists('users.json.bak') && exists('products.json.bak'), '.bak des données gardés');
+      assert.deepStrictEqual(A.listFullSnapshots().map(item => item.id), snapshotsBefore, 'seul snapshot gardé');
+      // Ligne de message client (300 octets) refusée : la place d'UN bloc suffit.
+      disk.free = 0;
+      A.emergencyFreeDisposableStorage({ reason: 'ENOSPC message', neededBytes: 300, target: 'conversation-events-2026-11-12.jsonl' });
+    } finally {
+      fs.unlinkSync = originalUnlinkSync;
+      fs.writeFileSync = originalWriteFileSync;
+    }
+    assert.ok(versions().length >= versionsBefore.length - 1, `au plus une version JSON supprimée (${versions().join(',')})`);
+    assert.ok(exists('users.json.bak') && exists('products.json.bak'), '.bak des données gardés');
+    assert.deepStrictEqual(A.listFullSnapshots().map(item => item.id), snapshotsBefore, 'seul snapshot gardé');
+    disk.free = 15 * GB;
+  });
+
+  await test('V6.46 — EACCES avec peu d’espace (30 Mo, sous la marge critique) : aucun dernier recours, délai de grâce de rétention gardé', () => {
+    disk.free = 30 * MB;
+    write('products.json.bak', [{ id: 'p1', name: 'Lit Bianca' }]);
+    age(write('backups/json/products/products-20261105-120000-000.json', '[]'), 0);
+    write('.v630-retention-15.json', { startedAt: new Date().toISOString(), appliedAt: '', retentionDays: 15 });
+    const snapshotsBefore = A.listFullSnapshots().map(item => item.id);
+    const originalWriteFileSync = fs.writeFileSync;
+    fs.writeFileSync = function patchedWriteFile(target, ...rest) {
+      if (String(target).includes('.write-test-')) {
+        const error = new Error(`EACCES: permission denied, open '${target}'`);
+        error.code = 'EACCES';
+        throw error;
+      }
+      return originalWriteFileSync.call(this, target, ...rest);
+    };
+    try {
+      assert.strictEqual(A.storageLevel(), 'critical');
+      A.emergencyFreeDisposableStorage({ reason: 'test EACCES bas', neededBytes: 4096, target: 'conversation-events-2026-11-12.jsonl' });
+      A.runStartupStorageRescue();
+      A.runStorageGuardTick();
+    } finally {
+      fs.writeFileSync = originalWriteFileSync;
+    }
+    assert.deepStrictEqual(A.listFullSnapshots().map(item => item.id), snapshotsBefore, 'dernier snapshot gardé');
+    assert.ok(exists('products.json.bak'), '.bak des données gardé');
+    assert.ok(exists('backups/json/products/products-20261105-120000-000.json'), 'dernière version JSON gardée');
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(DATA_DIR, '.v630-retention-15.json'), 'utf8')).appliedAt, '', 'délai de grâce gardé');
+    assert.ok(!logs.some(line => /Stockage critique \((test EACCES bas|démarrage|surveillance)\)/.test(line)), 'aucun dernier recours');
     disk.free = 15 * GB;
   });
 
@@ -398,6 +496,59 @@ async function test(label, fn) {
     fs.writeFileSync(`${A.PURGED_RECORD_HASHES_PATH}.bak`, JSON.stringify({ version: 1, hashes: [hash] }));
     fs.writeFileSync(A.PURGED_RECORD_HASHES_PATH, '');
     assert.ok(A.loadPurgedRecordHashes().has(hash), 'empreinte reprise du .bak');
+  });
+
+  await test('V6.46 — erreur de lecture passagère (EMFILE) sur users.json / settings.json valides : fichiers gardés, aucun retour au .bak (IA désactivée et compte désactivé restent ainsi)', () => {
+    const corruptCount = () => fs.readdirSync(DATA_DIR).filter(name => /^(users|settings)\.json\.corrupt-/.test(name)).length;
+    const corruptBefore = corruptCount();
+    const touch = file => { const later = new Date(Date.now() + 5000 + Math.random() * 1000); fs.utimesSync(file, later, later); };
+    const failOnce = target => {
+      const originalReadFileSync = fs.readFileSync;
+      let failed = false;
+      fs.readFileSync = function patchedRead(file, ...rest) {
+        if (!failed && String(file) === target) {
+          failed = true;
+          const error = new Error(`EMFILE: too many open files, open '${file}'`);
+          error.code = 'EMFILE';
+          throw error;
+        }
+        return originalReadFileSync.call(this, file, ...rest);
+      };
+      return () => { fs.readFileSync = originalReadFileSync; return failed; };
+    };
+
+    A.writeJsonAtomic(A.SETTINGS_PATH, { aiEnabled: true });
+    A.writeJsonAtomic(A.SETTINGS_PATH, { aiEnabled: false });
+    assert.strictEqual(JSON.parse(fs.readFileSync(`${A.SETTINGS_PATH}.bak`, 'utf8')).aiEnabled, true);
+    assert.strictEqual(A.getBotSettings().aiEnabled, false);
+    touch(A.SETTINGS_PATH);
+    let restore = failOnce(A.SETTINGS_PATH);
+    let settingsAfter;
+    try { settingsAfter = A.getBotSettings(); } finally { assert.ok(restore(), 'erreur injectée'); }
+    assert.strictEqual(settingsAfter.aiEnabled, false, 'IA toujours désactivée (avant : .bak remis, IA réactivée)');
+    assert.strictEqual(JSON.parse(fs.readFileSync(A.SETTINGS_PATH, 'utf8')).aiEnabled, false, 'settings.json sur disque inchangé');
+    assert.strictEqual(A.getBotSettings().aiEnabled, false, 'lecture suivante : vrai fichier');
+
+    const usersBefore = fs.readFileSync(A.USERS_PATH, 'utf8');
+    A.writeJsonAtomic(A.USERS_PATH, [
+      { id: 'u-admin', email: 'test-admin@mondeco.test', role: 'admin', active: true },
+      { id: 'c1', email: 'c1@mondeco.test', role: 'commercial', active: true }
+    ]);
+    A.writeJsonAtomic(A.USERS_PATH, [
+      { id: 'u-admin', email: 'test-admin@mondeco.test', role: 'admin', active: true },
+      { id: 'c1', email: 'c1@mondeco.test', role: 'commercial', active: false },
+      { id: 'c3', email: 'c3@mondeco.test', role: 'commercial', active: true }
+    ]);
+    assert.deepStrictEqual(A.loadUsers().map(user => `${user.id}:${user.active}`), ['u-admin:true', 'c1:false', 'c3:true']);
+    touch(A.USERS_PATH);
+    restore = failOnce(A.USERS_PATH);
+    let usersAfter;
+    try { usersAfter = A.loadUsers(); } finally { assert.ok(restore(), 'erreur injectée'); }
+    assert.deepStrictEqual(usersAfter.map(user => `${user.id}:${user.active}`), ['u-admin:true', 'c1:false', 'c3:true'], 'dernière liste connue');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(A.USERS_PATH, 'utf8')).map(user => `${user.id}:${user.active}`), ['u-admin:true', 'c1:false', 'c3:true'], 'users.json sur disque inchangé (avant : .bak remis, c1 réactivé, c3 supprimé)');
+    assert.deepStrictEqual(A.loadUsers().map(user => user.id), ['u-admin', 'c1', 'c3']);
+    assert.strictEqual(corruptCount(), corruptBefore, 'aucun fichier valide mis de côté');
+    fs.writeFileSync(A.USERS_PATH, usersBefore);
   });
 
   await test('V6.46 — suppression définitive : journal raccourci pendant la réécriture → nouvel essai automatique, texte effacé', async () => {

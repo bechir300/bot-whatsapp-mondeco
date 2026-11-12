@@ -195,7 +195,7 @@ const freshDir = () => {
       db.close();
     });
 
-    await test('V6.46 — JSON vide (0 octet) + SQLite indisponible → mémoire reprise du .bak, IA en pause gardée, .bak jamais écrasé par {}', () => {
+    await test('V6.46 — JSON vide (0 octet) + SQLite indisponible → mémoire reprise du .bak, IA en pause gardée, .bak jamais écrasé par {} ni par une version plus pauvre', () => {
       const dir = freshDir();
       const jsonPath = path.join(dir, 'conversation-state.json');
       const bak = { 21698000001: { channel: 'whatsapp', humanPaused: true, manualTakeover: true, assignedUserId: 'u-1' } };
@@ -220,10 +220,12 @@ const freshDir = () => {
       assert.strictEqual(store.get('21698000001').assignedUserId, 'u-1');
       store.update('21698000001', current => ({ ...current, lastCustomerAt: '2026-11-12T10:00:00.000Z', awaitingResponse: true }));
       store.flush();
-      store.flush();
-      assert.strictEqual(fs.readFileSync(jsonPath, 'utf8'), '', 'JSON non réécrit tant que l’état est incomplet');
+      // Mémoire = .bak + changements : JSON écrit, le .bak (fichier vide
+      // avant la 1re écriture) reste intact.
+      assert.strictEqual(JSON.parse(fs.readFileSync(jsonPath, 'utf8'))['21698000001'].humanPaused, true, 'JSON écrit avec le .bak et le changement');
       assert.deepStrictEqual(JSON.parse(fs.readFileSync(`${jsonPath}.bak`, 'utf8')), bak, '.bak intact');
-      assert.strictEqual(store.stats().jsonHeldForOverlay, true);
+      assert.strictEqual(store.stats().jsonHeldForOverlay, false);
+      assert.ok(fs.existsSync(`${jsonPath}.sqlite-overlay-pending`), 'reprise SQLite due enregistrée');
       // La base revient : reprise faite, JSON de nouveau écrit (avec le .bak).
       control.available = true;
       store.update('21698000002', current => ({ ...current, channel: 'whatsapp' }));
@@ -233,7 +235,89 @@ const freshDir = () => {
       assert.strictEqual(json['21698000001'].awaitingResponse, true);
       assert.ok(json['21698000002']);
       assert.strictEqual(store.stats().jsonHeldForOverlay, false);
+      assert.ok(!fs.existsSync(`${jsonPath}.sqlite-overlay-pending`), 'reprise faite : plus rien en attente');
       control.db.close();
+    });
+
+    await test('V6.46 — JSON vide + .bak + SQLite toujours indisponible : prise en main faite pendant la panne gardée après redémarrage (arrêt compris), puis fusionnée avec SQLite à son retour', () => {
+      const dir = freshDir();
+      const jsonPath = path.join(dir, 'conversation-state.json');
+      const dbPath = path.join(dir, 'mondeco.db');
+      // Base avant la panne : A plus récent que le .bak (affectation), B
+      // client connu sans prise en main.
+      const seed = createDb(dbPath);
+      seed.prepare('INSERT INTO conversation_states (contact, data, updated_at) VALUES (?, ?, ?)').run('A', JSON.stringify({ channel: 'whatsapp', humanPaused: true, manualTakeover: true, assignedUserId: 'u-9' }), Date.now() - 1000);
+      seed.prepare('INSERT INTO conversation_states (contact, data, updated_at) VALUES (?, ?, ?)').run('B', JSON.stringify({ channel: 'whatsapp', adReferral: { adId: '77' }, humanPaused: false }), Date.now() - 1000);
+      seed.close();
+      fs.writeFileSync(jsonPath, '');
+      fs.writeFileSync(`${jsonPath}.bak`, JSON.stringify({ A: { channel: 'whatsapp', humanPaused: true, manualTakeover: true, assignedUserId: 'u-1' } }));
+      const write = (target, data) => {
+        if (fs.existsSync(target) && fs.statSync(target).size) fs.copyFileSync(target, `${target}.bak`);
+        writeJsonAtomic(target, data);
+      };
+      const options = control => ({
+        jsonPath,
+        openDb: control.openDb,
+        writeJson: write,
+        writeDebounceMs: 60 * 60 * 1000,
+        jsonMinIntervalMs: 60 * 60 * 1000,
+        sqliteRetryMs: 0,
+        logger: quiet
+      });
+      // 1er démarrage : base illisible tout du long.
+      const down1 = switchableDb(dbPath);
+      const first = createConversationStateStore(options(down1));
+      first.update('B', current => ({ ...current, channel: 'whatsapp', lastCustomerAt: '2026-11-12T10:00:00.000Z' }));
+      first.update('B', current => ({ ...current, humanPaused: true, manualTakeover: true, assignedUserId: 'u-2' }));
+      first.flush(true); // arrêt (SIGTERM)
+      assert.notStrictEqual(fs.readFileSync(jsonPath, 'utf8'), '', 'JSON écrit à l’arrêt (avant : rien)');
+      assert.strictEqual(JSON.parse(fs.readFileSync(`${jsonPath}.bak`, 'utf8')).A.assignedUserId, 'u-1', '.bak intact');
+      // 2e démarrage, base toujours indisponible : la prise en main de B est là.
+      const down2 = switchableDb(dbPath);
+      const second = createConversationStateStore(options(down2));
+      assert.strictEqual(second.get('B').humanPaused, true, 'prise en main de B gardée (avant : perdue, l’IA répondait)');
+      assert.strictEqual(second.get('A').humanPaused, true);
+      // La base revient : lignes SQLite reprises, champs de B modifiés
+      // pendant la panne fusionnés avec sa ligne.
+      down2.available = true;
+      second.update('C', current => ({ ...current, channel: 'whatsapp' }));
+      assert.strictEqual(second.get('A').assignedUserId, 'u-9', 'ligne SQLite plus récente que le .bak reprise');
+      const b = second.get('B');
+      assert.strictEqual(b.humanPaused, true);
+      assert.strictEqual(b.assignedUserId, 'u-2');
+      assert.deepStrictEqual(b.adReferral, { adId: '77' }, 'champ de la ligne SQLite gardé');
+      second.flush(true);
+      assert.ok(!fs.existsSync(`${jsonPath}.sqlite-overlay-pending`));
+      assert.strictEqual(sqliteRow(down2.db, 'B').humanPaused, true);
+      down2.db.close();
+    });
+
+    await test('V6.46 — écriture SQLite refusée par un verrou passager, sans autre message ensuite : nouvel essai automatique, ligne écrite et /health de nouveau « ok »', async () => {
+      const dir = freshDir();
+      const dbPath = path.join(dir, 'mondeco.db');
+      createDb(dbPath).close();
+      const db = new Database(dbPath, { timeout: 0 });
+      const locker = new Database(dbPath);
+      const results = [];
+      const store = createConversationStateStore({
+        jsonPath: path.join(dir, 'conversation-state.json'),
+        openDb: () => db,
+        writeJson: writeJsonAtomic,
+        writeDebounceMs: 60 * 60 * 1000,
+        jsonMinIntervalMs: 60 * 60 * 1000,
+        writeRetryMs: 30,
+        onWriteResult: ok => results.push(ok),
+        logger: quiet
+      });
+      locker.exec('BEGIN EXCLUSIVE');
+      store.update('21698000011', current => ({ ...current, channel: 'whatsapp', humanPaused: true }));
+      assert.deepStrictEqual(results, [false], 'écriture refusée pendant le verrou');
+      locker.exec('COMMIT');
+      locker.close();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      assert.strictEqual(results[results.length - 1], true, 'écriture réussie au nouvel essai (avant : jamais retentée)');
+      assert.strictEqual(sqliteRow(db, '21698000011').humanPaused, true);
+      db.close();
     });
 
     await test('V6.46 — conversation absente du JSON, touchée pendant la panne SQLite → prise en main / affectation / pub de la ligne SQLite gardées', async () => {

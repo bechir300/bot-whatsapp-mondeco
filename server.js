@@ -664,14 +664,17 @@ function conversationChannel(contact, state = null) {
 }
 
 // V6.46 — `neededBytes` : taille de l'écriture refusée, pour que le dernier
-// recours de Storage Rescue ne libère que la place nécessaire.
+// recours de Storage Rescue ne libère que la place nécessaire. Sans taille
+// (médias, avatars, compteurs) ou pour un fichier de statistiques (`label`
+// = ai-usage.json…), le dernier recours ne s'exécute pas : seuls les
+// fichiers jetables sont supprimés.
 function withStorageRetry(operation, label = 'écriture', neededBytes = 0) {
   try {
     return operation();
   } catch (error) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
     console.warn(`🛟 ENOSPC (${label}) : tentative de libération automatique du Volume.`);
-    try { ensureStorageHeadroom({ neededBytes }); } catch {}
+    try { ensureStorageHeadroom({ neededBytes, target: label }); } catch {}
     return operation();
   }
 }
@@ -824,7 +827,7 @@ function appendTextLineSafely(filePath, text) {
 function appendJsonLine(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const line = `${JSON.stringify(value)}\n`;
-  withStorageRetry(() => appendTextLineSafely(filePath, line), path.basename(filePath));
+  withStorageRetry(() => appendTextLineSafely(filePath, line), path.basename(filePath), Buffer.byteLength(line, 'utf8'));
 }
 
 function appendPersistentConversationEvent(entry) {
@@ -876,7 +879,8 @@ function appendMessageIdLine(id) {
   fs.mkdirSync(path.dirname(MESSAGE_ID_INDEX_PATH), { recursive: true });
   withStorageRetry(
     () => appendTextLineSafely(MESSAGE_ID_INDEX_PATH, `${id}\n`),
-    'conversation-message-ids.jsonl'
+    'conversation-message-ids.jsonl',
+    Buffer.byteLength(`${id}\n`, 'utf8')
   );
 }
 
