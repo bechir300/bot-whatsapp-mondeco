@@ -6431,6 +6431,23 @@ router.post('/login', async (req, res) => {
   // empêcher le vrai titulaire de se connecter.
   if (attempt.delayMs > 0) {
     await new Promise(resolve => setTimeout(resolve, attempt.delayMs));
+
+    // V6.45 — Nouvelle vérification après l'attente : des tentatives
+    // envoyées en même temps passaient toutes le premier contrôle puis
+    // attendaient, et aucune n'était refusée (limites (e-mail, IP) et IP
+    // contournées). La suite du traitement est synchrone : le contrôle et
+    // l'enregistrement de l'échec ne peuvent plus être séparés.
+    const recheck = loginThrottle.check({ ip, email });
+
+    if (recheck.blocked) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(recheck.retryAfterMs / 1000))));
+      return res
+        .status(429)
+        .json({
+          error:
+            'Trop de tentatives. Réessayez dans quelques minutes.'
+        });
+    }
   }
 
   const users =
@@ -15693,6 +15710,10 @@ router.post(
         return res.status(400).json({ error: 'Session audio WebRTC invalide.' });
       }
 
+      // V6.45 — Même verrou que /commercial/send : un commercial n'appelle
+      // pas le client d'un collègue en service (409 CONVERSATION_LOCKED).
+      if (!acquireCommercialConversationReply(req, res, contact, 'whatsapp')) return;
+
       const result = await whatsappCallHandler({
         action: 'start',
         phone,
@@ -24150,6 +24171,33 @@ function messageDeletionActor(req) {
   };
 }
 
+// V6.45 — Notifications d'un message client masqué : l'aperçu (visible de
+// toute l'équipe dans la cloche) est remplacé par la mention de masquage,
+// à la lecture (la restauration le fait réapparaître).
+function hiddenMessageNotificationMasker() {
+  const byMessageId = new Map();
+  const byPreview = new Map();
+  try {
+    for (const record of loadMessageSoftDeletionsState().active.values()) {
+      if (safeString(record?.part) !== 'incoming') continue;
+      const contact = safeString(record?.contact);
+      if (!contact) continue;
+      if (safeString(record?.messageId)) byMessageId.set(`${contact}|${safeString(record.messageId)}`, record);
+      if (safeString(record?.preview)) byPreview.set(`${contact}|${safeString(record.preview)}`, record);
+    }
+  } catch {
+    return () => ({});
+  }
+  if (!byMessageId.size && !byPreview.size) return () => ({});
+  return item => {
+    const contact = safeString(item?.contact);
+    const record =
+      byMessageId.get(`${contact}|${safeString(item?.messageId)}`) ||
+      byPreview.get(`${contact}|${safeString(item?.preview)}`);
+    return record ? { preview: safeString(record.label) || 'Message masqué', attachmentPreview: '' } : {};
+  };
+}
+
 function entryPartPreview(entry = {}, part = 'incoming') {
   const text = safeString(part === 'incoming' ? entry?.incoming : entry?.reply);
   if (text) return text.slice(0, 1000);
@@ -24245,6 +24293,21 @@ router.delete('/api/conversations/:contact/messages/:purgeKey', requireCommercia
       deletedByRole: actor.userRole,
       label: messageSoftDeletionLabel(actor.userName, now)
     };
+    // V6.45 — Dernier message du client masqué : son texte disparaît aussi
+    // de l'état de la conversation (lastCustomerText, renvoyé aux
+    // commerciaux et repris par « IA répond aux non-lus »).
+    if (part === 'incoming') {
+      const original = safeString(target?.incoming);
+      try {
+        updateConversationStateAdmin(contact, current => {
+          if (!original || safeString(current?.lastCustomerText) !== original) return current;
+          record.maskedLastCustomerText = true;
+          return { ...current, lastCustomerText: record.label };
+        });
+      } catch (stateError) {
+        console.warn('⚠️ Masquage du dernier message client (état) :', stateError.message);
+      }
+    }
     saveMessageSoftDeletions([...loadMessageSoftDeletionsState().items, record]);
     resetInboxCachesAfterMessageChange();
     appendTeamActivity({
@@ -24295,6 +24358,19 @@ router.post('/api/message-deletions/:id/restore', requireAdmin, (req, res) => {
     saveMessageSoftDeletions(state.items.map(item =>
       item === record ? { ...item, restoredAt: now, restoredByUserId: actor.userId, restoredByName: actor.userName } : item
     ));
+    // V6.45 — Texte du dernier message client remis dans l'état s'il avait
+    // été masqué (et n'a pas été remplacé depuis par un nouveau message).
+    if (record.maskedLastCustomerText && safeString(record.contact)) {
+      try {
+        updateConversationStateAdmin(safeString(record.contact), current =>
+          safeString(current?.lastCustomerText) === safeString(record.label)
+            ? { ...current, lastCustomerText: safeString(record.preview) }
+            : current
+        );
+      } catch (stateError) {
+        console.warn('⚠️ Restauration du dernier message client (état) :', stateError.message);
+      }
+    }
     // Le texte d'origine n'est pas en mémoire : relecture des sources.
     resetInboxCachesAfterMessageChange();
     appendTeamActivity({
@@ -24790,10 +24866,12 @@ router.get(
 
       const pendingMessageMap = pendingMessageStatusByContact();
       const notificationChannelScope = plannedChannelSetForUser(req.user);
+      const hiddenPreview = hiddenMessageNotificationMasker();
       let messageItems = store.items
         .filter(item => notificationVisibleToUser(item, req.user, states))
         .map(item => ({
           ...item,
+          ...hiddenPreview(item),
           read: Array.isArray(item?.readBy) && item.readBy.includes(userKey),
           channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : safeString(item?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
           assignedTo: safeString(states[item?.contact]?.assignedTo || item?.assignedTo),

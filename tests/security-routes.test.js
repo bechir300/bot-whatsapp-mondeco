@@ -56,8 +56,11 @@ function tunisToday() {
     { contact: '21650000003', channel: 'whatsapp', time: minutesAgo(8), message_id: 'wamid.C1', incoming: 'Message à effacer définitivement', reply: '', action: 'ok' },
     { contact: 'instagram:17841400000000001', channel: 'instagram', external_contact: '17841400000000001', time: minutesAgo(7), reply_time: minutesAgo(7), message_id: 'mid.I1', incoming: 'Prix chaise Lina ?', reply: 'La chaise Lina est à 150 DT.', action: 'ai_reply' }
   ]));
+  fs.writeFileSync(path.join(dataDir, 'notifications.json'), JSON.stringify({ items: [
+    { id: 'notif-A1', contact: '21650000001', messageId: 'wamid.A1', channel: 'whatsapp', preview: 'Bonjour, prix du salon Diana ?', createdAt: minutesAgo(10), readBy: [] }
+  ] }));
   fs.writeFileSync(path.join(dataDir, 'conversation-state.json'), JSON.stringify({
-    '21650000001': { channel: 'whatsapp' },
+    '21650000001': { channel: 'whatsapp', lastCustomerText: 'Bonjour, prix du salon Diana ?' },
     '21650000002': { channel: 'whatsapp' },
     '21650000003': { channel: 'whatsapp' },
     'instagram:17841400000000001': { channel: 'instagram', externalContact: '17841400000000001' }
@@ -302,11 +305,21 @@ function tunisToday() {
       assert.strictEqual((await hide('21650000001', key, 'incoming', loginB.cookie)).status, 403, 'B : conversation de A');
       assert.strictEqual((await hide('21650000002', (await detail('21650000002')).entries[0].purgeKeys.incoming, 'incoming', loginA.cookie)).status, 403, 'A : conversation non affectée');
       assert.strictEqual((await hide('21650000001', key, 'incoming', loginA.cookie, true)).status, 403, 'définitif : administrateur seulement');
+      assert.ok((await app('GET', '/admin/api/notifications', loginA.cookie)).text.includes('prix du salon Diana'), 'notification visible avant masquage');
       const hidden = await hide('21650000001', key, 'incoming', loginA.cookie);
       assert.strictEqual(hidden.status, 200, hidden.text);
       assert.strictEqual(hidden.json.hidden, true);
       assert.strictEqual(hidden.json.permanentlyDeleted, false);
       assert.strictEqual((await hide('21650000001', key, 'incoming', loginA.cookie)).status, 409, 'déjà masqué');
+      // V6.45 — Le texte masqué ne reste ni dans l'état (lastCustomerText)
+      // ni dans l'aperçu des notifications.
+      for (const cookie of [admin.cookie, loginA.cookie]) {
+        const state = (await detail('21650000001', cookie)).state || {};
+        assert.ok(!String(state.lastCustomerText || '').includes('salon Diana'), JSON.stringify(state.lastCustomerText));
+        const notifications = await app('GET', '/admin/api/notifications', cookie);
+        assert.strictEqual(notifications.status, 200, notifications.text);
+        assert.ok(!notifications.text.includes('prix du salon Diana'), 'aperçu de notification masqué');
+      }
     });
 
     await test('message masqué : mention visible, conversation conservée, restauration par un administrateur', async () => {
@@ -335,6 +348,7 @@ function tunisToday() {
       entry = data.entries.find(item => item.message_id === 'wamid.A1');
       assert.strictEqual(entry.incoming, 'Bonjour, prix du salon Diana ?');
       assert.ok(!entry.softDeleted);
+      assert.strictEqual(data.state.lastCustomerText, 'Bonjour, prix du salon Diana ?', 'état restauré');
 
       const activityDir = path.join(dataDir, 'team-activity-days');
       const activity = fs.readdirSync(activityDir).map(name => fs.readFileSync(path.join(activityDir, name), 'utf8')).join('');
@@ -355,6 +369,16 @@ function tunisToday() {
       assert.strictEqual(after.state.assignedUserId, userB.id, 'affectation conservée');
       const log = fs.readFileSync(path.join(dataDir, 'conversation-log.json'), 'utf8');
       assert.ok(!log.includes('Message à effacer définitivement'), 'texte retiré du journal');
+    });
+
+    await test('appel WhatsApp : même verrou que les envois (client d’un collègue en service)', async () => {
+      // Client affecté à A (en service) : B ne peut ni lui écrire ni l'appeler.
+      await assign('21650000002', userA.id);
+      const send = await app('POST', '/admin/api/commercial/send', loginB.cookie, { contact: '21650000002', channel: 'whatsapp', text: 'Bonjour' });
+      assert.strictEqual(send.status, 409, send.text);
+      const call = await app('POST', '/admin/api/whatsapp/calls/start', loginB.cookie, { contact: '21650000002', sdp: 'v=0\r\n' });
+      assert.strictEqual(call.status, 409, call.text);
+      assert.strictEqual(call.json?.errorCode, 'CONVERSATION_LOCKED');
     });
 
     // ---------------- /api/ai-replies ----------------
@@ -392,6 +416,21 @@ function tunisToday() {
       assert.ok(Number(blocked.headers['retry-after']) > 0);
       const otherIp = await login('comc@mondeco.tn', 'Commercial-Pass-1', { 'x-forwarded-for': '198.51.100.20' });
       assert.strictEqual(otherIp.status, 200, otherIp.text);
+    });
+
+    await test('connexion : rafale simultanée pendant le délai progressif → limite (e-mail, IP) respectée', async () => {
+      const email = 'rafale@mondeco.tn';
+      for (let i = 1; i <= 8; i++) {
+        assert.strictEqual((await login(email, 'mauvais', { 'x-forwarded-for': `192.0.2.${i}` })).status, 401);
+      }
+      // Délai progressif actif pour cet e-mail : 20 tentatives simultanées
+      // depuis une autre adresse.
+      const burst = await Promise.all(Array.from({ length: 20 }, () =>
+        login(email, 'mauvais', { 'x-forwarded-for': '198.51.100.9' })
+      ));
+      const counts = burst.reduce((acc, res) => ({ ...acc, [res.status]: (acc[res.status] || 0) + 1 }), {});
+      assert.ok((counts[401] || 0) <= 8, JSON.stringify(counts));
+      assert.ok((counts[429] || 0) >= 12, JSON.stringify(counts));
     });
 
     console.log(`ALL ${passed} SECURITY ROUTE TESTS PASSED`);

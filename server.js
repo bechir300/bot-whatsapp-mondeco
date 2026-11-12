@@ -9071,9 +9071,10 @@ function validMetaWebhookSignature(req) {
 
 const unsignedWebhookWarningChannels = new Set();
 
-// V6.45 — Signature OBLIGATOIRE par défaut dès qu'un App Secret est
-// configuré (META_APP_SECRET ou secret par canal) : un webhook non signé,
-// mal signé ou d'un canal sans secret est refusé. Sans aucun secret, les
+// V6.45 — Signature OBLIGATOIRE par défaut pour chaque canal couvert par un
+// App Secret (META_APP_SECRET ou secret du canal) : un webhook non signé ou
+// mal signé est refusé. Un canal sans secret reste accepté (alerte au
+// démarrage qui le nomme). Sans aucun secret, les
 // webhooks restent acceptés (compatibilité) avec une alerte au démarrage.
 // WEBHOOK_SIGNATURE_REQUIRED=false = désactivation d'urgence explicite.
 const WEBHOOK_SIGNATURE_POLICY = resolveWebhookSignaturePolicy({
@@ -9100,9 +9101,11 @@ app.post('/webhook', (req, res) => {
   const signatureValid =
     validMetaWebhookSignature(req);
 
+  // V6.45 — Obligation décidée canal par canal (voir
+  // resolveWebhookSignaturePolicy).
   const signatureDecision = webhookSignatureDecision({
     signatureValid,
-    required: WEBHOOK_SIGNATURE_REQUIRED
+    required: WEBHOOK_SIGNATURE_POLICY.requiredForObject(object)
   });
 
   if (signatureDecision.reason === 'invalid') {

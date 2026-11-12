@@ -7325,7 +7325,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
       <div class="page-header">
         <div>
           <h2 class="page-title">Messages enregistrés</h2>
-          <p class="page-subtitle">
+          <p id="quickReplyManagerSubtitle" class="page-subtitle">
             Les réponses rapides proposées dans les conversations (/raccourci). Modifiez le texte puis appuyez sur Enregistrer.
           </p>
         </div>
@@ -14442,7 +14442,9 @@ function quickReplyManagerCard(item){
   const id = item ? item.id : 'new';
   const active = !item || item.active !== false;
   const readOnly = !quickReplyManagerCanEdit();
-  const lock = readOnly ? 'readonly' : '';
+  // V6.45 — Lecture seule : champs grisés (ils ressemblaient à des champs
+  // modifiables).
+  const lock = readOnly ? 'readonly aria-readonly="true" style="background:var(--bg);color:var(--muted);cursor:default"' : '';
   const author = item?.updatedByName || item?.createdByName || '';
 
   return `
@@ -14508,6 +14510,13 @@ function renderQuickReplyManager(){
 
 window.loadQuickRepliesPage = async function(){
   document.getElementById('quickReplyManagerNewBtn')?.classList.toggle('hidden', !quickReplyManagerCanEdit());
+  // V6.45 — Sous-titre adapté au rôle (lecture seule pour les commerciaux).
+  const subtitle = document.getElementById('quickReplyManagerSubtitle');
+  if(subtitle){
+    subtitle.textContent = quickReplyManagerCanEdit()
+      ? 'Les réponses rapides proposées dans les conversations (/raccourci). Modifiez le texte puis appuyez sur Enregistrer.'
+      : 'Lecture seule : seuls un administrateur, un responsable commercial ou un éditeur peuvent modifier ces messages. Utilisez-les dans les conversations avec /raccourci.';
+  }
   if(!quickReplyManagerCanEdit()) quickReplyManagerDraft = false;
   await loadQuickReplies({ force:true });
   renderQuickReplyManager();

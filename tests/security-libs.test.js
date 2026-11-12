@@ -35,6 +35,27 @@ const sign = (body, secret) => `sha256=${crypto.createHmac('sha256', secret).upd
     assert.strictEqual(resolveWebhookSignaturePolicy({ envValue: '', secrets: { whatsapp: 's' } }).required, true);
   });
 
+  await test('secret d’un seul canal (Instagram) : WhatsApp reste accepté, alerte nommant les canaux sans secret', () => {
+    const policy = resolveWebhookSignaturePolicy({ envValue: '', secrets: { meta: '', whatsapp: '', instagram: 'ig-only', facebook: '' } });
+    assert.strictEqual(policy.requiredForObject('instagram'), true);
+    assert.strictEqual(policy.requiredForObject('whatsapp_business_account'), false);
+    assert.strictEqual(policy.requiredForObject('page'), false);
+    // Canal sans secret : webhook accepté sans vérification (comme avant V6.45).
+    assert.strictEqual(webhookSignatureDecision({ signatureValid: null, required: policy.requiredForObject('whatsapp_business_account') }).accept, true);
+    // Canal avec secret : signature fausse ou absente refusée.
+    assert.strictEqual(webhookSignatureDecision({ signatureValid: false, required: policy.requiredForObject('instagram') }).accept, false);
+    const messages = webhookSignatureStartupMessages(policy);
+    assert.ok(messages.some(message => message.level === 'error' && /whatsapp, facebook/.test(message.text)), JSON.stringify(messages));
+    // META_APP_SECRET couvre tous les canaux.
+    const meta = resolveWebhookSignaturePolicy({ envValue: '', secrets: { meta: 's', instagram: 'ig' } });
+    assert.deepStrictEqual(meta.uncoveredChannels, []);
+    assert.strictEqual(meta.requiredForObject('whatsapp_business_account'), true);
+    // Obligation explicite : canal sans secret refusé, et annoncé au démarrage.
+    const strict = resolveWebhookSignaturePolicy({ envValue: 'true', secrets: { instagram: 'ig' } });
+    assert.strictEqual(strict.requiredForObject('whatsapp_business_account'), true);
+    assert.ok(webhookSignatureStartupMessages(strict).some(message => message.level === 'error' && /refusés/.test(message.text)));
+  });
+
   await test('sans aucun secret : accepté (compatibilité) avec alerte de démarrage', () => {
     const policy = resolveWebhookSignaturePolicy({ envValue: '', secrets: { meta: '', whatsapp: '' } });
     assert.strictEqual(policy.required, false);
