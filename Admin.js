@@ -24620,6 +24620,16 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
 let fastPendingStatusCache = null;
 let fastPendingStatusCacheAt = 0;
 const FAST_PENDING_STATUS_CACHE_MS = 30000;
+// V6.46 — Nombre « à répondre » jamais plus ancien que les notifications
+// renvoyées avec lui : une notification plus récente que le cache le fait
+// recalculer. Avant, le premier message après « tout traité » arrivait avec
+// « 0 en attente » (cache de 30 s) et la bulle retirait aussitôt son alerte.
+function invalidatePendingStatusCacheBefore(eventMs) {
+  if (fastPendingStatusCache && Number.isFinite(eventMs) && eventMs >= fastPendingStatusCacheAt) {
+    fastPendingStatusCache = null;
+  }
+}
+
 function fastPendingMessageStatusFromStates() {
   if (fastPendingStatusCache && (Date.now() - fastPendingStatusCacheAt) < FAST_PENDING_STATUS_CACHE_MS) {
     return fastPendingStatusCache;
@@ -27094,6 +27104,13 @@ router.get(
       const filter = safeString(req.query?.filter).toLowerCase();
       const sinceMs = Date.parse(safeString(req.query?.since));
       const store = loadNotificationsStoreReadOnly();
+
+      let newestNotificationMs = NaN;
+      for (const item of store.items) {
+        const ms = Date.parse(item?.createdAt || '');
+        if (Number.isFinite(ms) && !(ms <= newestNotificationMs)) newestNotificationMs = ms;
+      }
+      invalidatePendingStatusCacheBefore(newestNotificationMs);
 
       const pendingMessageMap = pendingMessageStatusByContact();
       const notificationChannelScope = plannedChannelSetForUser(req.user);

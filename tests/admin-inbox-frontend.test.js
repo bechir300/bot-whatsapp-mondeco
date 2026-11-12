@@ -12,6 +12,7 @@
 // commerciaux pour la file commune, brouillon d'un envoi échoué gardé
 // dans SA conversation, badges produits échappés.
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
@@ -267,12 +268,88 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
     // Un commentaire s'ajoute au total.
     ctx.showFloatingBubble({ id: 'c1', kind: 'comment', commentKey: 'k1', preview: 'Prix ?' });
     assert.strictEqual(count(), '16');
-    // Tout est résolu : le résumé et les alertes de conversation disparaissent.
+    // Tout est résolu : le résumé disparaît ; l'alerte de conversation est
+    // retirée quand la liste relue confirme qu'elle n'attend plus de réponse.
     ctx.showFloatingBubble({ id: 'm2', kind: 'message', contact: '21641999777', preview: 'x' });
     ctx.syncFloatingBubbleWithPending(0);
     assert.ok(!ctx.mondecoBubbleItems.has('summary'), 'avant : « 20 » avec 0 en attente');
+    assert.ok(ctx.mondecoBubbleItems.has('contact:21641999777'), 'jamais retirée sur le seul nombre du serveur');
+    ctx.conversations = [{ contact: '21641999777', pendingReply: false }];
+    ctx.syncFloatingBubbleWithPending(0, { listFresh: true });
     assert.ok(!ctx.mondecoBubbleItems.has('contact:21641999777'));
     assert.deepStrictEqual([...ctx.mondecoBubbleItems.keys()], ['comment:k1']);
+  });
+
+  await test('V6.46 — bulle : 1er message après « tout traité » gardé même si le nombre « à répondre » reçu date d’avant (admin et commercial) ; info-bulle du résumé sans « (+ N autres) »', async () => {
+    for (const role of ['admin', 'commercial']) {
+      for (const onInbox of [false, true]) {
+        const container = fakeElement({ querySelector: () => fakeElement() });
+        let response = null;
+        const lists = [];
+        const ctx = createContext({
+          currentUser: { role, id: 'u1' },
+          conversations: [],
+          API: '/admin/api',
+          BACKGROUND_REQUEST_TIMEOUT_MS: 15000,
+          conversationNotificationCursor: new Date(Date.now() - 5000).toISOString(),
+          conversationNotificationUnread: 0,
+          interactionPendingCounts: { messages: 0 },
+          lastPendingMessagesCount: 0,
+          lastNewPendingAlerts: undefined,
+          notificationSeenIds: new Set(),
+          inboxInteractionMode: 'messages',
+          conversationSendInProgress: false,
+          apiFetch: async () => response,
+          updateNotificationBadges() {},
+          seenTaskNotificationIds: () => new Set(),
+          rememberTaskNotification() {},
+          showClientBrowserNotification() {},
+          showClientBrowserNotificationSummary() {},
+          loadSocialComments: async () => {},
+          loadConversations: async () => { lists.push(1); },
+          softRefreshSelectedConversation() {},
+          loadNotificationPanel: async () => {}
+        });
+        ctx.elements.mondecoBubbleContainer = container;
+        ctx.elements.mondecoSingleBubble = fakeElement();
+        ctx.elements.notificationPanelBackdrop = fakeElement({ classList: { contains: () => true } });
+        ctx.elements['page-conversations'] = fakeElement();
+        if (onInbox) ctx.elements['page-conversations'].classList.add('active');
+        ctx.ResizeObserver = undefined;
+        load(ctx, ['escapeHtml', 'floatingBubbleKey', 'showFloatingBubble', 'dismissFloatingBubbleContact', 'syncFloatingBubbleWithPending', 'updateFloatingBubbleLayout', 'floatingBubbleIdentity', 'renderMondecoBubble', 'openFloatingBubbleItem', 'pollCommercialNotificationsOnce'],
+          'var mondecoBubbleItems = new Map(); var floatingBubbleResizeObserver = null; const NOTIFICATION_REPLAY_MAX_AGE_MS = 10 * 60 * 1000;');
+        const label = `${role}${onInbox ? ' (Inbox)' : ' (tableau de bord)'}`;
+        // Le client écrit : l'alerte arrive avec un nombre « à répondre » encore à 0.
+        response = { events: [{ id: `e-${role}-${onInbox}`, kind: 'commercial', urgent: true, contact: '21650002222', preview: 'Bonjour' }], pendingCounts: { messages: 0 }, serverTime: new Date().toISOString() };
+        ctx.conversations = [{ contact: '21650002222', pendingReply: true }];
+        await ctx.pollCommercialNotificationsOnce();
+        assert.ok(ctx.mondecoBubbleItems.has('contact:21650002222'), `${label} : alerte gardée (avant : retirée aussitôt)`);
+        assert.ok(container.innerHTML.includes('mondeco-bubble-round'), label);
+        // Relève suivante : le nombre est à jour.
+        response = { events: [], pendingCounts: { messages: 1 }, serverTime: new Date().toISOString() };
+        await ctx.pollCommercialNotificationsOnce();
+        assert.ok(ctx.mondecoBubbleItems.has('contact:21650002222'), label);
+        // Répondue ailleurs : 0 en attente, la liste relue la retire.
+        ctx.conversations = [{ contact: '21650002222', pendingReply: false }];
+        response = { events: [], pendingCounts: { messages: 0 }, serverTime: new Date().toISOString() };
+        await ctx.pollCommercialNotificationsOnce();
+        assert.ok(lists.length >= 1, `${label} : liste relue`);
+        assert.ok(!ctx.mondecoBubbleItems.has('contact:21650002222'), `${label} : retirée après confirmation`);
+      }
+    }
+
+    // Info-bulle du résumé du login : le total seul.
+    const container = fakeElement({ querySelector: () => fakeElement() });
+    const ctx = createContext({ conversations: [] });
+    ctx.elements.mondecoBubbleContainer = container;
+    ctx.elements.mondecoSingleBubble = fakeElement();
+    ctx.ResizeObserver = undefined;
+    load(ctx, ['escapeHtml', 'floatingBubbleKey', 'showFloatingBubble', 'dismissFloatingBubbleContact', 'syncFloatingBubbleWithPending', 'updateFloatingBubbleLayout', 'floatingBubbleIdentity', 'renderMondecoBubble', 'openFloatingBubbleItem'],
+      'var mondecoBubbleItems = new Map(); var floatingBubbleResizeObserver = null;');
+    ctx.showFloatingBubble({ kind: 'summary', id: 'summary', count: 5, preview: '5 conversations à répondre' });
+    assert.ok(container.innerHTML.includes('title="Nouveau message : 5 conversations à répondre"'), container.innerHTML);
+    assert.ok(!container.innerHTML.includes('autres'), 'avant : « (+ 4 autres) »');
+    assert.ok(container.innerHTML.includes('aria-label="Nouveau message : 5 conversations à répondre"'));
   });
 
   // ================= Alertes au login et file commune =================
@@ -306,7 +383,7 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
     ctx.elements.notificationPanelBackdrop = fakeElement({ classList: { contains: () => true } });
     ctx.elements['page-conversations'] = fakeElement();
     ctx.elements['page-conversations'].classList.add('active');
-    load(ctx, ['pollCommercialNotificationsOnce'], 'const NOTIFICATION_REPLAY_MAX_AGE_MS = 10 * 60 * 1000;');
+    load(ctx, ['pollCommercialNotificationsOnce'], 'const NOTIFICATION_REPLAY_MAX_AGE_MS = 10 * 60 * 1000; var mondecoBubbleItems = new Map();');
     return { ctx, calls };
   }
 
@@ -484,6 +561,30 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
       assert.strictEqual(product.overrides, undefined);
       assert.strictEqual(product.syncSource, 'woocommerce');
       assert.strictEqual(product.price, '3290');
+    });
+
+    await test('V6.46 — /notifications : le 1er message après « tout traité » arrive avec un nombre « à répondre » à jour (plus le cache de 30 s)', async () => {
+      const first = await request('GET', '/admin/api/notifications', { cookie });
+      assert.strictEqual(first.status, 200);
+      const before = Number((await first.json()).pendingCounts?.messages || 0);
+      const since = new Date(Date.now() - 1000).toISOString();
+      const from = '21650002222';
+      const payload = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field: 'messages', value: {
+        messaging_product: 'whatsapp', metadata: { phone_number_id: '999' },
+        contacts: [{ wa_id: from, profile: { name: 'Client Bulle' } }],
+        messages: [{ from, id: `wamid.BUBBLE${Date.now()}`, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'Bonjour, je voudrais parler à un conseiller' } }]
+      } }] }] });
+      const signature = `sha256=${crypto.createHmac('sha256', 'x').update(payload).digest('hex')}`;
+      const hook = await fetch(`${base}/webhook`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature }, body: payload });
+      assert.strictEqual(hook.status, 200);
+      let data = null;
+      for (let i = 0; i < 60; i++) {
+        data = await (await request('GET', `/admin/api/notifications?since=${encodeURIComponent(since)}`, { cookie })).json();
+        if ((data.events || []).some(event => event.contact === from)) break;
+        await wait(150);
+      }
+      assert.ok((data.events || []).some(event => event.contact === from), `aucune alerte : ${JSON.stringify(data.events)}\n${serverLog.slice(-1500)}`);
+      assert.strictEqual(Number(data.pendingCounts?.messages || 0), before + 1, 'avant : 0 (nombre mis en cache avant le message)');
     });
 
     console.log(`ALL ${passed} ADMIN INBOX FRONTEND TESTS PASSED`);

@@ -17459,14 +17459,18 @@ function syncFloatingBubbleWithPending(pendingNow,{listFresh=false}={}){
       changed=true;
     }
   }
+  // V6.46 — Une alerte de conversation n'est retirée que sur une liste
+  // relue qui confirme qu'elle n'attend plus de réponse (ou, à 0 en attente,
+  // qu'elle n'y figure plus) : jamais sur le seul nombre du serveur, qui
+  // pouvait dater d'avant le message de l'alerte (le 1er message après
+  // « tout traité » disparaissait aussitôt de la bulle).
+  if(!pending&&mondecoBubbleItems.delete('pending')) changed=true;
   const listed=listFresh&&Array.isArray(conversations)?new Map(conversations.map(item=>[String(item?.contact||''),item])):null;
-  for(const key of [...mondecoBubbleItems.keys()]){
-    const conversationKey=key.startsWith('contact:')||key==='pending';
-    if(!conversationKey) continue;
-    if(!pending){mondecoBubbleItems.delete(key);changed=true;continue;}
-    if(listed&&key.startsWith('contact:')){
+  if(listed){
+    for(const key of [...mondecoBubbleItems.keys()]){
+      if(!key.startsWith('contact:')) continue;
       const item=listed.get(key.slice('contact:'.length));
-      if(item&&item.pendingReply!==true){mondecoBubbleItems.delete(key);changed=true;}
+      if(item?item.pendingReply!==true:!pending){mondecoBubbleItems.delete(key);changed=true;}
     }
   }
   if(changed) renderMondecoBubble();
@@ -17560,7 +17564,9 @@ function renderMondecoBubble(){
     ? Math.max(Number(summaryItem.count||0), conversationCount)+otherCount
     : mondecoBubbleItems.size;
   const countLabel = total>99 ? '99+' : String(total);
-  const title = `${identity||'Nouveau message'} : ${preview}${total>1?` (+ ${total-1} autre${total>2?'s':''})`:''}`;
+  // V6.46 — Le résumé annonce déjà le total : pas de « (+ N autres) » en
+  // plus (« 5 conversations à répondre (+ 4 autres) » laissait croire à 9).
+  const title = `${identity||'Nouveau message'} : ${preview}${kind!=='summary'&&total>1?` (+ ${total-1} autre${total>2?'s':''})`:''}`;
 
   // V6.36.43 — Bulle réduite à l'essentiel : un rond cliquable (avatar ou
   // icône + compteur). Le clic ouvre la bonne conversation.
@@ -17910,7 +17916,11 @@ async function pollCommercialNotificationsOnce(){
   // le seul signal d'une nouvelle conversation non affectée pour un
   // commercial (alerte nominative calculée sur la liste, voir
   // notifyNewPendingConversations ; aussi hors de la page Inbox).
-  const reloadList=!conversationSendInProgress&&messagesMode&&(inboxActive?(hasMessageEvent||pendingChanged):(isCommercial&&pendingIncreased));
+  // V6.46 — Plus rien « à répondre » alors que la bulle signale encore des
+  // conversations : la liste relue confirme lesquelles retirer.
+  const conversationAlertsShown=[...mondecoBubbleItems.keys()].some(key=>key.startsWith('contact:'));
+  const pendingCleared=pendingChanged&&!pendingNow&&conversationAlertsShown;
+  const reloadList=!conversationSendInProgress&&messagesMode&&(inboxActive?(hasMessageEvent||pendingChanged):((isCommercial&&pendingIncreased)||pendingCleared));
   lastNewPendingAlerts=undefined;
   if(reloadList){
     const listLoaded=await loadConversations({background:true}).then(()=>true).catch(error=>{console.debug('Liste conversations :',error.message);return false;});
