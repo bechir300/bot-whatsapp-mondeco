@@ -8986,7 +8986,11 @@ function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLa
     });
     document.addEventListener('keydown',onKey,true);
     document.body.appendChild(backdrop);
-    (field||backdrop.querySelector('[data-ui-dialog="ok"]')).focus();
+    // V6.46 — Dialogue destructif : le focus va sur « Annuler » (avant :
+    // sur « Confirmer », une seule touche Entrée — ou sa répétition après le
+    // choix au clavier dans le menu « ⋯ » — confirmait une suppression).
+    const initialFocus=field||(danger&&cancelButton?cancelButton:backdrop.querySelector('[data-ui-dialog="ok"]'));
+    initialFocus.focus();
     if(field) field.select();
   });
 }
@@ -10135,7 +10139,9 @@ async function revertProductOverride(id, field){
   );
   if(!confirmed) return;
   try{
-    await updateProductFields(id, { [field]:siteAvailability });
+    // V6.46 — revertOverride : la correction est retirée même si la valeur
+    // affichée est déjà celle du site (ancienne donnée incohérente).
+    await updateProductFields(id, { [field]:siteAvailability, revertOverride:field });
     uiToast(`« ${label} » rendu au site pour ${product.name}.`);
     await loadProducts();
   }catch(error){
@@ -12773,10 +12779,13 @@ function conversationAiPauseInfo(state = {}){
 const conversationReadWatermarks = new Map();
 const RECEIPT_CLOCK_TOLERANCE_MS = 3000;
 function conversationReceiptStatus(contact, state = {}){
+  // V6.46 — Envois réels seulement : lastAnsweredAt est aussi écrit par le
+  // rattrapage « répondu », la résolution groupée et la réparation des
+  // lectures sans aucun envoi ; il affichait « ✓ Envoyé » alors que le
+  // dernier vrai message avait déjà été vu par le client.
   const lastOutgoingMs = Math.max(
     Date.parse(state?.lastHumanAt || '') || 0,
     Date.parse(state?.lastBotAt || '') || 0,
-    Date.parse(state?.lastAnsweredAt || '') || 0,
     Date.parse(state?.lastBusinessAt || '') || 0
   );
   if(!lastOutgoingMs) return null;
@@ -13453,14 +13462,30 @@ function formatWhatsAppWindowRemaining(ms){
   return `${minutes} min`;
 }
 
-// V6.46 — Temps restant calculé EN DIRECT à partir de expiresAt (avant :
-// figé à l'ouverture de la conversation, « encore 1 min » restait affiché
-// après la fermeture de la fenêtre).
+// V6.46 — Temps restant calculé EN DIRECT (avant : figé à l'ouverture de
+// la conversation, « encore 1 min » restait affiché après la fermeture de
+// la fenêtre). Référence : le temps restant donné par le SERVEUR
+// (remainingMs), décompté depuis sa réception avec l'horloge monotone du
+// navigateur (performance.now) — jamais l'heure du PC : un poste avancé
+// d'une heure verrouillait le composer pendant la dernière heure de chaque
+// fenêtre. expiresAt (heure du PC) seulement sans remainingMs.
+var whatsappWindowReceivedAt=new WeakMap();
+function whatsappWindowMonotonicNow(){
+  return (typeof performance!=='undefined'&&performance&&typeof performance.now==='function')
+    ? performance.now()
+    : Date.now();
+}
 function whatsappWindowRemainingMs(info = {}){
+  const rawRemaining=info?.remainingMs;
+  const remaining=Number(rawRemaining);
+  if(info&&typeof info==='object'&&rawRemaining!==null&&rawRemaining!==undefined&&rawRemaining!==''&&Number.isFinite(remaining)){
+    const now=whatsappWindowMonotonicNow();
+    if(!whatsappWindowReceivedAt.has(info)) whatsappWindowReceivedAt.set(info,now);
+    return remaining-(now-whatsappWindowReceivedAt.get(info));
+  }
   const expiresMs=Date.parse(String(info?.expiresAt||''));
   if(Number.isFinite(expiresMs)) return expiresMs-Date.now();
-  const remaining=Number(info?.remainingMs);
-  return Number.isFinite(remaining) ? remaining : null;
+  return null;
 }
 
 function whatsappWindowStatusText(info = {}){
@@ -17418,10 +17443,40 @@ function dismissFloatingBubbleContact(contact){
   if(mondecoBubbleItems.delete(`contact:${contact}`)) renderMondecoBubble();
 }
 
-// Position : conversation ouverte sur grand écran → coin bas droit du fil,
-// juste au-dessus du composer (le fil reçoit un espace vide en bas pour que
-// le dernier message ne soit jamais caché) ; sur mobile, masquée pendant
-// une conversation (CSS) ; ailleurs, coin bas droit de l'écran.
+// V6.46 — Bulle alignée sur le nombre « à répondre » du serveur (chaque
+// relève) : le résumé du login suit ce nombre et disparaît à 0 ; plus aucune
+// conversation en attente → alertes de conversation retirées ; après une
+// relecture de la liste, une conversation qui n'attend plus de réponse est
+// retirée. Avant, le résumé restait figé (« 20 » avec 0 en attente).
+function syncFloatingBubbleWithPending(pendingNow,{listFresh=false}={}){
+  const pending=Math.max(0,Number(pendingNow||0));
+  let changed=false;
+  const summary=mondecoBubbleItems.get('summary');
+  if(summary){
+    if(!pending){mondecoBubbleItems.delete('summary');changed=true;}
+    else if(Number(summary.count||0)!==pending){
+      mondecoBubbleItems.set('summary',{...summary,count:pending,preview:`${pending} conversation${pending>1?'s':''} à répondre`});
+      changed=true;
+    }
+  }
+  const listed=listFresh&&Array.isArray(conversations)?new Map(conversations.map(item=>[String(item?.contact||''),item])):null;
+  for(const key of [...mondecoBubbleItems.keys()]){
+    const conversationKey=key.startsWith('contact:')||key==='pending';
+    if(!conversationKey) continue;
+    if(!pending){mondecoBubbleItems.delete(key);changed=true;continue;}
+    if(listed&&key.startsWith('contact:')){
+      const item=listed.get(key.slice('contact:'.length));
+      if(item&&item.pendingReply!==true){mondecoBubbleItems.delete(key);changed=true;}
+    }
+  }
+  if(changed) renderMondecoBubble();
+  return changed;
+}
+
+// Position : coin bas droit de l'écran. V6.46 — Conversation ouverte (grand
+// écran comme mobile) : bulle masquée (CSS) ; elle recouvrait les messages
+// envoyés et leur bouton « ⋯ » dès que le fil défilait. Le badge de la
+// navigation, la liste et la notification système restent les alertes.
 function updateFloatingBubbleLayout(){
   const container=document.getElementById('mondecoBubbleContainer');
   if(!container) return;
@@ -17440,7 +17495,8 @@ function updateFloatingBubbleLayout(){
   }
   container.style.setProperty('--mondeco-composer-h',`${bottom}px`);
   container.style.setProperty('--mondeco-bubble-right',`${right}px`);
-  document.body.classList.toggle('mondeco-bubble-in-thread',Boolean(bottom&&mondecoBubbleItems.size));
+  // V6.46 — Plus de bulle dans le fil : aucun espace réservé en bas.
+  document.body.classList.remove('mondeco-bubble-in-thread');
   if(!floatingBubbleResizeObserver&&typeof ResizeObserver==='function'){
     const host=document.getElementById('inboxComposerHost');
     if(host){
@@ -17490,13 +17546,21 @@ function renderMondecoBubble(){
   const identity = floatingBubbleIdentity(event);
   const preview = event?.preview||'Nouveau message client';
   const initials = kind==='summary'||kind==='pending'||!identity ? '💬' : identity.trim().slice(0,2).toUpperCase();
-  // Nombre de conversations (ou d'éléments) en attente dans la bulle ;
-  // un résumé porte son propre total.
-  const total = kind==='summary'
-    ? Math.max(Number(event?.count||0), mondecoBubbleItems.size)
+  // Nombre de conversations (ou d'éléments) en attente dans la bulle.
+  // V6.46 — Le résumé (nombre « à répondre » du serveur) compte quelle que
+  // soit l'alerte affichée ; les conversations signalées une à une en font
+  // partie (maximum, pas somme) ; commentaires et tâches s'ajoutent. Avant,
+  // le résumé n'était compté que s'il était la dernière alerte : « 15 »
+  // devenait « 2 » à l'arrivée d'un message.
+  const summaryItem = mondecoBubbleItems.get('summary');
+  const keys = [...mondecoBubbleItems.keys()];
+  const conversationCount = keys.filter(itemKey=>itemKey.startsWith('contact:')||itemKey==='pending').length;
+  const otherCount = keys.length-conversationCount-(summaryItem?1:0);
+  const total = summaryItem
+    ? Math.max(Number(summaryItem.count||0), conversationCount)+otherCount
     : mondecoBubbleItems.size;
   const countLabel = total>99 ? '99+' : String(total);
-  const title = `${identity||'Nouveau message'} : ${preview}${mondecoBubbleItems.size>1?` (+ ${mondecoBubbleItems.size-1} autre${mondecoBubbleItems.size>2?'s':''})`:''}`;
+  const title = `${identity||'Nouveau message'} : ${preview}${total>1?` (+ ${total-1} autre${total>2?'s':''})`:''}`;
 
   // V6.36.43 — Bulle réduite à l'essentiel : un rond cliquable (avatar ou
   // icône + compteur). Le clic ouvre la bonne conversation.
@@ -17831,6 +17895,8 @@ async function pollCommercialNotificationsOnce(){
   if(stale&&pendingNow>0){
     showFloatingBubble({kind:'summary',id:'summary',count:pendingNow,preview:`${pendingNow} conversation${pendingNow>1?'s':''} à répondre`});
   }
+  // V6.46 — Résumé et alertes de conversation alignés sur le serveur.
+  syncFloatingBubbleWithPending(pendingNow);
 
   const pendingChanged=!stale&&previousPending!==null&&pendingNow!==previousPending;
   const pendingIncreased=pendingChanged&&pendingNow>previousPending;
@@ -17847,8 +17913,10 @@ async function pollCommercialNotificationsOnce(){
   const reloadList=!conversationSendInProgress&&messagesMode&&(inboxActive?(hasMessageEvent||pendingChanged):(isCommercial&&pendingIncreased));
   lastNewPendingAlerts=undefined;
   if(reloadList){
-    await loadConversations({background:true}).catch(error=>console.debug('Liste conversations :',error.message));
+    const listLoaded=await loadConversations({background:true}).then(()=>true).catch(error=>{console.debug('Liste conversations :',error.message);return false;});
     if(inboxActive&&selectedConversationContact&&fresh.some(e=>e?.contact===selectedConversationContact)) softRefreshSelectedConversation();
+    // V6.46 — Liste à jour : conversations déjà traitées retirées de la bulle.
+    if(listLoaded) syncFloatingBubbleWithPending(pendingNow,{listFresh:true});
   }
   if(isCommercial&&pendingIncreased&&!hasMessageEvent&&(lastNewPendingAlerts===undefined||lastNewPendingAlerts===null)){
     // Liste indisponible (onglet Commentaires, premier chargement) : alerte
@@ -21576,9 +21644,9 @@ body.mondeco-debug #mondecoDebugPanel{display:block !important}
 #mondecoBubbleContainer:empty{display:none}
 body.mondeco-bubble-in-thread #page-conversations #conversationDetail{padding-bottom:84px !important}
 .mondeco-bubble-count{min-width:20px;height:20px;border-radius:10px;font-size:11px}
-@media (max-width:900px){
-  body:has(#page-conversations.active.has-selection) #mondecoBubbleContainer{display:none !important}
-}
+/* V6.46 — Masquée pendant une conversation ouverte, aussi sur grand écran
+   (elle couvrait les messages envoyés et leur menu « ⋯ » au défilement). */
+body:has(#page-conversations.active.has-selection) #mondecoBubbleContainer{display:none !important}
 
 .ui-toast-host{
   position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top,0px));transform:translateX(-50%);
@@ -21643,12 +21711,17 @@ body.mondeco-bubble-in-thread #page-conversations #conversationDetail{padding-bo
   /* Le nom n'apparaît qu'une fois (la règle générale display:block
      réaffichait la version bureau). */
   #page-conversations .inbox-header-name.inbox-header-name-desktop{display:none !important}
+  /* V6.46 — Séparateur AVANT chaque segment, dans une bande de 14 px :
+     la bande de début de ligne est rognée (marge négative + clip-path), il
+     ne reste donc jamais de « • » en fin ni en début de ligne quand le
+     sous-titre passe à la ligne. */
   #page-conversations .inbox-header-sub-mobile{
     display:flex !important;flex-wrap:wrap !important;row-gap:1px !important;
     white-space:normal !important;overflow:visible !important;text-overflow:clip !important;
+    margin-left:-14px !important;clip-path:inset(0 0 0 14px);
   }
   #page-conversations .inbox-header-sub-mobile .inbox-header-sub-part{white-space:nowrap}
-  #page-conversations .inbox-header-sub-mobile .inbox-header-sub-part:not(:last-child)::after{content:"•";margin:0 4px;opacity:.6}
+  #page-conversations .inbox-header-sub-mobile .inbox-header-sub-part::before{content:"•";display:inline-block;width:14px;text-align:center;opacity:.6}
   #page-conversations .inbox-header-mobile-status{flex-wrap:wrap !important;row-gap:3px !important;overflow:visible !important}
   #page-conversations .inbox-header-mobile-chip{max-width:100% !important}
   #page-conversations .inbox-header-mobile-chip.alert{background:#FFF0EF !important;color:#B42318 !important}

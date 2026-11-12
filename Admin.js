@@ -15585,6 +15585,31 @@ router.put(
         }
       }
 
+      // V6.46 — « Revenir à la valeur du site » : correction retirée
+      // explicitement (même si la valeur envoyée ne change rien, ex.
+      // disponibilité déjà égale à celle du site). Prix et nom exclus.
+      const revertField =
+        safeString(req.body?.revertOverride);
+
+      if (
+        revertField &&
+        !['name', 'category', 'price', 'promoPrice'].includes(revertField) &&
+        updated.overrides &&
+        Object.prototype.hasOwnProperty.call(updated.overrides, revertField)
+      ) {
+        const remaining = {
+          ...updated.overrides
+        };
+
+        delete remaining[revertField];
+
+        if (Object.keys(remaining).length) {
+          updated.overrides = remaining;
+        } else {
+          delete updated.overrides;
+        }
+      }
+
       // V6.46 — « Pas un doublon » (page Produits) : la fiche manuelle
       // n'est plus repérée comme doublon d'une fiche du site
       // (flagManualWooDuplicates l'ignore). Champ facultatif : les
@@ -27059,6 +27084,9 @@ router.get(
       for (const [contact, state] of Object.entries(states)) {
         if (req.user?.role === 'commercial' && safeString(state?.assignedUserId) !== safeString(req.user.id)) continue;
         if (notificationChannelScope && !channelScopeAllowsMessage(notificationChannelScope, state?.channel || (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp'))) continue;
+        // V6.46 — Conversation résolue (ex. résolution groupée) : plus
+        // d'alerte de délai (elle revenait dans la bulle d'alertes).
+        if (state?.resolved === true) continue;
         const sla = computeLiveSla(state);
         if (!sla || !['pending','late'].includes(sla.status)) continue;
         const remaining = Number(sla.remainingMs);

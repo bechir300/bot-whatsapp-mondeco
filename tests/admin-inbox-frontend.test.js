@@ -176,6 +176,10 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
     assert.ok(failed.text.includes('131026'));
     // Échec ancien puis nouvel envoi distribué : plus d'alerte.
     assert.strictEqual(ctx.conversationReceiptStatus('c2', { lastHumanAt: t(3), lastDeliveredAt: t(2), lastDeliveryFailedAt: t(9) }).kind, 'delivered');
+    // V6.46 — Marqueur de rattrapage (lastAnsweredAt) sans envoi réel : le
+    // dernier vrai message, déjà lu, reste « vu ».
+    assert.strictEqual(ctx.conversationReceiptStatus('c3', { lastHumanAt: t(80), lastReadByCustomerAt: t(74), lastAnsweredAt: t(1) }).kind, 'seen');
+    assert.strictEqual(ctx.conversationReceiptStatus('c4', { lastAnsweredAt: t(1) }), null, 'aucun envoi réel : pas d’accusé');
   });
 
   // ================= Fil : fusion sans perte d'historique =================
@@ -198,14 +202,23 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
   });
 
   // ================= Fenêtre WhatsApp en direct =================
-  await test('fenêtre WhatsApp : temps restant calculé en direct, fermeture détectée sans le serveur', async () => {
-    const ctx = load(createContext(), ['escapeHtml', 'formatWhatsAppWindowRemaining', 'whatsappWindowRemainingMs', 'whatsappWindowIsExpired', 'whatsappWindowStatusText', 'whatsappWindowStatusHtml']);
-    const open = { applicable: true, known: true, expired: false, remainingMs: 109333, expiresAt: new Date(Date.now() + 2 * 3600000 + 5 * 60000).toISOString() };
+  await test('fenêtre WhatsApp : temps restant du serveur décompté en direct (horloge monotone), fermeture détectée sans le serveur', async () => {
+    let monotonic = 1000;
+    const ctx = load(createContext({ performance: { now: () => monotonic } }), ['escapeHtml', 'formatWhatsAppWindowRemaining', 'whatsappWindowMonotonicNow', 'whatsappWindowRemainingMs', 'whatsappWindowIsExpired', 'whatsappWindowStatusText', 'whatsappWindowStatusHtml'], 'var whatsappWindowReceivedAt = new WeakMap();');
+    const twoHours = 2 * 3600000 + 5 * 60000;
+    // V6.46 — Horloge du PC avancée : expiresAt déjà « passé » pour le
+    // navigateur, mais le serveur annonce 2 h 05 restantes → ouverte.
+    const open = { applicable: true, known: true, expired: false, remainingMs: twoHours, expiresAt: new Date(Date.now() - 1000).toISOString() };
     assert.ok(ctx.whatsappWindowStatusText(open).includes('2 h'), ctx.whatsappWindowStatusText(open));
-    const closedLocally = { ...open, expiresAt: new Date(Date.now() - 1000).toISOString() };
-    assert.strictEqual(ctx.whatsappWindowIsExpired(closedLocally), true, 'remainingMs figé ignoré');
-    assert.strictEqual(ctx.whatsappWindowStatusHtml({ whatsappWindow: closedLocally }), '');
-    assert.ok(ctx.whatsappWindowStatusText({ ...open, expiresAt: new Date(Date.now() + 20000).toISOString() }).includes('moins d’1 min'));
+    assert.strictEqual(ctx.whatsappWindowIsExpired(open), false, 'heure du PC ignorée');
+    monotonic += twoHours - 20000;
+    assert.ok(ctx.whatsappWindowStatusText(open).includes('moins d’1 min'), 'décompte en direct');
+    monotonic += 21000;
+    assert.strictEqual(ctx.whatsappWindowIsExpired(open), true, 'fermeture détectée sans attendre le serveur');
+    assert.strictEqual(ctx.whatsappWindowStatusHtml({ whatsappWindow: open }), '');
+    // Sans temps restant du serveur : expiresAt.
+    assert.strictEqual(ctx.whatsappWindowIsExpired({ applicable: true, known: true, expiresAt: new Date(Date.now() - 1000).toISOString() }), true);
+    assert.strictEqual(ctx.whatsappWindowIsExpired({ applicable: true, known: true, expired: true, remainingMs: 0 }), true);
     assert.strictEqual(ctx.whatsappWindowIsExpired({ applicable: true, known: false }), false);
     assert.strictEqual(ctx.whatsappWindowIsExpired({ applicable: false, expired: true }), false);
   });
@@ -230,9 +243,41 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
     assert.strictEqual(ctx.mondecoBubbleItems.size, 150, 'rapport quotidien : pas de bulle');
   });
 
+  await test('V6.46 — compteur de la bulle : résumé du login compté avec un nouveau message, aligné sur le serveur, retiré à 0', async () => {
+    const container = fakeElement({ querySelector: () => fakeElement() });
+    const ctx = createContext({ conversations: [] });
+    ctx.elements.mondecoBubbleContainer = container;
+    ctx.elements.mondecoSingleBubble = fakeElement();
+    ctx.ResizeObserver = undefined;
+    load(ctx, ['escapeHtml', 'floatingBubbleKey', 'showFloatingBubble', 'dismissFloatingBubbleContact', 'syncFloatingBubbleWithPending', 'updateFloatingBubbleLayout', 'floatingBubbleIdentity', 'renderMondecoBubble', 'openFloatingBubbleItem'],
+      'var mondecoBubbleItems = new Map(); var floatingBubbleResizeObserver = null;');
+    const count = () => (/mondeco-bubble-count">([^<]+)</.exec(container.innerHTML) || [])[1] || (container.innerHTML ? '1' : '0');
+    ctx.showFloatingBubble({ kind: 'summary', id: 'summary', count: 15, preview: '15 conversations à répondre' });
+    assert.strictEqual(count(), '15');
+    // Un nouveau message (nouvelle conversation) : 16 en attente côté serveur.
+    ctx.showFloatingBubble({ id: 'm1', kind: 'message', contact: '21641999888', profileName: 'Rania', preview: 'Nouveau' });
+    ctx.syncFloatingBubbleWithPending(16);
+    assert.strictEqual(count(), '16', 'avant : « 2 »');
+    assert.ok(container.innerHTML.includes('+ 15 autres'), container.innerHTML);
+    // Une conversation répondue ailleurs : liste relue, retirée de la bulle.
+    ctx.conversations = [{ contact: '21641999888', pendingReply: false }];
+    ctx.syncFloatingBubbleWithPending(15, { listFresh: true });
+    assert.ok(!ctx.mondecoBubbleItems.has('contact:21641999888'));
+    assert.strictEqual(count(), '15');
+    // Un commentaire s'ajoute au total.
+    ctx.showFloatingBubble({ id: 'c1', kind: 'comment', commentKey: 'k1', preview: 'Prix ?' });
+    assert.strictEqual(count(), '16');
+    // Tout est résolu : le résumé et les alertes de conversation disparaissent.
+    ctx.showFloatingBubble({ id: 'm2', kind: 'message', contact: '21641999777', preview: 'x' });
+    ctx.syncFloatingBubbleWithPending(0);
+    assert.ok(!ctx.mondecoBubbleItems.has('summary'), 'avant : « 20 » avec 0 en attente');
+    assert.ok(!ctx.mondecoBubbleItems.has('contact:21641999777'));
+    assert.deepStrictEqual([...ctx.mondecoBubbleItems.keys()], ['comment:k1']);
+  });
+
   // ================= Alertes au login et file commune =================
   function pollContext({ cursor, response, role = 'admin', pendingBefore = null }) {
-    const calls = { urls: [], single: [], summary: [], bubbles: [], lists: 0 };
+    const calls = { urls: [], single: [], summary: [], bubbles: [], lists: 0, syncs: [] };
     const ctx = createContext({
       currentUser: { role, id: 'u1' },
       API: '/admin/api',
@@ -250,6 +295,7 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
       seenTaskNotificationIds: () => new Set(),
       rememberTaskNotification() {},
       showFloatingBubble: event => calls.bubbles.push(event),
+      syncFloatingBubbleWithPending: (pending, options) => calls.syncs.push({ pending, options }),
       showClientBrowserNotification: event => calls.single.push(event),
       showClientBrowserNotificationSummary: events => calls.summary.push(events),
       loadSocialComments: async () => {},
@@ -355,7 +401,8 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
     { id: 'woo-bianca', name: 'Chambre à Coucher Bianca', category: 'Chambres', price: '3290', image: 'https://mondeco.tn/bianca.jpg', composition: 'Lit 160, armoire', active: true, syncSource: 'woocommerce', woocommerceId: 69317, overrides: { composition: { value: 'Lit 160, armoire', by: 'Admin', at: '2026-11-10T10:00:00Z', source: 'admin-product-form' } } },
     { id: 'man-bianca', name: 'Chambre Bianca', category: 'Chambres', price: '2800', image: 'https://mondeco.tn/b.jpg', active: true, duplicateOfWooId: 69317, duplicateOfName: 'Chambre à Coucher Bianca', duplicateConfidence: 'high', duplicateFlaggedAt: '2026-11-11T10:00:00Z' },
     { id: 'man-lit', name: 'Lit Bianca', category: 'Chambres', price: '1500', image: 'https://mondeco.tn/l.jpg', active: true, duplicateOfWooId: 69317, duplicateOfName: 'Chambre à Coucher Bianca', duplicateConfidence: 'possible' },
-    { id: 'man-2', name: 'Salon Ancien', category: 'Salons', price: '1900', active: true, duplicateOfWooId: 522, duplicateOfName: 'Salon Moderne', duplicateConfidence: 'high' }
+    { id: 'man-2', name: 'Salon Ancien', category: 'Salons', price: '1900', active: true, duplicateOfWooId: 522, duplicateOfName: 'Salon Moderne', duplicateConfidence: 'high' },
+    { id: 'woo-610', name: 'Salon Diana', category: 'Salons', price: '2400', availability: 'in_stock', active: true, syncSource: 'woocommerce', woocommerceId: 610, overrides: { dimensions: { value: '280 x 180 cm', by: 'Admin', at: '2026-11-10T11:31:34Z', source: 'admin' }, availability: { value: 'on_order', siteValue: 'in_stock', by: 'Admin', at: '2026-11-11T11:31:34Z' } } }
   ], null, 2));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: root,
@@ -414,6 +461,18 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
       full.append('description', 'x');
       const refused = await request('PUT', '/admin/api/products/man-2', { body: full, cookie });
       assert.strictEqual(refused.status, 400);
+    });
+
+    await test('V6.46 — « Revenir à la valeur du site » : correction retirée même si la valeur est déjà celle du site, sans photo', async () => {
+      const form = new FormData();
+      form.append('availability', 'in_stock');
+      form.append('revertOverride', 'availability');
+      form.append('partialUpdate', 'true');
+      const res = await request('PUT', '/admin/api/products/woo-610', { body: form, cookie });
+      assert.strictEqual(res.status, 200, await res.text());
+      const product = readProducts().find(item => item.id === 'woo-610');
+      assert.deepStrictEqual(Object.keys(product.overrides || {}), ['dimensions']);
+      assert.strictEqual(product.revertOverride, undefined);
     });
 
     await test('route produit : « Revenir à la valeur du site » retire la correction (champ vidé)', async () => {
