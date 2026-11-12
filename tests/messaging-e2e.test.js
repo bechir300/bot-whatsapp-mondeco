@@ -222,6 +222,15 @@ async function test(label, fn) {
       }, 'smb_message_echoes');
       assert.ok(await waitFor(async () => (await conversation(c)).entries.some(entry => entry.action === 'ai_reply_suppressed_human_active'), 5000));
       assert.strictEqual(sentTo(c).length, 0, 'aucune réponse IA après la réponse du commercial');
+      // V6.45 — Le message client retenu garde son heure : il se range
+      // avant la réponse du commercial, la conversation n'est pas « À
+      // répondre ».
+      const { item, entries } = await conversation(c);
+      const suppressed = entries.find(entry => entry.action === 'ai_reply_suppressed_human_active');
+      const human = entries.find(entry => /Oui, nous livrons à Sousse/.test(entry.reply || entry.outgoing || entry.text || ''));
+      assert.ok(suppressed && human, JSON.stringify(entries.map(entry => entry.action)));
+      assert.ok(Date.parse(suppressed.time) <= Date.parse(human.time), `${suppressed.time} > ${human.time}`);
+      assert.notStrictEqual(item.pendingReply, true, 'conversation déjà répondue');
       control({});
     });
 
@@ -285,6 +294,20 @@ async function test(label, fn) {
       assert.ok(!entries.some(entry => entry.action === 'commercial_required'));
     });
 
+    await test('sticker client → conservé, sans escalade ni pause : la question suivante reçoit la réponse IA', async () => {
+      const c = '21650000014';
+      await text(c, 'Bonjour, vous êtes ouverts aujourd’hui ?');
+      assert.ok(await waitFor(() => sentTo(c).length === 1));
+      await customerMessage(c, { type: 'sticker', sticker: { id: 'STICKER1', mime_type: 'image/webp', animated: false } });
+      assert.ok(await waitFor(async () => (await conversation(c)).entries.some(entry => entry.action === 'customer_sticker')));
+      const { item } = await conversation(c);
+      assert.ok(!item.humanPaused && !item.manualTakeover, JSON.stringify({ humanPaused: item.humanPaused }));
+      assert.notStrictEqual(item.slaStatus, 'pending');
+      await text(c, 'Merci ! Et vous livrez à Sfax ?');
+      assert.ok(await waitFor(() => sentTo(c).length === 2), 'réponse IA après le sticker');
+      assert.ok(!(await conversation(c)).entries.some(entry => entry.action === 'commercial_required' || entry.action === 'human_pause'));
+    });
+
     await test('F18 : statut Meta « failed » conservé et affiché dans la conversation', async () => {
       const c = '21650000011';
       await webhook({
@@ -329,13 +352,40 @@ async function test(label, fn) {
       child.kill('SIGKILL');
       await new Promise(resolve => child.once('exit', resolve));
       assert.strictEqual(sentTo(c).length, 0);
-      control({});
+      // V6.45 — Message reçu il y a 2 h pendant une coupure (journal
+      // seulement) : trop ancien pour l'IA, présenté au commercial ET pris
+      // en compte dans l'état (fenêtre de 24 h, tri de l'Inbox).
+      const old = '21650000015';
+      const oldMs = Date.now() - 2 * 60 * 60 * 1000;
+      fs.appendFileSync(path.join(dataDir, 'inbound-journal.jsonl'), `${JSON.stringify({
+        t: 'in',
+        id: 'wamid.OLDJOURNAL1',
+        at: new Date(oldMs).toISOString(),
+        payload: {
+          channel: 'whatsapp',
+          profileName: 'Client Ancien',
+          message: { from: old, id: 'wamid.OLDJOURNAL1', timestamp: String(Math.floor(oldMs / 1000)), type: 'text', text: { body: 'Je veux commander le salon, rappelez-moi' } }
+        }
+      })}\n`);
+      control({ geminiDelayMs: 800 });
       startServer();
       await waitReadyAndLogin();
-      assert.ok(await waitFor(() => sentTo(c).length === 1, 20000), 'réponse IA envoyée après la reprise');
-      assert.ok(await waitFor(async () => (await conversation(c)).entries.some(entry => entry.incoming === 'Bonjour, je reviens vers vous' && entry.reply_sent === true)));
+      // Message suivant envoyé tout de suite : traité APRÈS le message rejoué.
+      await text(c, 'Et pour la livraison ?');
+      assert.ok(await waitFor(() => sentTo(c).length === 2, 20000), 'réponses IA envoyées après la reprise');
+      const { entries } = await conversation(c);
+      const first = entries.find(entry => entry.incoming === 'Bonjour, je reviens vers vous' && entry.reply_sent === true);
+      const second = entries.find(entry => entry.incoming === 'Et pour la livraison ?' && entry.reply_sent === true);
+      assert.ok(first && second, JSON.stringify(entries.map(entry => [entry.incoming, entry.action])));
+      assert.ok(Date.parse(first.time) <= Date.parse(second.time), `${first.time} > ${second.time}`);
       await wait(500);
-      assert.strictEqual(sentTo(c).length, 1, 'une seule réponse');
+      assert.strictEqual(sentTo(c).length, 2, 'une seule réponse par message');
+      control({});
+      assert.ok(await waitFor(async () => (await conversation(old)).entries.some(entry => entry.action === 'ai_reply_send_failed')));
+      const detail = (await admin('GET', `/api/conversations/${old}`)).json || {};
+      const lastCustomerMs = Date.parse(detail?.state?.lastCustomerAt || '');
+      assert.ok(Number.isFinite(lastCustomerMs) && Math.abs(lastCustomerMs - oldMs) < 5000, JSON.stringify(detail?.state || {}));
+      assert.strictEqual(sentTo(old).length, 0, 'aucune réponse IA automatique à un message trop ancien');
     });
 
     console.log(`ALL ${passed} MESSAGING E2E TESTS PASSED`);

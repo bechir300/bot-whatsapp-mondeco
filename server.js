@@ -9761,13 +9761,36 @@ function journalWhatsAppInboundMessages(body) {
 
 // Message abandonné (dernière tentative en échec, ou trop ancien pour être
 // rejoué) : il est présenté au commercial, jamais perdu.
-function recordInboundGiveUp(message, error) {
+function recordInboundGiveUp(message, error, profileName = '') {
   const id = safeString(message?.id);
   try {
     if (!id || !persistentMessageIds.has(id)) {
       const from = normalizePhone(message?.from);
       if (from) {
         const type = safeString(message?.type) || 'unknown';
+        // V6.45 — L'état de la conversation reçoit aussi ce message (heure
+        // réelle) : sinon lastCustomerAt restait ancien et la réponse du
+        // commercial était refusée « hors fenêtre de 24 h » alors que le
+        // client venait d'écrire. Jamais appliqué deux fois au même message
+        // ni par-dessus un message plus récent.
+        try {
+          const eventMs = inboundMessageTimeMs(message);
+          const state = getConversationState(from) || {};
+          const lastCustomerMs = Date.parse(safeString(state.lastCustomerAt));
+          const alreadyMarked =
+            (id && safeString(state.lastUnreadMessageId) === id) ||
+            (Number.isFinite(lastCustomerMs) && Number.isFinite(eventMs) && lastCustomerMs >= eventMs);
+          if (!alreadyMarked && type !== 'reaction') {
+            markCustomerMessage(from, message, messageHasAdReferral(message), {
+              channel: 'whatsapp',
+              externalContact: from,
+              profileName: safeString(profileName),
+              eventTime: Number.isFinite(eventMs) ? new Date(Math.min(eventMs, Date.now())).toISOString() : ''
+            });
+          }
+        } catch (stateError) {
+          console.warn('⚠️ État du message abandonné non mis à jour :', stateError.message);
+        }
         logConversation({
           message_id: id || null,
           contact: from,
@@ -9809,7 +9832,7 @@ function processWhatsAppInboundMessage(message, profileName = '') {
       );
       inboundJournal.done(id);
     },
-    onGiveUp: error => recordInboundGiveUp(message, error)
+    onGiveUp: error => recordInboundGiveUp(message, error, profileName)
   });
 }
 
@@ -9835,7 +9858,8 @@ function replayPendingInboundMessages() {
     if (Number.isFinite(receivedMs) && Date.now() - receivedMs > INBOUND_REPLAY_MAX_AGE_MS) {
       recordInboundGiveUp(
         message,
-        new Error('reçu pendant une interruption du serveur, trop ancien pour une réponse automatique')
+        new Error('reçu pendant une interruption du serveur, trop ancien pour une réponse automatique'),
+        safeString(item?.payload?.profileName)
       );
       continue;
     }
@@ -9845,8 +9869,10 @@ function replayPendingInboundMessages() {
   inboundJournal.compact();
 }
 
-const inboundReplayTimer = setTimeout(replayPendingInboundMessages, 5000);
-if (typeof inboundReplayTimer.unref === 'function') inboundReplayTimer.unref();
+// V6.45 — La reprise est lancée juste avant app.listen (fin du fichier),
+// plus 5 s après le démarrage : les messages interrompus entrent dans la
+// file de leur client AVANT tout nouveau webhook, et le client ne reçoit
+// plus la réponse à son message suivant avant celle du précédent.
 
 async function processWhatsAppWebhook(body) {
   if (
@@ -11394,8 +11420,23 @@ function logAiReplySuppressed({
   inboundAtMs = NaN
 }) {
   const nowMs = Date.now();
+  // V6.45 — La date dépend de l'état, pas du contrôle qui a bloqué l'envoi :
+  // si un humain a répondu (ou envoie) après ce message client — écho de
+  // l'application WhatsApp Business (human_pause) ou envoi depuis l'Admin
+  // (manual_takeover) —, l'entrée garde l'heure du message client et se
+  // range AVANT la réponse du commercial. Sinon la conversation repassait
+  // « À répondre » alors qu'elle avait reçu une réponse.
+  let humanAfterInbound = reason === 'human_replied' || reason === 'human_sending';
+  if (!humanAfterInbound && Number.isFinite(inboundAtMs)) {
+    try {
+      const lastHumanMs = Date.parse(safeString((getConversationState(contact) || {}).lastHumanAt));
+      humanAfterInbound = Number.isFinite(lastHumanMs) && lastHumanMs >= inboundAtMs;
+    } catch {
+      humanAfterInbound = false;
+    }
+  }
   const entryTimeMs =
-    reason === 'human_replied' && Number.isFinite(inboundAtMs)
+    humanAfterInbound && Number.isFinite(inboundAtMs)
       ? Math.min(inboundAtMs, nowMs)
       : nowMs;
   dropUnsentAiHistoryTurn(contact, reply);
@@ -12572,6 +12613,29 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
 
   // AUTRES MÉDIAS
   // ==========================================================
+
+  // V6.45 — Sticker (👍, « merci ») : utilisé comme une réaction. Conservé
+  // dans la conversation, sans escalade ni pause de l'IA : depuis que la
+  // pause de transfert n'expire plus après 60 s, un sticker privait le
+  // client de réponse automatique jusqu'au SLA (5 à 120 min).
+  if (messageType === 'sticker') {
+    console.log(
+      `😊 Sticker reçu de ${maskPhoneForLog(from)} : conservé, sans escalade.`
+    );
+    logConversation({
+      message_id: messageId || null,
+      contact: from,
+      external_contact: from,
+      channel: 'whatsapp',
+      incoming: whatsappMediaSummary(message) || '😊 Sticker',
+      type: 'sticker',
+      action: 'customer_sticker',
+      source: 'whatsapp_sticker',
+      reply_sent: false,
+      time: new Date(inboundAtMs).toISOString()
+    });
+    return;
+  }
 
   console.log(
     `👤 Message non texte reçu de ${maskPhoneForLog(from)} (${messageType}).`
@@ -13903,6 +13967,14 @@ process.on(
 // ============================================================
 // DÉMARRAGE
 // ============================================================
+
+// V6.45 — Messages interrompus par l'arrêt précédent : mis en file avant
+// que le serveur n'accepte de nouveaux webhooks.
+try {
+  replayPendingInboundMessages();
+} catch (error) {
+  console.error('❌ Reprise des messages entrants au démarrage :', error?.message || error);
+}
 
 const httpServer = app.listen(
   PORT,

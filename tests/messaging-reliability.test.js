@@ -161,6 +161,37 @@ async function settlesWithin(promise, ms) {
       assert.deepStrictEqual(ordered, [1, 2]);
     });
 
+    await test('file : la tâche qui n’a pas attendu ne remplace pas la précédente (message suivant toujours après)', async () => {
+      const queue = createConversationQueue({ stuckJobTimeoutMs: 2000, logger: quiet });
+      const order = [];
+      const a = queue.run('whatsapp:220', async () => { await wait(300); order.push('A'); });
+      // Envoi commercial plafonné à 50 ms, en échec (erreur Meta).
+      const commercial = queue.run('whatsapp:220', async () => { order.push('commercial'); throw new Error('Meta 500'); }, { maxWaitMs: 50 });
+      await commercial.catch(() => {});
+      const b = queue.run('whatsapp:220', async () => { order.push('B'); });
+      await Promise.all([a, b]);
+      assert.deepStrictEqual(order, ['commercial', 'A', 'B']);
+      // Une tâche bloquée ne retient la suite qu'au plus stuckJobTimeoutMs.
+      const bounded = createConversationQueue({ stuckJobTimeoutMs: 80, logger: quiet });
+      bounded.run('whatsapp:221', () => new Promise(() => {}));
+      bounded.run('whatsapp:221', async () => 'rapide', { maxWaitMs: 10 });
+      const outcome = await settlesWithin(bounded.run('whatsapp:221', async () => 'suivant'), 1000);
+      assert.strictEqual(outcome.value, 'suivant');
+      // Rafale pendant une IA lente : le garde-fou compte à partir du début
+      // du traitement précédent, pas de l'arrivée du message.
+      const burst = createConversationQueue({ stuckJobTimeoutMs: 150, logger: quiet });
+      const running = new Set();
+      let overlap = false;
+      const slow = label => async () => {
+        if (running.size) overlap = true;
+        running.add(label);
+        await wait(100);
+        running.delete(label);
+      };
+      await Promise.all([1, 2, 3, 4].map(n => burst.run('whatsapp:222', slow(n))));
+      assert.strictEqual(overlap, false, 'deux messages du même client traités en parallèle');
+    });
+
     await test('file : abandon d’un message → onGiveUp appelé une fois (jamais silencieux)', async () => {
       const logged = new Set();
       const queue = createConversationQueue({
