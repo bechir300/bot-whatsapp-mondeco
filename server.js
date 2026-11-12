@@ -109,26 +109,63 @@ app.use(requestContextMiddleware);
 // proxys locaux (Nginx sur le même VPS) sont crus ; TRUST_PROXY_HOPS=1 pour
 // Railway ou un proxy distant. Sans proxy de confiance, un client pourrait
 // fournir une fausse adresse via X-Forwarded-For.
-app.set(
-  'trust proxy',
-  process.env.TRUST_PROXY_HOPS !== undefined && process.env.TRUST_PROXY_HOPS !== ''
-    ? Math.max(0, Number(process.env.TRUST_PROXY_HOPS) || 0)
-    : 'loopback'
-);
+// V6.45 — Sur Railway (proxy distant, jamais en loopback), TRUST_PROXY_HOPS
+// vaut 1 par défaut : sinon toute l'équipe partageait l'adresse du proxy et
+// quelques échecs de connexion bloquaient tout le monde. Un avertissement
+// est écrit si un proxy distant est détecté sans réglage.
+const {
+  resolveTrustProxySetting,
+  createRemoteProxyDetector,
+  createOriginGuard,
+  createCrossSiteGetGuard,
+  originGuardOptionsFromEnv
+} = require('./lib/origin-guard');
+const {
+  resolveWebhookSignaturePolicy,
+  verifyMetaSignature,
+  webhookSignatureDecision,
+  webhookSignatureStartupMessages,
+  whatsappPhoneNumberIdAccepted
+} = require('./lib/webhook-signature');
+
+const TRUST_PROXY_SETTING = resolveTrustProxySetting(process.env);
+app.set('trust proxy', TRUST_PROXY_SETTING.value);
+console.log(`🌐 trust proxy : ${TRUST_PROXY_SETTING.label}`);
+if (TRUST_PROXY_SETTING.value === 'loopback') {
+  app.use(createRemoteProxyDetector());
+}
 app.disable('x-powered-by');
 
-// En-têtes de sécurité de base (sans dépendance externe). Pas de CSP stricte
-// sur les scripts : Admin.html repose sur du JavaScript inline.
+// En-têtes de sécurité de base (sans dépendance externe).
+// V6.45 — CSP renforcée : Admin.html repose sur du JavaScript inline
+// (onclick=…), d'où 'unsafe-inline', mais aucun script externe, aucun
+// plugin (object-src), aucune balise <base> détournée ni intégration de
+// l'application dans un cadre d'un autre site.
+const CONTENT_SECURITY_POLICY = [
+  "script-src 'self' 'unsafe-inline'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join('; ');
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
   if (req.secure) {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   }
   next();
 });
+
+// V6.45 — Protection CSRF des routes d'administration hors /admin (le
+// routeur /admin applique la même vérification d'origine).
+app.use('/reset-test-history', createOriginGuard(originGuardOptionsFromEnv(process.env, { label: 'reset-test-history' })));
+// /test-ia est un GET qui déclenche un appel IA facturé : refusé quand le
+// navigateur signale un appel depuis un autre site (ex. <img> sur *.mondeco.tn).
+app.use('/test-ia', createCrossSiteGetGuard({ label: 'test-ia' }));
 
 // V6.35.10 — Compression gzip des réponses (HTML/JSON/JS). Aucune
 // compression n'était activée : Admin.html (~630 Ko) et les réponses JSON
@@ -8088,36 +8125,34 @@ function validMetaWebhookSignature(req) {
           ? FACEBOOK_APP_SECRET
           : META_APP_SECRET;
 
-  if (!appSecret) return null;
-
-  const header = safeString(req.headers['x-hub-signature-256']);
-  if (!header.startsWith('sha256=')) return false;
-  if (!Buffer.isBuffer(req.rawBody)) return false;
-
-  const expected = `sha256=${crypto
-    .createHmac('sha256', appSecret)
-    .update(req.rawBody)
-    .digest('hex')}`;
-
-  try {
-    const left = Buffer.from(header, 'utf8');
-    const right = Buffer.from(expected, 'utf8');
-    return left.length === right.length && crypto.timingSafeEqual(left, right);
-  } catch {
-    return false;
-  }
+  // V6.45 — Calcul HMAC partagé et testé (lib/webhook-signature.js).
+  return verifyMetaSignature(
+    req.rawBody,
+    req.headers['x-hub-signature-256'],
+    appSecret
+  );
 }
 
 const unsignedWebhookWarningChannels = new Set();
 
-// V6.37 — Avec WEBHOOK_SIGNATURE_REQUIRED=true, un webhook est refusé si
-// aucun App Secret n'est configuré pour son canal (au lieu d'être accepté
-// sans vérification). À activer dès que META_APP_SECRET est renseigné.
-const WEBHOOK_SIGNATURE_REQUIRED =
-  String(process.env.WEBHOOK_SIGNATURE_REQUIRED || '').trim().toLowerCase() === 'true';
+// V6.45 — Signature OBLIGATOIRE par défaut dès qu'un App Secret est
+// configuré (META_APP_SECRET ou secret par canal) : un webhook non signé,
+// mal signé ou d'un canal sans secret est refusé. Sans aucun secret, les
+// webhooks restent acceptés (compatibilité) avec une alerte au démarrage.
+// WEBHOOK_SIGNATURE_REQUIRED=false = désactivation d'urgence explicite.
+const WEBHOOK_SIGNATURE_POLICY = resolveWebhookSignaturePolicy({
+  envValue: process.env.WEBHOOK_SIGNATURE_REQUIRED,
+  secrets: {
+    meta: META_APP_SECRET,
+    whatsapp: process.env.WHATSAPP_APP_SECRET,
+    instagram: process.env.INSTAGRAM_APP_SECRET,
+    facebook: process.env.FACEBOOK_APP_SECRET
+  }
+});
+const WEBHOOK_SIGNATURE_REQUIRED = WEBHOOK_SIGNATURE_POLICY.required;
 
-if (WEBHOOK_SIGNATURE_REQUIRED && !META_APP_SECRET && !(WHATSAPP_APP_SECRET && INSTAGRAM_APP_SECRET && FACEBOOK_APP_SECRET)) {
-  console.error('❌ WEBHOOK_SIGNATURE_REQUIRED=true mais META_APP_SECRET est absent : les webhooks des canaux sans secret seront refusés.');
+for (const message of webhookSignatureStartupMessages(WEBHOOK_SIGNATURE_POLICY)) {
+  console[message.level](message.text);
 }
 
 app.post('/webhook', (req, res) => {
@@ -8126,21 +8161,25 @@ app.post('/webhook', (req, res) => {
       req.body?.object
     );
 
-  
   const signatureValid =
     validMetaWebhookSignature(req);
 
-  if (signatureValid === false) {
-    console.warn('❌ Webhook Meta rejeté : signature X-Hub-Signature-256 invalide.');
-    return res.sendStatus(401);
+  const signatureDecision = webhookSignatureDecision({
+    signatureValid,
+    required: WEBHOOK_SIGNATURE_REQUIRED
+  });
+
+  if (signatureDecision.reason === 'invalid') {
+    console.warn('❌ Webhook Meta rejeté : signature X-Hub-Signature-256 invalide ou absente.');
+    return res.sendStatus(signatureDecision.status);
   }
 
-  if (signatureValid === null && WEBHOOK_SIGNATURE_REQUIRED) {
+  if (signatureDecision.reason === 'no_secret') {
     console.warn(`❌ Webhook Meta rejeté : aucun App Secret configuré pour « ${object || 'inconnu'} » alors que la signature est obligatoire.`);
-    return res.sendStatus(401);
+    return res.sendStatus(signatureDecision.status);
   }
 
-  if (signatureValid === null) {
+  if (signatureDecision.reason === 'unsigned') {
     const warningKey = object || 'unknown';
     if (!unsignedWebhookWarningChannels.has(warningKey)) {
       unsignedWebhookWarningChannels.add(warningKey);
@@ -8731,6 +8770,17 @@ async function processWhatsAppWebhook(body) {
       // ======================================================
 
       if (field === 'smb_message_echoes') {
+        // V6.45 — Écho d'un autre numéro WhatsApp : ignoré (il mettait l'IA
+        // en pause pour le client). Sans numéro dans le webhook : traité.
+        if (!whatsappPhoneNumberIdAccepted({
+          configured: PHONE_NUMBER_ID,
+          incoming: value?.metadata?.phone_number_id,
+          requirePresence: false
+        })) {
+          console.log('🧪 Écho WhatsApp Business d’un autre numéro ignoré.');
+          continue;
+        }
+
         handleHumanMessageEcho(
           value
         );
@@ -8740,11 +8790,11 @@ async function processWhatsAppWebhook(body) {
 
       if (field === 'calls') {
         const incomingPhoneNumberId = safeString(value?.metadata?.phone_number_id);
-        if (
-          PHONE_NUMBER_ID &&
-          incomingPhoneNumberId &&
-          incomingPhoneNumberId !== PHONE_NUMBER_ID
-        ) {
+        if (!whatsappPhoneNumberIdAccepted({
+          configured: PHONE_NUMBER_ID,
+          incoming: incomingPhoneNumberId,
+          requirePresence: false
+        })) {
           console.log('🧪 Webhook appel WhatsApp autre numéro ignoré.');
           continue;
         }
@@ -8768,14 +8818,18 @@ async function processWhatsAppWebhook(body) {
             ?.phone_number_id
         );
 
-      if (
-        PHONE_NUMBER_ID &&
-        incomingPhoneNumberId &&
-        incomingPhoneNumberId !==
-          PHONE_NUMBER_ID
-      ) {
+      // V6.45 — Numéro obligatoire quand PHONE_NUMBER_ID est configuré :
+      // un webhook « messages » sans metadata.phone_number_id (jamais
+      // envoyé ainsi par Meta) est ignoré au lieu d'être traité.
+      if (!whatsappPhoneNumberIdAccepted({
+        configured: PHONE_NUMBER_ID,
+        incoming: incomingPhoneNumberId,
+        requirePresence: true
+      })) {
         console.log(
-          '🧪 Webhook autre numéro ignoré.'
+          incomingPhoneNumberId
+            ? '🧪 Webhook autre numéro ignoré.'
+            : '🛡️ Webhook WhatsApp sans numéro destinataire (metadata.phone_number_id) ignoré.'
         );
 
         continue;

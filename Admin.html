@@ -7331,7 +7331,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
         </div>
 
         <div class="actions">
-          <button class="btn primary" type="button" onclick="newQuickReplyManagerItem()">
+          <button id="quickReplyManagerNewBtn" class="btn primary" type="button" onclick="newQuickReplyManagerItem()">
             + Nouveau message
           </button>
         </div>
@@ -9022,6 +9022,8 @@ const PAGE_ROLES = {
     ['admin','editor'],
   'ai-replies':
     ['admin','editor','responsable_commercial','commercial'],
+  // V6.45 — Commerciaux : page visible en lecture seule (modification
+  // réservée à admin, éditeur et responsable commercial, voir le serveur).
   'quick-replies':
     ['admin','editor','responsable_commercial','commercial'],
   'wa-report':
@@ -9593,7 +9595,12 @@ navButtons.forEach(btn => {
 });
 
 async function apiFetch(url, options = {}){
-  const response = await fetch(url, options);
+  // V6.45 — En-tête propre à l'application : le serveur l'accepte comme
+  // preuve que la requête vient du centre de pilotage (protection CSRF),
+  // même derrière un proxy qui réécrit l'adresse du site.
+  const headers = new Headers(options.headers || {});
+  if(!headers.has('X-Mondeco-Client')) headers.set('X-Mondeco-Client', 'admin');
+  const response = await fetch(url, { ...options, headers });
 
   if(response.status === 401){
     location.href = '/admin/login';
@@ -12554,7 +12561,12 @@ function renderThreadMessage(
   const rowKind=type === 'incoming' ? 'incoming' : (commercial || facebookOutbound) ? 'commercial' : 'bot';
   const purgePart=type === 'incoming' ? 'incoming' : 'reply';
   const purgeKey=String(entry?.purgeKeys?.[purgePart]||'');
-  const deleteButton=(currentUser?.role==='admin'||currentUser?.role==='responsable_commercial'||currentUser?.role==='commercial')&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(purgeKey)},'${purgePart}')" title="Supprimer définitivement de MONDECO">🗑 Supprimer</button>`:'';
+  // V6.45 — Masquage réversible ; un commercial seulement sur ses conversations affectées.
+  const canHideMessage=currentUser?.role==='admin'||currentUser?.role==='responsable_commercial'||(currentUser?.role==='commercial'&&selectedConversationData?.access?.assignedToMe===true);
+  const hiddenInfo=entry?.softDeleted?.[purgePart];
+  const deleteButton=hiddenInfo
+    ?(currentUser?.role==='admin'?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();restoreConversationMessage(${jsArg(hiddenInfo.id||'')})" title="Restaurer le message d’origine">↩ Restaurer</button><button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(entry?.softDeleted?.keys?.[purgePart]||'')},'${purgePart}',true)" title="Supprimer définitivement de MONDECO">🗑 Supprimer définitivement</button>`:'')
+    :(canHideMessage&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(purgeKey)},'${purgePart}')" title="Masquer ce message (un administrateur peut le restaurer)">🗑 Supprimer</button>`:'');
 
   return `
     <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
@@ -12762,7 +12774,7 @@ function buildConversationComposer(
             <span>Uniquement les réponses enregistrées manuellement · catalogue produit exclu.</span>
           </div>
 
-          <div class="quick-reply-actions">
+          <div class="quick-reply-actions ${currentUser?.role==='commercial'?'hidden':''}">
             <button
               class="quick-reply-import-btn"
               type="button"
@@ -12793,7 +12805,7 @@ function buildConversationComposer(
           </select>
 
           <button
-            class="quick-reply-delete-btn"
+            class="quick-reply-delete-btn ${currentUser?.role==='commercial'?'hidden':''}"
             type="button"
             onclick="deleteConversationQuickReply()"
             title="Supprimer la réponse rapide sélectionnée"
@@ -13522,27 +13534,38 @@ window.loadOlderConversationMessages = async function(contact, before){
   }catch(error){alert(`Impossible de charger les messages plus anciens : ${error.message}`);}
 };
 
-window.deleteConversationMessage=async function(purgeKey,part){
-  // V6.36.99 — Autorisation alignée sur celle du bouton (ligne ~11784) :
-  // admin, responsable_commercial et commercial peuvent tous supprimer un
-  // message. Avant ce correctif, le bouton était visible pour les
-  // commerciaux mais l'action était bloquée silencieusement (rôle
-  // 'admin' uniquement), signalé le 03/09.
+window.deleteConversationMessage=async function(purgeKey,part,permanent=false){
+  // V6.36.99 — Autorisation alignée sur celle du bouton (renderThreadMessage).
+  // V6.45 — Le serveur décide : un commercial ne masque que dans une
+  // conversation qui lui est affectée ; la suppression définitive
+  // (permanent) est réservée aux administrateurs.
   const allowedRoles=['admin','responsable_commercial','commercial'];
   if(!allowedRoles.includes(currentUser?.role)||!selectedConversationContact||!purgeKey)return;
   const channel=conversationChannel(selectedConversationData?.state||{contact:selectedConversationContact});
   const remoteNote=channel==='whatsapp'||channel==='instagram'||channel==='facebook'
-    ? '\n\nImportant : pour un message privé, cela le supprime définitivement de MONDECO mais ne peut pas garantir un « supprimer pour tout le monde » chez le client.'
+    ? '\n\nImportant : pour un message privé, MONDECO ne peut pas garantir un « supprimer pour tout le monde » chez le client.'
     : '';
-  if(!await uiConfirm('SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'))return;
+  // V6.45 — Masquage par défaut (restaurable par un administrateur).
+  const confirmText=permanent
+    ?'SUPPRESSION DÉFINITIVE\n\nLe message disparaîtra de l’historique MONDECO et ne pourra pas être restauré.'+remoteNote+'\n\nContinuer ?'
+    :'MASQUER CE MESSAGE\n\nIl sera remplacé par la mention « Message masqué par … » ; un administrateur peut le restaurer.'+remoteNote+'\n\nContinuer ?';
+  if(!await uiConfirm(confirmText))return;
   try{
-    await apiFetch(`${API}/conversations/${encodeURIComponent(selectedConversationContact)}/messages/${encodeURIComponent(purgeKey)}?part=${encodeURIComponent(part)}`,{method:'DELETE'});
+    await apiFetch(`${API}/conversations/${encodeURIComponent(selectedConversationContact)}/messages/${encodeURIComponent(purgeKey)}?part=${encodeURIComponent(part)}${permanent?'&permanent=1':''}`,{method:'DELETE'});
     await loadConversations();
     if(selectedConversationContact){
       try{await openConversation(selectedConversationContact);}catch{selectedConversationContact='';selectedConversationData=null;resetInteractionDetail();}
     }
     await refreshPendingCountsNow();
-  }catch(error){alert('Suppression définitive impossible : '+error.message);}
+  }catch(error){alert('Suppression impossible : '+error.message);}
+};
+
+window.restoreConversationMessage=async function(id){
+  if(currentUser?.role!=='admin'||!id||!selectedConversationContact)return;
+  try{
+    await apiFetch(`${API}/message-deletions/${encodeURIComponent(id)}/restore`,{method:'POST'});
+    await openConversation(selectedConversationContact);
+  }catch(error){alert('Restauration impossible : '+error.message);}
 };
 
 window.backToInboxList = function(){
@@ -14270,6 +14293,12 @@ window.deleteConversationQuickReply = async function(){
 let quickReplyManagerFilter = '';
 let quickReplyManagerDraft = false;
 
+// V6.45 — Les réponses rapides partent telles quelles chez les clients :
+// modification réservée à ces rôles (même règle côté serveur).
+function quickReplyManagerCanEdit(){
+  return ['admin','editor','responsable_commercial'].includes(currentUser?.role);
+}
+
 function quickReplyManagerSearchText(value){
   return String(value || '')
     .normalize('NFD')
@@ -14280,24 +14309,28 @@ function quickReplyManagerSearchText(value){
 function quickReplyManagerCard(item){
   const id = item ? item.id : 'new';
   const active = !item || item.active !== false;
+  const readOnly = !quickReplyManagerCanEdit();
+  const lock = readOnly ? 'readonly' : '';
+  const author = item?.updatedByName || item?.createdByName || '';
 
   return `
     <div class="card quick-reply-manager-card ${active ? '' : 'inactive'}" data-id="${escapeHtml(id)}">
       <div class="quick-reply-manager-grid">
         <div class="field">
           <label>Raccourci</label>
-          <input data-field="shortcut" value="${escapeHtml(item?.shortcut || '')}" placeholder="adresse">
+          <input data-field="shortcut" value="${escapeHtml(item?.shortcut || '')}" placeholder="adresse" ${lock}>
         </div>
         <div class="field">
           <label>Titre *</label>
-          <input data-field="title" value="${escapeHtml(item?.title || '')}" placeholder="Adresse des showrooms">
+          <input data-field="title" value="${escapeHtml(item?.title || '')}" placeholder="Adresse des showrooms" ${lock}>
         </div>
       </div>
       <div class="field">
         <label>Message *</label>
-        <textarea data-field="content" rows="5">${escapeHtml(item?.content || '')}</textarea>
+        <textarea data-field="content" rows="5" ${lock}>${escapeHtml(item?.content || '')}</textarea>
       </div>
-      <div class="quick-reply-manager-actions">
+      ${author ? `<div style="font-size:12px;margin-bottom:6px;color:var(--muted)">Dernière modification : ${escapeHtml(author)}${item?.updatedAt ? ` · ${escapeHtml(formatDate(item.updatedAt))}` : ''}</div>` : ''}
+      ${readOnly ? '' : `<div class="quick-reply-manager-actions">
         <label class="checkbox-line">
           <input data-field="active" type="checkbox" ${active ? 'checked' : ''}>
           Proposé dans les conversations
@@ -14306,7 +14339,7 @@ function quickReplyManagerCard(item){
           ? `<button class="btn small danger" type="button" onclick="deleteQuickReplyManagerItem(${jsArg(id)})">Supprimer</button>`
           : `<button class="btn small" type="button" onclick="cancelQuickReplyManagerDraft()">Annuler</button>`}
         <button class="btn small primary" type="button" onclick="saveQuickReplyManagerItem(${jsArg(id)})">Enregistrer</button>
-      </div>
+      </div>`}
     </div>
   `;
 }
@@ -14342,6 +14375,8 @@ function renderQuickReplyManager(){
 }
 
 window.loadQuickRepliesPage = async function(){
+  document.getElementById('quickReplyManagerNewBtn')?.classList.toggle('hidden', !quickReplyManagerCanEdit());
+  if(!quickReplyManagerCanEdit()) quickReplyManagerDraft = false;
   await loadQuickReplies({ force:true });
   renderQuickReplyManager();
 };
@@ -19563,7 +19598,8 @@ if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visib
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   try{
     await fetch('/admin/logout', {
-      method:'POST'
+      method:'POST',
+      headers:{ 'X-Mondeco-Client':'admin' }
     });
   }finally{
     location.href = '/admin/login';

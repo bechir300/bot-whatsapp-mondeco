@@ -35,7 +35,7 @@ sudo systemctl restart mondeco    # ou : pm2 restart mondeco
 
 Lors d'un redémarrage, le serveur reçoit `SIGTERM` : il cesse d'accepter des connexions, termine les messages en cours, enregistre les fichiers en attente (journal, état des conversations, historique IA) puis s'arrête (au plus `SHUTDOWN_GRACE_MS`, 20 s par défaut).
 
-**HTTPS est obligatoire** pour les webhooks Meta : placez Nginx ou Caddy devant l'application (port 3000 non exposé). Avec Nginx sur la même machine, laissez `TRUST_PROXY_HOPS` vide.
+**HTTPS est obligatoire** pour les webhooks Meta : placez Nginx ou Caddy devant l'application (port 3000 non exposé). Avec Nginx sur la même machine, laissez `TRUST_PROXY_HOPS` vide ; sur Railway, il vaut 1 automatiquement ; derrière un autre proxy distant, mettez `TRUST_PROXY_HOPS=1` (sinon toute l'équipe partage la même adresse IP pour la limite de connexion, une alerte le signale dans les logs).
 
 ## Variables essentielles (`.env`)
 
@@ -43,7 +43,9 @@ Lors d'un redémarrage, le serveur reçoit `SIGTERM` : il cesse d'accepter des c
 | --- | --- |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Compte administrateur (12 caractères minimum). Sans `ADMIN_PASSWORD`, aucun compte n'est créé ni réinitialisé (le mot de passe par défaut ne sert qu'avec `NODE_ENV=development`). |
 | `VERIFY_TOKEN` | Vérification du webhook Meta (obligatoire). |
-| `META_APP_SECRET` | Signature des webhooks. Une fois renseignée, activez `WEBHOOK_SIGNATURE_REQUIRED=true`. |
+| `META_APP_SECRET` | Signature des webhooks. Dès qu'elle est renseignée, tout webhook non signé ou mal signé est refusé (401). Laissez `WEBHOOK_SIGNATURE_REQUIRED` vide ; `false` n'est qu'une désactivation d'urgence pour les canaux sans secret. Sans aucun secret, les webhooks restent acceptés (alerte au démarrage). |
+| `TRUST_PROXY_HOPS` | Nombre de proxys devant l'application (vide avec Nginx local, 1 automatique sur Railway). |
+| `ADMIN_ORIGIN_CHECK`, `ADMIN_ALLOWED_ORIGINS` | Protection CSRF de `/admin` (`enforce` par défaut, `report` pour diagnostiquer) et adresses supplémentaires du centre de pilotage. |
 | `WHATSAPP_REENGAGEMENT_TEMPLATE_NAME` | Modèle approuvé pour relancer un client hors fenêtre de 24 h. |
 
 Toutes les variables sont documentées dans `.env.example`.
@@ -62,7 +64,15 @@ Toutes les variables sont documentées dans `.env.example`.
 - **IA** : plage horaire et budget mensuel (existants) ; quota par client `AI_MAX_REPLIES_PER_CONTACT_PER_HOUR` (30 par défaut) ; délai maximal de 25 s par appel avec bascule vers Groq.
 - **Messages** : traitement dans l'ordre pour chaque client ; reprise automatique d'un message en échec (15 s puis 60 s), sauf s'il est déjà journalisé.
 - **Réseau** : délai maximal sur tous les appels Meta ; reprise des lectures sur 429/5xx ; taille des médias plafonnée.
-- **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`) ; limite de tentatives de connexion par adresse IP et par compte.
+- **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`) ; limite de tentatives de connexion (V6.45) : 8 échecs pour un même compte depuis une même adresse IP ou 30 échecs d'une adresse IP bloquent cette adresse 15 min ; un compte visé depuis de nombreuses adresses n'est jamais bloqué, la vérification est seulement retardée (1 s à 8 s, `LOGIN_EMAIL_MAX_DELAY_MS`) : le vrai titulaire peut toujours se connecter.
+- **Sécurité du centre de pilotage** (V6.45) :
+  - toute requête qui modifie des données sous `/admin` doit venir de l'application (Origin/Referer, `Sec-Fetch-Site` ou en-tête `X-Mondeco-Client`), sinon 403 `CSRF_ORIGIN_REJECTED` ; `ADMIN_ORIGIN_CHECK=report` pour diagnostiquer un proxy qui réécrit l'adresse ;
+  - en-têtes : `Content-Security-Policy: script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` et `X-Frame-Options: DENY` (l'application ne peut plus être affichée dans un cadre) ;
+  - réponses rapides (envoyées telles quelles aux clients, y compris automatiquement aux prospects publicitaires) : création, modification, import et suppression réservés à l'administrateur, au responsable commercial et à l'éditeur ; les commerciaux les utilisent en lecture seule. Auteur enregistré sur chaque réponse, historique (ancien et nouveau texte) dans le journal d'activité, consultable via `GET /admin/api/quick-replies/history` ;
+  - suppression d'un message : un commercial ne peut que **masquer** un message d'une conversation qui lui est affectée ; le message affiche « Message masqué par … », la conversation reste dans la boîte de réception, l'administrateur peut le restaurer ou le supprimer définitivement. Chaque action est tracée (journal d'activité + `message-deletions.json`) ;
+  - envois commerciaux et appels WhatsApp : le destinataire est déduit de la conversation contrôlée (un `externalContact` différent est refusé, 400 `RECIPIENT_MISMATCH`) ;
+  - page « Réponses IA » : un commercial ne voit que les canaux de son planning du jour ;
+  - webhooks WhatsApp : si `PHONE_NUMBER_ID` est configuré, un webhook de messages sans ce numéro (`metadata.phone_number_id`) est ignoré.
 - **Performance** (V6.37.2–6.37.3) :
   - `adReferral` allégé (135 → 77 Mo en production) ;
   - SQLite ne réécrit que les conversations modifiées ;
