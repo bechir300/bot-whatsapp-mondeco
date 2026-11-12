@@ -79,7 +79,10 @@ fs.writeFileSync(path.join(tmpDataDir, 'products.json'), JSON.stringify([
   // Ancien produit du site supprimé : désactivé.
   { id: 'woo-old', name: 'Chambre à coucher Bianca (ancienne fiche)', price: '2800', active: true, syncSource: 'woocommerce', woocommerceId: 41000, availability: 'in_stock' },
   // Fiche manuelle sans équivalent sur le site : intacte.
-  { id: 'manual-opale', name: 'Table Opale', price: '890', active: true }
+  { id: 'manual-opale', name: 'Table Opale', price: '890', active: true },
+  // V6.45 — Pack déjà synchronisé avec la composition d'un seul ensemble
+  // (ancienne lecture) : remplacée, même si la nouvelle est vide.
+  { id: 'woo-pack-bianca', name: 'Pack Mariage Bianca', price: '12570', promoPrice: '12270', composition: '1 table + 6 chaises', category: 'Pack Mariage', active: true, syncSource: 'woocommerce', woocommerceId: 63995 }
 ]));
 
 const originalCompile = Module.prototype._compile;
@@ -138,6 +141,8 @@ const byLocalId = (products, id) => products.find(item => item.id === id);
     assert.strictEqual(byLocalId(products, 'woo-old').active, false);
     assert.strictEqual(byLocalId(products, 'manual-opale').active, true);
     assert.strictEqual(byLocalId(products, 'manual-opale').duplicateOfWooId, undefined);
+    // V6.45 — Pack : plus jamais la composition d'un seul ensemble.
+    assert.notStrictEqual(byLocalId(products, 'woo-pack-bianca').composition, '1 table + 6 chaises');
   });
 
   await test('Chambre à Coucher Bianca : prix du site, composition décodée remplace la composition périmée', async () => {

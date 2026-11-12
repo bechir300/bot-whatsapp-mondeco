@@ -3090,7 +3090,8 @@ function findMatchingQuickReplyForAd(adReferral, options = {}) {
         status: resolution.status,
         product: resolution.product,
         candidates: resolution.candidates,
-        allowedAmounts: aiFactGuardAllowedAmounts()
+        allowedAmounts: aiFactGuardAllowedAmounts(),
+        catalog: getActiveProductsForAi().index
       });
     if (!check.ok) {
       console.warn('⚡ Réponse rapide de pub NON envoyée (contredit la fiche catalogue) :', JSON.stringify({
@@ -5529,7 +5530,10 @@ function applyAiFactGuard(contact, reply, resolution, options = {}) {
       candidates: resolution?.candidates,
       allowedAmounts: aiFactGuardAllowedAmounts(),
       instructionTexts: options.instructionTexts || [],
-      customerText: options.customerText || ''
+      customerText: options.customerText || '',
+      // V6.45 — prix des produits voisins du même modèle, repérés même
+      // sans devise (« بـ 2800 »).
+      catalog: getActiveProductsForAi().index
     });
 
   if (check.ok) {

@@ -11074,22 +11074,37 @@ function mapWooCommerceProduct(product) {
 
   // Attribut « composition » explicite, sinon la ligne « Composition » de
   // la fiche, sinon (ancien comportement) un attribut « matière ».
-  const composition =
+  const explicitComposition =
     wooAttributeValue(
       product,
       [
         'composition'
       ]
-    ) ||
+    );
+
+  // V6.45 — Pack (chambre + salon + salle à manger) : la composition est
+  // celle de tout le pack, ou vide ; jamais celle d'un seul ensemble ni la
+  // matière. compositionFromPack force le remplacement de la composition
+  // enregistrée par une synchronisation précédente.
+  const compositionFromPack =
+    !explicitComposition &&
+    Boolean(content.multiSet);
+
+  const composition =
+    explicitComposition ||
     content.composition ||
-    wooAttributeValue(
-      product,
-      [
-        'matiere',
-        'matieres',
-        'material',
-        'materials'
-      ]
+    (
+      compositionFromPack
+        ? ''
+        : wooAttributeValue(
+          product,
+          [
+            'matiere',
+            'matieres',
+            'material',
+            'materials'
+          ]
+        )
     );
 
   const showrooms =
@@ -11231,6 +11246,8 @@ function mapWooCommerceProduct(product) {
       content.dimensions,
 
     composition,
+
+    compositionFromPack,
 
     specs:
       content.specs,
@@ -11567,9 +11584,14 @@ function mergeWooProduct(
       ),
 
     composition:
-      wooFieldValue(
-        'composition'
-      ),
+      remote.compositionFromPack &&
+      !overrides.composition
+        ? safeString(
+            remote.composition
+          )
+        : wooFieldValue(
+            'composition'
+          ),
 
     colors:
       wooFieldValue(

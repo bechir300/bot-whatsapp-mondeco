@@ -110,11 +110,21 @@ async function test(label, fn) {
       assert.strictEqual(resolution.status, 'resolved', JSON.stringify({ input, resolution: resolution.candidateNames }));
       assert.strictEqual(Number(resolution.product.woocommerceId), 60068, JSON.stringify(input));
     }
-    // Question vague : choix proposé entre fiches du site, sans fiche manuelle périmée.
+    // V6.45 — « Lit Bianca + 2 chevets » n'est qu'un doublon « possible »
+    // (élément d'un ensemble) : il reste identifiable, comme dans le
+    // contexte IA, au lieu de proposer des ensembles qui contredisent
+    // « lit » et « chevets ». La fiche manuelle « Chambre Bianca »
+    // (doublon certain) n'est jamais proposée.
+    const lit = products.find(item => item.id === 'manual-lit-bianca');
+    assert.strictEqual(lit.duplicateConfidence, 'possible');
     const vague = resolveProduct({ message: 'lit bianca avec 2 chevets combien ?' }, products);
-    assert.ok(vague.status !== 'none');
-    const proposed = vague.status === 'resolved' ? [vague.product] : vague.candidates;
-    assert.ok(proposed.every(item => item.syncSource === 'woocommerce'), JSON.stringify(proposed.map(item => item.name)));
+    assert.strictEqual(vague.status, 'resolved', JSON.stringify(vague.candidateNames));
+    assert.strictEqual(vague.product.id, 'manual-lit-bianca');
+    for (const message of ['lit bianca avec 2 chevets combien ?', 'prix bianca', 'chambre bianca']) {
+      const resolution = resolveProduct({ message }, products);
+      const proposed = resolution.status === 'resolved' ? [resolution.product] : resolution.candidates;
+      assert.ok(proposed.every(item => item.id !== 'manual-chambre-bianca'), JSON.stringify({ message, names: proposed.map(item => item.name) }));
+    }
   });
 
   await test('garde-fou : 2800 dt refusé, 6590 / 7200 dt et composition du site acceptés', async () => {

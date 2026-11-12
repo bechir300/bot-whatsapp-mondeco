@@ -160,4 +160,68 @@ test('nom d’affichage sans le suffixe SEO', () => {
   assert.ok(tokenize('Chambres à coucher').includes('chambre'));
 });
 
+// V6.45 — Retours de revue (catalogue réel synchronisé).
+const LARA = [
+  { id: 'lara-1', woocommerceId: 9101, syncSource: 'woocommerce', name: 'Salon modulaire Lara', price: '2690', active: true },
+  { id: 'lara-2', woocommerceId: 9102, syncSource: 'woocommerce', name: 'Salon Lara avec canapé', price: '4390', active: true },
+  { id: 'lara-3', woocommerceId: 9103, syncSource: 'woocommerce', name: 'Salon modulaire Lara avec pouf', price: '3290', active: true },
+  { id: 'lara-4', woocommerceId: 9104, syncSource: 'woocommerce', name: 'Canapé Modulable Lara sans pouf', price: '2190', active: true },
+  { id: 'lara-5', woocommerceId: 9105, syncSource: 'woocommerce', name: 'Pouf pour salon Lara', price: '350', active: true }
+];
+
+test('« salon modulaire Lara » -> ce produit, jamais « Salon Lara avec canapé » (salon ≠ salon + canapé)', () => {
+  const laraIndex = buildProductIndex([...products, ...LARA]);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'Bonjour, quel est le prix du salon modulaire Lara ?' }, laraIndex)), 9101);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'prix salon lara avec canapé' }, laraIndex)), 9102);
+  // Plusieurs salons Lara : on demande lequel au lieu de choisir le plus long.
+  const vague = resolveProduct({ message: 'prix salon lara' }, laraIndex);
+  assert.strictEqual(vague.status, 'ambiguous');
+  assert.ok(!vague.candidates.some(product => product.woocommerceId === 9105), vague.candidateNames.join(' | '));
+  const canape = resolveProduct({ message: 'prix canapé lara' }, laraIndex);
+  assert.strictEqual(canape.status, 'ambiguous');
+  assert.strictEqual(canape.candidates[0].woocommerceId, 9104);
+});
+
+test('vrais noms de modèles pris pour des descriptifs (Golden, Royal, Lune, INDUS) : produit identifiable', () => {
+  const catalog = [
+    ...products,
+    { id: 'golden', woocommerceId: 9201, syncSource: 'woocommerce', name: 'Pack Mariage Golden', price: '8630', promoPrice: '8330', active: true },
+    { id: 'royal', woocommerceId: 9202, syncSource: 'woocommerce', name: 'Salon Royal | Déstockage', price: '1990', active: true },
+    { id: 'lune', woocommerceId: 9203, syncSource: 'woocommerce', name: 'Table LUNE', price: '690', active: true },
+    { id: 'indus', woocommerceId: 9204, syncSource: 'woocommerce', name: 'Etagère Métallique – INDUS', price: '320', active: true },
+    { id: 'blanche', woocommerceId: 9205, syncSource: 'woocommerce', name: 'Table de bout de canapé Blanche', price: '150', active: true }
+  ];
+  const fallbackIndex = buildProductIndex(catalog);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'prix pack mariage golden' }, fallbackIndex)), 9201);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'Bonjour, combien ?', adProductHint: 'Salon Royal | Déstockage' }, fallbackIndex)), 9202);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'la table lune svp' }, fallbackIndex)), 9203);
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'etagere indus prix' }, fallbackIndex)), 9204);
+  // Une couleur ne devient jamais un nom de modèle.
+  assert.strictEqual(resolveProduct({ message: 'vous avez une table blanche ?' }, fallbackIndex).status, 'none');
+});
+
+test('doublon « possible » (Lit Bianca + 2 chevets) gardé : la pub du lit trouve le lit, la pub Bianca la chambre', () => {
+  const synced = products.map(product => product.id === 'local-lit-bianca'
+    ? { ...product, duplicateOfWooId: 60068, duplicateConfidence: 'possible' }
+    : product);
+  const syncedIndex = buildProductIndex(synced);
+  const lit = resolveProduct({ message: 'prix?', adProductHint: 'Lit BIANCA + 2 Chevets', adHeadline: 'Lit BIANCA + 2 Chevets | MONDECO' }, syncedIndex);
+  assert.strictEqual(resolvedId(lit), 'local-lit-bianca');
+  assert.strictEqual(resolvedId(resolveProduct({ message: 'prix?', adProductHint: 'Chambre à coucher Bianca' }, syncedIndex)), 60068);
+  // Doublon certain : toujours ignoré.
+  const certain = buildProductIndex(products.map(product => product.id === 'local-lit-bianca'
+    ? { ...product, duplicateOfWooId: 60068, duplicateConfidence: 'high' }
+    : product));
+  assert.notStrictEqual(resolvedId(resolveProduct({ message: 'prix lit bianca' }, certain)), 'local-lit-bianca');
+});
+
+test('choix après la question : « le 2ème », « la 2 », « 2e », « التانية »', () => {
+  const pending = [byWoo(63995).id, BIANCA.id, byWoo(65197).id];
+  for (const message of ['le 2ème', 'la 2', 'la 2ème', '2e', 'التانية', 'c’est la 2']) {
+    assert.strictEqual(resolvedId(resolveProduct({ pendingCandidateIds: pending, message }, index)), 60068, message);
+  }
+  assert.strictEqual(resolvedId(resolveProduct({ pendingCandidateIds: pending, message: 'le 1er' }, index)), 63995);
+  assert.strictEqual(resolvedId(resolveProduct({ pendingCandidateIds: pending, message: 'la 3ème' }, index)), 65197);
+});
+
 console.log(`\n${passed} test(s) product-resolver OK`);

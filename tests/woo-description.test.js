@@ -55,6 +55,55 @@ try {
     assert.ok(/Table Ibiza — Composition : 1 table \+ 6 chaises/.test(desc.otherSpecsText(content.specs, 2000)));
   });
 
+  // V6.45 — Fiches réelles « Pack Mariage Perla » et « Golden » : la seule
+  // ligne « Composition » est celle du salon (Perla) ou de la table (Golden).
+  const specRows = rows => rows
+    .map(([label, value]) => `<div class="mondeco-spec-row"><span class="mondeco-spec-label">${label}</span><span class="mondeco-spec-value">${value}</span></div>`)
+    .join('');
+  test('pack mariage : jamais la composition d’un seul ensemble (Perla, Golden, Marbelle)', () => {
+    const perla = desc.parseWooProductContent({
+      name: 'Pack Mariage Perla',
+      categories: [{ name: 'Pack Mariage' }],
+      description: specRows([
+        ['Modèle', 'Ivorie Premium'], ['Lit', '160 × 200 cm'], ['Dressing', 'L 243 × P 60 × H 215 cm'],
+        ['Tables de nuit', '2 tables – L 49 × P 36 × H 48 cm'], ['Coiffeuse', 'Incluse'],
+        ['Composition', '1 canapé 3 places + 1 canapé 2 places + 1 pouf'], ['Canapé 3 places', 'L 220 × P 93 cm']
+      ])
+    });
+    assert.strictEqual(perla.composition, '');
+    assert.strictEqual(perla.multiSet, true);
+
+    const golden = desc.parseWooProductContent({
+      name: 'Pack Mariage Golden',
+      categories: [{ name: 'Pack Mariage' }],
+      description: specRows([
+        ['Modèle', 'Salma'], ['Lit', '160 × 200 cm'], ['Composition', '1 table + 6 chaises'],
+        ['Chambre', 'Salma – Lit 160 × 200 cm, dressing, coiffeuse et 2 tables de nuit'],
+        ['Salon', 'Plume L – Canapé d’angle 320 × 200 cm'],
+        ['Salle à manger', 'Violette – Table de 160 × 90 cm et 6 chaises']
+      ])
+    });
+    assert.strictEqual(
+      golden.composition,
+      'Chambre : Salma – Lit 160 × 200 cm, dressing, coiffeuse et 2 tables de nuit ; Salon : Plume L – Canapé d’angle 320 × 200 cm ; Salle à manger : Violette – Table de 160 × 90 cm et 6 chaises'
+    );
+
+    // Libellé « Composition de la chambre Toscana — Modèle » : pas une composition.
+    assert.strictEqual(desc.compositionFromSpecs({
+      'Composition de la chambre Toscana — Modèle': 'Toscana',
+      'Composition du salon Jazz — Modèle': 'Jazz',
+      'Composition de la salle à manger Azur — Composition': '1 table et 6 chaises'
+    }), '');
+    // Une ligne « Composition » par ensemble : composition du pack complète.
+    assert.strictEqual(desc.compositionFromSpecs({
+      'Chambre Silia — Composition': '1 lit + 1 dressing',
+      'Salon Marita — Composition': 'Canapé d’angle + canapé 2 places',
+      'Salon Marita — Mousse': 'Magic 35'
+    }), 'Chambre Silia : 1 lit + 1 dressing ; Salon Marita : Canapé d’angle + canapé 2 places');
+    // Fiche simple : inchangé.
+    assert.strictEqual(desc.compositionFromSpecs({ Modèle: 'Bianca', Composition: '1 lit + 2 chevets' }), '1 lit + 2 chevets');
+  });
+
   test('entités HTML décodées (noms, catégories), prix jamais repris des caractéristiques', () => {
     assert.strictEqual(desc.decodeHtmlEntities('Lit 90&#215;190 &#038; co &#8211; Blanc &amp; Beige&nbsp;!'), 'Lit 90×190 & co – Blanc & Beige !');
     assert.strictEqual(desc.cleanInlineText(' Salons &amp;  <b>Séjours</b> '), 'Salons & Séjours');
