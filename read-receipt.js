@@ -18,12 +18,13 @@ async function markRead(o) {
         Authorization: 'Bearer ' + o.token,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
+      // V6.45 — o.typing === false : accusé de lecture seul, sans
+      // « en train d'écrire… » (l'IA ne répondra pas : pause, commercial).
+      body: JSON.stringify(Object.assign({
         messaging_product: 'whatsapp',
         status: 'read',
-        message_id: o.messageId,
-        typing_indicator: { type: 'text' }
-      })
+        message_id: o.messageId
+      }, o.typing === false ? {} : { typing_indicator: { type: 'text' } }))
     });
     if (!r.ok) {
       throw new Error('HTTP ' + r.status + ' ' +

@@ -11337,6 +11337,12 @@ function actionLabel(action){
     ai_needs_commercial:'Commercial requis',
     ai_error_fallback_sent:'Erreur IA — relais commercial',
     ai_error_no_reply:'Erreur IA — sans réponse',
+    ai_reply_send_failed:'Réponse IA non envoyée — commercial requis',
+    ai_reply_suppressed_human_active:'Réponse IA retenue (commercial actif)',
+    customer_reaction:'Réaction du client',
+    whatsapp_system_event:'Événement WhatsApp',
+    ai_auto_resumed:'IA réactivée automatiquement',
+    meta_delivery_failed:'Échec de livraison WhatsApp',
     automatic_followup:'Relance automatique',
     commercial_reply:'Réponse commerciale',
     ai_mode_choice:'Choix IA / Commercial',
@@ -11800,11 +11806,24 @@ function liveSlaForConversation(item){
   return {remainingMs,status:remainingMs < 0 ? 'late' : 'pending'};
 }
 
+// V6.45 — Même règle que le serveur (lib/messaging-rules.js,
+// conversationAiPauseReason) : « IA en pause » = prise en main, ou pause
+// humaine sans échéance / pas encore expirée. Avant, le badge comptait aussi
+// commercialAttention et une pause expirée, alors que l'IA répondait.
+// « ⚠ Commercial requis » reste affiché à part.
+function conversationAiPausedForUi(s){
+  if(!s) return false;
+  if(s.manualTakeover) return true;
+  if(!s.humanPaused) return false;
+  const until=Date.parse(s.pausedUntil||'');
+  return !s.pausedUntil||!Number.isFinite(until)||until>Date.now();
+}
+
 function conversationListTags(item){
   const channel=conversationChannel(item);
   const facebook=channel==='facebook';
   const pending=item.pendingReply===true;
-  const paused=!facebook&&Boolean(item.humanPaused||item.manualTakeover||item.commercialAttention||item.imageNeedsCommercial);
+  const paused=!facebook&&conversationAiPausedForUi(item);
   const liveSla=pending?liveSlaForConversation(item):null;
   const sourceContext=item.sourceContext||null;
   const line2=`<span class="inbox-item-platform-row"><span>${escapeHtml(channelDisplayName(channel))}</span>${(!facebook&&pending&&(item.commercialAttention||item.imageNeedsCommercial))?'<span class="urgent-text">⚠ Commercial requis</span>':''}</span>`;
@@ -11980,7 +11999,7 @@ async function speedCleanupNow(){
 }
 
 async function aiRespondAllUnread(){
-  if(!await uiConfirm("Faire répondre l'IA à TOUS les messages WhatsApp non lus (jusqu'à 50 à la fois) ? Cette action réactive l'IA sur ces conversations et envoie une réponse immédiatement.")) return;
+  if(!await uiConfirm("Faire répondre l'IA à TOUS les messages WhatsApp non lus (jusqu'à 50 à la fois) ? Cette action réactive l'IA sur ces conversations et envoie une réponse immédiatement. Les conversations prises en main par un commercial, déjà répondues ou hors fenêtre WhatsApp de 24 h sont ignorées.")) return;
 
   const btn = document.querySelector('.inbox-ai-respond-all-btn');
   if(btn){ btn.disabled = true; btn.textContent = 'En cours…'; }
@@ -11994,6 +12013,8 @@ async function aiRespondAllUnread(){
     let msg = `${result.respondedCount} conversation(s) ont reçu une réponse IA.`;
     if(result.skippedCount > 0) msg += `\n${result.skippedCount} ignorée(s) (IA incertaine, transférée au commercial).`;
     if(result.failedCount > 0) msg += `\n${result.failedCount} échec(s) technique(s).`;
+    // V6.45 — conversations non traitées : prises en main, déjà répondues, hors 24 h.
+    if(result.ignoredCount > 0) msg += `\n${result.ignoredCount} ignorée(s) (prise en main, déjà répondue ou hors fenêtre de 24 h).`;
     if(result.message) msg = result.message;
     alert(msg);
   }catch(error){
@@ -12240,12 +12261,7 @@ function renderConversationHeader(
   const facebook=channel==='facebook';
   const access=selectedConversationAccess(contact,state);
   const limitedCommercial=currentUser?.role==='commercial' && !access.canManage;
-  const paused=!facebook && Boolean(
-    state.manualTakeover ||
-    state.humanPaused ||
-    state.commercialAttention ||
-    state.imageNeedsCommercial
-  );
+  const paused=!facebook && conversationAiPausedForUi(state);
 
   const slaDueMs = Date.parse(state?.sla?.dueAt || '');
   const selectedSlaRemaining = Number.isFinite(slaDueMs) && ['pending','late'].includes(String(state?.sla?.status || ''))
@@ -12597,6 +12613,17 @@ function renderThreadMessage(
 
 function renderThreadSystemEvent(entry){
   const action=String(entry?.action||'');
+  // V6.45 — Événements WhatsApp sans bulle de message.
+  if(action==='customer_reaction'){
+    const reaction=String(entry?.reaction||'').trim();
+    const label=reaction?`Réaction du client : ${reaction}`:'Réaction du client retirée';
+    return `<div class="inbox-history-limit" style="max-width:520px;margin:6px auto;text-align:center">${escapeHtml(label)} • ${escapeHtml(formatDate(entry?.time))}</div>`;
+  }
+  if(['whatsapp_system_event','ai_auto_resumed','meta_delivery_failed'].includes(action)){
+    const detail=String(entry?.system_body||entry?.error||'').trim();
+    const label=`${actionLabel(action)}${detail?` : ${detail}`:''}`;
+    return `<div class="inbox-history-limit" style="max-width:520px;margin:6px auto;text-align:center">${escapeHtml(label)} • ${escapeHtml(formatDate(entry?.time))}</div>`;
+  }
   if(!action.startsWith('facebook_')) return '';
   let label='';
   if(action==='facebook_message_delivery') label='✓ Message livré sur Facebook';
@@ -13195,7 +13222,7 @@ function renderCustomerPanel(
 
   const aiStatus=facebook
     ? '✨ Meta Business AI / Business Suite'
-    : state.manualTakeover || state.humanPaused
+    : conversationAiPausedForUi(state)
       ? '👤 En pause — Commercial'
       : state.aiModeChoicePending
         ? '⏳ Choix du client en attente'

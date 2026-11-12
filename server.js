@@ -55,6 +55,9 @@ const {
   parseProfileExtraction
 } = require('./lib/customer-profile');
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
+const { createMetaSendTransport, isPreflightNetworkFailure: isMetaPreflightNetworkFailure } = require('./lib/meta-send-transport');
+const { createInboundJournal } = require('./lib/inbound-journal');
+const messagingRules = require('./lib/messaging-rules');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const {
   MEDIA_FETCH_TIMEOUT_MS,
@@ -705,6 +708,8 @@ const ESCALATION_NOTIFICATION_ACTIONS = new Set([
   'ai_needs_commercial',
   'ai_error_fallback_sent',
   'ai_error_no_reply',
+  // V6.45 — réponse IA générée mais non envoyée (erreur Meta, coupure).
+  'ai_reply_send_failed',
   'commercial_required',
   'human_pause',
   'ai_disabled',
@@ -1667,17 +1672,22 @@ function logConversation(entry) {
           'ai_needs_commercial',
           'ai_error_fallback_sent',
           'ai_error_no_reply',
+          'ai_reply_send_failed',
           'commercial_required',
           'secure_image_commercial_required',
           'secure_image_analysis_error',
           'image_analysis_error'
         ]);
 
+        // V6.45 — Plus de reprise automatique silencieuse après 60 s : l'IA
+        // reste en pause (comme l'annonce l'Inbox « IA en pause ») jusqu'à
+        // « Réactiver IA », ou jusqu'à l'expiration du SLA sans aucune
+        // intervention (reprise documentée V6.36.34, checkSlaAutoResume).
         if (strictHandoffActions.has(action)) {
           pauseAiForCommercial(
             contact,
             safeString(entry?.image_reason || entry?.error || action),
-            60000
+            { aiHandoff: true }
           );
         }
       } catch (slaError) {
@@ -1837,59 +1847,30 @@ function saveConversationStates(states) {
   saveConversationStatesAdmin(states);
 }
 
-// V6.36.64 — Migrée vers SQLite (accès ciblé, ~1ms) au lieu de
-// loadConversationStates() qui chargeait tout le JSON (24+ Mo) pour ne
-// lire qu'une seule conversation. Repli sur le cache JSON en mémoire si
-// jamais SQLite ne trouve rien (sécurité pendant la transition, ne
-// devrait normalement jamais se produire après la migration complète).
+// V6.45 — Lecture d'UNE conversation sur la source de vérité partagée avec
+// Admin.js (lib/conversation-state-store.js) : une prise en main, une
+// réactivation de l'IA, une affectation ou un SLA écrits côté Admin sont
+// visibles ici immédiatement. Avant, cette fonction lisait d'abord SQLite,
+// que les écritures Admin.js n'atteignaient que 8 à 60 s plus tard.
 function getConversationState(phone) {
-  const fromSqlite = getConversationStateSingle(phone);
-  if (fromSqlite) return fromSqlite;
-
-  const states = loadConversationStates();
-  return (
-    states[phone] &&
-    typeof states[phone] === 'object'
-      ? states[phone]
-      : null
-  );
+  return getConversationStateSingle(phone);
 }
 
-// V6.36.63 — Migré vers SQLite pour l'accès ciblé à UNE SEULE
-// conversation, au lieu du cycle complet loadConversationStates (24+ Mo)
-// / saveConversationStates à chaque appel. Le cache JSON en mémoire
-// (loadConversationStatesAdmin) reste mis à jour en miroir pour garder la
-// compatibilité avec tout le reste du code qui itère encore sur
-// l'ensemble des conversations (listes, rapports, exports) — seule
-// l'écriture PHYSIQUE sur disque du JSON reste différée/groupée
-// (V6.36.62), le vrai gain ici est que cette fonction elle-même ne
-// touche plus du tout le fichier JSON de 24+ Mo.
+// V6.45 — Lecture-modification-écriture atomique d'UNE conversation, sur la
+// même source de vérité que Admin.js (updateConversationStateAdmin) :
+// mémoire mise à jour et écrite tout de suite dans SQLite, JSON complet
+// écrit de façon groupée. Avant, la lecture se faisait depuis la ligne
+// SQLite (parfois périmée) et l'entrée JSON était remplacée en entier :
+// une prise en main faite dans l'Admin était effacée par le message client
+// ou le statut « lu » Meta suivant.
 function updateConversationState(
   phone,
   updater
 ) {
-  const current =
-    getConversationStateSingle(phone) || {};
-
-  // V6.37.2 — adReferral allégé (voir lib/ad-referral.js).
-  const updated =
-    slimConversationState(
-      updater({
-        ...current
-      }) || current
-    );
-
-  setConversationStateSingle(phone, updated);
-
-  // Miroir dans le cache mémoire JSON, pour compatibilité avec le reste
-  // du code (listes de conversations, rapports) sans déclencher d'écriture
-  // disque immédiate — saveConversationStatesAdmin gère déjà le
-  // regroupement des écritures (V6.36.62).
-  const states = loadConversationStates();
-  states[phone] = updated;
-  saveConversationStates(states);
-
-  return updated;
+  return updateConversationStateAdmin(
+    phone,
+    updater
+  );
 }
 
 function markCustomerMessage(
@@ -2071,25 +2052,33 @@ function markHumanTakeover(phone, settings) {
 // V6.19.2 — Pause IA stricte jusqu'à réactivation manuelle.
 // Utilisée quand l'IA ne connaît pas la réponse ou lorsqu'un média
 // nécessite une vérification humaine.
+// V6.45 — Deux cas :
+// - réponse d'un commercial (par défaut) : prise en main stricte
+//   (manualTakeover), levée uniquement par « Réactiver IA » ;
+// - handoff décidé par l'IA ({ aiHandoff: true }) : pause sans échéance
+//   (humanPaused, pausedUntil vide) ; elle est levée par « Réactiver IA »,
+//   par une réponse commerciale (qui la rend stricte) ou, si personne
+//   n'intervient, par checkSlaAutoResume à l'expiration du SLA. La reprise
+//   automatique après 60 s (invisible dans l'Inbox, qui affichait toujours
+//   « IA en pause ») est supprimée. Un nombre en 3e argument (ancien
+//   autoResumeAfterMs) est traité comme un handoff IA, sans échéance.
 function pauseAiForCommercial(
   phone,
   reason = 'Intervention commerciale requise.',
-  autoResumeAfterMs = null
+  options = {}
 ) {
   const now = new Date().toISOString();
-  const hasAutoResume =
-    Number.isFinite(autoResumeAfterMs) &&
-    autoResumeAfterMs > 0;
+  const aiHandoff =
+    typeof options === 'number' ||
+    Boolean(options && options.aiHandoff);
 
   updateConversationState(
     phone,
     current => ({
       ...current,
       humanPaused: true,
-      manualTakeover: !hasAutoResume,
-      pausedUntil: hasAutoResume
-        ? new Date(Date.now() + autoResumeAfterMs).toISOString()
-        : null,
+      manualTakeover: aiHandoff ? current.manualTakeover === true : true,
+      pausedUntil: null,
       awaitingResponse: false,
       commercialAttention: true,
       commercialAttentionReason:
@@ -2102,52 +2091,38 @@ function pauseAiForCommercial(
   );
 
   console.log(
-    hasAutoResume
-      ? `🤝 Handoff IA (auto) : IA suspendue pour ${maskPhoneForLog(phone)} pendant ${Math.round(autoResumeAfterMs / 1000)}s avant reprise automatique si aucun commercial n'intervient.`
+    aiHandoff
+      ? `🤝 Handoff IA : IA suspendue pour ${maskPhoneForLog(phone)} jusqu'à « Réactiver IA » ou expiration du SLA sans intervention.`
       : `🤝 Handoff strict : IA suspendue pour ${maskPhoneForLog(phone)} jusqu'à réactivation manuelle.`
   );
 }
+
+// V6.45 — Prédicat UNIQUE « l'IA est-elle en pause pour cette
+// conversation ? », identique au badge « IA en pause / Suivi commercial »
+// de l'Inbox (Admin.html) : voir lib/messaging-rules.js. Renvoie la raison,
+// ou '' si l'IA peut répondre.
+const conversationAiPauseReason = messagingRules.conversationAiPauseReason;
 
 function isHumanPaused(phone) {
   const state =
     getConversationState(phone);
 
-  // Une prise en main manuelle / handoff commercial est volontairement
-  // sans expiration : seul « Réactiver IA » doit la lever.
-  if (state?.manualTakeover === true) {
+  if (conversationAiPauseReason(state)) {
     return true;
   }
 
-  if (!state?.humanPaused) {
-    return false;
+  // Pause humaine expirée (prise en main via WhatsApp Business limitée à
+  // humanPauseMinutes) : on la lève.
+  if (state?.humanPaused === true) {
+    updateConversationState(
+      phone,
+      current => ({
+        ...current,
+        humanPaused: false,
+        pausedUntil: null
+      })
+    );
   }
-
-  const rawPausedUntil =
-    safeString(state.pausedUntil);
-
-  // humanPaused sans échéance = pause indéfinie.
-  if (!rawPausedUntil) {
-    return true;
-  }
-
-  const until =
-    Date.parse(rawPausedUntil);
-
-  if (
-    Number.isFinite(until) &&
-    until > Date.now()
-  ) {
-    return true;
-  }
-
-  updateConversationState(
-    phone,
-    current => ({
-      ...current,
-      humanPaused: false,
-      pausedUntil: null
-    })
-  );
 
   return false;
 }
@@ -5912,7 +5887,46 @@ function assertWhatsAppWithinCustomerWindow(conversationKey) {
   throw error;
 }
 
-setCommercialSendHandler(
+// V6.45 — Un envoi commercial (Admin) est sérialisé avec le traitement des
+// messages du même client (même file que les webhooks WhatsApp) et signalé
+// immédiatement comme « envoi humain en cours » : une réponse IA dont la
+// génération se termine pendant cet envoi n'est pas envoyée (voir
+// aiAutoSendBlockReason). L'attente de la file est limitée à
+// COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS pour ne pas bloquer le commercial
+// derrière une génération IA lente : l'IA est de toute façon bloquée.
+const COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS = 10 * 1000;
+
+function serializedCommercialSend(handler) {
+  return async (sendArgs = {}) => {
+    const queueChannel =
+      normalizeChannel(
+        sendArgs.channel ||
+        conversationChannel(sendArgs.contact, getConversationState(sendArgs.contact))
+      );
+    const queueExternal =
+      safeString(sendArgs.externalContact) ||
+      (queueChannel === 'instagram' || queueChannel === 'facebook'
+        ? conversationExternalId(sendArgs.contact)
+        : normalizePhone(sendArgs.phone || sendArgs.contact));
+    const queueConversationKey = makeConversationKey(queueChannel, queueExternal);
+
+    if (!queueConversationKey) return handler(sendArgs);
+
+    markHumanSendStart(queueConversationKey);
+    try {
+      if (queueChannel !== 'whatsapp') return await handler(sendArgs);
+      return await conversationQueue.run(
+        `whatsapp:${normalizePhone(queueExternal)}`,
+        () => handler(sendArgs),
+        { maxWaitMs: COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS }
+      );
+    } finally {
+      markHumanSendEnd(queueConversationKey);
+    }
+  };
+}
+
+setCommercialSendHandler(serializedCommercialSend(
   async ({
     phone,
     contact,
@@ -6261,7 +6275,7 @@ setCommercialSendHandler(
         result
     };
   }
-);
+));
 
 // ============================================================
 // V6.35.6 — Résilience réseau pour les envois de messages (WhatsApp,
@@ -6278,20 +6292,11 @@ setCommercialSendHandler(
 
 const SEND_MESSAGE_TIMEOUT_MS = 20000;
 
-function isPreflightNetworkFailure(error) {
-  // V6.35.11 — Élargi : en pratique, quand fetch() lève une TypeError
-  // "fetch failed" (par opposition à un AbortError de timeout), c'est
-  // presque toujours parce que la connexion n'a jamais abouti (DNS,
-  // TCP, TLS) — Node/undici ne remplit pas toujours error.cause.code de
-  // façon fiable, donc se limiter à une liste étroite de codes faisait
-  // que la quasi-totalité des échecs réels ne déclenchait AUCUN retry.
-  // Seul un AbortError (timeout, cas ambigu où la requête a pu partir)
-  // reste exclu du retry.
-  if (error?.name === 'AbortError') return false;
-  if (error instanceof TypeError && /fetch failed/i.test(String(error.message || ''))) return true;
-  const code = String(error?.cause?.code || error?.code || '');
-  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET'].includes(code);
-}
+// V6.45 — Voir lib/meta-send-transport.js : une nouvelle tentative n'a
+// lieu que si la connexion à Meta n'a jamais été établie (DNS, connexion
+// refusée, coupure pendant la négociation TLS). ECONNRESET / « socket hang
+// up » après l'envoi de la requête ne sont plus rejoués (doublons).
+const isPreflightNetworkFailure = isMetaPreflightNetworkFailure;
 
 // V6.36.0 VPS STABLE — transport Meta HTTPS natif
 // - IPv4 forcé
@@ -6336,203 +6341,27 @@ if (typeof metaKeepAlivePingTimer.unref === 'function') {
   metaKeepAlivePingTimer.unref();
 }
 
-async function attemptNativeHttpsRequest(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-
-    let target;
-    try {
-      target = new URL(url);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    const headers = { ...(options.headers || {}) };
-
-    for (const key of Object.keys(headers)) {
-      if (key.toLowerCase() === 'connection') {
-        delete headers[key];
-      }
-    }
-
-    let body = options.body ?? null;
-
-    if (
-      body !== null &&
-      body !== undefined &&
-      !Buffer.isBuffer(body) &&
-      typeof body !== 'string'
-    ) {
-      body = String(body);
-    }
-
-    const bodyBuffer =
-      body === null || body === undefined
-        ? null
-        : Buffer.isBuffer(body)
-          ? body
-          : Buffer.from(body);
-
-    if (bodyBuffer && !Object.keys(headers).some(
-      key => key.toLowerCase() === 'content-length'
-    )) {
-      headers['Content-Length'] = bodyBuffer.length;
-    }
-
-    console.log('⏱️ HTTPS-META START 0ms');
-
-    let settled = false;
-
-    const req = META_NATIVE_HTTPS.request(
-      {
-        protocol: target.protocol,
-        hostname: target.hostname,
-        port: target.port || 443,
-        path: `${target.pathname}${target.search}`,
-        method: options.method || 'GET',
-        headers,
-        family: 4,
-        agent: META_HTTPS_AGENT
-      },
-      res => {
-        console.log(
-          `⏱️ HTTPS-META HEADERS ${Date.now() - startedAt}ms ` +
-          `HTTP=${res.statusCode || 0} REUSED=${req.reusedSocket ? 'yes' : 'no'}`
-        );
-
-        const chunks = [];
-
-        res.on('data', chunk => chunks.push(chunk));
-
-        res.on('end', () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(overallTimer);
-
-          const raw = Buffer.concat(chunks).toString('utf8');
-
-          console.log(
-            `⏱️ HTTPS-META END ${Date.now() - startedAt}ms`
-          );
-
-          const responseHeaders = res.headers || {};
-
-          resolve({
-            ok:
-              Number(res.statusCode || 0) >= 200 &&
-              Number(res.statusCode || 0) < 300,
-
-            status: Number(res.statusCode || 0),
-
-            statusText: res.statusMessage || '',
-
-            headers: {
-              get(name) {
-                const value =
-                  responseHeaders[String(name || '').toLowerCase()];
-
-                if (Array.isArray(value)) {
-                  return value.join(', ');
-                }
-
-                return value == null ? null : String(value);
-              }
-            },
-
-            async text() {
-              return raw;
-            },
-
-            async json() {
-              if (!raw) return {};
-              return JSON.parse(raw);
-            }
-          });
-        });
-      }
-    );
-
-    req.on('socket', socket => {
-      if (socket.connecting) {
-        socket.once('secureConnect', () => {
-          console.log(
-            `⏱️ HTTPS-META TLS ${Date.now() - startedAt}ms ` +
-            `IP=${socket.remoteAddress || '?'}`
-          );
-        });
-      }
-    });
-
-    req.on('error', error => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(overallTimer);
-
-      logSendNetworkErrorDetail(error, 'node:https');
-
-      if (error?.code === 'SEND_TIMEOUT_UNCERTAIN') {
-        reject(error);
-        return;
-      }
-
-      const networkError = new Error(
-        'Coupure réseau pendant l’envoi. ' +
-        'Le message a peut-être été délivré malgré tout : ' +
-        'vérifiez la conversation avant de renvoyer.'
-      );
-
-      networkError.code = 'SEND_NETWORK_UNCERTAIN';
-      networkError.cause = error;
-
-      reject(networkError);
-    });
-
-    const overallTimer = setTimeout(() => {
-      if (settled) return;
-
-      const timeoutError = new Error(
-        `Envoi interrompu après ${SEND_MESSAGE_TIMEOUT_MS / 1000}s ` +
-        `sans réponse de Meta. Le message a peut-être été délivré malgré tout : ` +
-        `vérifiez la conversation avant de renvoyer.`
-      );
-
-      timeoutError.code = 'SEND_TIMEOUT_UNCERTAIN';
-
-      req.destroy(timeoutError);
-    }, SEND_MESSAGE_TIMEOUT_MS);
-
-    if (bodyBuffer) {
-      req.write(bodyBuffer);
-    }
-
-    req.end();
+// V6.45 — Transport extrait dans lib/meta-send-transport.js : la promesse
+// se termine toujours (coupure pendant la réponse, délai maximal), pour ne
+// plus bloquer la file du client.
+const metaSendTransport =
+  createMetaSendTransport({
+    https: META_NATIVE_HTTPS,
+    agent: META_HTTPS_AGENT,
+    timeoutMs: SEND_MESSAGE_TIMEOUT_MS,
+    logNetworkError: (error, label) => logSendNetworkErrorDetail(error, label)
   });
+
+async function attemptNativeHttpsRequest(url, options = {}) {
+  return metaSendTransport.request(url, options);
 }
 
-// V6.36.1 — Réintègre la nouvelle tentative automatique (V6.35.11) par-dessus
-// le nouveau transport HTTPS natif (V6.36.0). Ne retente QUE les échecs
-// survenus AVANT tout contact réseau réel avec Meta (DNS, connexion
-// refusée, connexion réinitialisée) — ceux-là n'ont provoqué aucun envoi,
-// donc aucun risque de double message. Un timeout (le message a peut-être
-// atteint Meta, seule la réponse s'est perdue) n'est JAMAIS retenté
-// automatiquement.
+// V6.36.1 — Nouvelle tentative automatique uniquement pour les échecs
+// survenus AVANT tout contact réseau réel avec Meta (V6.45 : connexion
+// jamais établie). Un timeout ou une coupure après l'envoi de la requête
+// ne sont JAMAIS retentés automatiquement.
 async function fetchWithSendTimeout(url, options = {}) {
-  let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await attemptNativeHttpsRequest(url, options);
-    } catch (error) {
-      lastError = error;
-      const underlying = error?.cause || error;
-      if (attempt < 3 && isPreflightNetworkFailure(underlying)) {
-        await new Promise(resolve => setTimeout(resolve, 600 * attempt));
-        continue;
-      }
-      throw error;
-    }
-  }
-  throw lastError;
+  return metaSendTransport.requestWithPreflightRetry(url, options);
 }
 
 // V6.35.11 — Log le détail brut (nom, message, cause.code, cause.message)
@@ -7772,19 +7601,15 @@ async function checkWhetherBotShouldReply(
     };
   }
 
-  const conversationState =
-    getConversationState(phone) || {};
-
-  if (
-    isHumanPaused(phone) &&
-    (
-      conversationState.manualTakeover === true ||
-      settings.pauseWhenHumanReplies
-    )
-  ) {
+  // V6.45 — Même prédicat que le badge de l'Inbox (lib/messaging-rules.js) :
+  // une conversation affichée « IA en pause » ne reçoit jamais de réponse
+  // IA. Avant, une pause sans prise en main (handoff IA, pause posée par
+  // l'Admin) était ignorée si pauseWhenHumanReplies était désactivé.
+  if (isHumanPaused(phone)) {
     return {
       allowed: false,
       reason: 'human_pause',
+      pauseReason: conversationAiPauseReason(getConversationState(phone)),
       settings
     };
   }
@@ -8157,6 +7982,14 @@ app.post('/webhook', (req, res) => {
           ? '📩 Webhook Facebook Messenger reçu'
           : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
   );
+
+  // V6.45 — Chaque message WhatsApp est inscrit dans le journal des
+  // messages entrants (écriture synchrone) AVANT l'accusé 200 : Meta ne le
+  // renverra jamais, un arrêt pendant le traitement ne le perd plus (il est
+  // rejoué au démarrage).
+  if (object === 'whatsapp_business_account') {
+    journalWhatsAppInboundMessages(req.body);
+  }
 
   // Meta doit recevoir 200 rapidement. Le payload complet n'est plus écrit
   // dans les logs afin d'éviter d'exposer des messages clients sur Railway.
@@ -8698,6 +8531,154 @@ async function processFacebookWebhook(body) {
   }
 }
 
+// ============================================================
+// V6.45 — MESSAGES ENTRANTS : JOURNAL AVANT TRAITEMENT + REPRISE
+// ============================================================
+// Voir lib/inbound-journal.js. Chaque message WhatsApp est inscrit de façon
+// synchrone AVANT l'accusé 200 envoyé à Meta (route /webhook) puis marqué
+// terminé à la fin de son traitement. Au démarrage, un message resté en
+// attente (arrêt, déploiement, plantage pendant la génération IA, reprise
+// annulée par l'arrêt) est rejoué ; s'il a plus de INBOUND_REPLAY_MAX_AGE_MS
+// (60 min par défaut, variable d'environnement du même nom), il est
+// seulement présenté au commercial (action ai_reply_send_failed).
+const inboundJournal =
+  createInboundJournal({
+    filePath: path.join(DATA_DIR, 'inbound-journal.jsonl')
+  });
+
+const INBOUND_REPLAY_MAX_AGE_MS =
+  Math.max(
+    5 * 60 * 1000,
+    Number(process.env.INBOUND_REPLAY_MAX_AGE_MS) || 60 * 60 * 1000
+  );
+
+function whatsappWebhookInboundMessages(body) {
+  const found = [];
+  for (const entry of (Array.isArray(body?.entry) ? body.entry : [])) {
+    for (const change of (Array.isArray(entry?.changes) ? entry.changes : [])) {
+      if (safeString(change?.field) !== 'messages') continue;
+      const value = change?.value || {};
+      const incomingPhoneNumberId = safeString(value?.metadata?.phone_number_id);
+      if (PHONE_NUMBER_ID && incomingPhoneNumberId && incomingPhoneNumberId !== PHONE_NUMBER_ID) continue;
+      const profiles = {};
+      for (const contactEntry of (Array.isArray(value.contacts) ? value.contacts : [])) {
+        const waId = normalizePhone(contactEntry?.wa_id);
+        const profileName = safeString(contactEntry?.profile?.name);
+        if (waId && profileName) profiles[waId] = profileName;
+      }
+      for (const message of (Array.isArray(value.messages) ? value.messages : [])) {
+        found.push({ message, profileName: profiles[normalizePhone(message?.from)] || '' });
+      }
+    }
+  }
+  return found;
+}
+
+// Inscription synchrone (appelée par la route /webhook avant l'accusé 200).
+// Une erreur ici n'empêche jamais l'accusé ni le traitement.
+function journalWhatsAppInboundMessages(body) {
+  try {
+    for (const { message, profileName } of whatsappWebhookInboundMessages(body)) {
+      inboundJournal.record(safeString(message?.id), {
+        channel: 'whatsapp',
+        message,
+        profileName
+      });
+    }
+  } catch (error) {
+    console.error('❌ Journal des messages entrants :', error.message);
+  }
+}
+
+// Message abandonné (dernière tentative en échec, ou trop ancien pour être
+// rejoué) : il est présenté au commercial, jamais perdu.
+function recordInboundGiveUp(message, error) {
+  const id = safeString(message?.id);
+  try {
+    if (!id || !persistentMessageIds.has(id)) {
+      const from = normalizePhone(message?.from);
+      if (from) {
+        const type = safeString(message?.type) || 'unknown';
+        logConversation({
+          message_id: id || null,
+          contact: from,
+          external_contact: from,
+          channel: 'whatsapp',
+          incoming:
+            safeString(
+              message?.text?.body ||
+              message?.image?.caption ||
+              message?.interactive?.button_reply?.title ||
+              message?.interactive?.list_reply?.title ||
+              message?.button?.text
+            ) || whatsappMediaSummary(message) || `[${type}]`,
+          type,
+          action: 'ai_reply_send_failed',
+          error: `Message non traité automatiquement : ${safeString(error?.message || error)}`,
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+      }
+    }
+  } catch (logError) {
+    console.error('❌ Message entrant abandonné non journalisé :', logError.message);
+  } finally {
+    inboundJournal.done(id);
+  }
+}
+
+function processWhatsAppInboundMessage(message, profileName = '') {
+  const id = safeString(message?.id);
+  return conversationQueue.runWithRetry({
+    queueKey: `whatsapp:${normalizePhone(message?.from)}`,
+    messageIds: [id],
+    label: 'message WhatsApp',
+    task: async () => {
+      await processSingleMessage(
+        message,
+        { profileName }
+      );
+      inboundJournal.done(id);
+    },
+    onGiveUp: error => recordInboundGiveUp(message, error)
+  });
+}
+
+function replayPendingInboundMessages() {
+  let pending = [];
+  try {
+    pending = inboundJournal.pending();
+  } catch (error) {
+    console.error('❌ Reprise des messages entrants :', error.message);
+    return;
+  }
+  if (pending.length) {
+    console.warn(`♻️ ${pending.length} message(s) WhatsApp non terminé(s) avant l'arrêt : reprise.`);
+  }
+  for (const item of pending) {
+    const id = safeString(item?.id);
+    const message = item?.payload?.message;
+    if (!message || typeof message !== 'object' || persistentMessageIds.has(id)) {
+      inboundJournal.done(id);
+      continue;
+    }
+    const receivedMs = Date.parse(safeString(item?.at));
+    if (Number.isFinite(receivedMs) && Date.now() - receivedMs > INBOUND_REPLAY_MAX_AGE_MS) {
+      recordInboundGiveUp(
+        message,
+        new Error('reçu pendant une interruption du serveur, trop ancien pour une réponse automatique')
+      );
+      continue;
+    }
+    processWhatsAppInboundMessage(message, safeString(item?.payload?.profileName))
+      .catch(error => console.error('❌ Reprise message WhatsApp :', error?.message || error));
+  }
+  inboundJournal.compact();
+}
+
+const inboundReplayTimer = setTimeout(replayPendingInboundMessages, 5000);
+if (typeof inboundReplayTimer.unref === 'function') inboundReplayTimer.unref();
+
 async function processWhatsAppWebhook(body) {
   if (
     body?.object !==
@@ -8824,6 +8805,49 @@ async function processWhatsAppWebhook(body) {
           }
         }
 
+        // V6.45 — Échec de livraison conservé sur la conversation et affiché
+        // dans l'historique (avant : console uniquement ; une relance ou une
+        // réponse refusée par Meta passait pour envoyée).
+        if (statusKind === 'failed' && statusPhone) {
+          const failedContact = makeConversationKey('whatsapp', statusPhone);
+          const firstError = Array.isArray(status?.errors) ? status.errors[0] || {} : {};
+          const failureText = [
+            safeString(firstError?.code) ? `code ${safeString(firstError.code)}` : '',
+            safeString(firstError?.title) || safeString(firstError?.message),
+            safeString(firstError?.error_data?.details)
+          ].filter(Boolean).join(' — ') || 'raison non précisée';
+          try {
+            updateConversationState(failedContact, current => ({
+              ...current,
+              lastDeliveryFailedAt: statusIso,
+              lastDeliveryFailure: {
+                metaMessageId: safeString(status?.id),
+                code: safeString(firstError?.code),
+                title: safeString(firstError?.title || firstError?.message),
+                details: safeString(firstError?.error_data?.details),
+                at: statusIso
+              }
+            }));
+            logConversation({
+              contact: failedContact,
+              external_contact: statusPhone,
+              channel: 'whatsapp',
+              type: 'delivery_failed',
+              action: 'meta_delivery_failed',
+              source: 'whatsapp_status',
+              direction: 'system',
+              sender_kind: 'system',
+              related_message_id: safeString(status?.id),
+              system_body: `Message non livré par WhatsApp (${failureText})`,
+              reply_sent: false,
+              time: statusIso
+            });
+          } catch (failedStatusError) {
+            console.warn('⚠️ Statut « failed » non enregistré :', failedStatusError.message);
+          }
+          continue;
+        }
+
         if (!statusPhone || !['sent', 'delivered', 'read'].includes(statusKind)) continue;
         const statusContact = makeConversationKey('whatsapp', statusPhone);
         updateConversationState(statusContact, current => {
@@ -8853,15 +8877,10 @@ async function processWhatsAppWebhook(body) {
 
       for (const message of messages) {
         try {
-          await conversationQueue.runWithRetry({
-            queueKey: `whatsapp:${normalizePhone(message?.from)}`,
-            messageIds: [message?.id],
-            label: 'message WhatsApp',
-            task: () => processSingleMessage(
-              message,
-              { profileName: contactsProfileByPhone[normalizePhone(message?.from)] || '' }
-            )
-          });
+          await processWhatsAppInboundMessage(
+            message,
+            contactsProfileByPhone[normalizePhone(message?.from)] || ''
+          );
         } catch (error) {
           console.error(
             '❌ Erreur message WhatsApp :',
@@ -9927,6 +9946,12 @@ async function processSingleInstagramEvent(event) {
 // DÉTECTION INTERVENTION HUMAINE
 // ============================================================
 
+// V6.45 — Traité immédiatement (pas dans la file du client) : la pause et
+// lastHumanAt doivent être visibles AVANT qu'une réponse IA en cours de
+// génération atteigne sa vérification finale (aiAutoSendBlockReason). Mise
+// dans la file, l'écho attendrait la fin de cette génération et la réponse
+// IA partirait après celle du commercial. Toutes les écritures d'état sont
+// atomiques (source de vérité partagée, aucun await) : pas d'entrelacement.
 function handleHumanMessageEcho(value) {
   const settings =
     getBotSettings();
@@ -10021,7 +10046,7 @@ function handleHumanMessageEcho(value) {
 // défaut) : quand la réponse de l'IA cite un seul produit du catalogue dont
 // le prix est connu, sa fiche (photo, prix, bouton « Voir le produit ») est
 // envoyée juste après. Une erreur ici n'affecte jamais la réponse texte.
-async function maybeSendAiProductCard(from, reply) {
+async function maybeSendAiProductCard(from, reply, inboundAtMs = NaN) {
   try {
     if (getBotSettings()?.aiProductCards !== true) return;
     const product = findProductForCard(reply, loadProducts());
@@ -10029,6 +10054,8 @@ async function maybeSendAiProductCard(from, reply) {
 
     const state = getConversationState(from) || {};
     if (!productCardAllowed(state, product.id)) return;
+    // V6.45 — Aucun envoi automatique si un humain a pris la main entre-temps.
+    if (aiAutoSendBlockReason(from, inboundAtMs)) return;
 
     let file = null;
     const imagePath = getLocalProductImagePath(product);
@@ -10065,6 +10092,216 @@ async function maybeSendAiProductCard(from, reply) {
     console.warn('⚠️ Fiche produit IA non envoyée :', error.message);
   }
 }
+
+// ============================================================
+// V6.45 — FIABILITÉ DES RÉPONSES AUTOMATIQUES
+// ============================================================
+
+// Envois commerciaux en cours, par conversation (mémoire seulement). Une
+// réponse IA dont la génération se termine pendant qu'un commercial envoie
+// son message n'est pas envoyée.
+const humanSendsInFlight = new Map();
+
+function markHumanSendStart(contact) {
+  const key = safeString(contact);
+  if (!key) return;
+  humanSendsInFlight.set(key, Number(humanSendsInFlight.get(key) || 0) + 1);
+}
+
+function markHumanSendEnd(contact) {
+  const key = safeString(contact);
+  const count = Number(humanSendsInFlight.get(key) || 0) - 1;
+  if (count > 0) humanSendsInFlight.set(key, count);
+  else humanSendsInFlight.delete(key);
+}
+
+// Heure d'envoi du message client (timestamp Meta, en secondes).
+const inboundMessageTimeMs = messagingRules.inboundMessageTimeMs;
+
+// Dernière vérification JUSTE AVANT un envoi automatique (réponse IA,
+// message de secours, fiche produit, épingle showroom…) : la génération
+// peut durer plusieurs dizaines de secondes, pendant lesquelles un
+// commercial a pu prendre la main, répondre (Admin ou WhatsApp Business) ou
+// l'IA être désactivée. Renvoie la raison du blocage, ou ''.
+function aiAutoSendBlockReason(contact, inboundAtMs = NaN) {
+  const settings = getBotSettings() || {};
+  if (!settings.aiEnabled) return 'ai_disabled';
+  const channel = conversationChannel(contact, null);
+  if (settings.aiEnabledChannels && settings.aiEnabledChannels[channel] === false) {
+    return 'ai_disabled_channel';
+  }
+  const state = getConversationState(contact) || {};
+  const pauseReason = conversationAiPauseReason(state);
+  if (pauseReason) return pauseReason;
+  if (humanSendsInFlight.has(safeString(contact))) return 'human_sending';
+  const lastHumanMs = Date.parse(safeString(state.lastHumanAt));
+  if (
+    Number.isFinite(lastHumanMs) &&
+    Number.isFinite(inboundAtMs) &&
+    lastHumanMs >= inboundAtMs
+  ) {
+    return 'human_replied';
+  }
+  return '';
+}
+
+// L'historique IA reçoit la réponse dès sa génération (generateReply) : si
+// elle n'est finalement pas envoyée, on la retire pour que l'IA ne croie
+// pas avoir répondu.
+function dropUnsentAiHistoryTurn(contact, reply) {
+  const text = safeString(reply).replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+  if (!text) return;
+  try {
+    const key = safeString(contact);
+    const item = aiHistoryStore.get(key);
+    const messages = Array.isArray(item?.messages) ? item.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+      if (candidate?.role !== 'assistant') continue;
+      const content = safeString(candidate.content).replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+      if (content !== text) continue;
+      aiHistoryStore.update(key, current => ({
+        ...current,
+        messages: messages.filter((_, position) => position !== index)
+      }));
+      return;
+    }
+  } catch (error) {
+    console.warn('⚠️ Historique IA (réponse non envoyée) :', error.message);
+  }
+}
+
+// Réponse IA générée mais volontairement non envoyée : un humain a pris la
+// main entre-temps. Le message du client est journalisé (il reste visible
+// dans l'Inbox), sans nouvelle escalade : la conversation est déjà suivie.
+// Si un commercial a déjà répondu à ce message (human_replied), l'entrée est
+// datée de l'heure du message client : elle s'affiche avant la réponse du
+// commercial et la conversation n'est pas remise « À répondre ».
+function logAiReplySuppressed({
+  messageId,
+  contact,
+  incoming,
+  type = 'text',
+  attachmentFields = {},
+  reply,
+  reason,
+  source,
+  inboundAtMs = NaN
+}) {
+  const nowMs = Date.now();
+  const entryTimeMs =
+    reason === 'human_replied' && Number.isFinite(inboundAtMs)
+      ? Math.min(inboundAtMs, nowMs)
+      : nowMs;
+  dropUnsentAiHistoryTurn(contact, reply);
+  console.log(
+    `⏸️ Réponse IA non envoyée à ${maskPhoneForLog(contact)} : ${reason} (intervention humaine ou IA désactivée pendant la génération).`
+  );
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: contact,
+    channel: 'whatsapp',
+    incoming: safeString(incoming),
+    type,
+    ...attachmentFields,
+    action: 'ai_reply_suppressed_human_active',
+    suppression_reason: safeString(reason),
+    suppressed_reply: safeString(reply),
+    source: safeString(source) || 'organic',
+    reply_sent: false,
+    time: new Date(entryTimeMs).toISOString()
+  });
+}
+
+// Envoi de la réponse automatique en échec (erreur Meta, coupure, délai) :
+// le message du client est TOUJOURS journalisé et la conversation passe au
+// commercial (ai_reply_send_failed : SLA, pause IA, notification). Avant,
+// l'erreur était seulement écrite dans la console et le message disparaissait
+// de l'Inbox.
+function logAiReplySendFailed({
+  messageId,
+  contact,
+  incoming,
+  type = 'text',
+  attachmentFields = {},
+  reply,
+  error,
+  source
+}) {
+  dropUnsentAiHistoryTurn(contact, reply);
+  const uncertain = Boolean(
+    error?.requestMayHaveReachedMeta === true ||
+    ['SEND_TIMEOUT_UNCERTAIN', 'SEND_NETWORK_UNCERTAIN'].includes(safeString(error?.code))
+  );
+  console.error(
+    `❌ Réponse automatique non envoyée à ${maskPhoneForLog(contact)}${uncertain ? ' (peut-être délivrée)' : ''} : ${safeString(error?.message || error)}`
+  );
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: contact,
+    channel: 'whatsapp',
+    incoming: safeString(incoming),
+    type,
+    ...attachmentFields,
+    action: 'ai_reply_send_failed',
+    error: uncertain
+      ? `Envoi de la réponse IA incertain (peut-être délivrée) : ${safeString(error?.message || error)}`
+      : `Réponse IA non envoyée : ${safeString(error?.message || error)}`,
+    error_code: safeString(error?.code),
+    unsent_reply: safeString(reply),
+    send_uncertain: uncertain,
+    source: safeString(source) || 'organic',
+    reply_sent: false,
+    time: new Date().toISOString()
+  });
+}
+
+// V6.45 — Réaction emoji d'un client (👍 sur une réponse) : simple
+// information. Elle est conservée dans l'historique, sans compter comme un
+// message non lu, sans escalade ni pause de l'IA.
+function logWhatsAppReaction(from, message, webhookMeta = {}) {
+  const emoji = safeString(message?.reaction?.emoji);
+  const relatedMessageId = safeString(message?.reaction?.message_id);
+  const time = new Date(inboundMessageTimeMs(message)).toISOString();
+
+  updateConversationState(from, current => ({
+    ...current,
+    channel: current.channel || 'whatsapp',
+    externalContact: current.externalContact || from,
+    profileName: safeString(webhookMeta?.profileName || current.profileName),
+    lastReactionAt: time,
+    lastReactionEmoji: emoji,
+    lastReactionMessageId: relatedMessageId
+  }));
+
+  logConversation({
+    message_id: safeString(message?.id) || null,
+    contact: from,
+    external_contact: from,
+    channel: 'whatsapp',
+    type: 'reaction',
+    action: 'customer_reaction',
+    source: 'whatsapp_reaction',
+    direction: 'system',
+    sender_kind: 'system',
+    reaction: emoji,
+    reaction_action: emoji ? 'react' : 'remove',
+    related_message_id: relatedMessageId,
+    reply_sent: false,
+    time
+  });
+
+  console.log(
+    `👍 Réaction ${emoji ? 'reçue' : 'retirée'} de ${maskPhoneForLog(from)} : aucune réponse ni escalade.`
+  );
+}
+
+// Contenu lisible des médias sans traitement IA (vidéo, document,
+// localisation, contact, sticker, message non pris en charge) : voir
+// lib/messaging-rules.js.
+const whatsappMediaSummary = messagingRules.whatsappMediaSummary;
 
 // ============================================================
 // MESSAGE CLIENT
@@ -10124,18 +10361,59 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
     return;
   }
 
-  try {
-    require('./read-receipt')
-      .markRead({
-        messageId,
-        apiVersion: META_API_VERSION,
-        phoneNumberId: PHONE_NUMBER_ID,
-        token: WHATSAPP_TOKEN
-      })
-      .catch(e => console.error('Accuse lecture :', e.message));
-  } catch (rrErr) {
-    console.error('Accuse lecture :', rrErr.message);
+  // V6.45 — Heure du message client : référence pour la vérification
+  // juste avant l'envoi d'une réponse automatique.
+  const inboundAtMs = inboundMessageTimeMs(message);
+
+  // V6.45 — Une réaction emoji n'est pas un nouveau message : ni non-lu, ni
+  // escalade, ni pause de l'IA (elle déclenchait « Commercial requis »).
+  if (messageType === 'reaction') {
+    logWhatsAppReaction(from, message, webhookMeta);
+    return;
   }
+
+  // Événement système WhatsApp (changement de numéro…) : conservé, sans
+  // escalade. request_welcome (ouverture de la discussion) : rien à faire.
+  if (messageType === 'system' || messageType === 'request_welcome') {
+    if (messageType === 'system') {
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        type: 'system',
+        action: 'whatsapp_system_event',
+        source: 'whatsapp_system',
+        direction: 'system',
+        sender_kind: 'system',
+        system_body: safeString(message?.system?.body),
+        reply_sent: false,
+        time: new Date(inboundAtMs).toISOString()
+      });
+    }
+    console.log(`ℹ️ Événement WhatsApp « ${messageType} » de ${maskPhoneForLog(from)} : aucune réponse.`);
+    return;
+  }
+
+  // V6.45 — Accusé de lecture envoyé après la décision (voir plus bas) :
+  // l'indicateur « en train d'écrire… » n'est affiché que si l'IA va
+  // réellement répondre.
+  const sendReadReceipt = typing => {
+    try {
+      require('./read-receipt')
+        .markRead({
+          messageId,
+          apiVersion: META_API_VERSION,
+          phoneNumberId: PHONE_NUMBER_ID,
+          token: WHATSAPP_TOKEN,
+          typing
+        })
+        .catch(e => console.error('Accuse lecture :', e.message));
+    } catch (rrErr) {
+      console.error('Accuse lecture :', rrErr.message);
+    }
+  };
+
   const previousState =
     getConversationState(from);
 
@@ -10243,6 +10521,11 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       isNewCustomer
     );
 
+  sendReadReceipt(
+    decision.allowed === true &&
+    (messageType === 'text' || messageType === 'image')
+  );
+
   if (decision.sendAbsence) {
     const absenceMessage =
       safeString(
@@ -10305,7 +10588,60 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
           '❌ Message absence :',
           error.message
         );
+
+        // V6.45 — Le message du client reste visible dans l'Inbox même si
+        // le message d'absence n'a pas pu partir.
+        logConversation({
+          message_id:
+            messageId || null,
+          contact:
+            from,
+          external_contact:
+            from,
+          channel:
+            'whatsapp',
+          incoming:
+            safeString(
+              message?.text?.body ||
+              message?.image?.caption ||
+              ''
+            ),
+          type:
+            messageType,
+          ...whatsappAttachmentFields,
+          action:
+            'outside_hours',
+          error:
+            `Message d’absence non envoyé : ${safeString(error.message)}`,
+          source:
+            isAdReferral
+              ? 'meta_ad'
+              : 'organic',
+          reply_sent:
+            false,
+          time:
+            new Date().toISOString()
+        });
       }
+    } else {
+      // V6.45 — Mode « message d'absence » sans texte configuré : le
+      // message du client est quand même journalisé (avant : rien, il
+      // n'apparaissait pas dans l'Inbox).
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        incoming:
+          safeString(message?.text?.body || message?.image?.caption || '') ||
+          whatsappMediaSummary(message),
+        type: messageType,
+        ...whatsappAttachmentFields,
+        action: 'outside_hours',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
     }
 
     return;
@@ -10327,8 +10663,11 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       channel:
         'whatsapp',
 
+      // V6.45 — Légende, nom de fichier, localisation… conservés aussi
+      // quand l'IA est en pause.
       incoming:
-        safeString(message?.text?.body || message?.image?.caption || ''),
+        safeString(message?.text?.body || message?.image?.caption || '') ||
+        whatsappMediaSummary(message),
 
       type:
         messageType,
@@ -10481,11 +10820,39 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
         return;
       }
 
-      const metaResult =
-        await sendWhatsAppMessage(
-          from,
-          choiceReply
-        );
+      // V6.45 — Vérification juste avant l'envoi automatique.
+      const choiceBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+      if (choiceBlockReason) {
+        logAiReplySuppressed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: choiceReply,
+          reason: choiceBlockReason,
+          source: isAdReferral ? 'meta_ad' : 'organic',
+          inboundAtMs
+        });
+        return;
+      }
+
+      let metaResult;
+      try {
+        metaResult =
+          await sendWhatsAppMessage(
+            from,
+            choiceReply
+          );
+      } catch (error) {
+        logAiReplySendFailed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: choiceReply,
+          error,
+          source: isAdReferral ? 'meta_ad' : 'organic'
+        });
+        return;
+      }
 
       markBotMessage(from, 'reply');
 
@@ -10527,11 +10894,25 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
         })
       );
 
-      const metaResult =
-        await sendWhatsAppMessage(
-          from,
-          prompt
-        );
+      let metaResult;
+      try {
+        metaResult =
+          await sendWhatsAppMessage(
+            from,
+            prompt
+          );
+      } catch (error) {
+        // V6.45 — Le message du client n'est jamais perdu.
+        logAiReplySendFailed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: prompt,
+          error,
+          source: isAdReferral ? 'meta_ad' : 'organic'
+        });
+        return;
+      }
 
       markBotMessage(from, 'routing');
 
@@ -10584,6 +10965,23 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
     if (isAdReferral) {
       const adStateForMatch = getConversationState(from) || {};
       const matchedQuickReply = findMatchingQuickReplyForAd(adStateForMatch?.adReferral);
+      // V6.45 — Même vérification juste avant l'envoi automatique.
+      const quickReplyBlockReason =
+        matchedQuickReply && safeString(matchedQuickReply.content)
+          ? aiAutoSendBlockReason(from, inboundAtMs)
+          : '';
+      if (quickReplyBlockReason) {
+        logAiReplySuppressed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: '',
+          reason: quickReplyBlockReason,
+          source: 'meta_ad',
+          inboundAtMs
+        });
+        return;
+      }
       if (matchedQuickReply && safeString(matchedQuickReply.content)) {
         try {
           const quickReplyText = safeString(matchedQuickReply.content);
@@ -10605,6 +11003,22 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
           });
           return;
         } catch (error) {
+          // V6.45 — Envoi peut-être arrivé chez le client (coupure, délai) :
+          // pas de seconde réponse IA par-dessus, le commercial prend le relais.
+          if (
+            error?.requestMayHaveReachedMeta === true ||
+            ['SEND_TIMEOUT_UNCERTAIN', 'SEND_NETWORK_UNCERTAIN'].includes(safeString(error?.code))
+          ) {
+            logAiReplySendFailed({
+              messageId,
+              contact: from,
+              incoming: userText,
+              reply: safeString(matchedQuickReply.content),
+              error,
+              source: 'meta_ad'
+            });
+            return;
+          }
           console.warn('⚠️ Envoi réponse rapide publicité échoué, poursuite avec IA :', error.message);
         }
       }
@@ -10669,15 +11083,21 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       );
 
       let fallbackSent = false;
-      try {
-        await sendWhatsAppMessage(
-          from,
-          'Merci pour votre message ! Notre équipe MONDECO revient vers vous très rapidement avec les informations demandées. 😊'
-        );
-        markBotMessage(from, 'fallback_error');
-        fallbackSent = true;
-      } catch (fallbackError) {
-        console.error("❌ Impossible d'envoyer le message de secours :", fallbackError.message);
+      // V6.45 — Pas de message de secours si un humain a pris la main.
+      const fallbackBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+      if (fallbackBlockReason) {
+        console.log(`⏸️ Message de secours non envoyé à ${maskPhoneForLog(from)} : ${fallbackBlockReason}.`);
+      } else {
+        try {
+          await sendWhatsAppMessage(
+            from,
+            'Merci pour votre message ! Notre équipe MONDECO revient vers vous très rapidement avec les informations demandées. 😊'
+          );
+          markBotMessage(from, 'fallback_error');
+          fallbackSent = true;
+        } catch (fallbackError) {
+          console.error("❌ Impossible d'envoyer le message de secours :", fallbackError.message);
+        }
       }
 
       logConversation({
@@ -10710,13 +11130,46 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       return;
     }
 
+    // V6.45 — Vérification JUSTE AVANT l'envoi : la génération a pu durer
+    // longtemps, un commercial a pu prendre la main ou répondre entre-temps
+    // (l'Inbox affichait alors « IA en pause » et la réponse IA partait
+    // quand même).
+    const replyBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+    if (replyBlockReason) {
+      logAiReplySuppressed({
+        messageId,
+        contact: from,
+        incoming: userText,
+        reply,
+        reason: replyBlockReason,
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        inboundAtMs
+      });
+      return;
+    }
+
+    let metaResult;
     try {
-      const metaResult =
+      metaResult =
         await sendWhatsAppMessage(
           from,
           reply
         );
+    } catch (error) {
+      // V6.45 — Le message du client est journalisé et passe au commercial
+      // (avant : simple ligne de console, message absent de l'Inbox).
+      logAiReplySendFailed({
+        messageId,
+        contact: from,
+        incoming: userText,
+        reply,
+        error,
+        source: isAdReferral ? 'meta_ad' : 'organic'
+      });
+      return;
+    }
 
+    try {
       markBotMessage(
         from,
         'reply'
@@ -10765,24 +11218,28 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       console.log(
         `✅ Réponse WhatsApp envoyée à ${maskPhoneForLog(from)}`
       );
-      await maybeSendAiProductCard(from, reply);
+      await maybeSendAiProductCard(from, reply, inboundAtMs);
       try {
-        require('./showroom-pin')
-          .maybeSendPin({
-            text: userText,
-            to: normalizePhone(from),
-            apiVersion: META_API_VERSION,
-            phoneNumberId: PHONE_NUMBER_ID,
-            token: WHATSAPP_TOKEN
-          })
-          .catch(e => console.error(
-            'Pin showroom :', e.message));
+        // V6.45 — Même vérification avant l'épingle showroom.
+        if (!aiAutoSendBlockReason(from, inboundAtMs)) {
+          require('./showroom-pin')
+            .maybeSendPin({
+              text: userText,
+              to: normalizePhone(from),
+              apiVersion: META_API_VERSION,
+              phoneNumberId: PHONE_NUMBER_ID,
+              token: WHATSAPP_TOKEN
+            })
+            .catch(e => console.error(
+              'Pin showroom :', e.message));
+        }
       } catch (pinErr) {
         console.error('Pin showroom :', pinErr.message);
       }
     } catch (error) {
+      // Réponse déjà envoyée : seule la suite (journal, fiche) a échoué.
       console.error(
-        '❌ Impossible d’envoyer WhatsApp :',
+        '❌ Après envoi WhatsApp :',
         error.message
       );
     }
@@ -10905,6 +11362,10 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
     '➡️ Commercial requis.'
   );
 
+  // V6.45 — Le contenu (légende, nom du fichier, coordonnées, contact
+  // partagé) est conservé pour le commercial ; avant, seul le type l'était.
+  const otherMediaSummary = whatsappMediaSummary(message);
+
   logConversation({
     message_id:
       messageId ||
@@ -10912,6 +11373,8 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
 
     contact:
       from,
+
+    ...(otherMediaSummary ? { incoming: otherMediaSummary } : {}),
 
     type:
       messageType ||
@@ -11183,6 +11646,22 @@ async function processWhatsAppImage(
             new Date().toISOString()
         });
       } else {
+        // V6.45 — Vérification juste avant l'envoi (l'analyse peut être longue).
+        const imageBlockReason = aiAutoSendBlockReason(from, inboundMessageTimeMs(message));
+        if (imageBlockReason) {
+          logAiReplySuppressed({
+            messageId: message?.id,
+            contact: from,
+            incoming: caption,
+            type: 'image',
+            attachmentFields,
+            reply: cleanAnalysis,
+            reason: imageBlockReason,
+            inboundAtMs: inboundMessageTimeMs(message)
+          });
+          return;
+        }
+
         await sendWhatsAppMessage(
           from,
           cleanAnalysis
@@ -11258,6 +11737,51 @@ async function processWhatsAppImage(
 
 let followUpRunning = false;
 
+// V6.45 — Limitation « une relance par client et par 24 h » : fichier dans
+// DATA_DIR (il était écrit en dur dans /data, hors du dossier de données
+// lorsque DATA_DIR est différent). L'ancien fichier /data/followup-last.json
+// est relu une fois s'il existe et que le nouveau est absent.
+const FOLLOWUP_LAST_PATH = path.join(DATA_DIR, 'followup-last.json');
+const FOLLOWUP_LEGACY_LAST_PATH = '/data/followup-last.json';
+// Marge avant la fin de la fenêtre WhatsApp de 24 h (envoi + délai Meta).
+const FOLLOWUP_WINDOW_MARGIN_MS = 10 * 60 * 1000;
+
+function loadFollowUpLast() {
+  if (global.__fuLast && typeof global.__fuLast === 'object') return global.__fuLast;
+  let loaded = {};
+  for (const candidate of [FOLLOWUP_LAST_PATH, FOLLOWUP_LEGACY_LAST_PATH]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        loaded = parsed;
+        break;
+      }
+    } catch {}
+  }
+  global.__fuLast = loaded;
+  return loaded;
+}
+
+function saveFollowUpLast(data) {
+  try {
+    writeJsonAtomic(FOLLOWUP_LAST_PATH, data);
+  } catch (fuErr) {
+    console.error('followup-last :', fuErr.message);
+  }
+}
+
+// Raison de ne pas relancer ce client maintenant, ou '' (voir
+// lib/messaging-rules.js : prise en main, 24 h entre deux relances,
+// fenêtre WhatsApp de 24 h).
+function followUpSkipReason(phone, state, { delayMs, maxFollowUps, followUpLast }) {
+  return messagingRules.followUpSkipReason(state, {
+    delayMs,
+    maxFollowUps,
+    lastFollowUpAtMs: Number(followUpLast?.[phone] || 0),
+    windowMarginMs: FOLLOWUP_WINDOW_MARGIN_MS
+  });
+}
+
 async function checkFollowUps() {
   if (followUpRunning) return;
 
@@ -11299,72 +11823,43 @@ async function checkFollowUps() {
 
     if (!message) return;
 
+    // V6.45 — La carte complète ne sert qu'à choisir les candidats : chaque
+    // relance est vérifiée puis enregistrée conversation par conversation
+    // (avant, la copie prise au début était réenregistrée en entier après
+    // les envois et effaçait les prises en main faites entre-temps).
     const states =
       loadConversationStates();
 
-    let changed = false;
     let fuSentThisRun = 0;
+    const followUpLast = loadFollowUpLast();
 
     for (
       const [phone, state]
       of Object.entries(states)
     ) {
-      if (!state?.awaitingResponse) {
-        continue;
-      }
-
-      if (
-        state.manualTakeover === true ||
-        state.humanPaused === true
-      ) {
-        // Aucune relance IA lorsqu'un commercial a la main.
-        continue;
-      }
-
-      const sent =
-        Number(
-          state.followUpsSent ||
-          0
-        );
-
-      if (sent >= maxFollowUps) {
-        continue;
-      }
       if (fuSentThisRun >= 25) { break; }
-      if (!global.__fuLast) {
-        try { global.__fuLast = JSON.parse(require('fs').readFileSync('/data/followup-last.json','utf8')); }
-        catch (e) { global.__fuLast = {}; }
-      }
-      if (Date.now() - Number(global.__fuLast[phone] || 0) < 24 * 3600 * 1000) {
+
+      if (followUpSkipReason(phone, state, { delayMs, maxFollowUps, followUpLast })) {
         continue;
       }
 
-      const lastBotAt =
-        Date.parse(
-          state.lastBotAt ||
-          ''
+      const followUpChannel =
+        conversationChannel(
+          phone,
+          state
         );
 
-      if (
-        !Number.isFinite(lastBotAt) ||
-        Date.now() - lastBotAt <
-          delayMs
-      ) {
-        continue;
-      }
+      const followUpRecipient =
+        safeString(
+          state.externalContact ||
+          conversationExternalId(phone)
+        );
 
-      try {
-        const followUpChannel =
-          conversationChannel(
-            phone,
-            state
-          );
-
-        const followUpRecipient =
-          safeString(
-            state.externalContact ||
-            conversationExternalId(phone)
-          );
+      const sendFollowUp = async () => {
+        // Nouvelle vérification au moment de l'envoi, sur l'état à jour.
+        const current = getConversationState(phone) || {};
+        const reason = followUpSkipReason(phone, current, { delayMs, maxFollowUps, followUpLast });
+        if (reason) return false;
 
         if (followUpChannel === 'instagram') {
           await sendInstagramMessage(
@@ -11378,21 +11873,21 @@ async function checkFollowUps() {
           );
         }
 
-        state.lastBotAt =
-          new Date().toISOString();
+        markBotMessage(phone, 'followup');
+        return true;
+      };
 
-        state.lastBotType =
-          'followup';
+      try {
+        const sent =
+          followUpChannel === 'whatsapp'
+            ? await conversationQueue.run(`whatsapp:${normalizePhone(followUpRecipient)}`, sendFollowUp)
+            : await sendFollowUp();
 
-        state.followUpsSent =
-          sent + 1;
+        if (!sent) continue;
 
-        changed = true;
         fuSentThisRun++;
-        try {
-          global.__fuLast[phone] = Date.now();
-          writeJsonAtomic('/data/followup-last.json', global.__fuLast);
-        } catch (fuErr) { console.error('followup-last :', fuErr.message); }
+        followUpLast[phone] = Date.now();
+        saveFollowUpLast(followUpLast);
 
         logConversation({
           contact:
@@ -11426,10 +11921,6 @@ async function checkFollowUps() {
           error.message
         );
       }
-    }
-
-    if (changed) {
-      saveConversationStates(states);
     }
   } catch (error) {
     console.error(
@@ -11475,6 +11966,7 @@ async function checkSlaAutoResume() {
 
     const now = Date.now();
     let changed = false;
+    const resumedContacts = [];
 
     for (
       const [contact, state]
@@ -11498,6 +11990,9 @@ async function checkSlaAutoResume() {
         humanPaused: false,
         pausedUntil: null,
         commercialAttention: false,
+        // V6.45 — L'alerte entière est levée avec la reprise de l'IA.
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
         // V6.36.51 — Retirer assignedUserId : l'IA reprend seule la main,
         // aucun commercial n'est plus responsable de cette conversation.
         // Sans ce nettoyage, un commercial DIFFÉRENT ne pouvait plus la
@@ -11513,6 +12008,7 @@ async function checkSlaAutoResume() {
       };
 
       changed = true;
+      resumedContacts.push(contact);
 
       console.log(
         `🔁 SLA expiré sans réponse pour ${maskPhoneForLog(contact)} : IA réactivée automatiquement.`
@@ -11521,6 +12017,21 @@ async function checkSlaAutoResume() {
 
     if (changed) {
       saveConversationStates(states);
+      // V6.45 — La reprise automatique est visible dans l'historique de la
+      // conversation (l'Inbox repasse en « IA active » au même moment).
+      for (const contact of resumedContacts) {
+        logConversation({
+          contact,
+          type: 'system',
+          action: 'ai_auto_resumed',
+          source: 'sla_auto_resume',
+          direction: 'system',
+          sender_kind: 'system',
+          system_body: 'aucun commercial n’a répondu avant la fin du délai (SLA)',
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+      }
     }
   } catch (error) {
     console.error(
@@ -11879,91 +12390,209 @@ app.get(
 // importe déjà Admin.js, l'inverse créerait une dépendance circulaire.
 // Traite au maximum 50 conversations par appel pour rester raisonnable
 // (chaque réponse implique un appel IA + un envoi Meta).
+// V6.45 — Corrections : un second clic (ou un second poste) ne renvoie plus
+// la même réponse (verrou + clé par dernier message non lu, non-lus remis à
+// zéro après envoi) ; une conversation prise en main par un commercial
+// (Admin ou WhatsApp Business) n'est plus réactivée de force (sauf
+// includeTakeovers: true) ; les clients hors fenêtre WhatsApp de 24 h sont
+// ignorés (Meta refuse un message libre) ; chaque réponse passe par la file
+// du client, comme un message entrant, avec une vérification juste avant
+// l'envoi.
+let aiRespondAllUnreadRunning = false;
+
+const aiBulkUnreadKey = messagingRules.aiBulkUnreadKey;
+
+// Raison d'ignorer une conversation, ou '' si l'IA peut lui répondre (voir
+// lib/messaging-rules.js).
+function aiBulkUnreadSkipReason(contact, state, includeTakeovers) {
+  return messagingRules.aiBulkUnreadSkipReason(state, {
+    includeTakeovers,
+    humanSending: humanSendsInFlight.has(safeString(contact)),
+    windowExpired: whatsappCustomerWindowInfo(contact).expired
+  });
+}
+
 app.post(
   '/admin/api/conversations/ai-respond-all-unread',
   requireAuth,
   async (req, res) => {
-    const states = loadConversationStatesAdmin();
-    const targets = [];
-    for (const [contact, state] of Object.entries(states || {})) {
-      if (!state || typeof state !== 'object') continue;
-      if (state.resolved === true) continue;
-      const channel = safeString(state?.channel).toLowerCase() ||
-        (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
-      if (channel !== 'whatsapp') continue;
-      if (Number(state?.unreadCount || 0) <= 0) continue;
-      const lastText = safeString(state?.lastCustomerText);
-      if (!lastText) continue;
-      targets.push(contact);
-      if (targets.length >= 50) break;
+    if (aiRespondAllUnreadRunning) {
+      return res.status(409).json({
+        success: false,
+        error: 'Une réponse IA groupée est déjà en cours. Patientez quelques instants avant de relancer.'
+      });
     }
-    if (!targets.length) {
-      return res.json({ success: true, respondedCount: 0, skippedCount: 0, failedCount: 0, message: 'Aucun message WhatsApp non lu avec IA à réactiver.' });
-    }
-    const reactivatedAt = new Date().toISOString();
-    let responded = 0;
-    let skipped = 0;
-    let failed = 0;
-    const skippedContacts = [];
-    const failedContacts = [];
-    for (const contact of targets) {
-      const state = states[contact] || {};
-      const lastText = safeString(state?.lastCustomerText);
-      updateConversationStateAdmin(contact, current => ({
-        ...current,
-        manualTakeover: false,
-        humanPaused: false,
-        pausedUntil: null,
-        assignedUserId: '',
-        assignedTo: '',
-        aiModePreference: 'ai',
-        aiModeChoicePending: false,
-        aiModeSelectedAt: reactivatedAt,
-        commercialAttention: false,
-        commercialAttentionReason: '',
-        imageNeedsCommercial: false,
-        aiReactivatedAt: reactivatedAt
-      }));
-      try {
-        let reply = await generateReply(contact, lastText, 'whatsapp');
-        // V6.36.85 — Filtre anti-fuite de raisonnement, comme le pipeline
-        // normal. Remplace la réponse par [COMMERCIAL_REQUIRED] si une
-        // fuite est détectée, transférant au commercial plutôt que
-        // d'envoyer un texte de raisonnement interne au client.
-        reply = stripReasoningLeak(reply, contact);
-        const needsCommercial = /\[COMMERCIAL_REQUIRED\]/i.test(reply);
-        reply = reply.replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
-        if (needsCommercial || !reply) {
-          skipped += 1;
-          skippedContacts.push(contact);
+    aiRespondAllUnreadRunning = true;
+
+    try {
+      const includeTakeovers = req.body?.includeTakeovers === true;
+      const states = loadConversationStatesAdmin();
+      const targets = [];
+      const ignored = [];
+      for (const [contact, state] of Object.entries(states || {})) {
+        if (!state || typeof state !== 'object') continue;
+        if (state.resolved === true) continue;
+        const channel = safeString(state?.channel).toLowerCase() ||
+          (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+        if (channel !== 'whatsapp') continue;
+        if (Number(state?.unreadCount || 0) <= 0) continue;
+        if (!safeString(state?.lastCustomerText)) continue;
+        const reason = aiBulkUnreadSkipReason(contact, state, includeTakeovers);
+        if (reason) {
+          ignored.push({ contact, reason });
           continue;
         }
-        const result = await sendWhatsAppMessage(contact, reply);
-        logConversation({
-          contact,
-          channel: 'whatsapp',
-          reply,
-          action: 'ai_bulk_unread_response',
-          source: 'ai_bulk',
-          reply_sent: true,
-          meta_message_id: safeString(result?.messages?.[0]?.id) || null,
-          time: new Date().toISOString()
-        });
-        responded += 1;
-      } catch (error) {
-        console.warn(`⚠️ Réponse IA (non-lus) ${maskPhoneForLog(contact)} :`, error.message);
-        failed += 1;
-        failedContacts.push(contact);
+        targets.push(contact);
+        if (targets.length >= 50) break;
       }
+      if (!targets.length) {
+        return res.json({
+          success: true,
+          respondedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          ignoredCount: ignored.length,
+          ignored,
+          message: ignored.length
+            ? `Aucun message WhatsApp non lu à traiter par l’IA (${ignored.length} conversation(s) ignorée(s) : déjà répondues, prises en main ou hors fenêtre de 24 h).`
+            : 'Aucun message WhatsApp non lu avec IA à réactiver.'
+        });
+      }
+
+      let responded = 0;
+      let skipped = 0;
+      let failed = 0;
+      const skippedContacts = [];
+      const failedContacts = [];
+
+      for (const contact of targets) {
+        const outcome = await conversationQueue.run(
+          `whatsapp:${normalizePhone(contact)}`,
+          async () => {
+            // Nouvelle vérification dans la file : un message a pu être
+            // traité ou un commercial a pu intervenir entre-temps.
+            const current = getConversationState(contact) || {};
+            const reason = aiBulkUnreadSkipReason(contact, current, includeTakeovers);
+            if (reason) return { status: 'ignored', reason };
+
+            const unreadKey = aiBulkUnreadKey(current);
+            const lastText = safeString(current.lastCustomerText);
+            const lastCustomerMs = Date.parse(safeString(current.lastCustomerAt));
+            const reactivatedAt = new Date().toISOString();
+            updateConversationState(contact, latest => ({
+              ...latest,
+              manualTakeover: false,
+              humanPaused: false,
+              pausedUntil: null,
+              assignedUserId: '',
+              assignedTo: '',
+              aiModePreference: 'ai',
+              aiModeChoicePending: false,
+              aiModeSelectedAt: reactivatedAt,
+              commercialAttention: false,
+              commercialAttentionReason: '',
+              imageNeedsCommercial: false,
+              aiReactivatedAt: reactivatedAt
+            }));
+
+            let reply = await generateReply(contact, lastText, 'whatsapp');
+            // V6.36.85 — Filtre anti-fuite de raisonnement, comme le pipeline
+            // normal. Remplace la réponse par [COMMERCIAL_REQUIRED] si une
+            // fuite est détectée, transférant au commercial plutôt que
+            // d'envoyer un texte de raisonnement interne au client.
+            reply = stripReasoningLeak(reply, contact);
+            const needsCommercial = /\[COMMERCIAL_REQUIRED\]/i.test(reply);
+            reply = reply.replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+            if (needsCommercial || !reply) {
+              // IA incertaine : la conversation repart au commercial (comme
+              // l'annonce l'interface) et ce message n'est plus retenté.
+              pauseAiForCommercial(
+                contact,
+                'IA incertaine (réponse groupée aux non-lus).',
+                { aiHandoff: true }
+              );
+              updateConversationState(contact, latest => ({
+                ...latest,
+                aiBulkAttemptedKey: unreadKey
+              }));
+              return { status: 'skipped' };
+            }
+
+            // Vérification juste avant l'envoi (prise en main pendant la génération).
+            const latest = getConversationState(contact) || {};
+            const blockReason =
+              conversationAiPauseReason(latest) ||
+              (humanSendsInFlight.has(safeString(contact)) ? 'human_sending' : '') ||
+              (aiBulkUnreadKey(latest) !== unreadKey ? 'new_customer_message' : '') ||
+              (Number.isFinite(lastCustomerMs) && (Date.parse(safeString(latest.lastHumanAt)) || 0) >= lastCustomerMs ? 'human_replied' : '');
+            if (blockReason) {
+              dropUnsentAiHistoryTurn(contact, reply);
+              return { status: 'ignored', reason: blockReason };
+            }
+
+            let result;
+            try {
+              result = await sendWhatsAppMessage(contact, reply);
+            } catch (error) {
+              dropUnsentAiHistoryTurn(contact, reply);
+              throw error;
+            }
+
+            markBotMessage(contact, 'reply');
+            const answeredAt = new Date().toISOString();
+            updateConversationState(contact, state => ({
+              ...state,
+              unreadCount: 0,
+              lastUnreadMessageId: '',
+              lastReadAt: answeredAt,
+              lastAnsweredAt: answeredAt,
+              lastAnsweredCustomerAt: safeString(state.lastCustomerAt),
+              aiBulkAnsweredKey: unreadKey,
+              aiBulkAnsweredAt: answeredAt
+            }));
+            logConversation({
+              contact,
+              channel: 'whatsapp',
+              reply,
+              action: 'ai_bulk_unread_response',
+              source: 'ai_bulk',
+              reply_sent: true,
+              meta_message_id: safeString(result?.messages?.[0]?.id) || null,
+              time: answeredAt
+            });
+            return { status: 'responded' };
+          }
+        ).catch(error => {
+          console.warn(`⚠️ Réponse IA (non-lus) ${maskPhoneForLog(contact)} :`, error.message);
+          return { status: 'failed' };
+        });
+
+        if (outcome?.status === 'responded') {
+          responded += 1;
+        } else if (outcome?.status === 'skipped') {
+          skipped += 1;
+          skippedContacts.push(contact);
+        } else if (outcome?.status === 'ignored') {
+          ignored.push({ contact, reason: outcome.reason });
+        } else {
+          failed += 1;
+          failedContacts.push(contact);
+        }
+      }
+
+      return res.json({
+        success: true,
+        respondedCount: responded,
+        skippedCount: skipped,
+        failedCount: failed,
+        ignoredCount: ignored.length,
+        skipped: skippedContacts,
+        failed: failedContacts,
+        ignored
+      });
+    } finally {
+      aiRespondAllUnreadRunning = false;
     }
-    return res.json({
-      success: true,
-      respondedCount: responded,
-      skippedCount: skipped,
-      failedCount: failed,
-      skipped: skippedContacts,
-      failed: failedContacts
-    });
   }
 );
 
@@ -12030,6 +12659,22 @@ process.on(
       '❌ Unhandled Promise Rejection :',
       reason
     );
+  }
+);
+
+// V6.45 — Exception non rattrapée : les écritures en attente sont faites
+// avant de quitter (le gestionnaire de processus redémarre l'application).
+// Les messages en cours de traitement restent dans inbound-journal.jsonl et
+// sont rejoués au démarrage.
+process.on(
+  'uncaughtException',
+  error => {
+    console.error(
+      '❌ Exception non rattrapée (arrêt) :',
+      error
+    );
+    try { flushAllPendingWrites(); } catch {}
+    process.exit(1);
   }
 );
 

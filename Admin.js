@@ -14,6 +14,7 @@ const { createJsonObjectStore } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 const { slimConversationState } = require('./lib/ad-referral');
+const { createConversationStateStore } = require('./lib/conversation-state-store');
 const { SALES_STAGES, applyCustomerProfileUpdate, computeSalesFunnel } = require('./lib/customer-profile');
 const { SHOWROOMS } = require('./location-showrooms');
 const { readResponseBufferWithLimit } = require('./lib/http');
@@ -63,8 +64,6 @@ let usersCacheStamp = null;
 // événements SLA), ce qui pouvait donner l'impression de données
 // "disparues". Les regrouper tout en haut élimine ce risque définitivement,
 // quel que soit l'endroit du fichier qui les appelle en premier.
-let conversationStatesCacheAdmin = null;
-let conversationStatesCacheStampAdmin = '';
 let slaEventsCache = null;
 let slaEventsCacheStamp = '';
 let performanceConversationsLogCache = null;
@@ -157,36 +156,27 @@ function getSqliteDb() {
   return sqliteDb;
 }
 
+// V6.45 — Lecture d'UNE conversation sur la source de vérité partagée
+// (mémoire, à jour de toutes les écritures Admin.js ET server.js ; SQLite
+// seulement pour une conversation absente de la mémoire). Renvoie une copie
+// indépendante, comme une ligne SQLite relue.
 function getConversationStateSingle(contact) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const db = getSqliteDb();
-  if (!db) return null;
   try {
-    const row = db.prepare('SELECT data FROM conversation_states WHERE contact = ?').get(cleanContact);
-    if (!row) return null;
-    return JSON.parse(row.data);
+    return conversationStateStore().get(cleanContact);
   } catch (error) {
     console.error(`❌ getConversationStateSingle(${cleanContact}) :`, error.message);
     return null;
   }
 }
 
+// V6.45 — Remplace l'état d'une conversation (mémoire + SQLite immédiat).
 function setConversationStateSingle(contact, state) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return;
-  const db = getSqliteDb();
-  if (!db) return;
   try {
-    db.prepare(`
-      INSERT INTO conversation_states (contact, data, updated_at)
-      VALUES (@contact, @data, @updated_at)
-      ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-    `).run({
-      contact: cleanContact,
-      data: JSON.stringify(state),
-      updated_at: Date.now()
-    });
+    conversationStateStore().set(cleanContact, state);
   } catch (error) {
     console.error(`❌ setConversationStateSingle(${cleanContact}) :`, error.message);
   }
@@ -2768,7 +2758,9 @@ function applyConversationPurgeTombstones(entry = {}) {
   const meaningful = Boolean(
     safeString(next?.incoming) || safeString(next?.reply) ||
     (Array.isArray(next?.attachments) && next.attachments.length) ||
-    ['facebook_message_read','facebook_message_delivery','facebook_message_reaction'].includes(safeString(next?.action))
+    ['facebook_message_read','facebook_message_delivery','facebook_message_reaction'].includes(safeString(next?.action)) ||
+    // V6.45 — Événements WhatsApp sans texte (réaction, reprise de l'IA…).
+    ['customer_reaction','whatsapp_system_event','ai_auto_resumed','meta_delivery_failed'].includes(safeString(next?.action))
   );
   return meaningful ? next : null;
 }
@@ -9208,12 +9200,19 @@ function registerCommercialEscalation({
 } = {}) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const states = loadConversationStatesAdmin();
-  const existing = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  // V6.45 — Lecture/écriture ciblées sur la source de vérité partagée : le
+  // SLA et l'affectation ne sont plus effacés par la pause IA appliquée
+  // juste après par server.js (pauseAiForCommercial).
+  const existing = getConversationStateSingle(cleanContact) || {};
   const existingStatus = safeString(existing?.sla?.status || existing?.slaStatus);
   if (['pending','late'].includes(existingStatus)) return existing;
 
-  const match = findAutomaticCommercial(channel, new Date());
+  // V6.45 — Conversation déjà prise en main par un commercial : son
+  // affectation est conservée (le SLA mesure seulement sa réponse).
+  const keepAssignee =
+    existing.manualTakeover === true &&
+    Boolean(safeString(existing.assignedUserId) || safeString(existing.assignedTo));
+  const match = keepAssignee ? null : findAutomaticCommercial(channel, new Date());
   const slaMinutes = Math.max(1, Math.min(120, Number(match?.schedule?.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES) || DEFAULT_COMMERCIAL_SLA_MINUTES));
   const startedAt = new Date();
   const dueAt = new Date(startedAt.getTime() + slaMinutes * 60 * 1000);
@@ -9238,8 +9237,16 @@ function registerCommercialEscalation({
       source: safeString(source)
     }
   };
-  states[cleanContact] = updated;
-  saveConversationStatesAdmin(states);
+  updateConversationStateAdmin(cleanContact, current => ({
+    ...current,
+    channel: updated.channel,
+    commercialAttention: updated.commercialAttention,
+    commercialAttentionReason: updated.commercialAttentionReason,
+    assignedTo: updated.assignedTo,
+    assignedUserId: updated.assignedUserId,
+    assignedAt: updated.assignedAt,
+    sla: updated.sla
+  }));
   appendSlaEvent({
     id: slaId,
     event: 'started',
@@ -9259,8 +9266,8 @@ function registerCommercialEscalation({
 function resolveCommercialSla({ contact, actor = {} } = {}) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const states = loadConversationStatesAdmin();
-  const current = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  // V6.45 — Lecture/écriture ciblées (source de vérité partagée).
+  const current = getConversationStateSingle(cleanContact) || {};
   const sla = current.sla && typeof current.sla === 'object' ? current.sla : null;
   if (!sla || !['pending','late'].includes(safeString(sla.status))) return current;
   const answeredAt = new Date();
@@ -9284,8 +9291,13 @@ function resolveCommercialSla({ contact, actor = {} } = {}) {
     imageNeedsCommercial: false,
     sla: updatedSla
   };
-  states[cleanContact] = updated;
-  saveConversationStatesAdmin(states);
+  updateConversationStateAdmin(cleanContact, latest => ({
+    ...latest,
+    commercialAttention: false,
+    commercialAttentionReason: '',
+    imageNeedsCommercial: false,
+    sla: updatedSla
+  }));
   appendSlaEvent({
     event: 'resolved',
     slaId: safeString(sla.id),
@@ -16587,315 +16599,83 @@ let loadWhatsAppLogInFlight = null;
 // si son contenu a changé depuis le dernier chargement.
 // (variables déclarées tout en haut du fichier, voir juste après DATA_DIR)
 
-function readConversationStatesAdminCached() {
-  if (conversationStatesCacheAdmin) return conversationStatesCacheAdmin;
-  loadConversationStatesAdmin();
-  return conversationStatesCacheAdmin || {};
+// V6.45 — Source de vérité UNIQUE pour l'état des conversations, partagée
+// par Admin.js et server.js (même processus) : voir
+// lib/conversation-state-store.js. Avant, Admin.js n'écrivait que le cache
+// JSON (synchronisé vers SQLite 8 à 60 s plus tard) tandis que server.js
+// lisait SQLite en premier : une prise en main, une réactivation de l'IA,
+// une affectation ou un SLA écrits ici étaient ignorés par le bot puis
+// effacés par sa première écriture suivante. Désormais chaque modification
+// est visible immédiatement des deux côtés et écrite tout de suite dans
+// SQLite ; le fichier JSON (même format) reste écrit de façon groupée, au
+// plus une fois par minute et toujours à l'arrêt.
+// `var` + création à la demande : ces fonctions peuvent être appelées très
+// tôt au chargement du module (voir V6.36.2 plus haut).
+var conversationStateStoreInstance;
+function conversationStateStore() {
+  if (!conversationStateStoreInstance) {
+    conversationStateStoreInstance = createConversationStateStore({
+      jsonPath: CONVERSATION_STATE_PATH_ADMIN,
+      openDb: getSqliteDb,
+      writeJson: (filePath, data) => writeJsonAtomic(filePath, data),
+      fileStamp: fileChangeStamp,
+      slim: slimConversationState,
+      // V6.36.62 / V6.37.3 — JSON complet au plus une fois par minute.
+      writeDebounceMs: 8000,
+      jsonMinIntervalMs: Math.max(
+        10 * 1000,
+        Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
+      ),
+      slowLogMs: 500,
+      logger: console
+    });
+  }
+  return conversationStateStoreInstance;
 }
 
-function loadConversationStatesAdmin() {
+// Carte vivante, en lecture seule (statistiques rapides).
+function readConversationStatesAdminCached() {
   try {
-    if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return {};
-    const stamp = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-    if (conversationStatesCacheAdmin && stamp === conversationStatesCacheStampAdmin) {
-      // Copie superficielle : rapide (proportionnelle au nombre de
-      // conversations, pas à la taille du fichier), et protège le cache
-      // partagé contre une mutation accidentelle par un appelant qui ne
-      // sauvegarderait pas ensuite.
-      return { ...conversationStatesCacheAdmin };
-    }
-    const parsed = JSON.parse(
-      fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
-    );
-    const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    const firstLoad = !conversationStatesCacheAdmin;
-    conversationStatesCacheAdmin = result;
-    conversationStatesCacheStampAdmin = stamp;
-    conversationStatesUnreadable = false;
-    if (firstLoad) {
-      const recovered = overlayNewerSqliteStates(result);
-      // SQLite est considéré à jour pour ces objets : les enregistrements
-      // suivants ne réécriront que les conversations modifiées.
-      const refs = sqliteSyncedStateRefs();
-      for (const [contact, state] of Object.entries(result)) refs.set(contact, state);
-      // Conversations reprises depuis SQLite : le JSON sera réécrit au
-      // prochain enregistrement groupé pour les contenir aussi.
-      if (recovered) saveConversationStatesAdmin(result);
-    }
-    return { ...result };
+    return conversationStateStore().live() || {};
   } catch (error) {
-    // V6.37.2 — Fichier présent mais illisible : on bloque toute écriture
-    // (voir flushConversationStatesWrite) pour ne jamais remplacer les
-    // conversations existantes par une liste vide.
-    conversationStatesUnreadable = true;
-    console.error('❌ Lecture conversation-state.json impossible (écritures suspendues) :', error.message);
+    console.error('❌ Lecture de l’état des conversations :', error.message);
     return {};
   }
 }
 
-
-// V6.36.62 — Écriture différée et regroupée : conversation-state.json a
-// dépassé 24 Mo / 9700+ conversations, et fs.writeFileSync (bloquant)
-// prenait 600ms à plus d'1s à chaque appel, mesuré directement sur les
-// phases d'envoi WhatsApp (updateConversationState). Réécrire le fichier
-// entier à CHAQUE message devient de plus en plus coûteux avec le volume,
-// peu importe le format JSON. Au lieu d'écrire immédiatement, on met à
-// jour le cache mémoire tout de suite (rapide, non-bloquant pour le
-// commercial) et on programme une seule écriture disque groupée
-// STATE_WRITE_DEBOUNCE_MS après la dernière modification — plusieurs
-// messages rapprochés ne déclenchent qu'une seule écriture physique.
-const STATE_WRITE_DEBOUNCE_MS = 8000;
-let pendingStateWriteTimer = null;
-let pendingStateToWrite = null;
-
-// V6.37.2 — Dernier objet d'état écrit dans SQLite pour chaque conversation.
-// Le code remplace toujours l'objet d'une conversation modifiée
-// ({ ...current, ... }) au lieu de le modifier sur place : comparer les
-// références suffit pour savoir quelles conversations ont changé, sans
-// rien re-sérialiser. Avant, CHAQUE écriture groupée réécrivait les
-// ~38 000 conversations dans SQLite (JSON.stringify de chacune), ce qui
-// bloquait le serveur plusieurs secondes. Au premier flush après un
-// démarrage, la Map est vide : tout est synchronisé une fois, comme avant.
-// `var` (initialisée à la demande) : loadConversationStatesAdmin() peut être
-// appelé avant cette ligne au démarrage.
-var sqliteSyncedStateRefsMap;
-function sqliteSyncedStateRefs() {
-  if (!sqliteSyncedStateRefsMap) sqliteSyncedStateRefsMap = new Map();
-  return sqliteSyncedStateRefsMap;
+// Copie superficielle de toutes les conversations. Les objets d'état ne
+// doivent pas être modifiés sur place : remplacer l'entrée
+// (states[contact] = { ...state, ... }) puis saveConversationStatesAdmin().
+function loadConversationStatesAdmin() {
+  try {
+    return conversationStateStore().loadAll();
+  } catch (error) {
+    console.error('❌ Lecture de l’état des conversations :', error.message);
+    return {};
+  }
 }
-
-// V6.37.3 — Le fichier JSON complet (77 Mo en production) n'est plus réécrit
-// à chaque enregistrement groupé : SQLite reçoit les conversations modifiées
-// à chaque fois (rapide), le JSON au plus une fois par minute, et toujours
-// à l'arrêt, avant un snapshot ou un export. Au démarrage, les conversations
-// plus récentes dans SQLite que dans le JSON sont réintégrées (voir
-// overlayNewerSqliteStates).
-const STATE_JSON_MIN_INTERVAL_MS = Math.max(
-  10 * 1000,
-  Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
-);
-const STATE_FLUSH_SLOW_LOG_MS = 500;
-var stateJsonPending;
-var stateJsonTimer;
-var lastStateJsonWriteAt;
-// `var` sans valeur initiale : loadConversationStatesAdmin() peut être
-// appelé avant cette ligne, il ne faut pas réinitialiser l'indicateur ici.
-var conversationStatesUnreadable;
 
 // `force` (par défaut) : écrit aussi le fichier JSON complet. Les écouteurs
-// SIGTERM/SIGINT/beforeExit et les appels explicites forcent l'écriture ;
-// la minuterie d'enregistrement groupé passe `false`.
+// SIGTERM/SIGINT/beforeExit et les appels explicites (snapshot, export)
+// forcent l'écriture.
 function flushConversationStatesWrite(force = true) {
-  const forceJson = force !== false;
-  const startedAt = Date.now();
-  let sqliteMs = 0;
-  let sqliteRows = 0;
-
-  if (pendingStateToWrite) {
-    const toWrite = pendingStateToWrite;
-    pendingStateToWrite = null;
-    if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
-    pendingStateWriteTimer = null;
-    stateJsonPending = toWrite;
-
-    // SQLite d'abord : il n'est ainsi jamais en retard sur le JSON.
-    const sqliteStartedAt = Date.now();
-    // V6.36.70 — Synchronisation SQLite à chaque flush groupé. Nécessaire
-    // car 40+ endroits du code (assigner, prioriser, terminer une
-    // conversation, etc.) modifient encore SEULEMENT le JSON via
-    // saveConversationStatesAdmin, sans jamais écrire dans SQLite —
-    // seul le chemin updateConversationState (envoi de message WhatsApp,
-    // V6.36.63) écrivait dans les deux. Sans cette synchronisation, un
-    // admin assignant une conversation risquait de voir son changement
-    // écrasé au message suivant, qui lisait SQLite en priorité (obsolète).
-    // V6.37.2 — Seules les conversations modifiées depuis le dernier
-    // enregistrement sont réécrites (comparaison de références) ; la
-    // resynchronisation complète se fait une fois, en arrière-plan, après
-    // le démarrage (voir sqliteBackgroundFullSync).
-    try {
-      const db = getSqliteDb();
-      if (db) {
-        const upsert = db.prepare(`
-          INSERT INTO conversation_states (contact, data, updated_at)
-          VALUES (@contact, @data, @updated_at)
-          ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-        `);
-        const now = Date.now();
-        const changed = [];
-        for (const [contact, state] of Object.entries(toWrite)) {
-          if (!contact) continue;
-          if (sqliteSyncedStateRefs().get(contact) !== state) changed.push([contact, state]);
-        }
-        const syncChanged = db.transaction((entries) => {
-          for (const [contact, state] of entries) {
-            upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
-          }
-        });
-        syncChanged(changed);
-        sqliteRows = changed.length;
-        for (const [contact, state] of changed) sqliteSyncedStateRefs().set(contact, state);
-        // Nettoyage des conversations supprimées du JSON (références obsolètes).
-        const refs = sqliteSyncedStateRefs();
-        if (refs.size > Object.keys(toWrite).length * 1.2 + 100) {
-          for (const contact of refs.keys()) {
-            if (!(contact in toWrite)) refs.delete(contact);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
-    }
-    sqliteMs = Date.now() - sqliteStartedAt;
-  }
-
-  if (!stateJsonPending) return;
-
-  if (conversationStatesUnreadable) {
-    console.error('🚨 conversation-state.json non écrit : le fichier existant est illisible. Restaurez une sauvegarde puis redémarrez.');
-    stateJsonPending = null;
-    return;
-  }
-
-  const sinceLastJson = Date.now() - (lastStateJsonWriteAt || 0);
-  if (!forceJson && sinceLastJson < STATE_JSON_MIN_INTERVAL_MS) {
-    if (!stateJsonTimer) {
-      stateJsonTimer = setTimeout(() => {
-        stateJsonTimer = null;
-        flushConversationStatesWrite(false);
-      }, STATE_JSON_MIN_INTERVAL_MS - sinceLastJson);
-      if (typeof stateJsonTimer.unref === 'function') stateJsonTimer.unref();
-    }
-    if (sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
-      console.warn(`⏱️ État des conversations : SQLite ${sqliteMs} ms (${sqliteRows} conversation(s)) | JSON différé`);
-    }
-    return;
-  }
-
-  if (stateJsonTimer) {
-    clearTimeout(stateJsonTimer);
-    stateJsonTimer = null;
-  }
-
-  const toWriteJson = stateJsonPending;
-  stateJsonPending = null;
-  const jsonStartedAt = Date.now();
-  try {
-    writeJsonAtomic(CONVERSATION_STATE_PATH_ADMIN, toWriteJson);
-    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-    lastStateJsonWriteAt = Date.now();
-  } catch (error) {
-    console.error('❌ Écriture différée conversation-state.json :', error.message);
-    // Nouvelle tentative au prochain enregistrement.
-    if (!stateJsonPending) stateJsonPending = toWriteJson;
-  }
-  const jsonMs = Date.now() - jsonStartedAt;
-
-  if (jsonMs + sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
-    let sizeMb = 0;
-    try { sizeMb = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size / 1e6; } catch {}
-    console.warn(
-      `⏱️ État des conversations : ${Date.now() - startedAt} ms | JSON ${jsonMs} ms (${sizeMb.toFixed(1)} Mo) | SQLite ${sqliteMs} ms (${sqliteRows} conversation(s))`
-    );
-  }
+  conversationStateStore().flush(force !== false);
 }
 
-// V6.37.3 — Au premier chargement : réintègre les conversations plus
-// récentes dans SQLite que dans le fichier JSON (le JSON n'étant écrit
-// qu'une fois par minute, un arrêt brutal peut le laisser en retard).
-function overlayNewerSqliteStates(states) {
-  try {
-    const db = getSqliteDb();
-    if (!db) return 0;
-    const jsonMtimeMs = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs;
-    const rows = db
-      .prepare('SELECT contact, data FROM conversation_states WHERE updated_at > ?')
-      // Marge de 2 s : l'ancien code synchronisait SQLite juste APRÈS
-      // l'écriture du JSON, avec un horodatage légèrement postérieur.
-      .all(Math.floor(jsonMtimeMs) + 2000);
-    let applied = 0;
-    for (const row of rows) {
-      try {
-        const data = JSON.parse(row.data);
-        if (data && typeof data === 'object') {
-          states[row.contact] = data;
-          applied++;
-        }
-      } catch {}
-    }
-    if (applied) {
-      console.log(`♻️ État des conversations : ${applied} conversation(s) plus récente(s) reprise(s) depuis SQLite.`);
-    }
-    return applied;
-  } catch (error) {
-    console.warn('⚠️ Reprise SQLite → état des conversations :', error.message);
-    return 0;
-  }
-}
-
-// V6.37.3 — Resynchronisation complète JSON → SQLite, une fois par
-// démarrage, par lots de 500 conversations en laissant la main entre deux
-// lots (le serveur reste réactif). Avant, elle avait lieu à CHAQUE
-// enregistrement groupé et bloquait le serveur plusieurs secondes.
-async function sqliteBackgroundFullSync() {
-  const db = getSqliteDb();
-  if (!db) return;
-  const startedAt = Date.now();
-  const entries = Object.entries(loadConversationStatesAdmin());
-  const upsert = db.prepare(`
-    INSERT INTO conversation_states (contact, data, updated_at)
-    VALUES (@contact, @data, @updated_at)
-    ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-  `);
-  // Horodatage = celui du fichier JSON : ces lignes ne sont pas « plus
-  // récentes » que le JSON et ne seront pas reprises au démarrage suivant.
-  let asOf = Date.now();
-  try { asOf = Math.floor(fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs); } catch {}
-  const runBatch = db.transaction(batch => {
-    for (const [contact, state] of batch) {
-      upsert.run({ contact, data: JSON.stringify(state), updated_at: asOf });
-    }
-  });
-  const refs = sqliteSyncedStateRefs();
-  let synced = 0;
-  for (let index = 0; index < entries.length; index += 500) {
-    // On ignore les conversations modifiées entre-temps : l'enregistrement
-    // groupé normal s'en charge avec leur version la plus récente.
-    const current = conversationStatesCacheAdmin || {};
-    const batch = entries
-      .slice(index, index + 500)
-      .filter(([contact, state]) => contact && current[contact] === state);
-    if (batch.length) {
-      runBatch(batch);
-      for (const [contact, state] of batch) refs.set(contact, state);
-      synced += batch.length;
-    }
-    await new Promise(resolve => setImmediate(resolve));
-  }
-  console.log(`🗄️ SQLite resynchronisé en arrière-plan : ${synced} conversation(s) en ${Date.now() - startedAt} ms.`);
-}
-
+// V6.37.3 — Resynchronisation complète mémoire → SQLite, une fois par
+// démarrage, par lots (le serveur reste réactif).
 const sqliteBackgroundSyncTimer = setTimeout(() => {
-  sqliteBackgroundFullSync().catch(error => console.error('❌ Resynchronisation SQLite en arrière-plan :', error.message));
+  conversationStateStore().backgroundFullSync().catch(error => console.error('❌ Resynchronisation SQLite en arrière-plan :', error.message));
 }, 3 * 60 * 1000);
 if (typeof sqliteBackgroundSyncTimer.unref === 'function') sqliteBackgroundSyncTimer.unref();
 
+// Enregistre une carte complète obtenue par loadConversationStatesAdmin().
+// V6.45 — Les conversations modifiées par quelqu'un d'autre depuis cette
+// copie (prise en main, message client…) ne sont plus écrasées : seules les
+// conversations réellement changées par l'appelant sont appliquées, et
+// écrites tout de suite dans SQLite.
 function saveConversationStatesAdmin(states) {
-  const safeStates =
-    states &&
-    typeof states === 'object' &&
-    !Array.isArray(states)
-      ? states
-      : {};
-
-  // Le cache mémoire est mis à jour immédiatement : toute lecture
-  // ultérieure (même avant l'écriture disque réelle) voit déjà les bons
-  // états. Seule l'écriture physique sur disque est différée.
-  conversationStatesCacheAdmin = safeStates;
-  pendingStateToWrite = safeStates;
-
-  if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
-  pendingStateWriteTimer = setTimeout(() => flushConversationStatesWrite(false), STATE_WRITE_DEBOUNCE_MS);
-  if (typeof pendingStateWriteTimer.unref === 'function') pendingStateWriteTimer.unref();
+  conversationStateStore().saveAll(states);
 }
 
 // Sécurité : si le process s'arrête proprement (redémarrage pm2, déploiement),
@@ -16961,32 +16741,18 @@ const adReferralSlimTimer = setTimeout(() => {
 }, 60 * 1000);
 if (typeof adReferralSlimTimer.unref === 'function') adReferralSlimTimer.unref();
 
+// V6.45 — Lecture-modification-écriture atomique d'UNE conversation, sur la
+// source de vérité partagée (mémoire + SQLite immédiat). Utilisée aussi par
+// server.js (updateConversationState) : une écriture d'un côté ne peut plus
+// effacer celle de l'autre.
 function updateConversationStateAdmin(
   contact,
   updater
 ) {
-  const states =
-    loadConversationStatesAdmin();
-
-  const current =
-    states[contact] &&
-    typeof states[contact] === 'object'
-      ? states[contact]
-      : {};
-
-  const updated =
-    updater({
-      ...current
-    }) || current;
-
-  states[contact] =
-    updated;
-
-  saveConversationStatesAdmin(
-    states
+  return conversationStateStore().update(
+    contact,
+    updater
   );
-
-  return updated;
 }
 
 // ============================================================
