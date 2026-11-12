@@ -8123,6 +8123,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,[role="button"]:focus
           </div>
 
           <div id="wooErrorNotice" class="notice warning hidden" style="margin-top:14px"></div>
+          <!-- V6.46 — synchronisation périmée, doublons manuels, corrections -->
+          <div id="wooSyncReport"></div>
         </div>
 
         <div class="card">
@@ -8674,6 +8676,8 @@ WOOCOMMERCE_SYNC_IMAGES=true</code>
     <form id="productForm">
       <div class="modal-body">
         <input type="hidden" id="productId">
+        <!-- V6.46 — origine de la fiche (site / doublon), remplie par editProduct() -->
+        <div id="productSyncNotice" class="notice info hidden" style="margin-bottom:12px"></div>
 
         <div class="grid grid-2">
           <div class="field">
@@ -8945,7 +8949,13 @@ function uiDialog({message='',input=false,defaultValue='',danger=false,confirmLa
     };
     const onKey=event=>{
       if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close(false);}
-      else if(event.key==='Enter'&&(event.target===field||!input)){event.preventDefault();close(true);}
+      // V6.46 — Entrée sur un bouton du dialogue : le clic natif de CE
+      // bouton s'applique (avant, Entrée sur « Annuler » confirmait une
+      // suppression définitive). Entrée dans le champ = valider ; ailleurs,
+      // seulement pour un dialogue non destructif.
+      else if(event.key==='Enter'&&event.target?.closest?.('[data-ui-dialog]')){return;}
+      else if(event.key==='Enter'&&(event.target===field||(!input&&!danger))){event.preventDefault();close(true);}
+      else if(event.key==='Enter'){event.preventDefault();}
       else if(event.key==='Tab'){
         const focusable=[...backdrop.querySelectorAll('input,button')];
         const index=focusable.indexOf(document.activeElement);
@@ -8977,6 +8987,46 @@ function uiAlert(message){
 
 function uiPrompt(message,defaultValue=''){
   return uiDialog({message,input:true,defaultValue,confirmLabel:'Valider'});
+}
+
+// V6.46 — Message bref non bloquant (à la place d'alert() dans les flux
+// de messagerie : échec d'envoi, notification, historique). Une action
+// facultative (« Ouvrir ») peut être proposée. Texte toujours échappé.
+function uiToast(message,{kind='info',actionLabel='',onAction=null,timeoutMs=6000}={}){
+  let host=document.getElementById('uiToastHost');
+  if(!host){
+    host=document.createElement('div');
+    host.id='uiToastHost';
+    host.className='ui-toast-host';
+    host.setAttribute('aria-live','polite');
+    document.body.appendChild(host);
+  }
+  const toast=document.createElement('div');
+  toast.className=`ui-toast ${kind==='error'?'error':kind==='warning'?'warning':''}`;
+  toast.setAttribute('role',kind==='error'?'alert':'status');
+  const text=document.createElement('span');
+  text.className='ui-toast-text';
+  text.textContent=String(message??'');
+  toast.appendChild(text);
+  if(actionLabel&&typeof onAction==='function'){
+    const action=document.createElement('button');
+    action.type='button';
+    action.className='ui-toast-action';
+    action.textContent=actionLabel;
+    action.addEventListener('click',()=>{toast.remove();try{onAction();}catch(error){console.debug('Action du message :',error);}});
+    toast.appendChild(action);
+  }
+  const close=document.createElement('button');
+  close.type='button';
+  close.className='ui-toast-close';
+  close.setAttribute('aria-label','Fermer');
+  close.textContent='✕';
+  close.addEventListener('click',()=>toast.remove());
+  toast.appendChild(close);
+  host.appendChild(toast);
+  while(host.children.length>3) host.firstElementChild.remove();
+  if(timeoutMs>0) setTimeout(()=>toast.remove(),timeoutMs);
+  return toast;
 }
 
 // N'accepte que les liens http(s) : bloque javascript:, data:, etc.
@@ -9554,6 +9604,8 @@ function showPage(name){
   if(name !== 'conversations'){
     document.getElementById('page-conversations')?.classList.remove('customer-panel-open','inbox-focus');
   }
+  // V6.46 — la bulle d'alertes suit la page affichée (fil ou coin d'écran).
+  if(typeof updateFloatingBubbleLayout === 'function') updateFloatingBubbleLayout();
 
   if(name === 'home') refreshHome();
   if(name === 'products') loadProducts();
@@ -9600,7 +9652,30 @@ async function apiFetch(url, options = {}){
   // même derrière un proxy qui réécrit l'adresse du site.
   const headers = new Headers(options.headers || {});
   if(!headers.has('X-Mondeco-Client')) headers.set('X-Mondeco-Client', 'admin');
-  const response = await fetch(url, { ...options, headers });
+  // V6.46 — Délai maximal facultatif (timeoutMs), utilisé par les
+  // rafraîchissements automatiques : une requête bloquée sur un serveur
+  // occupé est abandonnée au lieu de s'empiler avec les suivantes.
+  const { timeoutMs = 0, ...fetchOptions } = options;
+  let timeoutController = null;
+  let timeoutHandle = null;
+  if(Number(timeoutMs) > 0 && !fetchOptions.signal && typeof AbortController === 'function'){
+    timeoutController = new AbortController();
+    timeoutHandle = setTimeout(() => timeoutController.abort(), Number(timeoutMs));
+    fetchOptions.signal = timeoutController.signal;
+  }
+  let response;
+  try{
+    response = await fetch(url, { ...fetchOptions, headers });
+  }catch(fetchError){
+    if(timeoutController?.signal?.aborted){
+      const timeoutError = new Error('Le serveur met trop de temps à répondre.');
+      timeoutError.code = 'CLIENT_TIMEOUT';
+      throw timeoutError;
+    }
+    throw fetchError;
+  }finally{
+    if(timeoutHandle) clearTimeout(timeoutHandle);
+  }
 
   if(response.status === 401){
     location.href = '/admin/login';
@@ -9891,6 +9966,7 @@ function renderProducts(){
               </td>
               <td>
                 <strong>${escapeHtml(product.name)}</strong>
+                ${productCatalogBadgesHtml(product)}
               </td>
               <td>${escapeHtml(product.category || '—')}</td>
               <td>
@@ -9918,6 +9994,135 @@ function renderProducts(){
   `;
 }
 
+// V6.46 — Origine des fiches produit (lib/woo-catalog.js) :
+// - fiche synchronisée avec mondeco.tn (syncSource « woocommerce ») ;
+// - champs volontairement figés ici (product.overrides), avec retour à la
+//   valeur du site (champ vidé : la synchronisation suivante le remplit) ;
+// - fiche manuelle repérée comme doublon d'une fiche du site
+//   (duplicateOfWooId / duplicateConfidence), avec « Pas un doublon »
+//   (notDuplicateOfWoo, route PUT produit existante).
+const PRODUCT_OVERRIDE_FIELD_LABELS = {
+  dimensions:'dimensions',
+  composition:'composition',
+  colors:'couleurs',
+  showrooms:'showrooms',
+  description:'description'
+};
+
+function productIsSiteManaged(product){
+  return String(product?.syncSource || '') === 'woocommerce';
+}
+
+function productOverrideFields(product){
+  const overrides = product?.overrides && typeof product.overrides === 'object' && !Array.isArray(product.overrides)
+    ? product.overrides
+    : {};
+  return Object.keys(PRODUCT_OVERRIDE_FIELD_LABELS).filter(field => overrides[field] && typeof overrides[field] === 'object');
+}
+
+function productCatalogBadgesHtml(product){
+  const parts = [];
+  if(productIsSiteManaged(product)){
+    const ref = Number(product.woocommerceId) > 0 ? ` (réf. site #${Number(product.woocommerceId)})` : '';
+    parts.push(`<span class="product-badge site" title="${escapeHtml(`Fiche synchronisée avec le site${ref} : prix, promotion, disponibilité, nom et catégorie sont mis à jour à chaque synchronisation.`)}">🌐 Géré par le site</span>`);
+    const overrides = product.overrides || {};
+    for(const field of productOverrideFields(product)){
+      const info = overrides[field] || {};
+      const by = [info.by ? `par ${info.by}` : '', info.at ? `le ${formatDate(info.at)}` : ''].filter(Boolean).join(' ');
+      parts.push(`<span class="product-badge override" title="${escapeHtml(`Correction manuelle${by ? ` ${by}` : ''} : elle remplace la donnée du site.`)}">✏️ ${escapeHtml(PRODUCT_OVERRIDE_FIELD_LABELS[field])} corrigé ici<button class="product-badge-action" type="button" data-product-action="revert-override" data-product-id="${escapeHtml(product.id)}" data-field="${escapeHtml(field)}">Revenir à la valeur du site</button></span>`);
+    }
+  }else if(Number(product?.duplicateOfWooId) > 0){
+    const certain = String(product.duplicateConfidence || '') !== 'possible';
+    const target = product.duplicateOfName ? `« ${product.duplicateOfName} »` : 'une fiche du site';
+    parts.push(`<span class="product-badge duplicate ${certain ? 'high' : 'possible'}" title="${escapeHtml(`Fiche manuelle repérée comme ${certain ? 'doublon' : 'doublon possible'} de ${target} (réf. site #${Number(product.duplicateOfWooId)}). L’IA utilise d’abord la fiche du site${certain ? ' et ne cite pas le prix de cette fiche' : ''}.`)}">⚠ ${certain ? 'Doublon' : 'Doublon possible'} de ${escapeHtml(target)}<button class="product-badge-action" type="button" data-product-action="not-duplicate" data-product-id="${escapeHtml(product.id)}">Pas un doublon</button></span>`);
+  }
+  return parts.length ? `<div class="product-badges">${parts.join('')}</div>` : '';
+}
+
+async function updateProductFields(id, fields){
+  const formData = new FormData();
+  for(const [key, value] of Object.entries(fields)) formData.append(key, value);
+  return apiFetch(`${API}/products/${encodeURIComponent(id)}`, { method:'PUT', body:formData });
+}
+
+async function revertProductOverride(id, field){
+  const product = await findProductLoaded(id);
+  if(!product || !PRODUCT_OVERRIDE_FIELD_LABELS[field]) return;
+  const label = PRODUCT_OVERRIDE_FIELD_LABELS[field];
+  const confirmed = await uiConfirm(
+    `Revenir à la valeur du site pour « ${label} » ?\n\nProduit : ${product.name}\n\nLa correction manuelle est retirée : le champ est vidé puis rempli par le site à la prochaine synchronisation (il reste vide si le site ne le fournit pas).`,
+    { danger:false, confirmLabel:'Revenir au site' }
+  );
+  if(!confirmed) return;
+  try{
+    await updateProductFields(id, { [field]:'' });
+    uiToast(`« ${label} » rendu au site pour ${product.name}.`);
+    await loadProducts();
+  }catch(error){
+    uiAlert(`Impossible de retirer la correction : ${error.message}`);
+  }
+}
+
+async function findProductLoaded(id){
+  let product = products.find(item => item.id === id);
+  if(!product){
+    // Action lancée depuis la page de synchronisation : catalogue pas encore chargé.
+    try{ await loadProducts(); }catch(error){ console.debug('Produits :', error.message); }
+    product = products.find(item => item.id === id);
+  }
+  return product || null;
+}
+
+async function markProductNotDuplicate(id){
+  const product = await findProductLoaded(id);
+  if(!product){ uiToast('Fiche introuvable : elle a peut-être été supprimée.', { kind:'warning' }); return; }
+  const target = product.duplicateOfName ? `« ${product.duplicateOfName} »` : 'la fiche du site';
+  const confirmed = await uiConfirm(
+    `« ${product.name} » n’est pas un doublon de ${target} ?\n\nLa fiche ne sera plus signalée et l’IA l’utilisera normalement, avec son propre prix.`,
+    { danger:false, confirmLabel:'Pas un doublon' }
+  );
+  if(!confirmed) return;
+  try{
+    await updateProductFields(id, { notDuplicateOfWoo:'true' });
+    uiToast(`« ${product.name} » n’est plus signalé comme doublon.`);
+    await loadProducts();
+    if(document.getElementById('page-woocommerce')?.classList.contains('active')) await loadWooCommerceStatus();
+  }catch(error){
+    uiAlert(`Impossible d’enregistrer : ${error.message}`);
+  }
+}
+
+// Actions déléguées (badges de la liste produits et rapport de synchronisation).
+document.addEventListener('click', event => {
+  const button = event.target?.closest?.('[data-product-action]');
+  if(!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const id = button.dataset.productId || '';
+  if(button.dataset.productAction === 'revert-override') revertProductOverride(id, button.dataset.field || '');
+  else if(button.dataset.productAction === 'not-duplicate') markProductNotDuplicate(id);
+  else if(button.dataset.productAction === 'show-product') showProductInList(id);
+});
+
+async function showProductInList(id){
+  showPage('products');
+  try{ await loadProducts(); }catch(error){ console.debug('Produits :', error.message); }
+  const search = document.getElementById('productSearch');
+  const product = products.find(item => item.id === id);
+  if(search && product){ search.value = product.name || ''; renderProducts(); }
+}
+
+function productSyncNoticeHtml(product){
+  if(productIsSiteManaged(product)){
+    const fields = productOverrideFields(product).map(field => PRODUCT_OVERRIDE_FIELD_LABELS[field]);
+    return `<strong>🌐 Géré par le site${Number(product.woocommerceId) > 0 ? ` (réf. #${Number(product.woocommerceId)})` : ''}.</strong> Le prix, la promotion, la disponibilité, le nom et la catégorie sont remplacés à chaque synchronisation : modifiez-les sur mondeco.tn. Une modification des dimensions, de la composition, des couleurs, des showrooms ou de la description devient une correction qui remplace la donnée du site.${fields.length ? `<br>Corrections en vigueur : ${escapeHtml(fields.join(', '))}.` : ''}`;
+  }
+  if(Number(product?.duplicateOfWooId) > 0){
+    return `<strong>⚠ ${String(product.duplicateConfidence || '') === 'possible' ? 'Doublon possible' : 'Doublon'} de ${escapeHtml(product.duplicateOfName ? `« ${product.duplicateOfName} »` : 'une fiche du site')}.</strong> L’IA utilise d’abord la fiche du site. Si ce produit est différent, utilisez « Pas un doublon » dans la liste.`;
+  }
+  return '';
+}
+
 function availabilityLabel(value){
   const labels = {
     in_stock:'En stock',
@@ -9937,6 +10142,8 @@ function resetProductForm(){
   document.getElementById('productAvailability').value = 'unknown';
   document.getElementById('productModalTitle').textContent = 'Ajouter un produit';
   document.getElementById('productImage').required = true;
+  const syncNotice = document.getElementById('productSyncNotice');
+  if(syncNotice){ syncNotice.innerHTML = ''; syncNotice.classList.add('hidden'); }
 
   const preview = document.getElementById('productImagePreview');
 
@@ -10001,6 +10208,9 @@ window.editProduct = function(id){
   document.getElementById('productActive').checked = product.active !== false;
   document.getElementById('productModalTitle').textContent = `Modifier ${product.name}`;
   document.getElementById('productImage').required = !product.image;
+  const syncNotice = document.getElementById('productSyncNotice');
+  const syncNoticeHtml = productSyncNoticeHtml(product);
+  if(syncNotice && syncNoticeHtml){ syncNotice.innerHTML = syncNoticeHtml; syncNotice.classList.remove('hidden'); }
 
   if(product.image){
     const preview = document.getElementById('productImagePreview');
@@ -10408,6 +10618,36 @@ let socialCommentSearchTimer = null;
 let socialCommentsLiveTimer = null;
 let socialCommentsPendingReconcileBusy = false;
 let socialCommentsLastPendingReconcileAt = 0;
+
+// V6.46 — Brouillons par conversation (texte non envoyé ou envoi échoué),
+// en mémoire seulement : jamais réinjectés dans un autre client.
+const conversationDrafts = new Map();
+// V6.46 — Rafraîchissements automatiques : un seul appel en vol par tâche,
+// délai maximal, attente progressive après un échec (serveur occupé).
+const backgroundTasks = {};
+const BACKGROUND_REQUEST_TIMEOUT_MS = 15000;
+let conversationListLastLoadedAt = 0;
+let lastPendingMessagesCount = null;
+
+async function runBackgroundTask(name, fn, { force = false } = {}){
+  const task = backgroundTasks[name] || (backgroundTasks[name] = { busy:false, failures:0, nextAt:0 });
+  if(task.busy) return false;
+  if(!force && Date.now() < task.nextAt) return false;
+  task.busy = true;
+  try{
+    await fn();
+    task.failures = 0;
+    task.nextAt = 0;
+    return true;
+  }catch(error){
+    task.failures += 1;
+    task.nextAt = Date.now() + Math.min(60000, 5000 * (2 ** Math.min(task.failures - 1, 4)));
+    console.debug(`Rafraîchissement ${name} :`, error?.message || error);
+    return false;
+  }finally{
+    task.busy = false;
+  }
+}
 
 
 function conversationUiTimeMs(value){
@@ -11246,14 +11486,106 @@ function applyCommentChannelAccessUI(){
   }
 }
 
-async function loadConversations({ append = false } = {}){
+// V6.46 — Rafraîchissement en arrière-plan (background) : garde les pages
+// déjà chargées (« Afficher plus »), la position de défilement, et en cas
+// d'échec réseau garde la liste avec un petit bandeau au lieu de
+// l'effacer.
+function conversationListScroller(){
+  let el=document.getElementById('conversationListContainer');
+  while(el&&el!==document.body){
+    const overflow=getComputedStyle(el).overflowY;
+    if(/(auto|scroll)/.test(overflow)&&el.scrollHeight>el.clientHeight) return el;
+    el=el.parentElement;
+  }
+  return document.scrollingElement||document.documentElement;
+}
+
+function conversationListAnchor(){
+  const container=document.getElementById('conversationListContainer');
+  if(!container) return null;
+  const scroller=conversationListScroller();
+  const top=scroller===document.scrollingElement||scroller===document.documentElement?0:scroller.getBoundingClientRect().top;
+  const item=[...container.querySelectorAll('.inbox-conversation-item[data-contact]')].find(el=>el.getBoundingClientRect().bottom>top+1);
+  return item?{scroller,contact:item.dataset.contact,offset:item.getBoundingClientRect().top-top,scrollTop:scroller.scrollTop}:{scroller,contact:'',offset:0,scrollTop:scroller.scrollTop};
+}
+
+function restoreConversationListAnchor(anchor){
+  if(!anchor?.scroller) return;
+  const container=document.getElementById('conversationListContainer');
+  const scroller=anchor.scroller;
+  const top=scroller===document.scrollingElement||scroller===document.documentElement?0:scroller.getBoundingClientRect().top;
+  let item=null;
+  if(anchor.contact&&container){
+    try{item=container.querySelector(`.inbox-conversation-item[data-contact="${CSS.escape(anchor.contact)}"]`);}catch{item=null;}
+  }
+  if(item) scroller.scrollTop+=(item.getBoundingClientRect().top-top)-anchor.offset;
+  else scroller.scrollTop=anchor.scrollTop;
+}
+
+function setConversationListConnectionBanner(visible, text = ''){
+  const container=document.getElementById('conversationListContainer');
+  let banner=document.getElementById('conversationListConnectionBanner');
+  if(!visible){ banner?.remove(); return; }
+  if(!container) return;
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='conversationListConnectionBanner';
+    banner.className='inbox-connection-banner';
+    banner.setAttribute('role','status');
+    container.parentElement?.insertBefore(banner,container);
+  }
+  banner.textContent=text||'Connexion perdue — nouvel essai automatique…';
+}
+
+// V6.46 — Commercial : une conversation qui passe « à répondre » dans la
+// file commune (non affectée) ou qui lui est affectée déclenche une alerte
+// nominative. Le serveur n'envoie pas d'alerte aux commerciaux pour les
+// conversations non affectées. Renvoie null si aucune liste de référence
+// n'existait encore (premier chargement).
+let knownPendingConversationContacts = null;
+let lastNewPendingAlerts = null;
+function notifyNewPendingConversations(items = [], { background = false, searching = false } = {}){
+  if(searching){ knownPendingConversationContacts = null; return null; }
+  const pending = items.filter(item => item?.pendingReply === true);
+  const previous = knownPendingConversationContacts;
+  knownPendingConversationContacts = new Set(pending.map(item => item.contact));
+  if(!previous) return null;
+  if(!background || currentUser?.role !== 'commercial') return [];
+  const inboxPage = document.getElementById('page-conversations');
+  const watchingContact = document.visibilityState === 'visible' && inboxPage?.classList.contains('active') && inboxPage.classList.contains('has-selection')
+    ? selectedConversationContact
+    : '';
+  const mine = item => !item.assignedUserId || String(item.assignedUserId) === String(currentUser?.id || '');
+  const events = pending
+    .filter(item => !previous.has(item.contact) && mine(item) && item.contact !== watchingContact)
+    .map(item => ({
+      kind:'message',
+      synthetic:true,
+      id:`pending-${item.contact}-${item.lastTime || ''}`,
+      contact:item.contact,
+      channel:conversationChannel(item),
+      profileName:conversationDisplayName(item),
+      preview:item.lastMessagePreview || item.lastIncoming || 'Nouveau message client',
+      urgent:false
+    }));
+  events.forEach(showFloatingBubble);
+  if(events.length === 1) showClientBrowserNotification(events[0]);
+  else if(events.length > 1) showClientBrowserNotificationSummary(events);
+  return events;
+}
+
+async function loadConversations({ append = false, background = false } = {}){
   const inboxPageActive=document.getElementById('page-conversations')?.classList?.contains('active');
   // En mode Commentaires, les rafraîchissements de messages restent en arrière-plan et ne touchent jamais la liste visible.
   if(inboxPageActive && inboxInteractionMode!=='messages') return;
   const requestId=++conversationLoadGeneration;
+  const previousLength=conversations.length;
   try{
     const search = String(document.getElementById('conversationSearch')?.value || '').trim();
     const offset = append ? conversations.length : 0;
+    // V6.46 — En arrière-plan, on recharge autant de conversations qu'il
+    // y en a déjà d'affichées (dans la limite du serveur, 200).
+    const pageLimit = background && !append ? Math.min(200, Math.max(80, previousLength)) : 80;
     // V6.36.96 — Une recherche active ignore le filtre de statut ("À
     // répondre", etc.) : chercher un client par nom/numéro doit le
     // retrouver peu importe s'il a déjà été traité, sinon une
@@ -11261,7 +11593,7 @@ async function loadConversations({ append = false } = {}){
     // exacte (signalé le 03/09, cas "Ali Khlif").
     const params = new URLSearchParams({
       paged:'1',
-      limit:'80',
+      limit:String(pageLimit),
       offset:String(offset),
       filter: search ? 'all' : conversationFilter,
       // V6.36.7 — Canal envoyé séparément, combiné côté serveur avec le
@@ -11279,7 +11611,8 @@ async function loadConversations({ append = false } = {}){
     const data = await apiFetch(
       conversationFilter === 'archives'
         ? `${API}/conversations/archives?${params.toString()}`
-        : `${API}/conversations?${params.toString()}`
+        : `${API}/conversations?${params.toString()}`,
+      background ? { timeoutMs: BACKGROUND_REQUEST_TIMEOUT_MS } : {}
     );
     // Protection anti-bascule : si l'utilisateur est passé dans Commentaires pendant la requête,
     // ou si une requête plus récente existe, cette réponse est ignorée visuellement.
@@ -11290,11 +11623,24 @@ async function loadConversations({ append = false } = {}){
       conversationChannelAccess={...conversationChannelAccess,...data.access};
       applyConversationChannelAccessUI();
     }
+    // V6.46 — Au-delà de la limite du serveur, les pages déjà chargées
+    // sont conservées à la suite (au lieu de revenir aux 80 premières).
+    const keptTail = background && !append && previousLength > pageLimit
+      ? conversations.slice(pageLimit).filter(old=>!items.some(item=>item.contact===old.contact))
+      : [];
     conversations = append
       ? [...conversations,...items.filter(item=>!conversations.some(existing=>existing.contact===item.contact))]
-      : items;
+      : [...items,...keptTail];
     conversationListTotal = Number(data?.total || conversations.length);
-    conversationListHasMore = data?.hasMore === true;
+    conversationListHasMore = data?.hasMore === true || (keptTail.length > 0 && conversations.length < conversationListTotal);
+    conversationListLastLoadedAt = Date.now();
+    setConversationListConnectionBanner(false);
+    // La comparaison n'a de sens que sur une liste complète des
+    // conversations en attente (sinon : alerte générique, voir le poll).
+    if(!append) lastNewPendingAlerts = notifyNewPendingConversations(items, {
+      background,
+      searching: Boolean(search) || !['pending','all'].includes(conversationFilter) || conversationChannelFilter !== 'all'
+    });
     conversationServerCounts = data?.counts && typeof data.counts === 'object'
       ? data.counts
       : null;
@@ -11311,12 +11657,22 @@ async function loadConversations({ append = false } = {}){
       updatePendingWorkUi();
       updateNotificationBadges();
     }
+    const listAnchor = background ? conversationListAnchor() : null;
     renderConversationsList();
+    if(listAnchor) restoreConversationListAnchor(listAnchor);
     if(selectedConversationContact && conversations.some(item=>item.contact===selectedConversationContact)){
       updateConversationFilterCounts();
     }
   }catch(error){
+    // V6.46 — Erreur d'une requête dépassée par une plus récente : ignorée.
+    if(requestId!==conversationLoadGeneration) return;
     const container=document.getElementById('conversationListContainer');
+    if(background || conversations.length){
+      // La liste affichée reste utilisable ; nouvel essai au prochain cycle.
+      setConversationListConnectionBanner(true, `Connexion perdue — nouvel essai automatique… (${error.message})`);
+      if(background) throw error;
+      return;
+    }
     if(container){
       container.innerHTML=`<div class="empty"><strong>Impossible de charger les conversations</strong>${escapeHtml(error.message)}</div>`;
     }
@@ -11367,10 +11723,44 @@ function actionLabel(action){
     product_image_need_name:'Nom produit demandé',
     welcome_menu:'Menu de bienvenue',
     showroom_reply:'Showroom',
-    showroom_list:'Liste showrooms'
+    showroom_list:'Liste showrooms',
+    // V6.46 — codes écrits par server.js / Admin.js qui s'affichaient bruts
+    // (« ai_reply » sous la bulle du client).
+    ai_reply:'Réponse IA',
+    ai:'Réponse IA',
+    reply:'Réponse',
+    ai_product_card:'Fiche produit envoyée',
+    ad_quick_reply:'Réponse rapide (publicité)',
+    ai_bulk_unread_response:'Réponse IA groupée (non-lus)',
+    ai_fact_guard:'Réponse IA corrigée (garde-fou)',
+    outside_hours_message:'Message hors horaires',
+    outside_hours_ai:'Réponse IA hors horaires',
+    ai_disabled_channel:'IA désactivée sur ce canal',
+    facebook_inbound_recovered:'Message Facebook récupéré',
+    review_request_sent:'Demande d’avis envoyée',
+    handoff:'Transfert au commercial',
+    resolved:'Conversation terminée'
   };
 
-  return map[action] || action || '';
+  // V6.46 — Code inconnu : rien plutôt que le code technique brut.
+  return map[action] || '';
+}
+
+// V6.46 — Libellé lisible de la ligne d'information d'une bulle. Une
+// entrée du journal contient souvent le message client ET la réponse ;
+// son « action » décrit la réponse : elle n'est donc plus affichée sous la
+// bulle du client (sauf entrée sans réponse : erreur IA, pause…).
+const THREAD_META_GENERIC_ACTIONS = new Set(['ok','ai_reply','ai','reply','commercial_reply']);
+function threadMetaLabel(type, entry, { commercial = false, facebookOutbound = false } = {}){
+  const action = String(entry?.action || '');
+  const specific = action && !THREAD_META_GENERIC_ACTIONS.has(action) ? actionLabel(action) : '';
+  if(type === 'incoming'){
+    const hasReply = Boolean(String(entry?.reply || '').trim());
+    return !hasReply && specific ? `Message client · ${specific}` : 'Message client';
+  }
+  if(facebookOutbound) return 'Réponse Facebook / Meta';
+  if(commercial) return specific || 'Réponse commerciale';
+  return specific || 'Réponse IA';
 }
 
 function formatDate(value){
@@ -11972,10 +12362,10 @@ async function bulkReactivateAISelectedConversations(){
     toggleConversationSelectMode(false);
     await loadConversations();
     if(result.refusedCount > 0){
-      alert(`${result.reactivatedCount} conversation(s) réactivée(s). ${result.refusedCount} ignorée(s) (canal Facebook ou non autorisé pour votre planning).`);
+      uiAlert(`${result.reactivatedCount} conversation(s) réactivée(s). ${result.refusedCount} ignorée(s) (canal Facebook ou non autorisé pour votre planning).`);
     }
   }catch(error){
-    alert(`Erreur : ${error.message}`);
+    uiAlert(`Erreur : ${error.message}`);
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '🤖 Réactiver IA'; }
   }
@@ -11997,10 +12387,10 @@ async function speedCleanupNow(){
   try{
     const result = await apiFetch(`${API}/speed-cleanup`, { method:'POST' });
     const freed = Number(result?.freedBytes||0)/(1024*1024);
-    alert(`Nettoyage terminé : environ ${freed.toFixed(1)} MB libérés. L'application devrait être plus rapide dès maintenant.`);
+    uiAlert(`Nettoyage terminé : environ ${freed.toFixed(1)} MB libérés. L'application devrait être plus rapide dès maintenant.`);
     await loadConversations();
   }catch(error){
-    alert(`Erreur : ${error.message}`);
+    uiAlert(`Erreur : ${error.message}`);
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '⚡ Optimiser la vitesse'; }
   }
@@ -12024,9 +12414,9 @@ async function aiRespondAllUnread(){
     // V6.45 — conversations non traitées : prises en main, déjà répondues, hors 24 h.
     if(result.ignoredCount > 0) msg += `\n${result.ignoredCount} ignorée(s) (prise en main, déjà répondue ou hors fenêtre de 24 h).`;
     if(result.message) msg = result.message;
-    alert(msg);
+    uiAlert(msg);
   }catch(error){
-    alert(`Erreur : ${error.message}`);
+    uiAlert(`Erreur : ${error.message}`);
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '🤖 Répondre à tous les non-lus'; }
   }
@@ -12049,10 +12439,10 @@ async function bulkResolveSelectedConversations(){
     toggleConversationSelectMode(false);
     await loadConversations();
     if(result.refusedCount > 0){
-      alert(`${result.resolvedCount} conversation(s) terminée(s). ${result.refusedCount} ignorée(s) (canal non autorisé pour votre planning).`);
+      uiAlert(`${result.resolvedCount} conversation(s) terminée(s). ${result.refusedCount} ignorée(s) (canal non autorisé pour votre planning).`);
     }
   }catch(error){
-    alert(`Erreur : ${error.message}`);
+    uiAlert(`Erreur : ${error.message}`);
   }finally{
     if(btn){ btn.disabled = false; btn.textContent = '✓ Terminer la sélection'; }
   }
@@ -12226,6 +12616,57 @@ function selectedConversationAccess(contact, state = {}){
   return {assignedToMe,canWrite:true,canReply:true,canManage:assignedToMe,readOnly:!assignedToMe};
 }
 
+// V6.46 — Raison et échéance de la pause IA, avec la règle exacte de
+// lib/messaging-rules.js (conversationAiPauseReason) : prise en main
+// (manualTakeover), ou pause humaine sans échéance / pas encore expirée.
+function conversationAiPauseInfo(state = {}){
+  if(!conversationAiPausedForUi(state)) return null;
+  if(state?.manualTakeover) return { reason:'manual_takeover', until:'' };
+  const until=Date.parse(String(state?.pausedUntil||''));
+  return { reason:'human_pause', until:Number.isFinite(until) ? new Date(until).toISOString() : '' };
+}
+
+// V6.46 — Accusé de réception de l'en-tête. Le « vu » ne recule jamais
+// pendant la session : Meta peut renvoyer en retard un ancien statut
+// « read » (le serveur l'enregistre tel quel).
+const conversationReadWatermarks = new Map();
+const RECEIPT_CLOCK_TOLERANCE_MS = 3000;
+function conversationReceiptStatus(contact, state = {}){
+  const lastOutgoingMs = Math.max(
+    Date.parse(state?.lastHumanAt || '') || 0,
+    Date.parse(state?.lastBotAt || '') || 0,
+    Date.parse(state?.lastAnsweredAt || '') || 0,
+    Date.parse(state?.lastBusinessAt || '') || 0
+  );
+  if(!lastOutgoingMs) return null;
+  const key = String(contact || '');
+  let readMs = Date.parse(state?.lastReadByCustomerAt || '') || 0;
+  const knownReadMs = conversationReadWatermarks.get(key) || 0;
+  if(readMs > knownReadMs) conversationReadWatermarks.set(key, readMs);
+  else readMs = knownReadMs;
+  const deliveredMs = Math.max(Date.parse(state?.lastDeliveredAt || '') || 0, readMs);
+  const failedMs = Date.parse(state?.lastDeliveryFailedAt || '') || 0;
+  const reached = ms => ms > 0 && ms + RECEIPT_CLOCK_TOLERANCE_MS >= lastOutgoingMs;
+  if(reached(failedMs) && failedMs >= deliveredMs){
+    const failure = state?.lastDeliveryFailure || {};
+    const reason = [failure.code, failure.title].filter(Boolean).join(' — ');
+    return {
+      kind:'failed',
+      text:`⚠ Dernier message non délivré${reason ? ` (${reason})` : ''}`,
+      title:failure.details || 'WhatsApp a signalé un échec de livraison après le dernier envoi.'
+    };
+  }
+  if(reached(readMs)){
+    const elapsed = formatElapsedSince(readMs);
+    return {
+      kind:'seen',
+      text:`✓✓ Vu par le client à ${formatShortTime(new Date(readMs).toISOString())}${elapsed ? ` (${elapsed})` : ''}`
+    };
+  }
+  if(reached(deliveredMs)) return { kind:'delivered', text:'✓✓ Distribué — pas encore vu' };
+  return { kind:'sent', text:'✓ Envoyé' };
+}
+
 function renderConversationHeader(
   contact,
   state
@@ -12283,12 +12724,25 @@ function renderConversationHeader(
       ? 'Facebook Messenger'
       : 'WhatsApp';
 
+  // V6.46 — Libellé de pause selon la raison (lib/messaging-rules.js) :
+  // prise en main, pause jusqu'à une heure précise, ou pause sans échéance.
+  const pauseInfo=paused ? conversationAiPauseInfo(state) : null;
+  const pausedLabel=!pauseInfo
+    ? ''
+    : pauseInfo.reason==='manual_takeover'
+      ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
+      : pauseInfo.until
+        ? `⏳ IA EN PAUSE jusqu’à ${formatShortTime(pauseInfo.until)}`
+        : '⏳ IA EN PAUSE • en attente d’un commercial';
+  // « ⚠ Commercial requis » : alerte affichée à part, elle ne met pas l'IA
+  // en pause à elle seule (même règle que le serveur).
+  const commercialRequired=!facebook && (state.commercialAttention===true || state.imageNeedsCommercial===true);
   const stateText=limitedCommercial
     ? ''
     : facebook
       ? '🔵 FACEBOOK MESSENGER • RÉPONSE COMMERCIALE AUTORISÉE'
       : paused
-        ? '👤 COMMERCIAL EN CHARGE • IA EN PAUSE'
+        ? pausedLabel
         : '🤖 IA ACTIVE • Réponses automatiques';
 
   // V6.34.7 — En-tête mobile lisible : ne jamais répéter le numéro et
@@ -12303,37 +12757,27 @@ function renderConversationHeader(
   const mobileHeaderName = channel === 'whatsapp' && nameIsExternal
     ? externalDisplay
     : name;
-  const mobileSub = channel === 'whatsapp'
-    ? `${nameIsExternal ? channelIdentity : `${channelIdentity} • ${externalDisplay}`} • ${assignedCompact}`
-    : `${channelIdentity} • ${assignedCompact}`;
+  // V6.46 — Sous-titre mobile en segments qui passent à la ligne au lieu
+  // d'être coupés (« WhatsApp • +216… • No… »).
+  const mobileSubParts = channel === 'whatsapp'
+    ? [channelIdentity, nameIsExternal ? '' : externalDisplay, assignedCompact]
+    : [channelIdentity, assignedCompact];
+  const mobileSubHtml = mobileSubParts
+    .filter(Boolean)
+    .map(part => `<span class="inbox-header-sub-part">${escapeHtml(part)}</span>`)
+    .join('');
   const mobileAiLabel = facebook
     ? 'Messenger'
     : paused
-      ? 'IA en pause'
+      ? (pauseInfo?.until ? `IA en pause → ${formatShortTime(pauseInfo.until)}` : 'IA en pause')
       : 'IA active';
 
-  // V6.35.19 — Indicateur "Vu par le client" (accusé de lecture Meta),
-  // même principe que les coches WhatsApp. On compare l'horodatage du
-  // dernier message envoyé (humain, bot ou business) à celui du dernier
-  // accusé de lecture reçu de Meta.
-  const lastOutgoingMs = Math.max(
-    Date.parse(state?.lastHumanAt || '') || 0,
-    Date.parse(state?.lastBotAt || '') || 0,
-    Date.parse(state?.lastAnsweredAt || '') || 0,
-    Date.parse(state?.lastBusinessAt || '') || 0
-  );
-  const lastReadMs = Date.parse(state?.lastReadByCustomerAt || '') || 0;
-  const seenByCustomer = lastOutgoingMs > 0 && lastReadMs > 0 && lastReadMs >= lastOutgoingMs;
-  // V6.36.72 — Ajout du temps écoulé relatif ("il y a 5 min") en plus de
-  // l'heure fixe, pour voir en un coup d'œil depuis combien de temps le
-  // client a vu le message sans avoir à calculer soi-même.
-  const seenElapsedLabel = seenByCustomer ? formatElapsedSince(lastReadMs) : '';
-  const seenIndicatorHtml = lastOutgoingMs > 0
-    ? `<div class="inbox-seen-indicator ${seenByCustomer ? 'seen' : ''}">
-        ${seenByCustomer
-          ? `✓✓ Vu par le client à ${escapeHtml(formatShortTime(state.lastReadByCustomerAt))}${seenElapsedLabel ? ` (${escapeHtml(seenElapsedLabel)})` : ''}`
-          : '✓✓ Envoyé — pas encore vu'}
-      </div>`
+  // V6.35.19 — Indicateur "Vu par le client" (accusé de lecture Meta).
+  // V6.46 — ✓ envoyé, ✓✓ distribué (lastDeliveredAt), ✓✓ bleu vu, et
+  // « non délivré » quand Meta a signalé un échec après le dernier envoi.
+  const receipt = conversationReceiptStatus(contact, state);
+  const seenIndicatorHtml = receipt
+    ? `<div class="inbox-seen-indicator ${receipt.kind}"${receipt.title ? ` title="${escapeHtml(receipt.title)}"` : ''}>${escapeHtml(receipt.text)}</div>`
     : '';
 
   header.innerHTML = `
@@ -12348,14 +12792,16 @@ function renderConversationHeader(
           ${channelIdentity}
           ${state.assignedTo ? ` • Affecté à ${escapeHtml(state.assignedTo)}` : ' • Non affecté'}
         </div>
-        <div class="inbox-header-sub inbox-header-sub-mobile">${escapeHtml(mobileSub)}</div>
+        <div class="inbox-header-sub inbox-header-sub-mobile">${mobileSubHtml}</div>
         <div class="inbox-header-mobile-status">
           <span class="inbox-header-mobile-chip ${paused ? 'paused' : 'active'}">${escapeHtml(mobileAiLabel)}</span>
+          ${commercialRequired ? '<span class="inbox-header-mobile-chip alert">⚠ Commercial requis</span>' : ''}
           ${Number.isFinite(selectedSlaRemaining) ? `<span class="inbox-header-mobile-chip sla ${selectedSlaRemaining < 0 ? 'late' : ''}">${escapeHtml(formatSlaHuman(selectedSlaRemaining))}</span>` : ''}
         </div>
-        ${(stateText || Number.isFinite(selectedSlaRemaining)) ? `
+        ${(stateText || commercialRequired || Number.isFinite(selectedSlaRemaining)) ? `
         <div class="inbox-header-state ${facebook ? 'ai' : paused ? 'human' : 'ai'}">
-          ${stateText ? `<span class="inbox-header-state-main">${stateText}</span>` : ''}
+          ${stateText ? `<span class="inbox-header-state-main">${escapeHtml(stateText)}</span>` : ''}
+          ${commercialRequired ? '<span class="inbox-header-state-alert">⚠ Commercial requis</span>' : ''}
           ${Number.isFinite(selectedSlaRemaining) ? `<span class="inbox-header-state-sla">${escapeHtml(formatSlaHuman(selectedSlaRemaining))}</span>` : ''}
         </div>` : ''}
         ${state?.adReferral ? `<div class="inbox-access-note">📣 Pub Meta : ${escapeHtml(state.adReferral.productHint || state.adReferral.headline || 'origine publicitaire détectée')}</div>` : ''}
@@ -12581,9 +13027,22 @@ function renderThreadMessage(
   // V6.45 — Masquage réversible ; un commercial seulement sur ses conversations affectées.
   const canHideMessage=currentUser?.role==='admin'||currentUser?.role==='responsable_commercial'||(currentUser?.role==='commercial'&&selectedConversationData?.access?.assignedToMe===true);
   const hiddenInfo=entry?.softDeleted?.[purgePart];
-  const deleteButton=hiddenInfo
-    ?(currentUser?.role==='admin'?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();restoreConversationMessage(${jsArg(hiddenInfo.id||'')})" title="Restaurer le message d’origine">↩ Restaurer</button><button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(entry?.softDeleted?.keys?.[purgePart]||'')},'${purgePart}',true)" title="Supprimer définitivement de MONDECO">🗑 Supprimer définitivement</button>`:'')
-    :(canHideMessage&&purgeKey?`<button class="inbox-message-delete" type="button" onclick="event.stopPropagation();deleteConversationMessage(${jsArg(purgeKey)},'${purgePart}')" title="Masquer ce message (un administrateur peut le restaurer)">🗑 Supprimer</button>`:'');
+  // V6.46 — Actions du message dans un menu « ⋯ » discret (avant : un
+  // bouton rouge « 🗑 Supprimer » sous chaque bulle). Les droits sont
+  // inchangés ; chaque suppression demande toujours confirmation.
+  const isAdmin=currentUser?.role==='admin';
+  const menuAttrs={
+    'data-part':purgePart,
+    'data-hide-key':!hiddenInfo&&canHideMessage&&purgeKey?purgeKey:'',
+    'data-restore-id':hiddenInfo&&isAdmin?String(hiddenInfo.id||''):'',
+    'data-purge-key':hiddenInfo&&isAdmin?String(entry?.softDeleted?.keys?.[purgePart]||''):'',
+    'data-copy':text?'1':''
+  };
+  const hasMenuAction=Boolean(menuAttrs['data-hide-key']||menuAttrs['data-restore-id']||menuAttrs['data-purge-key']||menuAttrs['data-copy']);
+  const deleteButton=hasMenuAction
+    ?`<button class="inbox-message-more" type="button" data-msg-menu="1" ${Object.entries(menuAttrs).map(([key,value])=>`${key}="${escapeHtml(value)}"`).join(' ')} title="Actions du message" aria-label="Actions du message" aria-haspopup="menu">⋯</button>`
+    :'';
+  const metaLabel=threadMetaLabel(type,entry,{commercial,facebookOutbound});
 
   return `
     <div class="inbox-message-row ${rowKind}" data-message-id="${escapeHtml(entry?.message_id || entry?.meta_message_id || '')}">
@@ -12613,9 +13072,7 @@ function renderThreadMessage(
             : ''
         }
         <div class="inbox-message-meta">
-          ${escapeHtml(formatDate(entry.time))}
-          ${entry.action && entry.action !== 'ok' ? ` • ${escapeHtml(actionLabel(entry.action))}` : ''}
-          ${directInstagram ? ' • Instagram direct' : ''}
+          <span class="inbox-message-meta-text">${escapeHtml(formatDate(entry.time))}${metaLabel ? ` • ${escapeHtml(metaLabel)}` : ''}${directInstagram ? ' • Instagram direct' : ''}</span>
           ${deleteButton}
         </div>
       </div>
@@ -12697,7 +13154,7 @@ function adOriginMediaInnerHtml(visual, kind='thumb'){
   const onerror='onerror="adOriginVisualFailed(this)"';
   const media=visual.type==='video'
     ? `<video class="${cls}" muted playsinline preload="metadata"${thumb?'':' controls'} src="${escapeHtml(`${visual.url}#t=0.1`)}" data-ad-visual-url="${escapeHtml(visual.url)}" ${onerror}></video>`
-    : `<img class="${cls}" src="${escapeHtml(visual.url)}" data-ad-visual-url="${escapeHtml(visual.url)}" alt="Visuel de la publicité d’origine" loading="lazy" ${onerror}>`;
+    : `<img class="${cls}" src="${escapeHtml(visual.url)}" data-ad-visual-url="${escapeHtml(visual.url)}" alt="${thumb?'':'Visuel de la publicité d’origine'}" loading="lazy" ${onerror}>`;
   const size=thumb?'20px':'36px';
   const badge=(visual.isVideoAd||visual.type==='video')&&(thumb||visual.type!=='video')
     ? `<span class="inbox-ad-origin-play" title="Publicité vidéo" aria-label="Publicité vidéo" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${size};height:${size};border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:${thumb?'10px':'16px'};line-height:1;pointer-events:none">▶</span>`
@@ -12801,10 +13258,30 @@ function conversationAdStickyHtml(state = {}, contact = ''){
   const label=product||headline||'Publicité Meta';
   const secondary=body||headline||'Le client a démarré cette conversation depuis cette publicité.';
   const link=/^https?:\/\//i.test(String(ad.sourceUrl||''))
-    ? `<a class="inbox-ad-origin-link" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir ↗</a>`
+    ? `<a class="inbox-ad-origin-link" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener" title="Voir la publication">Voir ↗</a>`
     : '';
-  return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation">${adOriginMediaFrameHtml(visual,'thumb',visualContact)}<div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ${sourcePlatform} ISSU D’UNE PUBLICITÉ</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
+  // V6.46 — Carte lisible sur mobile : produit sur deux lignes, texte
+  // complet en infobulle, et un appui sur la carte l'ouvre en entier.
+  const fullText=[label,headline&&headline!==label?headline:'',body].filter(Boolean).join(' — ');
+  return `<div class="inbox-ad-origin-sticky" data-ad-card-toggle="1" role="button" tabindex="0" aria-expanded="false" title="${escapeHtml(fullText)}">${adOriginMediaFrameHtml(visual,'thumb',visualContact)}<div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">PUBLICITÉ ${sourcePlatform} · origine du client</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
 }
+
+// V6.46 — Appui sur la carte publicitaire : affiche/masque le texte complet
+// (le lien « Voir ↗ » garde son comportement).
+document.addEventListener('click', event => {
+  const card=event.target?.closest?.('[data-ad-card-toggle]');
+  if(!card||event.target.closest('a,button')) return;
+  const expanded=card.classList.toggle('expanded');
+  card.setAttribute('aria-expanded',String(expanded));
+});
+document.addEventListener('keydown', event => {
+  if(event.key!=='Enter'&&event.key!==' ') return;
+  const card=event.target?.closest?.('[data-ad-card-toggle]');
+  if(!card||event.target!==card) return;
+  event.preventDefault();
+  const expanded=card.classList.toggle('expanded');
+  card.setAttribute('aria-expanded',String(expanded));
+});
 
 window.openMediaLightbox=function(url,alt=''){
   const safe=safeConversationMediaUrl(url);if(!safe)return;
@@ -12830,14 +13307,40 @@ function formatWhatsAppWindowRemaining(ms){
   const hours=Math.floor(total/3600000);
   const minutes=Math.floor((total%3600000)/60000);
   if(hours>0) return `${hours} h ${minutes} min`;
-  return `${Math.max(1,minutes)} min`;
+  // V6.46 — « moins d'1 min » plutôt qu'un « 1 min » figé.
+  if(minutes<1) return 'moins d’1 min';
+  return `${minutes} min`;
+}
+
+// V6.46 — Temps restant calculé EN DIRECT à partir de expiresAt (avant :
+// figé à l'ouverture de la conversation, « encore 1 min » restait affiché
+// après la fermeture de la fenêtre).
+function whatsappWindowRemainingMs(info = {}){
+  const expiresMs=Date.parse(String(info?.expiresAt||''));
+  if(Number.isFinite(expiresMs)) return expiresMs-Date.now();
+  const remaining=Number(info?.remainingMs);
+  return Number.isFinite(remaining) ? remaining : null;
+}
+
+function whatsappWindowStatusText(info = {}){
+  if(info?.known!==true) return '🟢 WhatsApp disponible · fenêtre 24 h non déterminée';
+  const remaining=whatsappWindowRemainingMs(info);
+  const urgent=Number.isFinite(remaining)&&remaining<=60*60*1000;
+  return `${urgent?'🟠':'🟢'} Fenêtre WhatsApp ouverte · encore ${formatWhatsAppWindowRemaining(remaining)}`;
+}
+
+function whatsappWindowIsExpired(info = {}){
+  if(info?.applicable!==true) return false;
+  if(info?.expired===true) return true;
+  if(info?.known!==true) return false;
+  const remaining=whatsappWindowRemainingMs(info);
+  return Number.isFinite(remaining)&&remaining<=0;
 }
 
 function whatsappWindowStatusHtml(data = {}){
   const info=data?.whatsappWindow||{};
-  if(info?.applicable!==true || info?.expired===true) return '';
-  if(info?.known!==true) return '<div class="wa-window-status">🟢 WhatsApp disponible · fenêtre 24 h non déterminée</div>';
-  return `<div class="wa-window-status">🟢 Fenêtre WhatsApp ouverte · encore ${escapeHtml(formatWhatsAppWindowRemaining(info.remainingMs))}</div>`;
+  if(info?.applicable!==true || whatsappWindowIsExpired(info)) return '';
+  return `<div class="wa-window-status" data-role="wa-window-status">${escapeHtml(whatsappWindowStatusText(info))}</div>`;
 }
 
 function buildConversationComposer(
@@ -12857,7 +13360,7 @@ function buildConversationComposer(
       ? `Reprise automatique possible à ${escapeHtml(retry)} si le client reste sans réponse.`
       : 'Cette conversation reste réservée à ce commercial tant qu’il attend le client.';
     return `
-      <div class="inbox-composer conversation-composer" id="commercialComposer">
+      <div class="inbox-composer conversation-composer" id="commercialComposer" data-contact="${escapeHtml(contact)}">
         <div class="inbox-composer-toolbar">
           <div class="inbox-composer-title">🔒 Conversation prise en charge</div>
         </div>
@@ -12870,13 +13373,13 @@ function buildConversationComposer(
   }
 
   const windowInfo = selectedConversationData?.whatsappWindow || {};
-  if(composerChannel === 'whatsapp' && windowInfo?.expired === true){
+  if(composerChannel === 'whatsapp' && whatsappWindowIsExpired(windowInfo)){
     const lastAt = windowInfo.lastCustomerAt ? formatDate(windowInfo.lastCustomerAt) : 'date inconnue';
     const configured = windowInfo.templateConfigured === true;
     const alreadySent = windowInfo.reengagementSent === true;
     const sentAt = windowInfo.reengagementSentAt ? formatDate(windowInfo.reengagementSentAt) : '';
     return `
-      <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer">
+      <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer" data-contact="${escapeHtml(contact)}">
         <div class="wa-window-expired">
           <div class="wa-window-expired-copy">
             <strong>${alreadySent ? '📨 Relance WhatsApp envoyée' : '🔒 Fenêtre WhatsApp de 24 h terminée'}</strong>
@@ -12892,7 +13395,7 @@ function buildConversationComposer(
   }
 
   return `
-    <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer">
+    <div class="inbox-composer conversation-composer whatsapp-composer" id="commercialComposer" data-contact="${escapeHtml(contact)}">
       ${composerChannel === 'whatsapp' ? whatsappWindowStatusHtml(selectedConversationData || {}) : ''}
       <div
         id="conversationQuickReplyPanel"
@@ -13449,11 +13952,137 @@ function renderCustomerPanel(
   ensureCustomerProfileOptions();
 }
 
+// V6.46 — Rendu UNIQUE du fil (ouverture, messages plus anciens,
+// rafraîchissement automatique) : même bouton « messages plus anciens »,
+// même bandeau publicitaire, même ordre. Avant, le rafraîchissement
+// automatique reconstruisait le fil sans ce bouton et sans les messages
+// anciens déjà chargés.
+function renderConversationEntryHtml(entry){
+  const commercial=String(entry?.source||'').startsWith('commercial');
+  return [
+    renderThreadMessage('incoming',entry.incoming,entry,false),
+    renderThreadMessage('outgoing',entry.reply,entry,commercial),
+    renderThreadSystemEvent(entry),
+    entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',
+    entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''
+  ].filter(Boolean).join('');
+}
+
+function renderConversationThreadHtml(contact, data = {}){
+  const state=data?.state||{};
+  const entries=Array.isArray(data?.entries)?data.entries:[];
+  const adHtml=state?.adReferral
+    ? conversationAdStickyHtml(state, contact)
+    : conversationSourceCardHtml(state);
+  const olderButton=data?.hasMore&&data?.nextBefore
+    ? `<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages(${jsArg(contact)},${jsArg(data.nextBefore)})">Afficher les messages plus anciens</button>`
+    : (data?.historyStartReached ? '<div class="inbox-history-start">Début de l’historique disponible</div>' : '');
+  const messages=entries.map(renderConversationEntryHtml).join('');
+  return `${olderButton}${adHtml}${historyLimitNotice(entries)}${messages || `
+      <div class="inbox-empty-state">
+        <strong>Aucun échange enregistré</strong>
+      </div>
+    `}`;
+}
+
+// Point d'ancrage de lecture : le premier message visible et sa position,
+// pour la retrouver après un nouveau rendu (messages ajoutés au-dessus ou
+// en dessous).
+function conversationThreadAnchor(detail){
+  if(!detail) return null;
+  const top=detail.getBoundingClientRect().top;
+  const rows=[...detail.querySelectorAll('.inbox-message-row[data-message-id]')];
+  const row=rows.find(el=>el.dataset.messageId&&el.getBoundingClientRect().bottom>top+1);
+  if(!row) return null;
+  const sameId=rows.filter(el=>el.dataset.messageId===row.dataset.messageId);
+  return { id:row.dataset.messageId, index:sameId.indexOf(row), offset:row.getBoundingClientRect().top-top };
+}
+
+function restoreConversationThreadAnchor(detail, anchor){
+  if(!detail||!anchor) return false;
+  const rows=[...detail.querySelectorAll('.inbox-message-row[data-message-id]')].filter(el=>el.dataset.messageId===anchor.id);
+  const row=rows[Math.min(anchor.index,rows.length-1)];
+  if(!row) return false;
+  const delta=(row.getBoundingClientRect().top-detail.getBoundingClientRect().top)-anchor.offset;
+  detail.scrollTop+=delta;
+  return true;
+}
+
+function paintConversationThread(contact, data, { keepPosition = false, toBottom = false, forceAnchor = false } = {}){
+  const detail=document.getElementById('conversationDetail');
+  if(!detail) return;
+  const nearBottom=(detail.scrollHeight-detail.scrollTop-detail.clientHeight)<150;
+  const anchor=forceAnchor||(keepPosition&&!nearBottom)?conversationThreadAnchor(detail):null;
+  // V6.46 — Un fil déplié par l'utilisateur (carte pub) reste déplié.
+  const adExpanded=Boolean(detail.querySelector('[data-ad-card-toggle].expanded'));
+  detail.className='inbox-thread';
+  detail.innerHTML=renderConversationThreadHtml(contact, data);
+  if(adExpanded){
+    const card=detail.querySelector('[data-ad-card-toggle]');
+    if(card){card.classList.add('expanded');card.setAttribute('aria-expanded','true');}
+  }
+  if(anchor){
+    restoreConversationThreadAnchor(detail, anchor);
+  }else if(toBottom||(keepPosition&&nearBottom)){
+    detail.scrollTop=detail.scrollHeight;
+    requestAnimationFrame(()=>{detail.scrollTop=detail.scrollHeight;});
+  }
+}
+
+// V6.46 — Brouillons par conversation. Le composer porte data-contact :
+// un texte n'est jamais réinjecté dans la conversation d'un autre client.
+function saveConversationDraft(contact, value){
+  const key=String(contact||'');
+  if(!key) return;
+  const text=String(value??'');
+  if(text.trim()) conversationDrafts.set(key,text);
+  else conversationDrafts.delete(key);
+}
+
+function stashComposerDraft(){
+  const composer=document.getElementById('commercialComposer');
+  const field=document.getElementById('conversationQuickReply');
+  const owner=composer?.dataset?.contact||'';
+  if(owner&&field) saveConversationDraft(owner, field.value);
+}
+
+function restoreComposerDraft(contact){
+  const key=String(contact||'');
+  const field=document.getElementById('conversationQuickReply');
+  if(!field||!conversationDrafts.has(key)) return false;
+  const draft=conversationDrafts.get(key);
+  conversationDrafts.delete(key);
+  field.value=field.value.trim()?`${draft}\n${field.value}`:draft;
+  try{autoResizeConversationComposer(field);}catch{}
+  try{syncConversationPrimaryAction();}catch{}
+  return true;
+}
+
+// Reconstruit le composer (fenêtre WhatsApp ouverte/fermée…) sans perdre
+// le texte en cours.
+async function mountConversationComposer(contact, state = {}){
+  const composerHost=document.getElementById('inboxComposerHost');
+  if(!composerHost) return;
+  stashComposerDraft();
+  composerHost.classList.remove('hidden');
+  const access=selectedConversationAccess(contact, state);
+  composerHost.innerHTML=buildConversationComposer(contact, access);
+  restoreComposerDraft(contact);
+  await loadQuickReplies();
+  populateConversationQuickReplySelect();
+  bindSmartKeyboardShortcuts();
+  applyStoredComposerMode();
+}
+
 window.openConversation = async function(contact, targetMessageId = ''){
+  // V6.46 — Texte en cours gardé pour la conversation qu'on quitte.
+  stashComposerDraft();
   selectedConversationContact =
     String(contact || '');
   selectedConversationTargetMessageId =
     String(targetMessageId || '');
+  // V6.46 — La bulle flottante ne compte plus cette conversation.
+  dismissFloatingBubbleContact(selectedConversationContact);
 
   // V6.35.4 — Ce jeton identifie CETTE navigation précise. Si une navigation
   // plus récente démarre avant que celle-ci ne se termine, son jeton devient
@@ -13522,80 +14151,14 @@ window.openConversation = async function(contact, targetMessageId = ''){
     state
   );
 
+  paintConversationThread(contact, data, { toBottom: !targetMessageId });
+
   const detail =
     document.getElementById(
       'conversationDetail'
     );
 
-  detail.className =
-    'inbox-thread';
-
-  const ad =
-    state.adReferral ||
-    null;
-
-  const adHtml = state?.adReferral
-    ? conversationAdStickyHtml(state, contact)
-    : conversationSourceCardHtml(state);
-
-  const messages =
-    data.entries
-      .map(entry => {
-        const commercial =
-          String(
-            entry.source ||
-            ''
-          )
-            .startsWith(
-              'commercial'
-            );
-
-        return [
-          renderThreadMessage(
-            'incoming',
-            entry.incoming,
-            entry,
-            false
-          ),
-          renderThreadMessage(
-            'outgoing',
-            entry.reply,
-            entry,
-            commercial
-          ),
-          renderThreadSystemEvent(entry),
-          entry.image_reason
-            ? `
-              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
-                ${escapeHtml(entry.image_reason)}
-              </div>
-            `
-            : '',
-          entry.error
-            ? `
-              <div class="inbox-alert" style="max-width:650px;margin:8px auto">
-                ${escapeHtml(entry.error)}
-              </div>
-            `
-            : ''
-        ]
-          .filter(Boolean)
-          .join('');
-      })
-      .join('');
-
-  detail.innerHTML = `
-    ${data.hasMore ? `<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages(${jsArg(contact)},${jsArg(data.nextBefore || '')})">Afficher les messages plus anciens</button>` : ''}
-    ${adHtml}
-    ${historyLimitNotice(data.entries)}
-    ${messages || `
-      <div class="inbox-empty-state">
-        <strong>Aucun échange enregistré</strong>
-      </div>
-    `}
-  `;
-
-  if(targetMessageId){
+  if(targetMessageId && detail){
     requestAnimationFrame(() => {
       const target=[...detail.querySelectorAll('[data-message-id]')].find(el=>el.dataset.messageId===String(targetMessageId));
       if(target){
@@ -13606,64 +14169,44 @@ window.openConversation = async function(contact, targetMessageId = ''){
     });
   }
 
-  const composerHost =
-    document.getElementById(
-      'inboxComposerHost'
-    );
-
-  if(composerHost){
-    composerHost.classList.remove(
-      'hidden'
-    );
-
-    const access = selectedConversationAccess(contact, state);
-    composerHost.innerHTML =
-      buildConversationComposer(
-        contact,
-        access
-      );
-  }
-
-  await loadQuickReplies();
-  populateConversationQuickReplySelect();
-  bindSmartKeyboardShortcuts();
-  applyStoredComposerMode();
-
-  if(!targetMessageId){
-    requestAnimationFrame(() => {
-      detail.scrollTop =
-        detail.scrollHeight;
-    });
-  }
+  await mountConversationComposer(contact, state);
+  updateFloatingBubbleLayout();
 
   // V6.36.83 — pas de rechargement complet de l'Inbox à chaque ouverture.
-}
+};
 
 window.loadOlderConversationMessages = async function(contact, before){
   if(!contact || !before) return;
+  const button=document.querySelector('#conversationDetail .load-older-messages');
+  if(button){button.disabled=true;button.textContent='Chargement…';}
   try{
     const older=await apiFetch(`${API}/conversations/${encodeURIComponent(contact)}?limit=120&before=${encodeURIComponent(before)}`);
+    // V6.46 — Réponse arrivée après un changement de conversation : ignorée.
+    if(selectedConversationContact!==contact) return;
     const current=Array.isArray(selectedConversationData?.entries)?selectedConversationData.entries:[];
-    const merged=[...(older.entries||[]),...current];
+    const olderEntries=Array.isArray(older?.entries)?older.entries:[];
+    const merged=[...olderEntries,...current];
     const seen=new Set();
     const entries=merged.filter(entry=>{
-      const key=String(entry.message_id||entry.meta_message_id||`${entry.time}|${entry.incoming||''}|${entry.reply||''}`);
+      const key=String(entry.message_id||entry.meta_message_id||`${entry.time}|${entry.incoming||''}|${entry.reply||''}`)+`|${entry.time||''}|${entry.direction||''}`;
       if(seen.has(key))return false;seen.add(key);return true;
     }).sort((a,b)=>conversationUiTimeMs(a.time)-conversationUiTimeMs(b.time));
-    // Render older messages without losing already loaded ones.
-    selectedConversationData={...selectedConversationData,...older,entries};
-    const detail=document.getElementById('conversationDetail');
-    const state=selectedConversationData.state||{};
-    const sourceHtml=state?.adReferral?conversationAdStickyHtml(state,contact):conversationSourceCardHtml(state);
-    const messages=entries.map(entry=>{
-      const commercial=String(entry.source||'').startsWith('commercial');
-      return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),renderThreadSystemEvent(entry),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
-    }).join('');
-    if(detail){
-      detail.innerHTML=`${older.hasMore?`<button class="load-older-messages" type="button" onclick="loadOlderConversationMessages(${jsArg(contact)},${jsArg(older.nextBefore||'')})">Afficher les messages plus anciens</button>`:''}${sourceHtml}${historyLimitNotice(entries)}${messages}`;
-      detail.scrollTop=0;
-    }
-  }catch(error){alert(`Impossible de charger les messages plus anciens : ${error.message}`);}
+    // V6.46 — On garde l'état, l'accès et la fenêtre WhatsApp les plus
+    // récents ; seuls l'historique et la pagination changent. Plus aucun
+    // message ancien : le bouton laisse place à « Début de l'historique ».
+    selectedConversationData={
+      ...selectedConversationData,
+      entries,
+      hasMore:older?.hasMore===true&&Boolean(older?.nextBefore),
+      nextBefore:older?.hasMore===true?String(older?.nextBefore||''):'',
+      historyStartReached:older?.hasMore!==true
+    };
+    // Position de lecture conservée sur le message qui était en haut.
+    paintConversationThread(contact, selectedConversationData, { forceAnchor:true });
+  }catch(error){
+    if(button){button.disabled=false;button.textContent='Afficher les messages plus anciens';}
+    uiToast(`Impossible de charger les messages plus anciens : ${error.message}`,{kind:'error'});
+  }
 };
 
 window.deleteConversationMessage=async function(purgeKey,part,permanent=false){
@@ -13689,7 +14232,7 @@ window.deleteConversationMessage=async function(purgeKey,part,permanent=false){
       try{await openConversation(selectedConversationContact);}catch{selectedConversationContact='';selectedConversationData=null;resetInteractionDetail();}
     }
     await refreshPendingCountsNow();
-  }catch(error){alert('Suppression impossible : '+error.message);}
+  }catch(error){uiAlert('Suppression impossible : '+error.message);}
 };
 
 window.restoreConversationMessage=async function(id){
@@ -13697,14 +14240,108 @@ window.restoreConversationMessage=async function(id){
   try{
     await apiFetch(`${API}/message-deletions/${encodeURIComponent(id)}/restore`,{method:'POST'});
     await openConversation(selectedConversationContact);
-  }catch(error){alert('Restauration impossible : '+error.message);}
+  }catch(error){uiAlert('Restauration impossible : '+error.message);}
 };
+
+// V6.46 — Menu « ⋯ » d'un message (délégation d'événements, comme
+// data-ui-dialog) : copier, masquer, restaurer, supprimer définitivement.
+// Masquer et supprimer passent toujours par la confirmation existante.
+function closeConversationMessageMenu(){
+  const menu=document.getElementById('inboxMessageMenu');
+  if(menu) menu.remove();
+  document.querySelectorAll('[data-msg-menu][aria-expanded="true"]').forEach(el=>el.setAttribute('aria-expanded','false'));
+}
+
+function openConversationMessageMenu(trigger){
+  closeConversationMessageMenu();
+  const items=[];
+  if(trigger.dataset.copy==='1') items.push(['copy','📋 Copier le texte']);
+  if(trigger.dataset.hideKey) items.push(['hide','🙈 Masquer le message…']);
+  if(trigger.dataset.restoreId) items.push(['restore','↩ Restaurer le message d’origine']);
+  if(trigger.dataset.purgeKey) items.push(['purge','🗑 Supprimer définitivement…']);
+  if(!items.length) return;
+  const menu=document.createElement('div');
+  menu.id='inboxMessageMenu';
+  menu.className='inbox-message-menu';
+  menu.setAttribute('role','menu');
+  for(const [action,label] of items){
+    const button=document.createElement('button');
+    button.type='button';
+    button.setAttribute('role','menuitem');
+    button.dataset.msgAction=action;
+    button.className=action==='purge'||action==='hide'?'danger':'';
+    button.textContent=label;
+    menu.appendChild(button);
+  }
+  menu._trigger=trigger;
+  menu._openedAt=Date.now();
+  document.body.appendChild(menu);
+  const rect=trigger.getBoundingClientRect();
+  const width=menu.offsetWidth;
+  const height=menu.offsetHeight;
+  const left=Math.max(8,Math.min(window.innerWidth-width-8,rect.right-width));
+  const below=rect.bottom+6+height<=window.innerHeight-8;
+  menu.style.left=`${left}px`;
+  menu.style.top=`${below?rect.bottom+6:Math.max(8,rect.top-height-6)}px`;
+  trigger.setAttribute('aria-expanded','true');
+  menu.querySelector('button')?.focus({preventScroll:true});
+}
+
+async function runConversationMessageAction(action, trigger){
+  closeConversationMessageMenu();
+  if(!trigger) return;
+  if(action==='copy'){
+    const text=trigger.closest('.inbox-message-wrap')?.querySelector('.inbox-bubble')?.textContent||'';
+    try{
+      await navigator.clipboard.writeText(text.trim());
+      uiToast('Texte copié.');
+    }catch{
+      uiToast('Copie impossible sur cet appareil.',{kind:'warning'});
+    }
+  }else if(action==='hide'){
+    await deleteConversationMessage(trigger.dataset.hideKey,trigger.dataset.part);
+  }else if(action==='restore'){
+    await restoreConversationMessage(trigger.dataset.restoreId);
+  }else if(action==='purge'){
+    await deleteConversationMessage(trigger.dataset.purgeKey,trigger.dataset.part,true);
+  }
+}
+
+document.addEventListener('click', event => {
+  const item=event.target?.closest?.('#inboxMessageMenu [data-msg-action]');
+  if(item){
+    event.preventDefault();
+    runConversationMessageAction(item.dataset.msgAction, document.getElementById('inboxMessageMenu')?._trigger);
+    return;
+  }
+  const trigger=event.target?.closest?.('[data-msg-menu]');
+  if(trigger){
+    event.preventDefault();
+    event.stopPropagation();
+    if(trigger.getAttribute('aria-expanded')==='true') closeConversationMessageMenu();
+    else openConversationMessageMenu(trigger);
+    return;
+  }
+  if(!event.target?.closest?.('#inboxMessageMenu')) closeConversationMessageMenu();
+});
+document.addEventListener('keydown', event => {
+  if(event.key==='Escape'&&document.getElementById('inboxMessageMenu')) closeConversationMessageMenu();
+});
+window.addEventListener('resize', closeConversationMessageMenu);
+document.addEventListener('scroll', event => {
+  // Défilement du fil : le menu se ferme (sauf la fin d'un défilement
+  // automatique qui a précédé son ouverture).
+  const menu=document.getElementById('inboxMessageMenu');
+  if(menu&&event.target?.id==='conversationDetail'&&Date.now()-(menu._openedAt||0)>400) closeConversationMessageMenu();
+}, true);
 
 window.backToInboxList = function(){
   const page = document.getElementById('page-conversations');
   page?.classList.remove('has-selection','inbox-focus','customer-panel-open');
   updateInboxFocusButton();
   updateCustomerPanelButton();
+  closeConversationMessageMenu();
+  updateFloatingBubbleLayout();
 };
 
 async function refreshSelectedConversation(){
@@ -13746,7 +14383,7 @@ window.toggleConversationFavorite = async function(contact, favorite){
     renderConversationHeader(contact,result?.state||selectedConversationData?.state||{});
     updateConversationFilterCounts();
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -13755,7 +14392,7 @@ window.toggleConversationPriority = async function(
   priority
 ){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
-    alert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
+    uiAlert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
     return;
   }
   try{
@@ -13775,13 +14412,13 @@ window.toggleConversationPriority = async function(
 
     await refreshSelectedConversation();
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
 window.assignConversation = async function(contact){
   if(currentUser?.role==='commercial'){
-    alert('L’affectation est réservée au responsable commercial ou à l’administrateur.');
+    uiAlert('L’affectation est réservée au responsable commercial ou à l’administrateur.');
     return;
   }
   const current = selectedConversationData?.state?.assignedTo || '';
@@ -13795,15 +14432,15 @@ window.assignConversation = async function(contact){
     try{
       const users = await apiFetch(`${API}/users`);
       const commercials = (users || []).filter(user => user.role === 'commercial' && user.active !== false);
-      if(!commercials.length){ alert('Aucun commercial actif.'); return; }
+      if(!commercials.length){ uiAlert('Aucun commercial actif.'); return; }
       const choices = commercials.map((user,index)=>`${index+1}. ${user.name || user.email}`).join('\n');
       const answer = await uiPrompt(`Choisissez le commercial :\n\n${choices}\n\nEntrez le numéro :`, '1');
       if(answer === null) return;
       const selected = commercials[Number(answer)-1];
-      if(!selected){ alert('Choix invalide.'); return; }
+      if(!selected){ uiAlert('Choix invalide.'); return; }
       assignedTo = selected.name || selected.email;
       assignedUserId = selected.id;
-    }catch(error){ alert(error.message); return; }
+    }catch(error){ uiAlert(error.message); return; }
   }else{
     assignedTo = await uiPrompt('Affecter cette conversation à :', current);
     if(assignedTo === null) return;
@@ -13822,12 +14459,12 @@ window.assignConversation = async function(contact){
       }
     );
     await refreshSelectedConversation();
-  }catch(error){ alert(error.message); }
+  }catch(error){ uiAlert(error.message); }
 };
 
 window.createTaskFromConversation = async function(contact){
   if(!['admin','responsable_commercial'].includes(currentUser?.role)){
-    alert('Seul le responsable commercial ou l’administrateur peut créer cette tâche.');
+    uiAlert('Seul le responsable commercial ou l’administrateur peut créer cette tâche.');
     return;
   }
 
@@ -13835,7 +14472,7 @@ window.createTaskFromConversation = async function(contact){
   const state=data.state||{};
   const assignedUserId=String(state.assignedUserId||'').trim();
   if(!assignedUserId){
-    alert('Affectez d’abord la conversation à un commercial, puis créez la tâche.');
+    uiAlert('Affectez d’abord la conversation à un commercial, puis créez la tâche.');
     return;
   }
 
@@ -13870,9 +14507,9 @@ window.createTaskFromConversation = async function(contact){
         clientName
       })
     });
-    alert(`Tâche créée pour ${state.assignedTo||'le commercial affecté'}.`);
+    uiAlert(`Tâche créée pour ${state.assignedTo||'le commercial affecté'}.`);
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -13892,12 +14529,12 @@ window.openLinkedTaskConversation = async function(contact,messageId=''){
 
 window.takeOverConversation = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
-    alert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
+    uiAlert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
     return;
   }
   const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
   if(conversationChannel(item)==='facebook'){
-    alert('Facebook est en supervision : les réponses restent gérées par Meta Business AI / Business Suite. Utilisez Affecter ou créer une tâche pour le suivi commercial.');
+    uiAlert('Facebook est en supervision : les réponses restent gérées par Meta Business AI / Business Suite. Utilisez Affecter ou créer une tâche pour le suivi commercial.');
     return;
   }
   const assignedTo =
@@ -13929,18 +14566,18 @@ window.takeOverConversation = async function(contact){
 
     await refreshSelectedConversation();
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
 window.reactivateConversationAI = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
-    alert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
+    uiAlert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
     return;
   }
   const item=conversations.find(entry=>entry.contact===contact)||{contact,channel:selectedConversationData?.state?.channel};
   if(conversationChannel(item)==='facebook'){
-    alert('L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.');
+    uiAlert('L’IA MONDECO est désactivée sur Facebook. Les réponses restent gérées côté Meta.');
     return;
   }
   if(
@@ -13961,7 +14598,7 @@ window.reactivateConversationAI = async function(contact){
 
     await refreshSelectedConversation();
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -13970,7 +14607,7 @@ window.toggleResolvedConversation = async function(
   resolved
 ){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).readOnly){
-    alert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
+    uiAlert('Cette action de gestion est réservée à la conversation affectée. Vous pouvez toutefois répondre au client à tout moment.');
     return;
   }
   try{
@@ -14043,7 +14680,7 @@ window.toggleResolvedConversation = async function(
       );
     }
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -14235,7 +14872,7 @@ window.saveConversationQuickReply = async function(){
     String(textarea?.value || '').trim();
 
   if(!content){
-    alert('Écrivez d’abord la réponse à enregistrer.');
+    uiAlert('Écrivez d’abord la réponse à enregistrer.');
     return;
   }
 
@@ -14283,7 +14920,7 @@ window.saveConversationQuickReply = async function(){
       select.value = item.id;
     }
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -14361,7 +14998,7 @@ window.importConversationQuickRepliesFile=async function(file){
     const text=await file.text();
     const items=parseQuickReplyImportText(text);
     if(!items.length){
-      alert('Aucune réponse reconnue. Format conseillé : raccourci;titre;reponse ou /raccourci | Titre | Réponse.');
+      uiAlert('Aucune réponse reconnue. Format conseillé : raccourci;titre;reponse ou /raccourci | Titre | Réponse.');
       return;
     }
     if(!await uiConfirm(`Importer ${items.length} réponse(s) rapide(s) ? Les raccourcis déjà existants seront ignorés.`)) return;
@@ -14370,9 +15007,9 @@ window.importConversationQuickRepliesFile=async function(file){
     });
     await loadQuickReplies({ force:true });
     populateConversationQuickReplySelect();
-    alert(`${Number(result?.imported||0)} réponse(s) importée(s). ${Number(result?.skipped||0)} ignorée(s) (doublon ou ligne invalide).`);
+    uiAlert(`${Number(result?.imported||0)} réponse(s) importée(s). ${Number(result?.skipped||0)} ignorée(s) (doublon ou ligne invalide).`);
   }catch(error){
-    alert(error.message||'Import impossible.');
+    uiAlert(error.message||'Import impossible.');
   }
 };
 
@@ -14386,7 +15023,7 @@ window.deleteConversationQuickReply = async function(){
     String(select?.value || '');
 
   if(!id){
-    alert('Sélectionnez une réponse enregistrée.');
+    uiAlert('Sélectionnez une réponse enregistrée.');
     return;
   }
 
@@ -14410,7 +15047,7 @@ window.deleteConversationQuickReply = async function(){
     await loadQuickReplies({ force:true });
     populateConversationQuickReplySelect();
   }catch(error){
-    alert(error.message);
+    uiAlert(error.message);
   }
 };
 
@@ -14551,7 +15188,7 @@ window.saveQuickReplyManagerItem = async function(id){
   };
 
   if(!payload.title || !payload.content){
-    alert('Le titre et le message sont obligatoires.');
+    uiAlert('Le titre et le message sont obligatoires.');
     return;
   }
 
@@ -14606,7 +15243,7 @@ window.saveQuickReplyManagerItem = async function(id){
       }, 1500);
     }
   }catch(error){
-    alert(error.message || 'Enregistrement impossible.');
+    uiAlert(error.message || 'Enregistrement impossible.');
     if(button){
       button.textContent = 'Enregistrer';
       button.disabled = false;
@@ -14624,7 +15261,7 @@ window.deleteQuickReplyManagerItem = async function(id){
     populateConversationQuickReplySelect();
     renderQuickReplyManager();
   }catch(error){
-    alert(error.message || 'Suppression impossible.');
+    uiAlert(error.message || 'Suppression impossible.');
   }
 };
 
@@ -14737,17 +15374,17 @@ window.cancelConversationVoiceRecording=function(){
 window.startConversationVoiceRecording=async function(contact){
   const currentConversation=conversations.find(item=>item.contact===contact)||{contact};
   if(conversationChannel(currentConversation)!=='whatsapp'){
-    alert('Les messages vocaux sont disponibles ici uniquement pour WhatsApp.');
+    uiAlert('Les messages vocaux sont disponibles ici uniquement pour WhatsApp.');
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined'){
-    alert('Ce navigateur ne permet pas l’enregistrement du micro. Ouvrez MONDECO en HTTPS avec Safari, Chrome ou Edge récent.');
+    uiAlert('Ce navigateur ne permet pas l’enregistrement du micro. Ouvrez MONDECO en HTTPS avec Safari, Chrome ou Edge récent.');
     return;
   }
 
   const mimeType=preferredConversationVoiceMimeType();
   if(!mimeType){
-    alert('Ce navigateur ne propose pas encore un format vocal accepté par WhatsApp. Mettez Safari/Chrome/Edge à jour puis réessayez.');
+    uiAlert('Ce navigateur ne propose pas encore un format vocal accepté par WhatsApp. Mettez Safari/Chrome/Edge à jour puis réessayez.');
     return;
   }
 
@@ -14789,7 +15426,7 @@ window.startConversationVoiceRecording=async function(contact){
       if(!chunks.length){
         renderConversationVoiceBar('');
         syncConversationPrimaryAction();
-        alert('Aucun son n’a été enregistré.');
+        uiAlert('Aucun son n’a été enregistré.');
         return;
       }
       const blob=new Blob(chunks,{type:actualType});
@@ -14828,7 +15465,7 @@ window.startConversationVoiceRecording=async function(contact){
     }else if(errorName.includes('notreadable')){
       friendlyMessage='Le microphone est déjà utilisé par un autre programme (Zoom, Teams, un autre onglet...). Fermez-le puis réessayez.';
     }
-    alert(friendlyMessage);
+    uiAlert(friendlyMessage);
   }
 };
 
@@ -15019,11 +15656,11 @@ window.startWhatsAppCall=async function(contact){
   const item=conversations.find(entry=>entry.contact===contact)||{contact};
   if(conversationChannel(item)!=='whatsapp') return;
   if(activeWhatsAppCall){
-    alert('Un appel WhatsApp est déjà en cours sur ce poste.');
+    uiAlert('Un appel WhatsApp est déjà en cours sur ce poste.');
     return;
   }
   if(!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection==='undefined'){
-    alert('Ce navigateur ne permet pas les appels WebRTC. Utilisez Safari, Chrome ou Edge récent en HTTPS.');
+    uiAlert('Ce navigateur ne permet pas les appels WebRTC. Utilisez Safari, Chrome ou Edge récent en HTTPS.');
     return;
   }
 
@@ -15284,7 +15921,7 @@ window.sendConversationSticker = async function(stickerId, buttonEl){
     if(error?.code==='CONVERSATION_LOCKED'){
       showConversationLockedModal(error?.data || {});
     }else{
-      alert(`Envoi du sticker impossible : ${error.message}`);
+      uiAlert(`Envoi du sticker impossible : ${error.message}`);
     }
   }finally{
     if(buttonEl) buttonEl.classList.remove('sending');
@@ -15690,7 +16327,7 @@ window.sendWhatsAppReengagement = async function(contact){
   if(conversationChannel(item)!=='whatsapp') return;
 
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact,data?.state||{}).canReply===false){
-    alert('Vous ne pouvez pas répondre à cette conversation.');
+    uiAlert('Vous ne pouvez pas répondre à cette conversation.');
     return;
   }
 
@@ -15714,18 +16351,18 @@ window.sendWhatsAppReengagement = async function(contact){
 
     await refreshPendingCountsNow();
     await window.openConversation(contact);
-    alert('Relance WhatsApp envoyée. Dès que le client répond, la fenêtre de 24 h se rouvre automatiquement.');
+    uiAlert('Relance WhatsApp envoyée. Dès que le client répond, la fenêtre de 24 h se rouvre automatiquement.');
   }catch(error){
     if(error?.code==='WHATSAPP_WINDOW_REOPENED'){
       await window.openConversation(contact);
-      alert('Le client a répondu entre-temps : la fenêtre WhatsApp est de nouveau ouverte. Vous pouvez écrire normalement.');
+      uiAlert('Le client a répondu entre-temps : la fenêtre WhatsApp est de nouveau ouverte. Vous pouvez écrire normalement.');
     }else if(error?.code==='WHATSAPP_TEMPLATE_NOT_CONFIGURED'){
-      alert('Le modèle de relance WhatsApp doit être configuré une seule fois par l’administrateur.');
+      uiAlert('Le modèle de relance WhatsApp doit être configuré une seule fois par l’administrateur.');
     }else if(error?.code==='WHATSAPP_REENGAGEMENT_ALREADY_SENT'){
       await window.openConversation(contact);
-      alert('Une relance a déjà été envoyée pour ce client. Attendez sa réponse.');
+      uiAlert('Une relance a déjà été envoyée pour ce client. Attendez sa réponse.');
     }else{
-      alert(error.message);
+      uiAlert(error.message);
     }
   }finally{
     const current=document.getElementById('whatsappReengageBtn');
@@ -16073,9 +16710,29 @@ async function whatsappCompatibleImageFile(file){
   }
 }
 
+// V6.46 — Texte d'un envoi échoué : remis dans SA conversation (composer
+// affiché si c'est encore elle, sinon brouillon restauré à sa réouverture).
+function restoreFailedSendText(contact, text){
+  const key=String(contact||'');
+  const value=String(text||'');
+  if(!key||!value.trim()) return false;
+  const field=document.getElementById('conversationQuickReply');
+  const owner=document.getElementById('commercialComposer')?.dataset?.contact||'';
+  if(field&&owner===key&&selectedConversationContact===key){
+    const current=field.value;
+    if(current.trim()!==value.trim()) field.value=current.trim()?`${value}\n${current}`:value;
+    try{autoResizeConversationComposer(field);}catch{}
+    try{syncConversationPrimaryAction();}catch{}
+    return true;
+  }
+  const existing=conversationDrafts.get(key)||'';
+  conversationDrafts.set(key, existing.trim()&&existing.trim()!==value.trim()?`${value}\n${existing}`:value);
+  return true;
+}
+
 window.sendConversationCommercialReply = async function(contact){
   if(currentUser?.role==='commercial' && selectedConversationAccess(contact, selectedConversationData?.state || {}).canReply === false){
-    alert('Vous ne pouvez pas répondre à cette conversation.');
+    uiAlert('Vous ne pouvez pas répondre à cette conversation.');
     return;
   }
 
@@ -16106,7 +16763,7 @@ window.sendConversationCommercialReply = async function(contact){
 
   if(!text && !file){
     conversationSendInProgress = false;
-    alert('Écrivez un message ou ajoutez un fichier.');
+    uiToast('Écrivez un message ou ajoutez un fichier.',{kind:'warning'});
     return;
   }
 
@@ -16177,7 +16834,9 @@ window.sendConversationCommercialReply = async function(contact){
     conversationExternalContact(currentConversation);
 
   if(['instagram','facebook'].includes(channel) && file){
-    alert(`Pour ${channel === 'facebook' ? 'Facebook Messenger' : 'Instagram'}, envoyez pour le moment une réponse texte.`);
+    // V6.46 — Le verrou d'envoi restait actif (rafraîchissements bloqués).
+    conversationSendInProgress = false;
+    uiAlert(`Pour ${channel === 'facebook' ? 'Facebook Messenger' : 'Instagram'}, envoyez pour le moment une réponse texte.`);
     return;
   }
 
@@ -16286,7 +16945,9 @@ window.sendConversationCommercialReply = async function(contact){
     // échouait juste après un envoi pourtant réussi, le texte restait
     // affiché comme si l'envoi avait échoué, obligeant le commercial à
     // l'effacer à la main avant de pouvoir écrire un nouveau message.
-    if(textEl){
+    // V6.46 — Seulement si le champ contient encore le texte envoyé (envoi
+    // avec fichier) : un nouveau message tapé pendant l'envoi est gardé.
+    if(textEl && textEl.isConnected && text && textEl.value.trim() === text){
       textEl.value = '';
       autoResizeConversationComposer(textEl);
     }
@@ -16345,16 +17006,23 @@ window.sendConversationCommercialReply = async function(contact){
     // gérés plus bas, où on ne sait pas si le message est réellement
     // parti — dans ce cas la bulle reste visible telle quelle).
     const isUncertain = error?.code==='SEND_TIMEOUT_UNCERTAIN' || error?.code==='SEND_NETWORK_UNCERTAIN';
+    // V6.46 — Le texte retourne dans SA conversation, jamais dans celle
+    // ouverte entre-temps (avant : brouillon d'un client réinjecté chez un
+    // autre). Les messages nomment le client concerné.
+    const clientName = conversationDisplayName({
+      ...currentConversation,
+      profileName: currentConversation?.profileName || data?.state?.profileName || '',
+      instagramUsername: currentConversation?.instagramUsername || data?.state?.instagramUsername || ''
+    }) || 'ce client';
+    const stillOpen = selectedConversationContact === contact;
     if(optimisticBubbleId && !isUncertain){
       document.getElementById(optimisticBubbleId)?.remove();
-      const textElRestore = document.getElementById('conversationQuickReply');
-      if(textElRestore && text){
-        textElRestore.value = text;
-        autoResizeConversationComposer(textElRestore);
-      }
+      restoreFailedSendText(contact, text);
     }
+    const openFailedConversation = stillOpen ? null : () => window.openConversation(contact);
     if(error?.code==='FACEBOOK_TOKEN_EXPIRED'){
-      alert(
+      uiAlert(
+        `Message non envoyé à ${clientName}.\n\n` +
         'Facebook Messenger est temporairement déconnecté : le Page Access Token a expiré.\n\n' +
         'Aucun message n’a été envoyé. Demandez à l’administrateur de renouveler le token longue durée dans Railway.'
       );
@@ -16367,13 +17035,18 @@ window.sendConversationCommercialReply = async function(contact){
       // V6.35.6 — Cas ambigu : on ne sait pas si Meta a reçu le message.
       // On ne vide PAS le champ de texte ici, pour que le commercial
       // puisse vérifier la conversation avant de décider de renvoyer.
-      alert(error.message);
+      uiAlert(`${clientName} : ${error.message}`);
     }else if(error?.code==='WHATSAPP_OUTSIDE_WINDOW'){
       // V6.36.17 — La fenêtre a pu expirer pendant que le commercial écrivait.
-      // On recharge immédiatement le composer spécial « Relancer le client ».
-      await window.openConversation(contact);
+      // V6.46 — Brouillon conservé ; le composer « Relancer le client » est
+      // rechargé seulement si cette conversation est toujours ouverte.
+      if(!optimisticBubbleId && text) restoreFailedSendText(contact, text);
+      uiToast(`Fenêtre WhatsApp de 24 h fermée : message non envoyé à ${clientName}. Brouillon conservé.`,{kind:'warning',actionLabel:openFailedConversation?'Ouvrir':'',onAction:openFailedConversation});
+      if(stillOpen){
+        try{ await window.openConversation(contact); }catch(reloadError){ console.debug('Rechargement conversation :', reloadError.message); }
+      }
     }else{
-      alert(error.message);
+      uiToast(`Échec d’envoi à ${clientName} — brouillon conservé. ${error.message}`,{kind:'error',timeoutMs:10000,actionLabel:openFailedConversation?'Ouvrir':'',onAction:openFailedConversation});
     }
   }finally{
     conversationSendInProgress = false;
@@ -16496,7 +17169,7 @@ async function updateAiAlertsBadge(){
   const el = document.getElementById('aiAlertsNavBadge');
   if(!el) return;
   try{
-    const data = await apiFetch(`${API}/ai-replies/alert-count`);
+    const data = await apiFetch(`${API}/ai-replies/alert-count`, { timeoutMs: BACKGROUND_REQUEST_TIMEOUT_MS });
     const count = Math.max(0, Number(data?.count || 0));
     el.textContent = count > 99 ? '99+' : String(count);
     el.title = `${count} alerte${count>1?'s':''} commerciale${count>1?'s':''} à traiter`;
@@ -16506,7 +17179,10 @@ async function updateAiAlertsBadge(){
   }
 }
 updateAiAlertsBadge();
-setInterval(updateAiAlertsBadge, 60000);
+setInterval(() => {
+  // V6.46 — pas d'appel empilé ni d'appel en arrière-plan masqué.
+  if(document.visibilityState === 'visible') runBackgroundTask('ai-alerts', updateAiAlertsBadge);
+}, 60000);
 
 function playNotificationTone(kind = 'message', channel = ''){
   try{
@@ -16565,61 +17241,175 @@ function playNotificationTone(kind = 'message', channel = ''){
 // notification navigateur (showClientBrowserNotification), qui fonctionne
 // même onglet/app fermé — cette bulle est un simple rappel visuel doux
 // pour quand la commerciale a déjà l'œil sur l'écran MONDECO.
-let mondecoBubbleQueue = [];
+// V6.46 — Une entrée par conversation (ou commentaire / tâche) : un client
+// qui écrit dix fois compte pour un ; l'entrée disparaît dès que sa
+// conversation est ouverte ; compteur plafonné à 99+. Avant, chaque
+// événement s'ajoutait sans limite (« +2253 » en production).
+const mondecoBubbleItems = new Map();
+let floatingBubbleResizeObserver = null;
+
+function floatingBubbleKey(event){
+  const kind=String(event?.kind||'');
+  if(kind==='comment') return `comment:${event?.commentKey||event?.id||''}`;
+  if(kind==='task') return `task:${event?.taskId||event?.id||''}`;
+  if(kind==='summary'||kind==='pending') return kind;
+  return event?.contact ? `contact:${event.contact}` : `event:${event?.id||''}`;
+}
 
 function showFloatingBubble(event){
-  const kind = String(event.kind||'');
+  const kind = String(event?.kind||'');
   if(kind==='report') return;
-
-  mondecoBubbleQueue.push(event);
+  const key=floatingBubbleKey(event);
+  mondecoBubbleItems.delete(key);
+  mondecoBubbleItems.set(key,event);
+  while(mondecoBubbleItems.size>300) mondecoBubbleItems.delete(mondecoBubbleItems.keys().next().value);
   renderMondecoBubble();
+}
+
+function dismissFloatingBubbleContact(contact){
+  if(!contact) return;
+  if(mondecoBubbleItems.delete(`contact:${contact}`)) renderMondecoBubble();
+}
+
+// Position : conversation ouverte sur grand écran → coin bas droit du fil,
+// juste au-dessus du composer (le fil reçoit un espace vide en bas pour que
+// le dernier message ne soit jamais caché) ; sur mobile, masquée pendant
+// une conversation (CSS) ; ailleurs, coin bas droit de l'écran.
+function updateFloatingBubbleLayout(){
+  const container=document.getElementById('mondecoBubbleContainer');
+  if(!container) return;
+  const page=document.getElementById('page-conversations');
+  const threadOpen=Boolean(page?.classList.contains('active')&&page.classList.contains('has-selection'));
+  const desktop=window.matchMedia('(min-width:901px)').matches;
+  const center=threadOpen&&desktop?document.getElementById('inboxCenter'):null;
+  const composer=center?document.getElementById('inboxComposerHost'):null;
+  let bottom=0;
+  let right=16;
+  if(center&&composer&&!composer.classList.contains('hidden')){
+    const composerTop=composer.getBoundingClientRect().top;
+    const centerRight=center.getBoundingClientRect().right;
+    if(composerTop>0) bottom=Math.max(0,Math.round(window.innerHeight-composerTop));
+    if(centerRight>0) right=Math.max(16,Math.round(window.innerWidth-centerRight+16));
+  }
+  container.style.setProperty('--mondeco-composer-h',`${bottom}px`);
+  container.style.setProperty('--mondeco-bubble-right',`${right}px`);
+  document.body.classList.toggle('mondeco-bubble-in-thread',Boolean(bottom&&mondecoBubbleItems.size));
+  if(!floatingBubbleResizeObserver&&typeof ResizeObserver==='function'){
+    const host=document.getElementById('inboxComposerHost');
+    if(host){
+      floatingBubbleResizeObserver=new ResizeObserver(()=>updateFloatingBubbleLayout());
+      floatingBubbleResizeObserver.observe(host);
+    }
+  }
+}
+
+window.addEventListener('resize', () => updateFloatingBubbleLayout());
+
+// Identifiant serveur de la notification (vide pour une alerte calculée
+// dans la page : pas d'appel « marquer comme lu » inutile).
+function notificationIdOf(event){
+  if(event?.synthetic===true) return '';
+  return event?.notificationId||event?.id||'';
+}
+
+function floatingBubbleIdentity(event){
+  const rawIdentity = event?.username
+    ? (String(event.username).startsWith('@')?event.username:`@${event.username}`)
+    : event?.profileName||String(event?.contact||'').replace(/^(instagram|facebook):/,'');
+  // V6.36.42 — Un numéro brut n'est pas lisible dans une bulle minimaliste.
+  return /^\d{6,}$/.test(String(rawIdentity||'')) ? '' : String(rawIdentity||'');
+}
+
+function openFloatingBubbleItem(key,event){
+  mondecoBubbleItems.delete(key);
+  renderMondecoBubble();
+  const kind=String(event?.kind||'');
+  if(kind==='summary'||kind==='pending'){openPendingMessages();return;}
+  if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
+  if(kind==='comment'&&event.commentKey){openNotificationSocialComment(notificationIdOf(event),event.commentKey);return;}
+  if(event?.contact){openNotificationConversation(notificationIdOf(event),event.contact,event.messageId||'');}
+  else{openAllNewMessages();}
 }
 
 function renderMondecoBubble(){
   const container = document.getElementById('mondecoBubbleContainer');
-  if(!container || !mondecoBubbleQueue.length) return;
+  if(!container) return;
+  updateFloatingBubbleLayout();
+  if(!mondecoBubbleItems.size){ container.innerHTML=''; return; }
 
-  const event = mondecoBubbleQueue[mondecoBubbleQueue.length-1];
-  const extraCount = mondecoBubbleQueue.length - 1;
-  const kind = String(event.kind||'');
-  const urgent = event.urgent===true;
-  const rawIdentity = event.username
-    ? (String(event.username).startsWith('@')?event.username:`@${event.username}`)
-    : event.profileName||String(event.contact||'').replace(/^(instagram|facebook):/,'');
-  // V6.36.42 — Un numéro de téléphone brut (ex: "21658583475") n'est pas
-  // lisible dans une bulle minimaliste. On ne l'affiche que si un vrai
-  // nom/identifiant est connu ; sinon on retombe sur un libellé neutre.
-  const isRawPhoneNumber = /^\d{6,}$/.test(rawIdentity);
-  const identity = isRawPhoneNumber ? 'Nouveau message' : rawIdentity;
-  const preview = event.preview||'Nouveau message client';
-  const initials = isRawPhoneNumber ? '💬' : String(identity||'M').trim().slice(0,2).toUpperCase();
+  const [key,event] = [...mondecoBubbleItems.entries()].at(-1);
+  const kind = String(event?.kind||'');
+  const urgent = [...mondecoBubbleItems.values()].some(item=>item?.urgent===true||['sla','commercial','pending'].includes(String(item?.kind||'')));
+  const identity = floatingBubbleIdentity(event);
+  const preview = event?.preview||'Nouveau message client';
+  const initials = kind==='summary'||kind==='pending'||!identity ? '💬' : identity.trim().slice(0,2).toUpperCase();
+  // Nombre de conversations (ou d'éléments) en attente dans la bulle ;
+  // un résumé porte son propre total.
+  const total = kind==='summary'
+    ? Math.max(Number(event?.count||0), mondecoBubbleItems.size)
+    : mondecoBubbleItems.size;
+  const countLabel = total>99 ? '99+' : String(total);
+  const title = `${identity||'Nouveau message'} : ${preview}${mondecoBubbleItems.size>1?` (+ ${mondecoBubbleItems.size-1} autre${mondecoBubbleItems.size>2?'s':''})`:''}`;
 
-  // V6.36.43 — Bulle réduite à l'essentiel : juste un rond cliquable
-  // (avatar/icône + badge compteur), sans texte à côté. Le clic ouvre
-  // directement la bonne conversation, donc rien n'est perdu au clic ;
-  // seul l'aperçu visible avant clic est retiré, au profit d'une bulle
-  // plus proche du vrai esprit Messenger.
+  // V6.36.43 — Bulle réduite à l'essentiel : un rond cliquable (avatar ou
+  // icône + compteur). Le clic ouvre la bonne conversation.
   container.innerHTML = `
-    <div class="mondeco-bubble-round${urgent?' urgent':''}" id="mondecoSingleBubble" title="${escapeHtml(identity)}: ${escapeHtml(preview)}">
-      ${escapeHtml(initials)}${extraCount>0?`<span class="mondeco-bubble-count">+${extraCount}</span>`:''}
-      <button class="mondeco-bubble-round-close" type="button" title="Fermer">✕</button>
+    <div class="mondeco-bubble-round${urgent?' urgent':''}" id="mondecoSingleBubble" role="button" tabindex="0" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+      ${escapeHtml(initials)}${total>1?`<span class="mondeco-bubble-count">${escapeHtml(countLabel)}</span>`:''}
+      <button class="mondeco-bubble-round-close" type="button" title="Fermer" aria-label="Fermer les alertes">✕</button>
     </div>
   `;
 
-  document.querySelector('#mondecoSingleBubble .mondeco-bubble-round-close').addEventListener('click', (e) => {
+  container.querySelector('.mondeco-bubble-round-close').addEventListener('click', (e) => {
     e.stopPropagation();
-    mondecoBubbleQueue = [];
+    mondecoBubbleItems.clear();
     container.innerHTML = '';
+    updateFloatingBubbleLayout();
   });
 
-  document.getElementById('mondecoSingleBubble').addEventListener('click', () => {
-    mondecoBubbleQueue = [];
-    container.innerHTML = '';
-    if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
-    if(kind==='comment'&&event.commentKey){openNotificationSocialComment(event.notificationId||event.id,event.commentKey);return;}
-    if(event.contact){openNotificationConversation(event.notificationId||event.id,event.contact,event.messageId||'');}
-    else{openAllNewMessages();}
-  });
+  const bubble=document.getElementById('mondecoSingleBubble');
+  bubble.addEventListener('click', () => openFloatingBubbleItem(key,event));
+  bubble.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openFloatingBubbleItem(key,event); } });
+}
+
+// V6.46 — Un lot d'alertes = UNE notification système et UN son
+// (avant : une notification + une mélodie par message, 400 d'un coup).
+function notificationSoundAllowed(){
+  if(!isNotificationSoundEnabled()) return false;
+  return localStorage.getItem('mondecoNotificationSound')==='1'||('Notification' in window&&Notification.permission==='granted');
+}
+
+function showClientBrowserNotificationSummary(events){
+  const list=Array.isArray(events)?events.filter(Boolean):[];
+  if(!list.length) return;
+  const urgent=list.some(event=>event?.urgent===true||['sla','commercial','pending'].includes(String(event?.kind||'')));
+  const contacts=[...new Set(list.map(event=>event?.contact).filter(Boolean))];
+  const names=[...new Set(list.map(event=>floatingBubbleIdentity(event)).filter(Boolean))];
+  const count=list.reduce((sum,event)=>sum+Math.max(1,Number(event?.count||1)),0);
+  const title=list.length===1&&list[0]?.kind==='pending'
+    ? 'MONDECO • Nouveau client en attente'
+    : `MONDECO • ${count} nouveau${count>1?'x':''} message${count>1?'s':''}${urgent?' • commercial requis':''}`;
+  const body=list.length===1&&list[0]?.preview
+    ? String(list[0].preview)
+    : names.length
+      ? `${names.slice(0,3).join(', ')}${names.length>3?` et ${names.length-3} autre${names.length-3>1?'s':''}`:''}`
+      : `${contacts.length||count} conversation${(contacts.length||count)>1?'s':''} concernée${(contacts.length||count)>1?'s':''}`;
+  if('Notification' in window&&Notification.permission==='granted'&&isNotificationSystemEnabled()){
+    try{
+      const notification=new Notification(title,{body,tag:'mondeco-batch'});
+      notification.onclick=()=>{
+        window.focus();
+        if(contacts.length===1&&list.every(event=>event?.contact===contacts[0])){
+          const event=list[list.length-1];
+          openNotificationConversation(notificationIdOf(event),event.contact,event.messageId||'');
+        }else openPendingMessages();
+      };
+    }catch(error){console.debug('Notification navigateur indisponible',error);}
+  }
+  if(notificationSoundAllowed()){
+    const channels=[...new Set(list.map(event=>String(event?.channel||'').toLowerCase()).filter(Boolean))];
+    playNotificationTone(urgent?'commercial':'message',channels.length===1?channels[0]:'');
+  }
 }
 
 function showClientBrowserNotification(event){
@@ -16651,208 +17441,174 @@ function showClientBrowserNotification(event){
         window.focus();
         if(kind==='report'&&currentUser?.role==='admin'){showPage('team');return;}
         if(kind==='task'&&currentUser?.role==='commercial'){showPage('mywork');return;}
-        if(kind==='comment'&&event.commentKey){openNotificationSocialComment(event.notificationId||event.id,event.commentKey);return;}
-        if(event.contact){openNotificationConversation(event.notificationId||event.id,event.contact,event.messageId||'');}
+        if(kind==='comment'&&event.commentKey){openNotificationSocialComment(notificationIdOf(event),event.commentKey);return;}
+        if(event.contact){openNotificationConversation(notificationIdOf(event),event.contact,event.messageId||'');}
         else{openAllNewMessages();}
       };
     }catch(error){console.debug('Notification navigateur indisponible',error);}
   }
-  const soundEnabled=localStorage.getItem('mondecoNotificationSound')==='1'||('Notification' in window&&Notification.permission==='granted');
-  if(soundEnabled)playNotificationTone(kind,channel);
+  // V6.46 — L'interrupteur « Sonnerie » est respecté.
+  if(notificationSoundAllowed())playNotificationTone(kind,channel);
 }
 
 
 
+// V6.46 — Rafraîchissement automatique de la conversation ouverte :
+// seuls les 30 derniers échanges sont demandés puis FUSIONNÉS avec ceux
+// déjà affichés (les messages anciens chargés à la main restent, ainsi
+// que le bouton « messages plus anciens »). Un seul appel à la fois, avec
+// délai maximal. L'en-tête, la fiche client et le composer ne sont
+// redessinés que s'ils ont changé (fenêtre WhatsApp rouverte/fermée…).
+const CONVERSATION_REFRESH_TAIL = 30;
+
+function conversationEntryIdentity(entry){
+  const id=String(entry?.message_id||entry?.meta_message_id||'');
+  return id
+    ? `id|${id}|${entry?.direction||''}`
+    : `t|${entry?.time||''}|${entry?.incoming||''}|${entry?.reply||''}`;
+}
+
+function conversationEntriesSignature(entries = []){
+  return entries.map(entry=>JSON.stringify([
+    entry?.message_id||entry?.meta_message_id||'',
+    entry?.time||'',
+    entry?.incoming||'',
+    entry?.reply||'',
+    entry?.action||'',
+    entry?.error||'',
+    entry?.image_reason||'',
+    entry?.reaction||'',
+    entry?.softDeleted||null,
+    conversationEntryAttachments(entry).length
+  ])).join('\n');
+}
+
+// Fusionne la fin récente (latest) avec le fil affiché (current). gap=true
+// si des échanges manquent entre les deux (fil resté longtemps figé).
+function mergeConversationTail(currentEntries = [], latestEntries = []){
+  if(!latestEntries.length) return { entries:currentEntries, gap:false };
+  if(!currentEntries.length) return { entries:latestEntries, gap:false };
+  const oldestLatestMs=conversationUiTimeMs(latestEntries[0]?.time);
+  const newestCurrentMs=conversationUiTimeMs(currentEntries[currentEntries.length-1]?.time);
+  if(newestCurrentMs<oldestLatestMs) return { entries:currentEntries, gap:true };
+  const latestKeys=new Set(latestEntries.map(conversationEntryIdentity));
+  const kept=currentEntries.filter(entry=>{
+    const ms=conversationUiTimeMs(entry?.time);
+    if(ms<oldestLatestMs) return true;
+    if(ms>oldestLatestMs) return false;
+    return !latestKeys.has(conversationEntryIdentity(entry));
+  });
+  return { entries:[...kept,...latestEntries], gap:false };
+}
+
+function conversationStateSignature(state = {}){
+  const sla=state?.sla?{status:state.sla.status,dueAt:state.sla.dueAt}:null;
+  return JSON.stringify({...state,sla});
+}
+
+function conversationAccessSignature(access = {}){
+  return JSON.stringify([access?.canReply,access?.canWrite,access?.canManage,access?.readOnly,access?.lockOwnerName||'']);
+}
+
 async function softRefreshSelectedConversation(){
-  if(!selectedConversationContact){
+  return runBackgroundTask('thread', softRefreshSelectedConversationOnce);
+}
+
+async function softRefreshSelectedConversationOnce(){
+  if(!selectedConversationContact||!selectedConversationData) return;
+
+  // V6.35.4 — Résultat ignoré si le commercial a changé de conversation
+  // (ou si une navigation plus récente a eu lieu) pendant l'appel.
+  const contact=selectedConversationContact;
+  const token=conversationRequestToken;
+  const stillCurrent=()=>selectedConversationContact===contact&&conversationRequestToken===token&&selectedConversationData;
+
+  const data=await apiFetch(
+    `${API}/conversations/${encodeURIComponent(contact)}?limit=${CONVERSATION_REFRESH_TAIL}`,
+    { timeoutMs:BACKGROUND_REQUEST_TIMEOUT_MS }
+  );
+  if(!stillCurrent()) return;
+
+  const current=selectedConversationData;
+  const currentEntries=Array.isArray(current.entries)?current.entries:[];
+  const latestEntries=Array.isArray(data?.entries)?data.entries:[];
+  const merged=mergeConversationTail(currentEntries,latestEntries);
+  let next={
+    ...current,
+    state:data?.state||current.state,
+    access:data?.access||current.access,
+    whatsappWindow:data?.whatsappWindow||current.whatsappWindow,
+    entries:merged.entries
+  };
+  if(merged.gap){
+    if(selectedConversationTargetMessageId){
+      // Lecture d'un passage ancien (ouvert depuis une notification) :
+      // on ne touche pas au fil, seulement à l'état.
+      next.entries=currentEntries;
+    }else{
+      const full=await apiFetch(
+        `${API}/conversations/${encodeURIComponent(contact)}?limit=120`,
+        { timeoutMs:BACKGROUND_REQUEST_TIMEOUT_MS }
+      );
+      if(!stillCurrent()) return;
+      next={...full,historyStartReached:false};
+    }
+  }
+
+  const entriesChanged=conversationEntriesSignature(currentEntries)!==conversationEntriesSignature(next.entries||[]);
+  const stateChanged=conversationStateSignature(current.state||{})!==conversationStateSignature(next.state||{});
+  const accessChanged=conversationAccessSignature(current.access||{})!==conversationAccessSignature(next.access||{});
+  const windowChanged=whatsappWindowIsExpired(current.whatsappWindow||{})!==whatsappWindowIsExpired(next.whatsappWindow||{});
+  selectedConversationData=next;
+
+  if(stateChanged||accessChanged){
+    renderConversationHeader(contact,next.state||{});
+    renderCustomerPanel(contact,next.state||{});
+  }
+
+  if(entriesChanged){
+    // Les bulles « ✓ Envoyé » pas encore présentes dans le journal restent
+    // affichées (le journal serveur peut avoir quelques secondes de retard).
+    const detail=document.getElementById('conversationDetail');
+    const loggedReplies=new Set((next.entries||[]).slice(-40).map(entry=>String(entry?.reply||'').trim()).filter(Boolean));
+    const pendingBubbles=detail
+      ? [...detail.querySelectorAll('.inbox-message-row.optimistic')].filter(row=>!loggedReplies.has(String(row.querySelector('.inbox-bubble')?.textContent||'').trim()))
+      : [];
+    paintConversationThread(contact,next,{keepPosition:true});
+    if(detail&&pendingBubbles.length){
+      const nearBottom=(detail.scrollHeight-detail.scrollTop-detail.clientHeight)<150;
+      pendingBubbles.forEach(row=>detail.appendChild(row));
+      if(nearBottom) detail.scrollTop=detail.scrollHeight;
+    }
+  }
+
+  // V6.46 — Fenêtre WhatsApp rouverte par le client (ou fermée) : le
+  // composer est reconstruit, brouillon conservé.
+  if(windowChanged||accessChanged){
+    await mountConversationComposer(contact,next.state||{});
+  }
+}
+
+// V6.46 — Appelée par la minuterie de 5 s (SLA) : texte « encore X h Y min »
+// en direct, et composer verrouillé dès que la fenêtre se ferme, sans
+// attendre un refus du serveur (brouillon conservé).
+function refreshWhatsAppWindowLive(){
+  if(!selectedConversationContact||!selectedConversationData) return;
+  const info=selectedConversationData.whatsappWindow||{};
+  if(info.applicable!==true) return;
+  const composer=document.getElementById('commercialComposer');
+  if(composer?.dataset?.contact!==selectedConversationContact) return;
+  const editable=Boolean(document.getElementById('conversationQuickReply'));
+  if(whatsappWindowIsExpired(info)){
+    if(editable&&!conversationSendInProgress){
+      selectedConversationData.whatsappWindow={...info,open:false,expired:true,remainingMs:0};
+      mountConversationComposer(selectedConversationContact,selectedConversationData.state||{});
+      uiToast('Fenêtre WhatsApp de 24 h fermée : seul le message de relance est possible. Votre brouillon est conservé.',{kind:'warning'});
+    }
     return;
   }
-
-  // V6.35.4 — On capture la conversation ET le jeton de navigation en
-  // cours. Si l'un des deux a changé quand la réponse réseau arrive (le
-  // commercial a cliqué ailleurs entre-temps), on abandonne le résultat :
-  // il ne concerne plus la conversation actuellement affichée.
-  const contactAtRefreshStart =
-    selectedConversationContact;
-  const tokenAtRefreshStart =
-    conversationRequestToken;
-
-  const textarea =
-    document.getElementById(
-      'conversationQuickReply'
-    );
-
-  const draft =
-    textarea?.value || '';
-
-  const fileName =
-    document.getElementById(
-      'conversationAttachmentName'
-    )?.textContent || '';
-
-  try{
-    const refreshParams = new URLSearchParams({limit:'120'});
-    if(selectedConversationTargetMessageId){
-      refreshParams.set('messageId',selectedConversationTargetMessageId);
-    }
-    const data =
-      await apiFetch(
-        `${API}/conversations/${encodeURIComponent(selectedConversationContact)}?${refreshParams.toString()}`
-      );
-
-    const currentEntries =
-      Array.isArray(
-        selectedConversationData?.entries
-      )
-        ? selectedConversationData.entries
-        : [];
-
-    const nextEntries =
-      Array.isArray(data.entries)
-        ? data.entries
-        : [];
-
-    // V6.35.4 — Réponse en retard sur une conversation qui n'est plus
-    // affichée (ou qu'une navigation plus récente a remplacée) : on
-    // l'ignore silencieusement plutôt que de l'appliquer à l'écran.
-    if(
-      selectedConversationContact !== contactAtRefreshStart ||
-      conversationRequestToken !== tokenAtRefreshStart
-    ){
-      return;
-    }
-
-    const changed =
-      nextEntries.length !==
-      currentEntries.length ||
-      String(
-        nextEntries.at(-1)?.time || ''
-      ) !==
-      String(
-        currentEntries.at(-1)?.time || ''
-      );
-
-    if(!changed){
-      return;
-    }
-
-    const detail =
-      document.getElementById(
-        'conversationDetail'
-      );
-
-    const wasNearBottom =
-      detail
-        ? (
-            detail.scrollHeight -
-            detail.scrollTop -
-            detail.clientHeight
-          ) < 150
-        : true;
-
-    selectedConversationData =
-      data;
-
-    renderConversationHeader(
-      selectedConversationContact,
-      data.state || {}
-    );
-
-    renderCustomerPanel(
-      selectedConversationContact,
-      data.state || {}
-    );
-
-    const ad =
-      data.state?.adReferral ||
-      null;
-
-    // V6.45 — même bandeau que l'ouverture de la conversation (avant, le
-    // rafraîchissement basculait sur la carte source, au rendu différent).
-    const adHtml = data.state?.adReferral
-      ? conversationAdStickyHtml(data.state, selectedConversationContact)
-      : conversationSourceCardHtml(data.state || {});
-
-    const messages =
-      nextEntries
-        .map(entry => {
-          const commercial =
-            String(
-              entry.source || ''
-            )
-              .startsWith(
-                'commercial'
-              );
-
-          return [
-            renderThreadMessage(
-              'incoming',
-              entry.incoming,
-              entry,
-              false
-            ),
-            renderThreadMessage(
-              'outgoing',
-              entry.reply,
-              entry,
-              commercial
-            ),
-            renderThreadSystemEvent(entry),
-            entry.image_reason
-              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`
-              : '',
-            entry.error
-              ? `<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`
-              : ''
-          ]
-            .filter(Boolean)
-            .join('');
-        })
-        .join('');
-
-    if(detail){
-      detail.innerHTML = `
-        ${adHtml}
-        ${historyLimitNotice(nextEntries)}
-        ${messages || '<div class="inbox-empty-state"><strong>Aucun échange enregistré</strong></div>'}
-      `;
-
-      const newTextarea =
-        document.getElementById(
-          'conversationQuickReply'
-        );
-
-      if(newTextarea){
-        newTextarea.value =
-          draft;
-      }
-
-      const attachmentLabel =
-        document.getElementById(
-          'conversationAttachmentName'
-        );
-
-      if(
-        attachmentLabel &&
-        fileName
-      ){
-        attachmentLabel.textContent =
-          fileName;
-      }
-
-      if(wasNearBottom){
-        requestAnimationFrame(() => {
-          detail.scrollTop =
-            detail.scrollHeight;
-        });
-      }
-    }
-  }catch(error){
-    console.debug(
-      'Actualisation discussion :',
-      error.message
-    );
-  }
+  const banner=composer.querySelector('[data-role="wa-window-status"]');
+  if(banner) banner.textContent=whatsappWindowStatusText(info);
 }
 
 
@@ -16868,47 +17624,97 @@ function rememberTaskNotification(id){
   localStorage.setItem('mondecoSeenTaskNotifications',JSON.stringify([...seen].slice(-100)));
 }
 
-async function pollCommercialNotifications(){
-  try{
-    const url=conversationNotificationCursor
-      ? `${API}/notifications?since=${encodeURIComponent(conversationNotificationCursor)}`
-      : `${API}/notifications`;
-    const data=await apiFetch(url);
-    const events=Array.isArray(data.events)?data.events:[];
-    conversationNotificationUnread=Number(data.unreadCount||0);
-    if(data?.pendingCounts&&typeof data.pendingCounts==='object') interactionPendingCounts={...interactionPendingCounts,...data.pendingCounts};
-    updateNotificationBadges();
-    for(const event of events){
-      const eventId=String(event?.id||'');
-      if(eventId&&notificationSeenIds.has(eventId))continue;
-      if(event?.kind==='report'){
-        const reportDate=String(event.reportDate||'');
-        const lastReport=localStorage.getItem('mondecoLastReportNotification')||'';
-        if(reportDate&&lastReport===reportDate){if(eventId)notificationSeenIds.add(eventId);continue;}
-        if(reportDate)localStorage.setItem('mondecoLastReportNotification',reportDate);
-      }else if(event?.kind==='task'){
-        const taskId=String(event.taskId||eventId||'');
-        if(taskId&&seenTaskNotificationIds().has(taskId)){if(eventId)notificationSeenIds.add(eventId);continue;}
-        rememberTaskNotification(taskId);
-      }
-      if(eventId)notificationSeenIds.add(eventId);
-      showClientBrowserNotification(event);
-      showFloatingBubble(event);
+// V6.46 — Au-delà de 10 min (connexion du matin, onglet endormi), les
+// alertes manquées ne sont plus rejouées une par une : un seul résumé
+// « N conversations à répondre », sans son.
+const NOTIFICATION_REPLAY_MAX_AGE_MS = 10 * 60 * 1000;
+
+async function pollCommercialNotifications({ force = false } = {}){
+  return runBackgroundTask('notifications', pollCommercialNotificationsOnce, { force });
+}
+
+async function pollCommercialNotificationsOnce(){
+  const cursorMs=Date.parse(conversationNotificationCursor||'');
+  const stale=!Number.isFinite(cursorMs)||Date.now()-cursorMs>NOTIFICATION_REPLAY_MAX_AGE_MS;
+  const url=stale
+    ? `${API}/notifications`
+    : `${API}/notifications?since=${encodeURIComponent(conversationNotificationCursor)}`;
+  const data=await apiFetch(url,{ timeoutMs:BACKGROUND_REQUEST_TIMEOUT_MS });
+  const events=!stale&&Array.isArray(data?.events)?data.events:[];
+  conversationNotificationUnread=Number(data?.unreadCount||0);
+  if(data?.pendingCounts&&typeof data.pendingCounts==='object') interactionPendingCounts={...interactionPendingCounts,...data.pendingCounts};
+  const previousPending=lastPendingMessagesCount;
+  const pendingNow=Math.max(0,Number(interactionPendingCounts?.messages||0));
+  lastPendingMessagesCount=pendingNow;
+  updateNotificationBadges();
+
+  const fresh=[];
+  for(const event of events){
+    const eventId=String(event?.id||'');
+    if(eventId&&notificationSeenIds.has(eventId))continue;
+    if(event?.kind==='report'){
+      const reportDate=String(event.reportDate||'');
+      const lastReport=localStorage.getItem('mondecoLastReportNotification')||'';
+      if(reportDate&&lastReport===reportDate){if(eventId)notificationSeenIds.add(eventId);continue;}
+      if(reportDate)localStorage.setItem('mondecoLastReportNotification',reportDate);
+    }else if(event?.kind==='task'){
+      const taskId=String(event.taskId||eventId||'');
+      if(taskId&&seenTaskNotificationIds().has(taskId)){if(eventId)notificationSeenIds.add(eventId);continue;}
+      rememberTaskNotification(taskId);
     }
-    const hasMessageEvent=events.some(e=>['message','commercial'].includes(String(e?.kind||'')));
-    const hasCommentEvent=events.some(e=>String(e?.kind||'')==='comment');
-    if(document.getElementById('page-conversations')?.classList?.contains('active')){
-      if(inboxInteractionMode==='comments'&&hasCommentEvent){
-        await loadSocialComments();
-      }else if(inboxInteractionMode==='messages'&&hasMessageEvent&&!conversationSendInProgress){
-        await loadConversations();
-        if(selectedConversationContact)await softRefreshSelectedConversation();
-      }
-    }
-    conversationNotificationCursor=data.serverTime||new Date().toISOString();
-    localStorage.setItem('mondecoNotificationCursor',conversationNotificationCursor);
-    if(!document.getElementById('notificationPanelBackdrop')?.classList.contains('hidden'))await loadNotificationPanel();
-  }catch(error){console.debug('Polling notifications :',error.message);}
+    if(eventId)notificationSeenIds.add(eventId);
+    fresh.push(event);
+  }
+
+  const inboxPage=document.getElementById('page-conversations');
+  const inboxActive=Boolean(inboxPage?.classList?.contains('active'));
+  // La conversation ouverte et visible n'est pas signalée (le commercial
+  // la voit déjà) ; elle est seulement rafraîchie.
+  const watchingContact=document.visibilityState==='visible'&&inboxActive&&inboxInteractionMode==='messages'&&inboxPage.classList.contains('has-selection')
+    ? selectedConversationContact
+    : '';
+  const alertable=fresh.filter(event=>!(watchingContact&&event?.contact===watchingContact&&['message','commercial','sla'].includes(String(event?.kind||''))));
+  alertable.forEach(showFloatingBubble);
+  if(alertable.length===1) showClientBrowserNotification(alertable[0]);
+  else if(alertable.length>1) showClientBrowserNotificationSummary(alertable);
+
+  const hasMessageEvent=fresh.some(e=>['message','commercial'].includes(String(e?.kind||'')));
+  const hasCommentEvent=fresh.some(e=>String(e?.kind||'')==='comment');
+
+  if(stale&&pendingNow>0){
+    showFloatingBubble({kind:'summary',id:'summary',count:pendingNow,preview:`${pendingNow} conversation${pendingNow>1?'s':''} à répondre`});
+  }
+
+  const pendingChanged=!stale&&previousPending!==null&&pendingNow!==previousPending;
+  const pendingIncreased=pendingChanged&&pendingNow>previousPending;
+  const isCommercial=currentUser?.role==='commercial';
+  const messagesMode=!inboxActive||inboxInteractionMode==='messages';
+  if(inboxActive&&inboxInteractionMode==='comments'&&hasCommentEvent){
+    await loadSocialComments();
+  }
+  // V6.46 — Liste rafraîchie en arrière-plan (pages chargées et position
+  // conservées), aussi quand seul le nombre « à répondre » change : c'est
+  // le seul signal d'une nouvelle conversation non affectée pour un
+  // commercial (alerte nominative calculée sur la liste, voir
+  // notifyNewPendingConversations ; aussi hors de la page Inbox).
+  const reloadList=!conversationSendInProgress&&messagesMode&&(inboxActive?(hasMessageEvent||pendingChanged):(isCommercial&&pendingIncreased));
+  lastNewPendingAlerts=undefined;
+  if(reloadList){
+    await loadConversations({background:true}).catch(error=>console.debug('Liste conversations :',error.message));
+    if(inboxActive&&selectedConversationContact&&fresh.some(e=>e?.contact===selectedConversationContact)) softRefreshSelectedConversation();
+  }
+  if(isCommercial&&pendingIncreased&&!hasMessageEvent&&(lastNewPendingAlerts===undefined||lastNewPendingAlerts===null)){
+    // Liste indisponible (onglet Commentaires, premier chargement) : alerte
+    // générique, sans nom.
+    const pendingAlert={kind:'pending',id:`pending-${Date.now()}`,count:1,urgent:true,preview:'Nouveau message client en attente de réponse'};
+    showFloatingBubble(pendingAlert);
+    showClientBrowserNotificationSummary([pendingAlert]);
+  }
+  conversationNotificationCursor=data?.serverTime||new Date().toISOString();
+  try{localStorage.setItem('mondecoNotificationCursor',conversationNotificationCursor);}catch{}
+  if(!document.getElementById('notificationPanelBackdrop')?.classList.contains('hidden')){
+    try{await loadNotificationPanel();}catch(error){console.debug('Panneau notifications :',error.message);}
+  }
 }
 
 function relativeTime(value){
@@ -16968,8 +17774,8 @@ window.openNotificationConversation=async function(notificationId,contact,messag
     showPage('conversations');
     await loadConversations();
     await window.openConversation(contact,messageId||'');
-    await pollCommercialNotifications();
-  }catch(error){alert(error.message);}
+    await pollCommercialNotifications({force:true});
+  }catch(error){uiToast(`Conversation impossible à ouvrir : ${error.message}`,{kind:'error'});}
 };
 window.openNotificationSocialComment=async function(notificationId,commentKey){
   try{
@@ -16981,8 +17787,8 @@ window.openNotificationSocialComment=async function(notificationId,commentKey){
     document.querySelectorAll('#commentFilters .inbox-filter').forEach(button=>button.classList.toggle('active',button.dataset.commentFilter==='all'));
     await loadSocialComments();
     await window.openSocialComment(commentKey);
-    await pollCommercialNotifications();
-  }catch(error){alert(error.message);}
+    await pollCommercialNotifications({force:true});
+  }catch(error){uiToast(`Commentaire impossible à ouvrir : ${error.message}`,{kind:'error'});}
 };
 window.markAllNotificationsRead=async function(){await apiFetch(`${API}/notifications/read-all`,{method:'POST'});await loadNotificationPanel();};
 window.showAllNotificationMessages=function(){closeNotificationPanel();openAllNewMessages();};
@@ -17096,7 +17902,7 @@ async function syncFacebookRealtimeMessages({ force = false } = {}){
         document.getElementById('page-conversations')?.classList?.contains('active') &&
         inboxInteractionMode === 'messages'
       ){
-        await loadConversations();
+        await loadConversations({background:true}).catch(error=>console.debug('Liste conversations :',error.message));
         if(
           selectedConversationContact &&
           conversationChannel(
@@ -17154,11 +17960,13 @@ facebookRealtimeRecoveryTimer = setInterval(
 // les 15 s quand l'onglet est en arrière-plan (les alertes continuent
 // d'arriver), et tout de suite au retour sur l'onglet.
 let lastNotificationPollAt = 0;
+// V6.46 — Chaque tâche passe par runBackgroundTask : jamais deux appels
+// en vol, délai maximal de 15 s, attente progressive après un échec.
 function pollCommercialNotificationsPaced(force = false){
   const hidden = document.visibilityState !== 'visible';
   if(!force && hidden && Date.now() - lastNotificationPollAt < 15000) return;
   lastNotificationPollAt = Date.now();
-  pollCommercialNotifications();
+  pollCommercialNotifications({ force });
 }
 setInterval(pollCommercialNotificationsPaced, 5000);
 document.addEventListener('visibilitychange', () => {
@@ -17181,8 +17989,21 @@ setInterval(
   5000
 );
 
+// V6.46 — Liste de l'Inbox rafraîchie au moins toutes les 30 s (onglet
+// visible) : une nouvelle conversation de la file commune apparaît même
+// sans alerte serveur (commerciaux).
+setInterval(
+  () => {
+    if(document.visibilityState !== 'visible' || conversationSendInProgress) return;
+    if(!document.getElementById('page-conversations')?.classList?.contains('active') || inboxInteractionMode !== 'messages') return;
+    if(Date.now() - conversationListLastLoadedAt < 30000) return;
+    runBackgroundTask('conversation-list', () => loadConversations({ background:true }));
+  },
+  10000
+);
+
 setTimeout(
-  pollCommercialNotifications,
+  () => pollCommercialNotifications({ force:true }),
   1200
 );
 
@@ -17846,6 +18667,46 @@ function renderWooCommerceStatus(){
     errorBox.textContent = '';
     errorBox.classList.add('hidden');
   }
+
+  renderWooSyncReport();
+}
+
+// V6.46 — Rapport de synchronisation (Admin.js wooCommerceStatus) :
+// alerte si aucune synchronisation réussie depuis plus de deux intervalles
+// (syncStale), fiches manuelles en doublon d'un produit du site
+// (lastDuplicateManualProducts) et corrections manuelles en vigueur
+// (lastOverrides). Toutes les valeurs sont échappées.
+function renderWooSyncReport(){
+  const host = document.getElementById('wooSyncReport');
+  if(!host || !wooStatus) return;
+  const parts = [];
+  if(wooStatus.syncStale === true){
+    const last = wooStatus.lastSuccessAt ? wooShortDate(wooStatus.lastSuccessAt) : 'jamais';
+    parts.push(`<div class="notice warning woo-stale-notice" style="margin-top:14px"><strong>⚠ Catalogue peut-être périmé.</strong> Aucune synchronisation réussie depuis plus de deux intervalles (dernière : ${escapeHtml(last)}). Les prix et disponibilités cités par l’IA peuvent ne plus correspondre au site : lancez « Synchroniser maintenant » ou vérifiez la connexion.</div>`);
+  }
+  const reported = Array.isArray(wooStatus.lastDuplicateManualProducts) ? wooStatus.lastDuplicateManualProducts : [];
+  // Fiches déjà marquées « Pas un doublon » depuis la dernière
+  // synchronisation : retirées du rapport sans attendre la suivante.
+  const duplicates = reported.filter(item => !products.some(product => product.id === item?.id && product.notDuplicateOfWoo === true));
+  const duplicateCount = Math.max(duplicates.length, Number(wooStatus.lastDuplicateManualCount || 0) - (reported.length - duplicates.length));
+  if(duplicateCount > 0){
+    const rows = duplicates.map(item => {
+      const certain = String(item?.confidence || '') !== 'possible';
+      const price = item?.promoPrice || item?.price;
+      return `<li class="woo-report-item"><span><strong>${escapeHtml(item?.name || 'Fiche manuelle')}</strong>${price ? ` (${escapeHtml(price)} TND)` : ''} → ${escapeHtml(item?.duplicateOfName || 'fiche du site')}${Number(item?.duplicateOfWooId) > 0 ? ` #${Number(item.duplicateOfWooId)}` : ''} <span class="product-badge duplicate ${certain ? 'high' : 'possible'}">${certain ? 'doublon' : 'doublon possible'}</span></span>${item?.id ? `<span class="woo-report-actions"><button class="btn small" type="button" data-product-action="show-product" data-product-id="${escapeHtml(item.id)}">Voir</button><button class="btn small" type="button" data-product-action="not-duplicate" data-product-id="${escapeHtml(item.id)}">Pas un doublon</button></span>` : ''}</li>`;
+    }).join('');
+    parts.push(`<div class="woo-report-block"><div class="woo-report-title">Fiches manuelles en doublon d’un produit du site : ${duplicateCount}</div><p class="setting-sub" style="margin:4px 0 8px">Elles ne sont ni supprimées ni désactivées : l’IA utilise d’abord la fiche du site. Désactivez-les si elles sont obsolètes.</p>${rows ? `<ul class="woo-report-list">${rows}</ul>` : ''}</div>`);
+  }
+  const overrides = Array.isArray(wooStatus.lastOverrides) ? wooStatus.lastOverrides : [];
+  const overrideCount = Math.max(overrides.length, Number(wooStatus.lastOverridesCount || 0));
+  if(overrideCount > 0){
+    const rows = overrides.map(item => {
+      const fields = (Array.isArray(item?.fields) ? item.fields : []).map(field => PRODUCT_OVERRIDE_FIELD_LABELS[field] || field);
+      return `<li class="woo-report-item"><span><strong>${escapeHtml(item?.name || 'Fiche du site')}</strong>${Number(item?.woocommerceId) > 0 ? ` #${Number(item.woocommerceId)}` : ''} : ${escapeHtml(fields.join(', ') || '—')}</span>${item?.id ? `<span class="woo-report-actions"><button class="btn small" type="button" data-product-action="show-product" data-product-id="${escapeHtml(item.id)}">Voir</button></span>` : ''}</li>`;
+    }).join('');
+    parts.push(`<div class="woo-report-block"><div class="woo-report-title">Corrections manuelles qui remplacent la donnée du site : ${overrideCount}</div>${rows ? `<ul class="woo-report-list">${rows}</ul>` : ''}</div>`);
+  }
+  host.innerHTML = parts.join('');
 }
 
 async function loadWooCommerceStatus(){
@@ -19732,9 +20593,9 @@ document.querySelectorAll('#commentFilters [data-comment-filter]').forEach(butto
   });
 });
 
-if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.visibilityState==='visible'&&document.getElementById('page-conversations')?.classList.contains('active'))refreshSocialCommentsStatus();},12000);}
+if(!socialCommentsLiveTimer){socialCommentsLiveTimer=setInterval(()=>{if(document.visibilityState==='visible'&&document.getElementById('page-conversations')?.classList.contains('active'))runBackgroundTask('comments-status',refreshSocialCommentsStatus);},12000);}
 
-if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visible')return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){refreshSocialCommentTimeLabels();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state)renderConversationHeader(selectedConversationContact,selectedConversationData.state);}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
+if(!slaUiTimer){slaUiTimer=setInterval(()=>{if(document.visibilityState!=='visible')return;if(document.getElementById('page-conversations')?.classList.contains('active')){if(inboxInteractionMode==='comments'){refreshSocialCommentTimeLabels();}else{refreshConversationListSlaTimers();if(selectedConversationContact&&selectedConversationData?.state){renderConversationHeader(selectedConversationContact,selectedConversationData.state);refreshWhatsAppWindowLive();}}}if(document.getElementById('page-team')?.classList.contains('active')&&['admin','responsable_commercial'].includes(currentUser?.role))loadTeamOperations();},5000);}
 
 // ============================================================
 // LOGOUT / INIT
@@ -20229,7 +21090,8 @@ updateCustomerPanelButton();
 })();
 </script>
 
-<div id="mondecoBubbleContainer" style="position:fixed;bottom:160px;right:20px;z-index:99999;display:flex;flex-direction:column-reverse;gap:10px;max-width:340px;pointer-events:none;"></div>
+<!-- V6.46 — position et superposition dans le CSS (#mondecoBubbleContainer) -->
+<div id="mondecoBubbleContainer"></div>
 
 <style>
 .mondeco-bubble{
@@ -20437,7 +21299,7 @@ body.mondeco-debug #mondecoDebugPanel{display:block !important}
   }
   #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-customer-toggle{
     background:var(--encre) !important;
-    color:#FFFFFF !important;
+    color:var(--panel) !important;
     border-color:var(--encre) !important;
   }
 }
@@ -20495,7 +21357,9 @@ body.mondeco-debug #mondecoDebugPanel{display:block !important}
 #page-conversations .inbox-header-btn.active,
 #page-conversations.customer-panel-open .inbox-customer-toggle{
   background:var(--encre) !important;
-  color:#FFFFFF !important;
+  /* V6.46 — --panel : blanc en mode clair, foncé en mode sombre (où le
+     fond Encre devient clair) ; avant, texte blanc sur fond clair. */
+  color:var(--panel) !important;
   border-color:var(--encre) !important;
 }
 
@@ -20515,6 +21379,128 @@ body.mondeco-debug #mondecoDebugPanel{display:block !important}
   font-size:13px !important;
   color:var(--muted) !important;
 }
+
+/* ==========================================================
+   V6.46 — Inbox : en-tête mobile lisible (nom une seule fois), menu
+   « ⋯ » discret pour les actions d'un message, carte publicitaire
+   lisible, bulle d'alertes au-dessus du composer et sous les fenêtres,
+   accusés de réception, messages brefs, badges produits.
+   ========================================================== */
+#mondecoBubbleContainer{
+  position:fixed;
+  right:var(--mondeco-bubble-right,16px);
+  bottom:calc(var(--mondeco-composer-h,0px) + 14px + env(safe-area-inset-bottom,0px));
+  z-index:95;
+  display:flex;
+  flex-direction:column-reverse;
+  gap:10px;
+  max-width:340px;
+  pointer-events:none;
+}
+#mondecoBubbleContainer:empty{display:none}
+body.mondeco-bubble-in-thread #page-conversations #conversationDetail{padding-bottom:84px !important}
+.mondeco-bubble-count{min-width:20px;height:20px;border-radius:10px;font-size:11px}
+@media (max-width:900px){
+  body:has(#page-conversations.active.has-selection) #mondecoBubbleContainer{display:none !important}
+}
+
+.ui-toast-host{
+  position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top,0px));transform:translateX(-50%);
+  z-index:10001;display:flex;flex-direction:column;gap:8px;width:min(520px,calc(100vw - 24px));pointer-events:none;
+}
+.ui-toast{
+  pointer-events:auto;display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:12px;
+  background:var(--panel);color:var(--text);border:1px solid var(--line-strong);
+  box-shadow:0 10px 30px rgba(0,0,0,.18);font-size:13px;line-height:1.35;
+}
+.ui-toast.error{border-left:4px solid #D7262E}
+.ui-toast.warning{border-left:4px solid #C77700}
+.ui-toast-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.ui-toast-action{border:1px solid var(--line-strong);background:transparent;color:var(--text);border-radius:8px;padding:3px 9px;font-weight:800;font-size:12px;cursor:pointer}
+.ui-toast-close{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px}
+
+.inbox-message-meta{display:flex;align-items:center;flex-wrap:wrap;gap:2px 4px}
+.inbox-message-row.bot .inbox-message-meta,
+.inbox-message-row.commercial .inbox-message-meta{justify-content:flex-end}
+.inbox-message-more{
+  border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;font-weight:900;
+  cursor:pointer;padding:2px 6px;min-width:30px;min-height:24px;border-radius:8px;opacity:.5;
+}
+.inbox-message-row:hover .inbox-message-more,
+.inbox-message-more:focus-visible,
+.inbox-message-more[aria-expanded="true"]{opacity:1}
+.inbox-message-more:hover,
+.inbox-message-more[aria-expanded="true"]{background:var(--bg-2)}
+.inbox-message-menu{
+  position:fixed;z-index:96;min-width:230px;padding:6px;border-radius:12px;background:var(--panel);
+  border:1px solid var(--line-strong);box-shadow:0 12px 32px rgba(0,0,0,.2);display:flex;flex-direction:column;
+}
+.inbox-message-menu button{
+  border:0;background:transparent;color:var(--text);text-align:left;padding:10px;border-radius:8px;
+  font-size:13px;font-weight:700;cursor:pointer;
+}
+.inbox-message-menu button:hover,
+.inbox-message-menu button:focus-visible{background:var(--bg-2)}
+.inbox-message-menu button.danger{color:#B42318}
+.inbox-history-start{text-align:center;color:var(--muted);font-size:11px;font-weight:700;margin:6px auto 12px}
+.inbox-connection-banner{margin:6px 12px;padding:6px 10px;border-radius:10px;background:#FFF5DF;color:#8A4B00;font-size:12px;font-weight:700}
+
+.inbox-header-state-alert{
+  display:inline-flex;align-items:center;margin-left:6px;padding:1px 8px;border-radius:999px;
+  background:#FFF0EF;color:#B42318;font-size:11px;font-weight:800;
+}
+.inbox-seen-indicator.sent,
+.inbox-seen-indicator.delivered{color:var(--muted)}
+.inbox-seen-indicator.failed{color:#B42318}
+.wa-window-status{transition:background .2s}
+
+.inbox-ad-origin-sticky{cursor:pointer}
+[data-ad-visual="thumb"]{max-width:50px;overflow:hidden;border-radius:10px}
+.inbox-ad-origin-product{
+  white-space:normal !important;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;text-overflow:clip !important;line-height:1.3;
+}
+.inbox-ad-origin-sticky.expanded .inbox-ad-origin-product{display:block;-webkit-line-clamp:unset;overflow:visible}
+.inbox-ad-origin-sticky.expanded .inbox-ad-origin-text{white-space:normal !important;overflow:visible !important;text-overflow:clip !important}
+
+@media (max-width:900px){
+  /* Le nom n'apparaît qu'une fois (la règle générale display:block
+     réaffichait la version bureau). */
+  #page-conversations .inbox-header-name.inbox-header-name-desktop{display:none !important}
+  #page-conversations .inbox-header-sub-mobile{
+    display:flex !important;flex-wrap:wrap !important;row-gap:1px !important;
+    white-space:normal !important;overflow:visible !important;text-overflow:clip !important;
+  }
+  #page-conversations .inbox-header-sub-mobile .inbox-header-sub-part{white-space:nowrap}
+  #page-conversations .inbox-header-sub-mobile .inbox-header-sub-part:not(:last-child)::after{content:"•";margin:0 4px;opacity:.6}
+  #page-conversations .inbox-header-mobile-status{flex-wrap:wrap !important;row-gap:3px !important;overflow:visible !important}
+  #page-conversations .inbox-header-mobile-chip{max-width:100% !important}
+  #page-conversations .inbox-header-mobile-chip.alert{background:#FFF0EF !important;color:#B42318 !important}
+  #page-conversations .inbox-seen-indicator{margin-top:3px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #page-conversations .inbox-ad-origin-kicker{display:block !important;font-size:10px !important}
+  #page-conversations .inbox-ad-origin-product{white-space:normal !important;line-height:1.3 !important}
+  #page-conversations [data-ad-visual="thumb"]{max-width:38px}
+  #page-conversations .inbox-message-more{min-width:34px;min-height:28px}
+}
+
+.product-badges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;white-space:normal}
+.product-badge{
+  display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;padding:2px 8px;border-radius:12px;
+  font-size:11px;font-weight:800;line-height:1.5;border:1px solid transparent;white-space:normal;max-width:min(360px,72vw);
+}
+.product-badge.site{background:#EAF3FF;color:#174EA6;border-color:#C9DDFB}
+.product-badge.override{background:#FFF5DF;color:#8A4B00;border-color:#F2D9A6}
+.product-badge.duplicate.high{background:#FFF0EF;color:#B42318;border-color:#F5C2BD}
+.product-badge.duplicate.possible{background:#FFF8E6;color:#8A5A00;border-color:#F2DDA6}
+.product-badge-action{
+  border:0;border-left:1px solid currentColor;background:transparent;color:inherit;font:inherit;
+  font-weight:900;padding:0 0 0 6px;cursor:pointer;text-decoration:underline;
+}
+.woo-report-block{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--bg-2)}
+.woo-report-title{font-weight:900;font-size:13px}
+.woo-report-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.woo-report-item{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px}
+.woo-report-actions{display:flex;gap:6px}
 </style>
 <style id="mondecoDarkTheme">
 /* ==========================================================
@@ -21110,8 +22096,7 @@ html[data-theme="dark"] .inbox-item-status-row .ai-paused{color:#f4cc9f !importa
 html[data-theme="dark"] .inbox-item-status-row .assigned{color:#dcd6d1 !important}
 html[data-theme="dark"] .inbox-item-status-row .ai-active{color:#aecae3 !important}
 html[data-theme="dark"] .inbox-item-platform-row .urgent-text{color:#e08388 !important}
-@media (min-width:1440px){html[data-theme="dark"] #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-right{background:#1f1a13 !important}
-html[data-theme="dark"] #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-customer-toggle{color:#ffffff !important}}
+@media (min-width:1440px){html[data-theme="dark"] #page-conversations.has-selection:not(.customer-panel-dismissed) .inbox-right{background:#1f1a13 !important}}
 html[data-theme="dark"] #page-conversations .inbox-message-row.incoming .inbox-bubble{background:#191512 !important}
 html[data-theme="dark"] #page-conversations .inbox-message-row.bot .inbox-bubble{background:#161d24 !important;border:1px solid #354250 !important}
 html[data-theme="dark"] #page-conversations .inbox-message-row.commercial .inbox-bubble,html[data-theme="dark"] #page-conversations #inboxCenter[data-channel-theme] .inbox-message-row.commercial .inbox-bubble{background:#1a241d !important;border:1px solid #3b4e41 !important}
@@ -21121,9 +22106,21 @@ html[data-theme="dark"] #page-conversations .inbox-center{background:#241f19 !im
 html[data-theme="dark"] #page-conversations #conversationSendBtn.wa-send-btn,html[data-theme="dark"] #page-conversations #inboxCenter[data-channel-theme] #conversationSendBtn.wa-send-btn{color:#ffffff !important}
 html[data-theme="dark"] #page-conversations .inbox-header-btn,html[data-theme="dark"] #page-conversations .wa-call-header-btn{background:#191512 !important}
 html[data-theme="dark"] #page-conversations .inbox-header-btn:hover,html[data-theme="dark"] #page-conversations .wa-call-header-btn:hover{background:#221d16 !important}
-html[data-theme="dark"] #page-conversations .inbox-header-btn.active,html[data-theme="dark"] #page-conversations.customer-panel-open .inbox-customer-toggle{color:#ffffff !important}
 html[data-theme="dark"] #page-conversations .inbox-conversation-item.selected{background:#221b14 !important}
 html[data-theme="dark"] #page-conversations .inbox-conversation-item:hover:not(.selected){background:#1f1a13 !important}
+html[data-theme="dark"] .ui-toast{box-shadow:0 10px 30px rgba(0,0,0,0.36)}
+html[data-theme="dark"] .ui-toast.error{border-left:4px solid #d7262e}
+html[data-theme="dark"] .ui-toast.warning{border-left:4px solid #c77700}
+html[data-theme="dark"] .inbox-message-menu{box-shadow:0 12px 32px rgba(0,0,0,0.4)}
+html[data-theme="dark"] .inbox-message-menu button.danger{color:#e48881}
+html[data-theme="dark"] .inbox-connection-banner{background:#231f15;color:#f7cf9f}
+html[data-theme="dark"] .inbox-header-state-alert{background:#1f1413;color:#e48881}
+html[data-theme="dark"] .inbox-seen-indicator.failed{color:#e48881}
+@media (max-width:900px){html[data-theme="dark"] #page-conversations .inbox-header-mobile-chip.alert{background:#1f1413 !important;color:#e48881 !important}}
+html[data-theme="dark"] .product-badge.site{background:#141921;color:#8baee6;border-color:#253b5d}
+html[data-theme="dark"] .product-badge.override{background:#231f15;color:#f7cf9f;border-color:#62502d}
+html[data-theme="dark"] .product-badge.duplicate.high{background:#1f1413;color:#e48881;border-color:#5c2f2b}
+html[data-theme="dark"] .product-badge.duplicate.possible{background:#221e14;color:#f7d99f;border-color:#62532d}
 /* DARK-THEME:END */
 
 /* Corrections manuelles (après la génération) */
