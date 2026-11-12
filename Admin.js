@@ -11979,14 +11979,16 @@ function mapWooCommerceProduct(product) {
         ? variationSummary.promoPrice
         : salePrice,
 
+    // V6.46 — Produit variable : dates de la promotion de la variante la
+    // moins chère (celle de price / promoPrice).
     promoStartsAt:
       variationSummary
-        ? ''
+        ? variationSummary.promoStartsAt || ''
         : promoStartsAt,
 
     promoEndsAt:
       variationSummary
-        ? ''
+        ? variationSummary.promoEndsAt || ''
         : promoEndsAt,
 
     availability:
@@ -12281,6 +12283,12 @@ function mergeWooProduct(
   let priceTo =
     remote.priceTo;
 
+  let promoStartsAt =
+    remote.promoStartsAt;
+
+  let promoEndsAt =
+    remote.promoEndsAt;
+
   if (
     variations === null &&
     remote.woocommerceType === 'variable' &&
@@ -12309,6 +12317,10 @@ function mergeWooProduct(
         kept.priceFrom;
       priceTo =
         kept.priceTo;
+      promoStartsAt =
+        kept.promoStartsAt;
+      promoEndsAt =
+        kept.promoEndsAt;
     }
   }
 
@@ -12382,14 +12394,14 @@ function mergeWooProduct(
     // corrigée à la main).
     promoStartsAt:
       !promoOverridden &&
-      remote.promoStartsAt
-        ? remote.promoStartsAt
+      promoStartsAt
+        ? promoStartsAt
         : undefined,
 
     promoEndsAt:
       !promoOverridden &&
-      remote.promoEndsAt
-        ? remote.promoEndsAt
+      promoEndsAt
+        ? promoEndsAt
         : undefined,
 
     availability:

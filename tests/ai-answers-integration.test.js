@@ -326,6 +326,40 @@ async function test(label, fn) {
     assert.strictEqual(S.inferAdProductHint({ headline: 'Mondeco.tn', body: 'Envoyez le mot : ZINA, on vous répond' }), 'ZINA');
   });
 
+  await test('V6.46 — promotion en cours : réponse du modèle « 7200 DT » seule remplacée par « 6590 dt au lieu de 7200 dt »', async () => {
+    const contact = '21698000081';
+    rememberBiancaAd(contact);
+    cannedReply = 'La Chambre à Coucher Bianca est à 7200 DT.';
+    const reply = await S.generateReply(contact, 'le prix de la chambre complète svp', 'whatsapp');
+    assert.strictEqual(geminiRequests.length, 1);
+    assert.ok(reply.includes('6590 dt au lieu de 7200 dt'), reply);
+    assert.ok(!reply.includes('est à 7200 DT'), reply);
+  });
+
+  await test('V6.46 — fiche du site Bianca masquée dans l’Admin (toujours publiée) : chambre complète → transfert, jamais « Pouf Chambre Luxe Bianca 350 DT »', async () => {
+    const productsPath = path.join(dataDir, 'products.json');
+    const original = fs.readFileSync(productsPath, 'utf8');
+    fs.writeFileSync(productsPath, JSON.stringify([
+      ...products.map(product => (product.woocommerceId === 60068 ? { ...product, active: false, hiddenByAdmin: true, woocommerceStatus: 'publish' } : product)),
+      { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true }
+    ]));
+    try {
+      let index = 0;
+      for (const message of ['le prix de la chambre complète svp', 'قداش الشومبر بيانكا كاملة', 'prix']) {
+        const contact = `2169800009${index++}`;
+        rememberBiancaAd(contact);
+        cannedReply = 'Le Pouf Chambre Luxe Bianca est à 350 DT.';
+        geminiRequests = [];
+        const reply = await S.generateReply(contact, message, 'whatsapp');
+        assert.strictEqual(reply, '[COMMERCIAL_REQUIRED]', `${message} -> ${reply}`);
+        assert.strictEqual(geminiRequests.length, 0, 'modèle jamais appelé');
+        assert.ok(!S.getConversationState(contact).activeProduct, 'aucun produit actif mémorisé');
+      }
+    } finally {
+      fs.writeFileSync(productsPath, original);
+    }
+  });
+
   say(`\n${passed} test(s) ai-answers (intégration) OK`);
   try { S.httpServer.close(); } catch {}
   setTimeout(() => process.exit(0), 100);

@@ -63,6 +63,25 @@ test('V6.46 — fiche du produit identifié pour ce tour, jamais d’un doublon,
   assert.strictEqual(findProductForCard('[COMMERCIAL_REQUIRED]', catalog, { kind: 'ai', product: bianca }), null);
 });
 
+test('V6.46 — « Baya Plus » / « Baya + » : jamais la fiche du Salon Baya ; réponse IA sans produit identifié pour ce tour → aucune fiche', () => {
+  const catalog = [
+    { id: 'baya-plus', name: 'Salon Baya+', price: '2800' },
+    { id: 'baya', name: 'Salon Baya', price: '2200' },
+    { id: 'baya-gm', name: 'Salon Baya GM', price: '3200' },
+    { id: 'bouclette-baya', name: 'Salon Bouclette Baya', price: '2900' }
+  ];
+  for (const reply of ['Le Salon Baya Plus est à 2800 DT.', 'Le Salon Baya + est à 2800 DT.']) {
+    // Question ambiguë côté résolveur : l'IA répond sans produit identifié.
+    assert.strictEqual(findProductForCard(reply, catalog, { kind: 'ai', product: null }), null, reply);
+    // Produit identifié Baya+ : sa fiche.
+    assert.strictEqual(findProductForCard(reply, catalog, { kind: 'ai', product: catalog[0] })?.id, 'baya-plus', reply);
+    // Sans tour connu : recherche par nom, jamais « Salon Baya ».
+    assert.notStrictEqual(findProductForCard(reply, catalog)?.id, 'baya', reply);
+  }
+  // « plus » adverbe : le Salon Baya reste reconnu.
+  assert.strictEqual(findProductForCard('Le Salon Baya est plus confortable, à 2200 DT.', catalog, { kind: 'ai', product: catalog[1] })?.id, 'baya');
+});
+
 test('pas deux fois la même fiche en 24 h, maximum par jour', () => {
   const now = Date.parse('2026-10-23T10:00:00Z');
   let state = {};

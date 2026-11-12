@@ -39,6 +39,7 @@ const fake = {
   omitPageHeaders: false,
   beforePage: null,
   webhooks: [],
+  variations: {},
   puts: [],
   posts: [],
   requests: []
@@ -67,7 +68,8 @@ globalThis.fetch = async (url, options = {}) => {
     fake.posts.push(body);
     return json({ id: 900 + fake.posts.length, ...body });
   }
-  if (/^\/products\/\d+\/variations$/.test(pathname)) return json([], { 'x-wp-totalpages': '1' });
+  match = pathname.match(/^\/products\/(\d+)\/variations$/);
+  if (match) return json(fake.variations[match[1]] || [], { 'x-wp-totalpages': '1' });
   match = pathname.match(/^\/products\/(\d+)$/);
   if (match) {
     const product = site.find(item => item.id === Number(match[1]));
@@ -222,6 +224,41 @@ const FLORA = catalog.find(item => /FLORA/.test(item.name) && /&amp;/.test(item.
     assert.strictEqual(buildProductCard(liora).interactive.body.text.split('\n')[1], '💰 12870 DT');
     row = feed.buildFeed().split('\n').find(line => line.startsWith('"69317"'));
     assert.ok(row.includes('"12870.00 TND","",""'), row);
+  });
+
+  await test('V6.46 — produit VARIABLE : dates de promotion des variantes enregistrées, promotion terminée retirée du contexte IA, du garde-fou, de la fiche et du flux Meta avant la synchro suivante', async () => {
+    const NUAGE = 69255;
+    const endsAt = Date.now() + 3600000;
+    const sale = (id, option, regular, promo) => ({
+      id, status: 'publish', sku: '', price: promo, regular_price: regular, sale_price: promo, on_sale: true, stock_status: 'instock',
+      date_on_sale_from_gmt: iso(Date.now() - 86400000), date_on_sale_to_gmt: iso(endsAt),
+      attributes: [{ id: 5, name: 'Largeur Lit', option }]
+    });
+    fake.variations[NUAGE] = [sale(69256, '90 cm', '690', '590'), sale(69257, '120 cm', '590', '490')];
+    setSite(NUAGE, { price: '490', date_modified_gmt: '2026-11-02T12:00:00' });
+    await admin.runWooCommerceSync('test-variable-sale-dates');
+    let nuage = one(NUAGE);
+    assert.ok(nuage.variations.every(item => item.promoEndsAt === iso(endsAt)), JSON.stringify(nuage.variations));
+    assert.strictEqual(nuage.promoPrice, '490');
+    assert.strictEqual(nuage.promoEndsAt, iso(endsAt), 'dates de la variante la moins chère sur la fiche');
+    assert.ok(admin.productToContext(nuage).includes('490 TND en promotion'), admin.productToContext(nuage));
+
+    // Fin de la promotion dépassée, synchronisation pas encore repassée.
+    const past = iso(Date.now() - 3000);
+    admin.saveProducts(admin.loadProducts().map(item => (Number(item.woocommerceId) === NUAGE
+      ? { ...item, promoEndsAt: past, variations: item.variations.map(variation => ({ ...variation, promoEndsAt: past })) }
+      : item)));
+    nuage = one(NUAGE);
+    const context = admin.productToContext(nuage);
+    assert.ok(!/en promotion|490/.test(context), context);
+    const { productFactsBlock, checkReplyFacts, productAllowedAmounts } = require('../lib/reply-fact-guard');
+    assert.ok(!/en promotion|490/.test(productFactsBlock(nuage)), productFactsBlock(nuage));
+    assert.ok(!productAllowedAmounts(nuage).includes(490), 'prix de la promotion terminée refusé');
+    assert.strictEqual(checkReplyFacts('Le lit 120 cm est à 490 DT au lieu de 590 DT (promotion en cours).', { status: 'resolved', product: nuage }).ok, false);
+    assert.ok(!/au lieu de|490/.test(buildProductCard(nuage).interactive.body.text), buildProductCard(nuage).interactive.body.text);
+    const row = require('../catalog-feed').buildFeed().split('\n').find(line => line.startsWith(`"${NUAGE}"`));
+    assert.ok(row && !row.includes('490.00 TND'), row);
+    delete fake.variations[NUAGE];
   });
 
   await test('G2 — fiche du site modifiée dans l’Admin : disponibilité, description et masquage gardés, prix repris avec avertissement', async () => {

@@ -186,6 +186,36 @@ const response = (buffer, type = 'image/jpeg', status = 200) =>
       assert.strictEqual(feed.feedAvailability('clearance'), 'in stock');
     });
 
+    await test('V6.46 — produit variable : promotion des variantes terminée → plus annoncée ni autorisée, même sans nouvelle synchronisation', async () => {
+      const guard = require('../lib/reply-fact-guard');
+      const endsAtMs = Date.now() - 3600 * 1000;
+      const end = new Date(endsAtMs).toISOString().slice(0, 19);
+      const variation = (id, option, regular, promo) => ({
+        id, status: 'publish', price: promo, regular_price: regular, sale_price: promo, on_sale: true, stock_status: 'instock',
+        date_on_sale_from_gmt: '2026-11-01T00:00:00', date_on_sale_to_gmt: end, attributes: [{ name: 'Taille', option }]
+      });
+      const variations = catalog.mapWooVariations([variation(1, '160', '7900', '7290'), variation(2, '140', '7200', '6590')]);
+      assert.ok(variations.every(item => item.promoEndsAt === end), 'dates de promotion gardées par variante');
+      // Fiche enregistrée pendant la promotion (8 s avant la fin), comme Admin.js.
+      const summary = catalog.summarizeVariationPrices(variations, endsAtMs - 8000);
+      assert.strictEqual(summary.promoPrice, '6590');
+      assert.strictEqual(summary.promoEndsAt, end);
+      const product = { id: 'var-1', name: 'Lit Royal', price: summary.price, promoPrice: summary.promoPrice, promoStartsAt: summary.promoStartsAt, promoEndsAt: summary.promoEndsAt, priceFrom: summary.priceFrom, priceTo: summary.priceTo, variations };
+      // Une heure après la fin : plus aucune promotion.
+      assert.strictEqual(catalog.effectivePromoPrice(product), '');
+      const lines = catalog.variationContextLines(product);
+      assert.ok(!/promotion|6590|7290/.test(JSON.stringify(lines)), JSON.stringify(lines));
+      assert.ok(!/promotion|6590|7290/.test(guard.productFactsBlock(product)), guard.productFactsBlock(product));
+      assert.ok(!/6590|7290/.test(guard.priceSentence(product)), guard.priceSentence(product));
+      const allowed = guard.productAllowedAmounts(product);
+      assert.ok(!allowed.includes(6590) && !allowed.includes(7290), allowed.join(','));
+      assert.ok(allowed.includes(7200) && allowed.includes(7900));
+      assert.ok(!/6590|au lieu de/.test(productCardBody(product)), productCardBody(product));
+      // Promotion encore en cours : inchangé.
+      const running = catalog.mapWooVariations([variation(2, '140', '7200', '6590')].map(item => ({ ...item, date_on_sale_to_gmt: new Date(Date.now() + 3600 * 1000).toISOString().slice(0, 19) })));
+      assert.ok(guard.productAllowedAmounts({ name: 'Lit Royal', price: '7200', variations: running }).includes(6590));
+    });
+
     await test('G7 — même dossier de données partout : DATA_DIR, sinon volume Railway, sinon dossier de l’application', async () => {
       const appDir = path.join(__dirname, '..');
       assert.strictEqual(resolveDataDir({ DATA_DIR: ' /x ' }), '/x');

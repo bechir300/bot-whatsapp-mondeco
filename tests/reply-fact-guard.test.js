@@ -243,4 +243,21 @@ test('V6.46 — promotion terminée ou invalide : absente du bloc PRODUIT ACTIF,
   assert.ok(!productFactsBlock(invalid).includes('Prix promotionnel'));
 });
 
+test('V6.46 — promotion en cours : prix normal cité SANS le prix promotionnel refusé (remplacé par « 6590 dt au lieu de 7200 dt »)', () => {
+  const running = { ...BIANCA, promoEndsAt: new Date(Date.now() + 3600 * 1000).toISOString() };
+  for (const reply of ['La Chambre à Coucher Bianca est à 7200 DT.', 'الشومبر بيانكا كاملة سومها 7200 دينار']) {
+    const check = checkReplyFacts(reply, { status: 'resolved', product: running });
+    assert.strictEqual(check.ok, false, reply);
+    assert.deepStrictEqual(check.badAmounts, [7200]);
+    assert.ok(check.reasons.some(reason => /promotion en cours/.test(reason)), check.reasons.join(' ; '));
+  }
+  assert.ok(buildCatalogAnswer(running, { includeLink: false }).includes('6590 dt au lieu de 7200 dt'));
+  // Les deux prix, ou la promo seule : acceptés.
+  assert.strictEqual(checkReplyFacts('Elle est à 6590 DT au lieu de 7200 DT.', { status: 'resolved', product: running }).ok, true);
+  assert.strictEqual(checkReplyFacts('Elle est à 6590 DT.', { status: 'resolved', product: running }).ok, true);
+  // Promotion terminée : le prix normal seul est juste.
+  const ended = { ...BIANCA, promoEndsAt: new Date(Date.now() - 60 * 1000).toISOString() };
+  assert.strictEqual(checkReplyFacts('La Chambre à Coucher Bianca est à 7200 DT.', { status: 'resolved', product: ended }).ok, true);
+});
+
 console.log(`\n${passed} test(s) reply-fact-guard OK`);

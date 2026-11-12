@@ -101,6 +101,42 @@ test('V6.46 — doublon certain ignoré même quand la fiche du site est masqué
   assert.ok(!(resolution.candidates || []).some(candidate => candidate.id === 'manual-bianca'));
 });
 
+test('V6.46 — fiche du site Bianca masquée / supprimée dans l’Admin mais publiée : « hidden » (transfert), jamais le Pouf ni la copie à 2800', () => {
+  const variants = [
+    { active: false, hiddenByAdmin: true, woocommerceStatus: 'publish' },
+    { active: false, hiddenByAdmin: true, deletedByAdmin: true, woocommerceStatus: 'publish' }
+  ];
+  for (const flags of variants) {
+    const catalog = [
+      ...products.map(product => (Number(product.woocommerceId) === 60068 ? { ...product, ...flags } : product)),
+      { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true },
+      { id: 'manual-lit', name: 'Lit Bianca + 2 tables de nuit', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'possible', active: true }
+    ];
+    const hiddenIndex = buildProductIndex(catalog);
+    const ad = { adProductHint: 'Chambre à coucher Bianca · Chambre complète', adHeadline: 'Chambre à coucher Bianca · Chambre complète' };
+    for (const [message, withAd] of [
+      ['le prix de la chambre complète svp', true],
+      ['قداش الشومبر بيانكا كاملة', true],
+      ['bch9adech chambre bianca kamla', true],
+      ['prix', true],
+      ['السعر', true],
+      ['prix chambre à coucher bianca', false],
+      ['prix chambre bianca', false]
+    ]) {
+      const resolution = resolveProduct({ message, ...(withAd ? ad : {}) }, hiddenIndex);
+      assert.strictEqual(resolution.status, 'hidden', `${message} -> ${resolution.status} ${resolution.product ? resolution.product.name : ''}`);
+      assert.strictEqual(resolution.product, null, 'aucune fiche transmise (ni prix ni carte)');
+    }
+    // Produit actif mémorisé avant le masquage : plus repris tel quel.
+    const stored = resolveProduct({ message: 'prix', activeProductId: BIANCA.id }, hiddenIndex);
+    assert.strictEqual(stored.status, 'hidden');
+    // Les autres produits Bianca restent identifiés normalement.
+    assert.strictEqual(resolvedId(resolveProduct({ message: 'prix pouf bianca' }, hiddenIndex)), 61304);
+    const many = resolveProduct({ message: 'bianca' }, hiddenIndex);
+    assert.ok(!many.candidateKeys.includes(BIANCA.id), 'fiche masquée jamais proposée dans la question de choix');
+  }
+});
+
 test('doublon local marqué duplicateOfWooId ignoré', () => {
   const withDuplicate = buildProductIndex([...products, { id: 'dup', name: 'Chambre à coucher Bianca', price: '2800', duplicateOfWooId: 60068, active: true }]);
   const result = resolveProduct({ message: 'chambre à coucher bianca' }, withDuplicate);

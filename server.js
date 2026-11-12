@@ -3040,7 +3040,7 @@ function productHintFromAdBody(body) {
 
 function productHintFromAdBodyUncached(text, index) {
   const resolution = productResolver.resolveProduct({ message: text }, index);
-  if (resolution.status === 'resolved') {
+  if (resolution.status === 'resolved' || resolution.status === 'hidden') {
     return safeString(resolution.displayName);
   }
   if (resolution.status === 'ambiguous' && resolution.candidates.length) {
@@ -3573,12 +3573,15 @@ function getActiveProductsForAi() {
   }
 
   try {
-    const products = (loadProducts() || [])
+    const all = loadProducts() || [];
+    const products = all
       .filter(product => product && product.active !== false);
     aiProductsCache = {
       stamp,
       products,
-      index: productResolver.buildProductIndex(products)
+      // V6.46 — L'index garde aussi les fiches du site masquées dans
+      // l'Admin mais toujours publiées (bloquées : résultat « hidden »).
+      index: productResolver.buildProductIndex(all)
     };
   } catch (error) {
     console.warn('⚠️ Lecture catalogue (résolution produit IA) :', error.message);
@@ -4795,7 +4798,7 @@ function logAiProductResolution(contact, resolution, extra = {}) {
     console.log('🧭 Produit IA :', JSON.stringify({
       contact: maskPhoneForLog(contact),
       status: resolution?.status || 'none',
-      productId: resolution?.productKey || undefined,
+      productId: resolution?.productKey || resolution?.hiddenProductKey || undefined,
       source: resolution?.source || undefined,
       candidates: resolution?.status === 'ambiguous' ? resolution.candidateKeys : undefined,
       ...extra
@@ -4835,6 +4838,13 @@ function decidePreAiAction(contact, userText, resolution) {
 
   const status = resolution?.status || 'none';
   const arabic = containsArabic(userText);
+
+  // V6.46 — Fiche du site masquée / supprimée dans l'Admin mais toujours
+  // en vente sur mondeco.tn : l'équipe répond (avant : le produit voisin
+  // suivant, « Pouf Chambre Luxe Bianca 350 DT », devenait la chambre).
+  if (status === 'hidden') {
+    return { action: 'handoff', reason: 'product-hidden' };
+  }
 
   if (status === 'resolved') {
     if (looksLikePriceRequest(userText) && !replyFactGuard.hasCatalogPrice(resolution.product)) {
