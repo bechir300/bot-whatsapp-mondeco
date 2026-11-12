@@ -60,6 +60,7 @@ globalThis.__srv = { generateReply, generateReplySuggestion, generateVisionReply
   buildSmartBusinessContextDetailed, resolveConversationProduct, findMatchingQuickReplyForAd, rememberAdReferral,
   getConversationState, getLimitedHistoryForAI, normalizeForSearch, scoreContextBlock, stripReasoningLeak,
   appendCategoryLink, inferAdProductHint, recordAiHistoryReply, getCurrentMonthAiCostUsd, httpServer,
+  handleHumanMessageEcho,
   MAX_PRODUCT_CONTEXT_CHARS, MAX_PINNED_PRODUCT_CHARS };`;
   }
   return originalCompile.call(this, content, filename);
@@ -206,6 +207,16 @@ async function test(label, fn) {
     await S.generateReply(contact, 'Merci ! Et samedi ?', 'whatsapp');
     const contents = geminiRequests[0].contents.map(item => `${item.role}:${item.parts[0].text}`);
     assert.ok(contents.some(item => item.startsWith('model:Oui, le showroom de Sousse')), contents.join(' | '));
+  });
+
+  await test('réponse depuis l’application WhatsApp Business (écho) : entre aussi dans l’historique IA', async () => {
+    const contact = '21698000011';
+    S.handleHumanMessageEcho({
+      messages: [{ to: contact, id: 'wamid.ECHO-HIST', timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'La Chambre à Coucher Bianca est à 6590 dt au lieu de 7200 dt.' } }]
+    });
+    const history = S.getLimitedHistoryForAI(contact);
+    assert.deepStrictEqual(history.map(item => item.role), ['assistant']);
+    assert.ok(history[0].content.includes('6590 dt'));
   });
 
   await test('réponse rapide de pub : jamais si elle contredit la fiche ou si le client pose une question', async () => {

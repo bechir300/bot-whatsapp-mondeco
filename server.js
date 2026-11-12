@@ -11228,6 +11228,13 @@ function handleHumanMessageEcho(value) {
       commercial_user_role: 'commercial',
       time: eventTime
     });
+
+    // V6.45 — Comme une réponse envoyée depuis l'Admin (paquet réponses IA) :
+    // le texte écrit depuis l'application WhatsApp Business entre dans
+    // l'historique IA, pour que l'IA ne contredise pas le conseiller à la
+    // reprise.
+    const echoText = safeString(message?.text?.body || message?.caption || '');
+    if (echoText) recordAiHistoryReply(candidate, echoText);
   }
 }
 
