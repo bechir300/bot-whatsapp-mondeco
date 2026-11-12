@@ -11,6 +11,13 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
+
+// V6.45 — Comme en production (paquet sécurité) : webhooks signés avec
+// l'App Secret, requêtes du centre de pilotage avec l'en-tête X-Mondeco-Client
+// envoyé par apiFetch (protection CSRF).
+const APP_SECRET = 'e2e-app-secret';
+const SPA_HEADERS = { 'x-mondeco-client': 'admin' };
 
 const ROOT = path.join(__dirname, '..');
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -61,6 +68,7 @@ async function test(label, fn) {
         PHONE_NUMBER_ID: '999',
         VERIFY_TOKEN: 'verify',
         GEMINI_API_KEY: 'test-key',
+        META_APP_SECRET: APP_SECRET,
         ADMIN_EMAIL: 'admin@test.local',
         ADMIN_PASSWORD: 'Passw0rd!Test123',
         NODE_ENV: 'development',
@@ -83,7 +91,7 @@ async function test(label, fn) {
   async function admin(method, route, body) {
     const response = await fetch(`${base}/admin${route}`, {
       method,
-      headers: { cookie, 'content-type': 'application/json' },
+      headers: { cookie, 'content-type': 'application/json', ...SPA_HEADERS },
       body: body ? JSON.stringify(body) : undefined
     });
     const text = await response.text();
@@ -93,10 +101,12 @@ async function test(label, fn) {
   }
 
   async function webhook(value, field = 'messages') {
+    const payload = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field, value: { messaging_product: 'whatsapp', metadata: { phone_number_id: '999' }, ...value } }] }] });
+    const signature = `sha256=${crypto.createHmac('sha256', APP_SECRET).update(payload).digest('hex')}`;
     const response = await fetch(`${base}/webhook`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field, value: { messaging_product: 'whatsapp', metadata: { phone_number_id: '999' }, ...value } }] }] })
+      headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature },
+      body: payload
     });
     assert.strictEqual(response.status, 200);
   }
@@ -140,7 +150,7 @@ async function test(label, fn) {
     assert.ok(ready, 'serveur démarré');
     const login = await fetch(`${base}/admin/login`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...SPA_HEADERS },
       body: JSON.stringify({ email: 'admin@test.local', password: 'Passw0rd!Test123' })
     });
     assert.strictEqual(login.status, 200);
@@ -287,6 +297,28 @@ async function test(label, fn) {
         }]
       });
       assert.ok(await waitFor(async () => (await conversation(c)).entries.some(entry => entry.action === 'meta_delivery_failed' && /131047/.test(entry.system_body || ''))));
+    });
+
+    await test('Intégration sécurité : webhook non signé refusé, message sans numéro destinataire ni traité ni journalisé', async () => {
+      const c = '21650000077';
+      const id = `wamid.NOPHONE${Date.now()}`;
+      const payload = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'WABA', changes: [{ field: 'messages', value: {
+        messaging_product: 'whatsapp',
+        contacts: [{ wa_id: c, profile: { name: 'Sans numéro' } }],
+        messages: [{ from: c, id, timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'Bonjour' } }]
+      } }] }] });
+      const unsigned = await fetch(`${base}/webhook`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: payload });
+      assert.strictEqual(unsigned.status, 401);
+      const signature = `sha256=${crypto.createHmac('sha256', APP_SECRET).update(payload).digest('hex')}`;
+      const signed = await fetch(`${base}/webhook`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature }, body: payload });
+      assert.strictEqual(signed.status, 200);
+      await wait(600);
+      // Jamais inscrit au journal : il ne sera pas rejoué au redémarrage (F15).
+      const journalPath = path.join(dataDir, 'inbound-journal.jsonl');
+      const journal = fs.existsSync(journalPath) ? fs.readFileSync(journalPath, 'utf8') : '';
+      assert.ok(!journal.includes(id), 'message sans numéro absent du journal');
+      assert.strictEqual(sentTo(c).length, 0);
+      assert.ok(!(await conversation(c)).entries.some(entry => entry.message_id === id));
     });
 
     await test('F15 : arrêt brutal pendant la génération IA → message rejoué au redémarrage', async () => {

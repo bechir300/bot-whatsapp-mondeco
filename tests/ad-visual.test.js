@@ -546,22 +546,33 @@ const SALON = {
       all[contact] = state;
       admin.saveConversationStatesAdmin(all);
 
-      const anonymous = await fetch(`${base}/admin/api/conversations/${contact}/ad-visual/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', redirect: 'manual' });
+      // V6.45 — En-tête envoyé par apiFetch (Admin.html) : la protection CSRF
+      // du paquet sécurité accepte les requêtes du centre de pilotage.
+      const spa = { 'X-Mondeco-Client': 'admin' };
+      const anonymous = await fetch(`${base}/admin/api/conversations/${contact}/ad-visual/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...spa }, body: '{}', redirect: 'manual' });
       assert.ok([302, 401].includes(anonymous.status), `sans session : ${anonymous.status}`);
 
       const login = await fetch(`${base}/admin/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...spa },
         body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD })
       });
       assert.strictEqual(login.status, 200, await login.clone().text());
       const cookie = String(login.headers.get('set-cookie') || '').split(';')[0];
       assert.ok(cookie.startsWith('mondeco_admin_session='));
 
+      // Requête d'un autre site avec la session : refusée (CSRF).
+      const foreign = await fetch(`${base}/admin/api/conversations/${contact}/ad-visual/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', cookie, Origin: 'https://evil.example' },
+        body: '{}'
+      });
+      assert.strictEqual(foreign.status, 403);
+
       requests.length = 0;
       const response = await fetch(`${base}/admin/api/conversations/${contact}/ad-visual/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', cookie },
+        headers: { 'Content-Type': 'application/json', cookie, ...spa },
         body: '{}'
       });
       const body = await response.json();
@@ -581,7 +592,7 @@ const SALON = {
       const other = '21650008888';
       admin.setConversationStateSingle(other, { channel: 'whatsapp', adReferral: { sourceId: '120210000000000777', headline: 'Bianca' } });
       requests.length = 0;
-      const second = await (await fetch(`${base}/admin/api/conversations/${other}/ad-visual/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json', cookie }, body: '{}' })).json();
+      const second = await (await fetch(`${base}/admin/api/conversations/${other}/ad-visual/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json', cookie, ...spa }, body: '{}' })).json();
       assert.strictEqual(second.source, 'shared_file');
       assert.strictEqual(second.adReferral.storedMediaUrl, body.adReferral.storedMediaUrl);
       assert.strictEqual(requests.length, 0);

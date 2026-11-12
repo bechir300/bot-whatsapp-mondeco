@@ -9715,8 +9715,16 @@ function whatsappWebhookInboundMessages(body) {
     for (const change of (Array.isArray(entry?.changes) ? entry.changes : [])) {
       if (safeString(change?.field) !== 'messages') continue;
       const value = change?.value || {};
-      const incomingPhoneNumberId = safeString(value?.metadata?.phone_number_id);
-      if (PHONE_NUMBER_ID && incomingPhoneNumberId && incomingPhoneNumberId !== PHONE_NUMBER_ID) continue;
+      // V6.45 — Même règle que processWhatsAppWebhook (paquet sécurité) :
+      // autre numéro, ou numéro absent alors que PHONE_NUMBER_ID est
+      // configuré => jamais inscrit au journal. Sinon le message, ignoré par
+      // le traitement, restait « en attente » et était rejoué au démarrage
+      // suivant sans cette vérification.
+      if (!whatsappPhoneNumberIdAccepted({
+        configured: PHONE_NUMBER_ID,
+        incoming: value?.metadata?.phone_number_id,
+        requirePresence: true
+      })) continue;
       const profiles = {};
       for (const contactEntry of (Array.isArray(value.contacts) ? value.contacts : [])) {
         const waId = normalizePhone(contactEntry?.wa_id);
