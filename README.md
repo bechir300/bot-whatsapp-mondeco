@@ -1,8 +1,10 @@
-# MONDECO — Agent IA omnicanal
+# MONDECO — Agent IA WhatsApp
 
-Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**, **Instagram** et **Facebook Messenger**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception unifiée, prise en main humaine, SLA, commentaires sociaux, catalogue, indicateurs.
+Assistant client automatique de **Mondeco** (mobilier, Tunisie) sur **WhatsApp**. Il s'accompagne d'un **centre de pilotage** web pour l'équipe commerciale : boîte de réception, prise en main humaine, SLA, catalogue, indicateurs.
 
-Version **6.44.0** : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux fiche client commerciale messages WhatsApp interactifs et nouvelle charte graphique (couleurs, polices, boîte de réception en 3 colonnes, mode sombre).
+**Instagram et Facebook (Messenger, commentaires)** : le code existe mais, depuis le 13/10, **seul WhatsApp est traité**. Les webhooks Instagram et Facebook sont acquittés puis ignorés (une ligne « ignoré » dans les logs, compteur dans `/health`). Ils se réactivent sans modifier le code : `INSTAGRAM_WEBHOOK_ENABLED=true`, `FACEBOOK_WEBHOOK_ENABLED=true` (voir `.env.example`). Tant qu'ils sont désactivés, désabonnez aussi ces champs du webhook dans l'app Meta.
+
+Version : celle de `package.json` (**6.46.0**), affichée au démarrage et par `GET /health` (avec le commit déployé). Historique : version de production du VPS (V6.36.102) + audit de sécurité, fiabilité et pilotage (voir `ETUDE-TECHNIQUE.md`) + copilote IA des commerciaux, fiche client commerciale, messages WhatsApp interactifs, nouvelle charte graphique (V6.44), corrections V6.45–V6.46.
 
 ## Architecture
 
@@ -19,23 +21,88 @@ Version **6.44.0** : version de production du VPS (V6.36.102) + audit de sécuri
 
 Les données (conversations, comptes, base SQLite, médias…) sont écrites dans `DATA_DIR`, ou à défaut dans le dossier de l'application. Elles ne doivent **jamais** être envoyées sur GitHub (voir `.gitignore`).
 
-## Installation sur le VPS (Ubuntu)
+## Déploiement
 
-L'application tourne avec un **utilisateur dédié**, jamais en root. Node.js 20 ou plus est requis (`node -v`).
+### Version de Node.js
+
+**Node.js 22 LTS** (22 ou plus ; la CI teste 22 et 24). **Node.js 20 n'est pas pris en charge** : le module SQLite (`better-sqlite3` 13) y plante (erreur de segmentation) au premier message reçu, après l'accusé envoyé à Meta, sans log ni alerte. Depuis V6.46 :
+
+- `npm ci` refuse de s'installer sur une version trop ancienne (`engines` + `.npmrc` `engine-strict=true`) ;
+- le serveur refuse de démarrer, avec un message clair, sous Node.js < 22.
+
+Vérifiez avec `node -v` avant toute mise à jour. Installation de Node.js 22 : paquet NodeSource (`setup_22.x`) ou `nvm install 22`, puis `npm ci --omit=dev` (le module natif doit être réinstallé pour la nouvelle version).
+
+### Branche et version à déployer
+
+- **Production : un tag de version `vX.Y.Z`** (même numéro que `package.json`, ex. `v6.46.0`), créé sur la branche de production (celle qui reçoit les PR, actuellement **`ccr-1b9e884b-twmazf`**) une fois la CI verte. Revenir en arrière = `git checkout` du tag précédent.
+- ⚠️ **`main` est obsolète** (code d'août 2026, version 1.0.0, sans les corrections de sécurité V6.37+) et **`vps-production` aussi** : ne déployez jamais depuis ces branches, ni avec un simple `git pull` sur la branche par défaut.
+- Création d'un tag (équipe technique) : `git tag -a v6.46.0 -m "MONDECO 6.46.0" && git push origin v6.46.0`.
+
+### Installation sur le VPS (Ubuntu)
+
+L'application tourne avec un **utilisateur dédié** (`mondeco`), jamais en root. Code dans `/opt/mondeco`, données dans un dossier séparé (`DATA_DIR=/opt/mondeco/data`, propriétaire `mondeco`). Le fichier **`.env` est lu dans le dossier de l'application** (`/opt/mondeco/.env`), quel que soit le dossier courant (V6.46).
+
+Service systemd (`/etc/systemd/system/mondeco.service`) :
+
+```ini
+[Unit]
+Description=MONDECO bot WhatsApp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mondeco
+WorkingDirectory=/opt/mondeco
+ExecStart=/usr/bin/node /opt/mondeco/server.js
+Restart=always
+RestartSec=5
+# Laisse le temps à l'arrêt propre (SHUTDOWN_GRACE_MS, 20 s par défaut)
+TimeoutStopSec=30
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Puis `sudo systemctl daemon-reload && sudo systemctl enable --now mondeco`. Avec pm2 : `pm2 start /opt/mondeco/server.js --name mondeco --cwd /opt/mondeco`.
+
+### Mise à jour
 
 ```bash
-# Mise à jour du code (dans le dossier de l'application)
 cd /opt/mondeco
-git fetch origin
-git checkout <branche-ou-version>
-npm ci --omit=dev          # installe exactement les dépendances du package-lock
-npm test                   # optionnel : vérifie que tout est valide
-sudo systemctl restart mondeco    # ou : pm2 restart mondeco
+node -v                              # 22 ou plus, sinon installer Node.js 22 d'abord
+sudo -u mondeco git fetch origin --tags
+sudo -u mondeco git checkout v6.46.0  # le tag de la version à déployer
+sudo -u mondeco npm ci --omit=dev    # dépendances exactes du package-lock
+sudo systemctl restart mondeco       # ou : pm2 restart mondeco
+curl -s http://127.0.0.1:3000/health # « status »: « ok », « version » = version déployée
 ```
+
+À faire une fois en passant à V6.46 :
+
+- **supprimez `WEBHOOK_SIGNATURE_REQUIRED=false` de `.env`** s'il y figure (conseillé avant V6.45 ; il laisse passer sans signature les canaux sans App Secret) ;
+- déplacez le `.env` dans le dossier de l'application s'il était ailleurs (une alerte au démarrage le signale) ;
+- sur un VPS avec Nginx local, ajoutez `HOST=127.0.0.1` (le port de l'application n'est alors plus joignable directement depuis Internet) ;
+- `/health` peut maintenant répondre **503 « degraded »** (voir ci-dessous) : adaptez la supervision si elle n'attendait que 200 ;
+- WooCommerce : cliquez une fois sur **« Installer les webhooks »** (page WooCommerce) pour réactiver les webhooks que le site avait désactivés (signatures refusées avant V6.46) ;
+- catalogue Meta (`/catalog-feed.csv`) : les identifiants des articles deviennent les identifiants WooCommerce (ceux du pixel du site, `CATALOG_FEED_ID`) ; Meta recrée les articles une fois : vérifiez les publicités et ensembles de produits qui citent des identifiants d'articles ;
+- « Supprimer » sur une fiche du site la masque désormais (badge « Supprimé (masqué) », bouton « Rendre au site ») au lieu de l'effacer ;
+- stockage : les décisions de nettoyage portent sur l'espace libre en Mo (`MONDECO_STORAGE_RESCUE_FREE_MB`, `MONDECO_STORAGE_CRITICAL_FREE_MB`) ; les médias des conversations ne sont plus supprimés automatiquement (bouton « Nettoyer le stockage » seulement) ; des fichiers `*.corrupt-<date>` peuvent apparaître dans `DATA_DIR` : gardés pour examen, à ne pas supprimer sans vérification.
 
 Lors d'un redémarrage, le serveur reçoit `SIGTERM` : il cesse d'accepter des connexions, termine les messages en cours, enregistre les fichiers en attente (journal, état des conversations, historique IA) puis s'arrête (au plus `SHUTDOWN_GRACE_MS`, 20 s par défaut).
 
-**HTTPS est obligatoire** pour les webhooks Meta : placez Nginx ou Caddy devant l'application (port 3000 non exposé). Avec Nginx sur la même machine, laissez `TRUST_PROXY_HOPS` vide.
+**HTTPS est obligatoire** pour les webhooks Meta : placez Nginx ou Caddy devant l'application (`HOST=127.0.0.1` pour que le port 3000 ne soit pas exposé ; défaut `0.0.0.0`, nécessaire sur Railway/Docker). Avec Nginx sur la même machine, laissez `TRUST_PROXY_HOPS` vide ; sur Railway, il vaut 1 automatiquement ; derrière un autre proxy distant, mettez `TRUST_PROXY_HOPS=1` (sinon toute l'équipe partage la même adresse IP pour la limite de connexion, une alerte le signale dans les logs).
+
+### Supervision (`GET /health`)
+
+Réponse JSON publique, sans version de Node ni secret :
+
+- `status` : `ok` (HTTP 200) ou `degraded` (HTTP **503**) avec `reasons` : dossier des données non inscriptible, base SQLite `mondeco.db` illisible (fichier corrompu, mauvais propriétaire, module natif incompatible), ou, avec `NODE_ENV=production`, `VERIFY_TOKEN` / `WHATSAPP_TOKEN` / `PHONE_NUMBER_ID` manquant ;
+- `version` (package.json) et `commit` déployés, `uptime_s` ;
+- `checks.last_webhook` : date et âge du dernier webhook Meta accepté (information : la nuit, aucun message est normal) ;
+- `channels` et `checks.ignored_webhooks` : canaux traités et webhooks Instagram/Facebook ignorés depuis le démarrage.
+
+Une base SQLite indisponible n'arrête pas le bot (l'état des conversations continue sur le fichier JSON) : elle est signalée **une fois** (log d'erreur + alerte `ALERT_WEBHOOK_URL`), retentée automatiquement (30 s, puis jusqu'à 5 min), et `/health` reste « degraded » tant qu'elle n'est pas réparée. Une exception non rattrapée envoie son alerte **avant** l'arrêt du processus (le gestionnaire de processus le relance).
 
 ## Variables essentielles (`.env`)
 
@@ -43,8 +110,13 @@ Lors d'un redémarrage, le serveur reçoit `SIGTERM` : il cesse d'accepter des c
 | --- | --- |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Compte administrateur (12 caractères minimum). Sans `ADMIN_PASSWORD`, aucun compte n'est créé ni réinitialisé (le mot de passe par défaut ne sert qu'avec `NODE_ENV=development`). |
 | `VERIFY_TOKEN` | Vérification du webhook Meta (obligatoire). |
-| `META_APP_SECRET` | Signature des webhooks. Une fois renseignée, activez `WEBHOOK_SIGNATURE_REQUIRED=true`. |
+| `META_APP_SECRET` | Signature des webhooks. Dès qu'elle est renseignée, tout webhook non signé ou mal signé est refusé (401). Laissez `WEBHOOK_SIGNATURE_REQUIRED` vide ; `false` n'est qu'une désactivation d'urgence pour les canaux sans secret. Sans aucun secret, les webhooks restent acceptés (alerte au démarrage). |
+| `TRUST_PROXY_HOPS` | Nombre de proxys devant l'application (vide avec Nginx local, 1 automatique sur Railway). |
+| `ADMIN_ORIGIN_CHECK`, `ADMIN_ALLOWED_ORIGINS` | Protection CSRF de `/admin` (`enforce` par défaut, `report` pour diagnostiquer) et adresses supplémentaires du centre de pilotage. |
 | `WHATSAPP_REENGAGEMENT_TEMPLATE_NAME` | Modèle approuvé pour relancer un client hors fenêtre de 24 h. |
+| `HOST` | Adresse d'écoute (défaut `0.0.0.0` ; `127.0.0.1` sur un VPS derrière Nginx local). |
+| `INSTAGRAM_WEBHOOK_ENABLED`, `FACEBOOK_WEBHOOK_ENABLED` | Traitement des messages Instagram / Facebook (défaut `false` : WhatsApp uniquement). |
+| `ALERT_WEBHOOK_URL` | Alertes d'erreurs (Slack, Discord, Google Chat, Teams), y compris base SQLite indisponible et arrêt sur exception. |
 
 Toutes les variables sont documentées dans `.env.example`.
 
@@ -52,7 +124,7 @@ Toutes les variables sont documentées dans `.env.example`.
 
 | Route | Accès |
 | --- | --- |
-| `GET /health` | Public (supervision) |
+| `GET /health` | Public (supervision : 200 « ok » ou 503 « degraded ») |
 | `GET/POST /webhook` | Meta (token de vérification, signature) |
 | `/admin` | Équipe connectée, selon le rôle |
 | `/debug-env`, `/debug-log`, `/test-ia`, `/reset-test-history` | Administrateurs connectés uniquement |
@@ -62,7 +134,15 @@ Toutes les variables sont documentées dans `.env.example`.
 - **IA** : plage horaire et budget mensuel (existants) ; quota par client `AI_MAX_REPLIES_PER_CONTACT_PER_HOUR` (30 par défaut) ; délai maximal de 25 s par appel avec bascule vers Groq.
 - **Messages** : traitement dans l'ordre pour chaque client ; reprise automatique d'un message en échec (15 s puis 60 s), sauf s'il est déjà journalisé.
 - **Réseau** : délai maximal sur tous les appels Meta ; reprise des lectures sur 429/5xx ; taille des médias plafonnée.
-- **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`) ; limite de tentatives de connexion par adresse IP et par compte.
+- **Sessions** : expiration après 12 h d'inactivité (`MONDECO_SESSION_IDLE_HOURS`) ; limite de tentatives de connexion (V6.45) : 8 échecs pour un même compte depuis une même adresse IP ou 30 échecs d'une adresse IP bloquent cette adresse 15 min ; un compte visé depuis de nombreuses adresses n'est jamais bloqué, la vérification est seulement retardée (1 s à 8 s, `LOGIN_EMAIL_MAX_DELAY_MS`) : le vrai titulaire peut toujours se connecter.
+- **Sécurité du centre de pilotage** (V6.45) :
+  - toute requête qui modifie des données sous `/admin` doit venir de l'application (Origin/Referer, `Sec-Fetch-Site` ou en-tête `X-Mondeco-Client`), sinon 403 `CSRF_ORIGIN_REJECTED` ; `ADMIN_ORIGIN_CHECK=report` pour diagnostiquer un proxy qui réécrit l'adresse ;
+  - en-têtes : `Content-Security-Policy: script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` et `X-Frame-Options: DENY` (l'application ne peut plus être affichée dans un cadre) ;
+  - réponses rapides (envoyées telles quelles aux clients, y compris automatiquement aux prospects publicitaires) : création, modification, import et suppression réservés à l'administrateur, au responsable commercial et à l'éditeur ; les commerciaux les utilisent en lecture seule. Auteur enregistré sur chaque réponse, historique (ancien et nouveau texte) dans le journal d'activité, consultable via `GET /admin/api/quick-replies/history` ;
+  - suppression d'un message : un commercial ne peut que **masquer** un message d'une conversation qui lui est affectée ; le message affiche « Message masqué par … », la conversation reste dans la boîte de réception, l'administrateur peut le restaurer ou le supprimer définitivement. Chaque action est tracée (journal d'activité + `message-deletions.json`) ;
+  - envois commerciaux et appels WhatsApp : le destinataire est déduit de la conversation contrôlée (un `externalContact` différent est refusé, 400 `RECIPIENT_MISMATCH`) ;
+  - page « Réponses IA » : un commercial ne voit que les canaux de son planning du jour ;
+  - webhooks WhatsApp : si `PHONE_NUMBER_ID` est configuré, un webhook de messages sans ce numéro (`metadata.phone_number_id`) est ignoré.
 - **Performance** (V6.37.2–6.37.3) :
   - `adReferral` allégé (135 → 77 Mo en production) ;
   - SQLite ne réécrit que les conversations modifiées ;
@@ -104,4 +184,4 @@ npm run build:dark
 npm test     # syntaxe de tous les fichiers JS (y compris Admin.html) + tests
 ```
 
-La CI GitHub Actions (`.github/workflows/ci.yml`) lance `npm test` et `npm audit` à chaque push.
+`npm run check` vérifie la syntaxe de **tous** les fichiers `.js` du dépôt (modules de la racine et `pwa-assets/sw.js` compris) et que chaque `require('./…')` désigne un fichier existant. Les tests de la racine (`test_*.js`) chargent les vraies fonctions d'`Admin.js` ; `tests/ops-boot.test.js` démarre le vrai serveur (dossier de données temporaire) : `/health`, webhook WhatsApp, base SQLite. La CI GitHub Actions (`.github/workflows/ci.yml`) lance `npm test` sous Node.js 22 et 24, puis `npm audit`, à chaque push.

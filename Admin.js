@@ -10,10 +10,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
-const { createJsonObjectStore } = require('./lib/json-object-store');
+const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 const { slimConversationState } = require('./lib/ad-referral');
+const { createConversationStateStore } = require('./lib/conversation-state-store');
 const { SALES_STAGES, applyCustomerProfileUpdate, computeSalesFunnel } = require('./lib/customer-profile');
 const { SHOWROOMS } = require('./location-showrooms');
 const { readResponseBufferWithLimit } = require('./lib/http');
@@ -63,8 +64,6 @@ let usersCacheStamp = null;
 // événements SLA), ce qui pouvait donner l'impression de données
 // "disparues". Les regrouper tout en haut élimine ce risque définitivement,
 // quel que soit l'endroit du fichier qui les appelle en premier.
-let conversationStatesCacheAdmin = null;
-let conversationStatesCacheStampAdmin = '';
 let slaEventsCache = null;
 let slaEventsCacheStamp = '';
 let performanceConversationsLogCache = null;
@@ -132,16 +131,21 @@ const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.js
 // setConversationStateSingle) utilisent SQLite directement pour les accès
 // à une seule conversation — le vrai point chaud de performance.
 const SQLITE_DB_PATH = path.join(DATA_DIR, 'mondeco.db');
-let sqliteDb = null;
 
-function getSqliteDb() {
-  if (sqliteDb) return sqliteDb;
-  try {
-    const Database = require('better-sqlite3');
-    sqliteDb = new Database(SQLITE_DB_PATH);
-    sqliteDb.pragma('journal_mode = WAL');
-    sqliteDb.pragma('synchronous = NORMAL');
-    sqliteDb.exec(`
+// V6.46 — Ouverture mémorisée (lib/sqlite-health.js) : un échec n'est plus
+// retenté (require + new Database + log) à chaque accès mais après une
+// attente croissante, n'est écrit qu'une fois (une seule alerte) et
+// apparaît dans /health (« degraded », HTTP 503). Même base, mêmes pragmas.
+const {
+  createSqliteConnection: createSqliteConnectionV646,
+  registerSqliteConnection: registerSqliteConnectionV646
+} = require('./lib/sqlite-health');
+const sqliteConnection = registerSqliteConnectionV646(createSqliteConnectionV646({
+  dbPath: SQLITE_DB_PATH,
+  initialize(db) {
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.exec(`
       CREATE TABLE IF NOT EXISTS conversation_states (
         contact TEXT PRIMARY KEY,
         data TEXT NOT NULL,
@@ -149,44 +153,35 @@ function getSqliteDb() {
       );
       CREATE INDEX IF NOT EXISTS idx_conversation_states_updated_at ON conversation_states(updated_at);
     `);
-    console.log('✅ SQLite (mondeco.db) initialisé.');
-  } catch (error) {
-    console.error('❌ Initialisation SQLite échouée :', error.message);
-    sqliteDb = null;
-  }
-  return sqliteDb;
+  },
+  logger: console
+}));
+
+function getSqliteDb() {
+  return sqliteConnection.get();
 }
 
+// V6.45 — Lecture d'UNE conversation sur la source de vérité partagée
+// (mémoire, à jour de toutes les écritures Admin.js ET server.js ; SQLite
+// seulement pour une conversation absente de la mémoire). Renvoie une copie
+// indépendante, comme une ligne SQLite relue.
 function getConversationStateSingle(contact) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const db = getSqliteDb();
-  if (!db) return null;
   try {
-    const row = db.prepare('SELECT data FROM conversation_states WHERE contact = ?').get(cleanContact);
-    if (!row) return null;
-    return JSON.parse(row.data);
+    return conversationStateStore().get(cleanContact);
   } catch (error) {
     console.error(`❌ getConversationStateSingle(${cleanContact}) :`, error.message);
     return null;
   }
 }
 
+// V6.45 — Remplace l'état d'une conversation (mémoire + SQLite immédiat).
 function setConversationStateSingle(contact, state) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return;
-  const db = getSqliteDb();
-  if (!db) return;
   try {
-    db.prepare(`
-      INSERT INTO conversation_states (contact, data, updated_at)
-      VALUES (@contact, @data, @updated_at)
-      ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-    `).run({
-      contact: cleanContact,
-      data: JSON.stringify(state),
-      updated_at: Date.now()
-    });
+    conversationStateStore().set(cleanContact, state);
   } catch (error) {
     console.error(`❌ setConversationStateSingle(${cleanContact}) :`, error.message);
   }
@@ -561,6 +556,21 @@ fs.mkdirSync(JSON_BACKUPS_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
 fs.mkdirSync(RECYCLE_DIR, { recursive: true });
 
+// V6.45 — Protection CSRF : toute requête qui modifie des données sous
+// /admin (POST, PUT, PATCH, DELETE) doit venir de l'application elle-même
+// (Origin/Referer, Sec-Fetch-Site ou en-tête X-Mondeco-Client d'apiFetch).
+// Vérifiée avant toute route (et avant multer pour les envois de fichiers).
+// Seul le webhook WooCommerce (serveur à serveur, signé) est exempté.
+// Voir lib/origin-guard.js (ADMIN_ORIGIN_CHECK, ADMIN_ALLOWED_ORIGINS).
+const ADMIN_ORIGIN_GUARD_OPTIONS = require('./lib/origin-guard').originGuardOptionsFromEnv(process.env, {
+  label: 'admin',
+  exemptPaths: ['/api/woocommerce/webhook']
+});
+router.use(require('./lib/origin-guard').createOriginGuard(ADMIN_ORIGIN_GUARD_OPTIONS));
+if (ADMIN_ORIGIN_GUARD_OPTIONS.mode !== 'enforce') {
+  console.warn(`⚠️ ADMIN_ORIGIN_CHECK=${ADMIN_ORIGIN_GUARD_OPTIONS.mode} : la protection CSRF de /admin ne bloque pas les requêtes d'autres origines.`);
+}
+
 router.use(express.json({ limit: '20mb' }));
 
 // ============================================================
@@ -657,6 +667,7 @@ function storageSpaceInfo() {
       totalBytes,
       freeBytes,
       usedBytes,
+      blockSize,
       freeRatio: totalBytes > 0 ? freeBytes / totalBytes : null
     };
   } catch {
@@ -1006,11 +1017,140 @@ function removePathForStorageRescue(targetPath, label = '') {
   }
 }
 
-function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_FILE) {
+// V6.46 — Storage Rescue : décisions sur l'espace libre ABSOLU (octets),
+// jamais sur un ratio. Avant, « moins de 20 % libres » (des dizaines de Go
+// sur un gros disque) déclenchait à chaque démarrage la suppression de TOUS
+// les snapshots, de tous les .bak et versions JSON, de la corbeille, du
+// dossier des photos de profil et des médias clients de plus de 7 jours,
+// et le snapshot quotidien était sauté.
+// - 'critical' : écriture impossible faute d'espace (ENOSPC/EDQUOT), ou moins
+//                de MONDECO_STORAGE_CRITICAL_FREE_MB ;
+// - 'unwritable' : écriture impossible pour une autre raison (droits,
+//                volume en lecture seule…) : alerte, aucune suppression ;
+// - 'low'      : moins de MONDECO_STORAGE_RESCUE_FREE_MB ;
+// - 'ok'       : sinon (espace inconnu mais écriture possible = 'ok').
+// En urgence, on supprime du plus jetable au plus précieux, du plus ancien
+// au plus récent, et on s'arrête dès que la marge cible est retrouvée. Le
+// snapshot le plus récent, les .bak des données (produits, comptes,
+// instructions, réglages, réponses rapides…) et la dernière version JSON
+// ne sont supprimés que si l'espace reste CRITIQUE après tout le reste.
+// Les médias des conversations ne sont jamais supprimés automatiquement :
+// seulement par l'action explicite « Nettoyer le stockage » (administrateur).
+// Les photos de profil encore utilisées par une conversation sont gardées.
+const STORAGE_CORE_BACKUP_NAMES = new Set([
+  'products.json.bak',
+  'users.json.bak',
+  'instructions.json.bak',
+  'settings.json.bak',
+  'quick-replies.json.bak',
+  'customization-requests.json.bak',
+  'commercial-corrections.json.bak',
+  'schedules.json.bak',
+  'tasks.json.bak',
+  'woocommerce-sync.json.bak',
+  'standing-commercial-access.json.bak'
+]);
+
+// Réserve d'espace : fichier caché supprimé en premier en cas d'ENOSPC
+// (marge immédiate pour enregistrer les messages), recréé quand l'espace
+// redevient suffisant. MONDECO_STORAGE_BALLAST_MB=0 la désactive.
+const STORAGE_BALLAST_PATH = path.join(DATA_DIR, '.storage-ballast');
+const STORAGE_BALLAST_BYTES = Math.max(
+  0,
+  Math.min(
+    256,
+    safeString(process.env.MONDECO_STORAGE_BALLAST_MB) === ''
+      ? 16
+      : (Number(process.env.MONDECO_STORAGE_BALLAST_MB) || 0)
+  )
+) * 1024 * 1024;
+
+function storageHasHeadroom(minFreeBytes) {
+  const probe = storageWriteProbe();
+  if (!probe.writable) return false;
+  const space = storageSpaceInfo();
+  if (!space) return true;
+  return space.freeBytes >= minFreeBytes;
+}
+
+// V6.46 — Un test d'écriture en échec n'est un manque d'ESPACE que pour
+// ENOSPC / EDQUOT, ou si statfs confirme moins que la marge critique. Les
+// autres erreurs (EACCES après un changement d'utilisateur ou de volume,
+// EROFS, EMFILE…) donnent le niveau 'unwritable' : alerte, mais AUCUNE
+// suppression (avant : niveau 'critical' → dernier snapshot, dernières
+// versions JSON et .bak des données supprimés à chaque démarrage avec 50 Go
+// libres, délai de grâce de rétention annulé).
+const STORAGE_SPACE_ERROR_CODES = new Set(['ENOSPC', 'EDQUOT']);
+
+function storageProbeIsSpaceFailure(probe, space = storageSpaceInfo()) {
+  if (!probe || probe.writable !== false) return false;
+  if (STORAGE_SPACE_ERROR_CODES.has(safeString(probe.errorCode).toUpperCase())) return true;
+  return Boolean(space && space.freeBytes < STORAGE_CRITICAL_FREE_BYTES);
+}
+
+// V6.46 — Test d'écriture refusé pour une autre raison que l'espace
+// (EACCES, EROFS…), même avec peu d'espace libre : supprimer des fichiers
+// ne le rendra jamais possible (aucun dernier recours, délai de grâce gardé).
+function storageProbeFailsWithoutSpaceError(probe) {
+  return Boolean(probe) && probe.writable === false &&
+    !STORAGE_SPACE_ERROR_CODES.has(safeString(probe.errorCode).toUpperCase());
+}
+
+function storageLevel(space = storageSpaceInfo(), probe = storageWriteProbe()) {
+  if (probe && probe.writable === false) {
+    return storageProbeIsSpaceFailure(probe, space) ? 'critical' : 'unwritable';
+  }
+  if (!space) return 'ok';
+  if (space.freeBytes < STORAGE_CRITICAL_FREE_BYTES) return 'critical';
+  if (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES) return 'low';
+  return 'ok';
+}
+
+function releaseStorageBallast() {
+  try {
+    if (!fs.existsSync(STORAGE_BALLAST_PATH)) return 0;
+    const bytes = Number(fs.statSync(STORAGE_BALLAST_PATH).size || 0);
+    fs.unlinkSync(STORAGE_BALLAST_PATH);
+    console.error(`🛟 Réserve de stockage libérée (${humanBytes(bytes)}) : le disque est presque plein, libérez de l'espace.`);
+    return bytes;
+  } catch (error) {
+    console.warn('⚠️ Réserve de stockage non libérée :', error.message);
+    return 0;
+  }
+}
+
+function ensureStorageBallast() {
+  if (!STORAGE_BALLAST_BYTES) return false;
+  try {
+    if (fs.existsSync(STORAGE_BALLAST_PATH) && fs.statSync(STORAGE_BALLAST_PATH).size >= STORAGE_BALLAST_BYTES) return true;
+    const space = storageSpaceInfo();
+    if (!space || space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES + 2 * STORAGE_BALLAST_BYTES) return false;
+    const temp = `${STORAGE_BALLAST_PATH}.${process.pid}.part`;
+    const fd = fs.openSync(temp, 'w');
+    try {
+      const chunk = crypto.randomBytes(1024 * 1024);
+      for (let written = 0; written < STORAGE_BALLAST_BYTES; written += chunk.length) {
+        fs.writeSync(fd, chunk, 0, Math.min(chunk.length, STORAGE_BALLAST_BYTES - written));
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temp, STORAGE_BALLAST_PATH);
+    return true;
+  } catch (error) {
+    try { fs.unlinkSync(`${STORAGE_BALLAST_PATH}.${process.pid}.part`); } catch {}
+    console.warn('⚠️ Réserve de stockage non créée :', error.message);
+    return false;
+  }
+}
+
+function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_FILE, enough = null) {
   let freed = 0;
   try {
     if (!fs.existsSync(JSON_BACKUPS_DIR)) return 0;
 
+    // Candidats de tous les fichiers, supprimés du plus ancien au plus récent.
+    const candidates = [];
     for (const entry of fs.readdirSync(JSON_BACKUPS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const dir = path.join(JSON_BACKUPS_DIR, entry.name);
@@ -1027,14 +1167,17 @@ function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_
         })
         .filter(Boolean)
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      candidates.push(...files.slice(Math.max(0, keepPerFile)));
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
 
-      for (const file of files.slice(Math.max(0, keepPerFile))) {
-        try {
-          fs.unlinkSync(file.fullPath);
-          freed += file.size;
-        } catch (error) {
-          console.warn('⚠️ Storage Rescue : ancien backup JSON non supprimé :', error.message);
-        }
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+      } catch (error) {
+        console.warn('⚠️ Storage Rescue : ancien backup JSON non supprimé :', error.message);
       }
     }
   } catch (error) {
@@ -1073,11 +1216,22 @@ function compactExistingSnapshotBinaryCopies() {
   return freed;
 }
 
-function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS) {
+// Garde les `keep` snapshots les plus récents ; supprime les autres du plus
+// ancien au plus récent, en s'arrêtant dès que `enough()` est vrai.
+// V6.46 — Sauvegarde restaurée récemment : jamais supprimée par l'entretien
+// (keep ≥ 1) ; en dernier recours (keep = 0), supprimée en dernier.
+function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS, enough = null) {
   let freed = 0;
   try {
     const snapshots = listFullSnapshots();
-    for (const snapshot of snapshots.slice(Math.max(0, keep))) {
+    const restoredToKeep = restoredSnapshotIdsToKeep(snapshots);
+    const candidates = snapshots.slice(Math.max(0, keep)).reverse();
+    const removable = [
+      ...candidates.filter(snapshot => !restoredToKeep.has(snapshot.id)),
+      ...(keep > 0 ? [] : candidates.filter(snapshot => restoredToKeep.has(snapshot.id)))
+    ];
+    for (const snapshot of removable) {
+      if (typeof enough === 'function' && enough()) break;
       freed += removePathForStorageRescue(
         path.join(SNAPSHOTS_DIR, snapshot.id),
         `snapshot ${snapshot.id}`
@@ -1112,41 +1266,153 @@ function cleanupStaleStorageTempFiles() {
 }
 
 
-function cleanupLooseBackupFilesForEmergency() {
+// V6.46 — `includeCore: false` : les .bak des données métier (produits,
+// comptes, instructions…) sont gardés ; seuls ceux des caches régénérables
+// partent. Du plus ancien au plus récent, arrêt dès que `enough()`.
+function cleanupLooseBackupFilesForEmergency({ includeCore = false, enough = null } = {}) {
   let freed = 0;
   try {
     if (!fs.existsSync(DATA_DIR)) return 0;
+    const candidates = [];
     for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       if (!entry.name.endsWith('.bak')) continue;
+      if (!includeCore && STORAGE_CORE_BACKUP_NAMES.has(entry.name)) continue;
       const fullPath = path.join(DATA_DIR, entry.name);
       try {
         const stat = fs.statSync(fullPath);
-        fs.unlinkSync(fullPath);
-        freed += Number(stat.size || 0);
+        candidates.push({ fullPath, name: entry.name, size: Number(stat.size || 0), mtimeMs: stat.mtimeMs });
+      } catch {}
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+        console.log(`🧹 Storage Rescue : ${file.name} supprimé (${humanBytes(file.size)}).`);
       } catch {}
     }
   } catch {}
   return freed;
 }
 
+function pruneRecycleBinForStorageRescue(enough = null) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(RECYCLE_DIR)) return 0;
+    const entries = fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })
+      .map(entry => {
+        const fullPath = path.join(RECYCLE_DIR, entry.name);
+        try { return { name: entry.name, fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs }; } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const entry of entries) {
+      if (typeof enough === 'function' && enough()) break;
+      freed += removePathForStorageRescue(entry.fullPath, `recycle/${entry.name}`);
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : corbeille non nettoyée :', error.message);
+  }
+  return freed;
+}
+
+function storageReferencedBasename(value, prefix) {
+  const raw = safeString(value);
+  if (!raw || (prefix && !raw.includes(prefix))) return '';
+  let fileName = safeString(raw.split('/').pop()).split(/[?#]/)[0];
+  try { fileName = decodeURIComponent(fileName); } catch {}
+  return fileName;
+}
+
+// Photos de profil encore affichées (état des conversations, notifications).
+function collectReferencedProfileBasenames() {
+  const output = new Set();
+  const add = value => {
+    const name = storageReferencedBasename(value, '/conversation-profile/');
+    if (name) output.add(name);
+  };
+  try {
+    for (const state of Object.values(readConversationStatesAdminCached() || {})) {
+      if (state && typeof state === 'object') add(state.profilePicture);
+    }
+  } catch {}
+  try {
+    for (const item of loadNotificationsStoreReadOnly().items) add(item?.profilePicture);
+  } catch {}
+  return output;
+}
+
+// Photos de profil plus utilisées par aucune conversation (cache orphelin),
+// plus anciennes que `olderThanMs`, de la plus ancienne à la plus récente.
+function pruneUnreferencedProfilePictures({ olderThanMs = 0, enough = null } = {}) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(CONVERSATION_PROFILE_DIR)) return 0;
+    const referenced = collectReferencedProfileBasenames();
+    const cutoff = Date.now() - Math.max(0, Number(olderThanMs) || 0);
+    const candidates = [];
+    for (const entry of fs.readdirSync(CONVERSATION_PROFILE_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || referenced.has(entry.name)) continue;
+      const fullPath = path.join(CONVERSATION_PROFILE_DIR, entry.name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs >= cutoff) continue;
+        candidates.push({ fullPath, size: Number(stat.size || 0), mtimeMs: stat.mtimeMs });
+      } catch {}
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+      } catch {}
+    }
+    if (freed) console.log(`🧹 Storage Rescue : photos de profil inutilisées supprimées (${humanBytes(freed)}).`);
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : photos de profil non nettoyées :', error.message);
+  }
+  return freed;
+}
+
+// V6.46 — Purge des médias anciens : UNIQUEMENT sur demande explicite d'un
+// administrateur (« Nettoyer le stockage »), jamais au démarrage ni par la
+// surveillance automatique. Médias des conversations ⭐ Favori / sans
+// réponse et visuels de publicités toujours conservés.
+function purgeOldConversationMediaOnAdminRequest() {
+  if (CLOUD_STORAGE_ENABLED) return 0;
+  const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
+  // V6.45 — visuels (images) des publicités d'origine de TOUTES les
+  // conversations : petits, partagés par pub, et impossibles à
+  // retélécharger une fois le lien Meta expiré.
+  for (const name of collectAdVisualMediaBasenames()) favoriteMedia.add(name);
+  const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const freed = pruneFilesOlderThan(
+    CONVERSATION_MEDIA_DIR,
+    mediaCutoff,
+    'conversation-media (nettoyage administrateur)',
+    { recursive: true, preserveBasenames: favoriteMedia }
+  );
+  if (freed) {
+    console.warn(`🧹 Nettoyage administrateur : médias de plus de ${EMERGENCY_MEDIA_RETENTION_DAYS} jours supprimés (${humanBytes(freed)}).`);
+  }
+  return freed;
+}
+
+// V6.46 — Passe par la copie mémoire partagée (notificationsStore) : plus
+// de lecture/écriture directe du fichier qui écraserait une notification
+// en attente d'écriture.
 function pruneNotificationsForStorageRescue() {
   try {
     if (!fs.existsSync(NOTIFICATIONS_PATH)) return 0;
     const beforeSize = Number(fs.statSync(NOTIFICATIONS_PATH).size || 0);
-    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
-    const items = Array.isArray(parsed?.items) ? parsed.items : [];
-    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
-    const kept = items
-      .filter(item => {
-        const ms = Date.parse(safeString(item?.createdAt));
-        return !Number.isFinite(ms) || ms >= cutoff;
-      })
-      .sort((a, b) => (Date.parse(safeString(b?.createdAt)) || 0) - (Date.parse(safeString(a?.createdAt)) || 0))
-      .slice(0, MAX_NOTIFICATION_ITEMS);
-
-    if (kept.length === items.length && items.length <= MAX_NOTIFICATION_ITEMS) return 0;
-    writeJsonAtomic(NOTIFICATIONS_PATH, { items: kept });
+    const items = loadNotificationsStoreReadOnly().items;
+    const kept = capNotificationItems(items);
+    if (kept.length === items.length) return 0;
+    saveNotificationsStore({ items: kept });
+    flushNotificationsStore();
     const afterSize = fs.existsSync(NOTIFICATIONS_PATH) ? Number(fs.statSync(NOTIFICATIONS_PATH).size || 0) : 0;
     return Math.max(0, beforeSize - afterSize);
   } catch (error) {
@@ -1163,7 +1429,8 @@ function pruneMessageIdIndexForStorageRescue() {
     const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
     if (lines.length <= MAX_MESSAGE_ID_LINES) return 0;
     const kept = lines.slice(-MAX_MESSAGE_ID_LINES);
-    fs.writeFileSync(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`, 'utf8');
+    // V6.46 — Réécriture atomique (temporaire + rename), jamais en place.
+    writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`);
     const afterSize = Number(fs.statSync(MESSAGE_ID_INDEX_PATH).size || 0);
     return Math.max(0, beforeSize - afterSize);
   } catch (error) {
@@ -1172,63 +1439,130 @@ function pruneMessageIdIndexForStorageRescue() {
   }
 }
 
+// V6.46 — Dernier recours borné à la place réelle de l'écriture refusée
+// (octets arrondis au bloc du système de fichiers). Avant : 1,35 × la
+// taille + 8 Ko, soit 3 blocs pour une écriture de 49 octets — chaque
+// petite sauvegarde supprimée ne libérant qu'un bloc de 4 Ko, la dernière
+// version JSON, les .bak des données ET le dernier snapshot partaient.
+function storageBytesOnDisk(bytes, blockSize) {
+  const block = Math.max(512, Number(blockSize) || 4096);
+  const size = Math.max(1, Number(bytes) || 0);
+  return Math.ceil(size / block) * block;
+}
+
+function storageHasRoomFor(neededBytes) {
+  const probe = storageWriteProbe();
+  if (!probe.writable) return false;
+  const space = storageSpaceInfo();
+  if (!space) return true;
+  return space.freeBytes >= storageBytesOnDisk(neededBytes, space.blockSize);
+}
+
+// V6.46 — Fichiers de statistiques / caches régénérables : leur écriture
+// refusée ne justifie jamais de supprimer le dernier snapshot, les .bak des
+// données ni les dernières versions JSON.
+const STORAGE_LAST_RESORT_SKIPPED_FILES = new Set([
+  'ai-usage.json',
+  'ai-history.json',
+  'sla-events.json',
+  'daily-reports.json',
+  'ai-eval-runs.json',
+  'team-activity.jsonl',
+  'cloud-media-migration.json'
+]);
+
+function storageLastResortSkipped(target) {
+  const name = path.basename(safeString(target));
+  return Boolean(name) && STORAGE_LAST_RESORT_SKIPPED_FILES.has(name);
+}
+
 // Libère uniquement des caches et sauvegardes régénérables, sans toucher aux
 // produits, instructions, utilisateurs, tâches, favoris ni conversation-state.
-function emergencyFreeDisposableStorage() {
+// V6.46 — Par paliers, du plus jetable au plus précieux, arrêt dès que la
+// marge cible (MONDECO_STORAGE_RESCUE_FREE_MB) est retrouvée.
+// `allowMediaPurge` : action explicite d'un administrateur uniquement.
+// V6.46 — `neededBytes` : taille de l'écriture refusée (ENOSPC). Le dernier
+// recours (dernières versions JSON, .bak des données, dernier snapshot) ne
+// libère plus que la place de CETTE écriture, arrondie au bloc (avant :
+// jusqu'à la marge critique de 16–40 Mo, inatteignable sur un disque plein
+// → toutes les dernières sauvegardes supprimées pour quelques Ko). Sans
+// écriture en attente de taille connue (surveillance, démarrage), pour un
+// fichier de statistiques (`target` : ai-usage.json…) ou quand l'écriture
+// échoue pour une autre raison que l'espace (EACCES, EROFS), il ne
+// s'exécute jamais.
+function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence', neededBytes = 0, target = '' } = {}) {
   if (storageEmergencyCleanupRunning) return 0;
+  const initialProbe = storageWriteProbe();
+  if (initialProbe.writable === false && storageLevel(storageSpaceInfo(), initialProbe) === 'unwritable') {
+    console.error(
+      `🚨 Storage Rescue (${reason}) : écriture impossible dans ${DATA_DIR} ` +
+      `(code=${initialProbe.errorCode || 'inconnu'}) sans manque d'espace : aucun fichier supprimé. ` +
+      'Vérifiez les droits et le montage du volume.'
+    );
+    return 0;
+  }
   storageEmergencyCleanupRunning = true;
   let freed = 0;
+  const steps = [];
+  const enough = () => storageHasHeadroom(STORAGE_RESCUE_TARGET_FREE_BYTES);
+  const lastResortBytes = Math.max(0, Number(neededBytes) || 0);
+  const lastResortAllowed = () =>
+    lastResortBytes > 0 &&
+    !storageLastResortSkipped(target) &&
+    !storageProbeFailsWithoutSpaceError(storageWriteProbe());
+  const stillCritical = () => !storageHasRoomFor(lastResortBytes);
+  const step = (label, fn) => {
+    const bytes = Number(fn() || 0);
+    if (bytes > 0) {
+      freed += bytes;
+      steps.push(`${label} ${humanBytes(bytes)}`);
+    }
+  };
   try {
-    freed += cleanupStaleStorageTempFiles();
-    freed += cleanupLooseBackupFilesForEmergency();
-    freed += pruneJsonBackupTreeForStorageRescue(0);
-    freed += compactExistingSnapshotBinaryCopies();
-    freed += pruneFullSnapshotsForStorageRescue(0);
+    if (!enough()) step('réserve', releaseStorageBallast);
+    if (!enough()) step('fichiers temporaires', cleanupStaleStorageTempFiles);
+    if (allowMediaPurge) step('corbeille', () => pruneRecycleBinForStorageRescue());
+    else if (!enough()) step('corbeille', () => pruneRecycleBinForStorageRescue(enough));
+    if (!enough()) step('copies redondantes des snapshots', compactExistingSnapshotBinaryCopies);
+    if (!enough()) step('anciens snapshots', () => pruneFullSnapshotsForStorageRescue(1, enough));
+    if (!enough()) step('anciennes versions JSON', () => pruneJsonBackupTreeForStorageRescue(1, enough));
+    if (!enough()) step('.bak des caches', () => cleanupLooseBackupFilesForEmergency({ includeCore: false, enough }));
+    if (!enough()) step('photos de profil inutilisées', () => pruneUnreferencedProfilePictures({ enough }));
 
-    if (fs.existsSync(RECYCLE_DIR)) {
-      for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
-        freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
-      }
-    }
-
-    // V6.33.1 : si Cloudinary est configuré, ne pas jeter les médias avant
-    // leur migration. Le transfert cloud démarre juste après le Storage Rescue
-    // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
-    // l'ancien comportement d'urgence.
-    if (!CLOUD_STORAGE_ENABLED) {
-      if (fs.existsSync(CONVERSATION_PROFILE_DIR)) {
-        freed += removePathForStorageRescue(CONVERSATION_PROFILE_DIR, 'conversation-profile (cache)');
-        try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
-      }
-
-      const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
-      const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-      freed += pruneFilesOlderThan(
-        CONVERSATION_MEDIA_DIR,
-        mediaCutoff,
-        'conversation-media urgence',
-        { recursive: true, preserveBasenames: favoriteMedia }
+    // Dernier recours : l'écriture en attente (ou toute écriture) reste
+    // impossible malgré tout le reste.
+    if (!enough() && lastResortAllowed() && stillCritical()) {
+      console.error(
+        `🚨 Stockage critique (${reason}) : suppression des dernières sauvegardes pour permettre l'enregistrement des messages. ` +
+        'Libérez de l’espace ou agrandissez le volume au plus vite.'
       );
+      step('dernières versions JSON', () => pruneJsonBackupTreeForStorageRescue(0, () => !stillCritical()));
+      if (stillCritical()) step('.bak des données', () => cleanupLooseBackupFilesForEmergency({ includeCore: true, enough: () => !stillCritical() }));
+      if (stillCritical()) step('dernier snapshot', () => pruneFullSnapshotsForStorageRescue(0, () => !stillCritical()));
     }
+
+    if (allowMediaPurge) step('médias anciens', purgeOldConversationMediaOnAdminRequest);
   } catch (error) {
     console.warn('⚠️ Storage Rescue urgence :', error.message);
   } finally {
     storageEmergencyCleanupRunning = false;
   }
+  if (steps.length) {
+    // console.error : déclenche l'alerte (ALERT_WEBHOOK_URL).
+    console.error(`🛟 Storage Rescue (${reason}) : ${steps.join(' · ')} — ${humanBytes(freed)} libérés au total.`);
+  } else if (!enough()) {
+    console.error(`🚨 Storage Rescue (${reason}) : aucun fichier jetable à supprimer, l'espace reste insuffisant. Libérez de l'espace sur le volume.`);
+  }
   return freed;
 }
 
-function ensureStorageHeadroom() {
+function ensureStorageHeadroom({ neededBytes = 0, target = '' } = {}) {
   const space = storageSpaceInfo();
   const probe = storageWriteProbe();
-  const critical =
-    !probe.writable ||
-    !space ||
-    space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
-    (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
+  const critical = storageLevel(space, probe) === 'critical';
 
   if (!critical) return { cleaned: false, freedBytes: 0, space, writable: probe.writable };
-  const freedBytes = emergencyFreeDisposableStorage();
+  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC', neededBytes, target });
   const after = storageSpaceInfo();
   const afterProbe = storageWriteProbe();
   return {
@@ -1408,6 +1742,41 @@ function collectFavoriteConversationMediaBasenames(favoriteContacts) {
   return output;
 }
 
+// V6.45 — Noms des fichiers images des visuels de publicités (adReferral
+// et contexte « publicité » Instagram/Messenger) de toutes les
+// conversations, plus les visuels partagés ad-visual-*. Les vidéos (anciens
+// enregistrements de pubs vidéo, jusqu'à 20 Mo chacune) ne sont pas
+// protégées : la réparation les remplace par la vignette.
+function collectAdVisualMediaBasenames() {
+  const output = new Set();
+  const isImageName = name => /\.(jpe?g|png|webp|gif)$/i.test(name);
+  const add = value => {
+    const raw = safeString(value);
+    if (!raw.startsWith('/admin/conversation-media/')) return;
+    let fileName = safeString(raw.split('/').pop()).split(/[?#]/)[0];
+    try { fileName = decodeURIComponent(fileName); } catch {}
+    if (fileName && isImageName(fileName)) output.add(fileName);
+  };
+  try {
+    for (const state of Object.values(loadConversationStatesAdmin() || {})) {
+      if (!state || typeof state !== 'object') continue;
+      add(state.adReferral?.storedMediaUrl);
+      if (safeString(state.sourceContext?.type) === 'ad') {
+        add(state.sourceContext?.previewUrl);
+        add(state.sourceContext?.ad?.storedMediaUrl);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : visuels publicités non listés :', error.message);
+  }
+  try {
+    for (const name of fs.readdirSync(CONVERSATION_MEDIA_DIR)) {
+      if (name.startsWith('ad-visual-') && isImageName(name)) output.add(name);
+    }
+  } catch {}
+  return output;
+}
+
 // V6.36.88 — Nettoyage agressif dédié à la VITESSE, à 48h plutôt que
 // HISTORY_IMPORT_DAYS (90 jours, trop risqué à modifier globalement, voir
 // commentaire ligne ~230). Réduit réellement la taille physique des gros
@@ -1441,49 +1810,8 @@ function pruneConversationHistoryByRetention() {
 
 function pruneConversationEventsByRetention(favoriteContacts = retentionProtectedConversationContacts()) {
   // Historique permanent : les journaux append-only ne sont jamais purgés automatiquement.
+  // V6.46 — Le code de purge qui suivait ce `return 0` (jamais exécuté) a été retiré.
   return 0;
-  let freed = 0;
-  try {
-    if (!fs.existsSync(CONVERSATION_EVENTS_DIR)) return 0;
-    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
-    for (const entry of fs.readdirSync(CONVERSATION_EVENTS_DIR, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      const match = /^conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(entry.name);
-      if (!match) continue;
-      const dayMs = Date.parse(`${match[1]}T23:59:59.999Z`);
-      if (!Number.isFinite(dayMs) || dayMs >= cutoff) continue;
-
-      const fullPath = path.join(CONVERSATION_EVENTS_DIR, entry.name);
-      try {
-        const stat = fs.statSync(fullPath);
-        const lines = fs.readFileSync(fullPath, 'utf8').split(/\r?\n/).filter(Boolean);
-        const keptLines = [];
-
-        for (const line of lines) {
-          try {
-            const event = JSON.parse(line);
-            if (favoriteContacts.has(safeString(event?.contact))) keptLines.push(line);
-          } catch {
-            // Une ligne illisible n'est pas conservée dans un journal déjà hors rétention.
-          }
-        }
-
-        if (keptLines.length) {
-          fs.writeFileSync(fullPath, `${keptLines.join('\n')}\n`);
-          const nextSize = Number(fs.statSync(fullPath).size || 0);
-          freed += Math.max(0, Number(stat.size || 0) - nextSize);
-        } else {
-          fs.unlinkSync(fullPath);
-          freed += Number(stat.size || 0);
-        }
-      } catch (error) {
-        console.warn('⚠️ Storage Rescue : ancien journal conversation non nettoyé :', error.message);
-      }
-    }
-  } catch (error) {
-    console.warn('⚠️ Storage Rescue : rétention conversation-events impossible :', error.message);
-  }
-  return freed;
 }
 
 function pruneSafeConversationCaches({ emergency = false } = {}) {
@@ -1507,9 +1835,9 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
 
   // Les photos de profil sont un cache cosmétique. En manque d'espace, on peut
   // retirer les anciennes sans supprimer les conversations ni les données métier.
+  // V6.46 — seulement celles qu'aucune conversation n'affiche plus.
   if (emergency) {
-    const profileCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    freed += pruneFilesOlderThan(CONVERSATION_PROFILE_DIR, profileCutoff, 'conversation-profile', { recursive: true });
+    freed += pruneUnreferencedProfilePictures({ olderThanMs: 14 * 24 * 60 * 60 * 1000 });
   }
   return freed;
 }
@@ -1577,35 +1905,41 @@ function markRetention15MigrationApplied() {
   return next;
 }
 
-function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false } = {}) {
+// V6.46 — `forceEmergency` : nettoyage par paliers même si l'espace semble
+// suffisant (bouton administrateur) ; `allowMediaPurge` : action explicite
+// d'un administrateur uniquement. Le niveau est décidé sur l'espace libre
+// absolu (storageLevel), jamais sur un ratio.
+function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false, allowMediaPurge = false, reason = 'entretien' } = {}) {
   const before = storageSpaceInfo();
+  const level = storageLevel(before, storageWriteProbe());
   let freed = 0;
 
   // En urgence, commencer par ce qui ne nécessite aucune nouvelle écriture.
   // Cela crée immédiatement de la marge pour pouvoir ensuite compacter les JSON.
-  if (forceEmergency) {
-    freed += emergencyFreeDisposableStorage();
-  } else {
-    freed += cleanupStaleStorageTempFiles();
-    freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
-    freed += compactExistingSnapshotBinaryCopies();
-    freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+  if (forceEmergency || level === 'critical') {
+    freed += emergencyFreeDisposableStorage({ allowMediaPurge, reason });
   }
 
+  // Entretien courant : seulement jusqu'aux limites configurées.
+  freed += cleanupStaleStorageTempFiles();
+  freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
+  if (COMPACT_STORAGE_MODE) freed += compactExistingSnapshotBinaryCopies();
+  freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+
   if (!skipConversationRetention) {
-    freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
+    // V6.46 — 'unwritable' (droits, montage) n'est pas un manque d'espace.
+    freed += pruneSafeConversationCaches({ emergency: level === 'critical' || level === 'low' });
   }
 
   freed += pruneNotificationsForStorageRescue();
   freed += pruneMessageIdIndexForStorageRescue();
 
-  if (fs.existsSync(RECYCLE_DIR) && (forceEmergency || (before && before.freeRatio < 0.15))) {
-    for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
-      freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
-    }
+  // Espace bas (sans être critique) : paliers jetables jusqu'à la marge cible.
+  if (!forceEmergency && level === 'low') {
+    freed += emergencyFreeDisposableStorage({ reason });
   }
   const after = storageSpaceInfo();
-  return { before, after, freedBytes: freed, breakdown: storageBreakdown() };
+  return { before, after, level, freedBytes: freed, breakdown: storageBreakdown() };
 }
 
 function runStartupStorageRescue() {
@@ -1613,20 +1947,33 @@ function runStartupStorageRescue() {
 
   const before = storageSpaceInfo();
   const beforeProbe = storageWriteProbe();
-  const lowSpace =
-    !before ||
-    before.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
-    (Number.isFinite(before.freeRatio) && before.freeRatio < 0.20) ||
-    !beforeProbe.writable;
+  // V6.46 — Espace libre ABSOLU (MONDECO_STORAGE_RESCUE_FREE_MB /
+  // MONDECO_STORAGE_CRITICAL_FREE_MB), plus de ratio : un disque « rempli à
+  // 80 % » avec des Go libres n'est pas en manque d'espace.
+  const level = storageLevel(before, beforeProbe);
+  // V6.46 — 'unwritable' (EACCES, EROFS…) : rien n'est supprimé et le délai
+  // de grâce de rétention n'est pas annulé ; ensurePersistenceSafety()
+  // arrête ensuite le démarrage avec le code d'erreur.
+  if (level === 'unwritable') {
+    console.error(
+      `🚨 Storage Rescue (démarrage) : ${DATA_DIR} n'est pas accessible en écriture ` +
+      `(code=${beforeProbe.errorCode || 'inconnu'}) alors que l'espace libre suffit : aucune sauvegarde supprimée.`
+    );
+    return;
+  }
+  const lowSpace = level !== 'ok';
 
   const retentionReady = retention15MigrationReady();
   // V6.33.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
   // Si l'espace est critique, la rétention 15 jours demandée par l'administrateur
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
-  const emergencyRetentionOverride = lowSpace && !retentionReady;
+  // V6.46 — Sauf si l'écriture échoue pour une autre raison que l'espace
+  // (EACCES, EROFS) : supprimer des conversations n'y changerait rien.
+  const emergencyRetentionOverride = lowSpace && !retentionReady && !storageProbeFailsWithoutSpaceError(beforeProbe);
   const result = runSafeStorageMaintenance({
-    forceEmergency: lowSpace,
-    skipConversationRetention: !retentionReady && !emergencyRetentionOverride
+    forceEmergency: level === 'critical',
+    skipConversationRetention: !retentionReady && !emergencyRetentionOverride,
+    reason: 'démarrage'
   });
   if (retentionReady || emergencyRetentionOverride) markRetention15MigrationApplied();
   const afterProbe = storageWriteProbe();
@@ -1644,6 +1991,7 @@ function runStartupStorageRescue() {
 
   console.log('🛟 MONDECO Storage Rescue', {
     mode: 'compact',
+    level,
     retentionDays: HISTORY_IMPORT_DAYS,
     retentionApplied: retentionReady,
     estimatedFreed: humanBytes(result.freedBytes),
@@ -2086,6 +2434,9 @@ function listFullSnapshots() {
         reason:
           meta.reason ||
           'manual',
+        // V6.46 — date de la dernière restauration de cette sauvegarde.
+        restoredAt:
+          safeString(meta.restoredAt),
         productCount:
           Number(meta.productCount || 0),
         instructionCount:
@@ -2101,9 +2452,57 @@ function listFullSnapshots() {
     );
 }
 
-function pruneFullSnapshots() {
+// V6.46 — Sauvegarde restaurée (restoredAt dans snapshot-meta.json) : gardée
+// par la rotation tant qu'aucun snapshot plus récent de l'état restauré
+// n'existe (une copie « before-restore-… » ne compte pas : c'est l'état
+// abandonné). Avant, en mode compact (1 snapshot), le redémarrage suivant
+// supprimait la bonne sauvegarde et ne gardait que la copie de l'état
+// dont l'administrateur venait de revenir.
+function isBeforeRestoreSnapshot(snapshot) {
+  return safeString(snapshot?.reason).startsWith('before-restore-');
+}
+
+function restoredSnapshotIdsToKeep(snapshots = listFullSnapshots()) {
+  const kept = new Set();
+  let latest = null;
+  for (const snapshot of snapshots) {
+    const restoredMs = Date.parse(safeString(snapshot?.restoredAt));
+    if (!Number.isFinite(restoredMs)) continue;
+    if (!latest || restoredMs > latest.restoredMs) latest = { id: snapshot.id, restoredMs };
+  }
+  if (!latest) return kept;
+  const newerGoodSnapshot = snapshots.some(snapshot =>
+    snapshot.id !== latest.id &&
+    !isBeforeRestoreSnapshot(snapshot) &&
+    Date.parse(safeString(snapshot.createdAt)) > latest.restoredMs
+  );
+  if (!newerGoodSnapshot) kept.add(latest.id);
+  return kept;
+}
+
+function markSnapshotRestored(snapshotDir) {
+  try {
+    const meta = snapshotMetadata(snapshotDir);
+    writeTextFileAtomic(
+      path.join(snapshotDir, 'snapshot-meta.json'),
+      JSON.stringify({ ...meta, restoredAt: new Date().toISOString() }, null, 2)
+    );
+  } catch (error) {
+    console.warn('⚠️ Restauration : date de restauration non enregistrée :', error.message);
+  }
+}
+
+// V6.46 — `protectIds` : snapshots jamais supprimés par ce nettoyage
+// (sauvegarde en cours de restauration et sa copie de protection).
+function pruneFullSnapshots({ protectIds = [] } = {}) {
   const snapshots =
     listFullSnapshots();
+  const protectedIds = new Set(
+    (Array.isArray(protectIds) ? protectIds : [protectIds])
+      .map(safeString)
+      .filter(Boolean)
+  );
+  for (const id of restoredSnapshotIdsToKeep(snapshots)) protectedIds.add(id);
 
   for (
     const snapshot
@@ -2111,6 +2510,7 @@ function pruneFullSnapshots() {
       MAX_FULL_SNAPSHOTS
     )
   ) {
+    if (protectedIds.has(snapshot.id)) continue;
     try {
       fs.rmSync(
         path.join(
@@ -2131,10 +2531,14 @@ function pruneFullSnapshots() {
   }
 }
 
-function createFullSnapshot(reason = 'manual') {
+// V6.46 — `prune: false` : aucun ancien snapshot supprimé (copie de
+// protection faite juste avant une restauration, voir restoreFullSnapshot).
+function createFullSnapshot(reason = 'manual', { prune = true, protectIds = [] } = {}) {
   // V6.37.3 — Le JSON d'état n'étant écrit qu'une fois par minute, on
   // l'écrit avant de le copier dans le snapshot.
   try { flushConversationStatesWrite(); } catch (error) { console.warn('⚠️ Snapshot : état non écrit :', error.message); }
+  // V6.46 — Notifications et autres magasins à écriture groupée aussi.
+  try { flushAllJsonStores(); } catch (error) { console.warn('⚠️ Snapshot : écritures groupées non faites :', error.message); }
 
   const id =
     `snapshot-${timestampId()}`;
@@ -2272,13 +2676,42 @@ function createFullSnapshot(reason = 'manual') {
     'utf8'
   );
 
-  pruneFullSnapshots();
+  if (prune !== false) pruneFullSnapshots({ protectIds });
 
   console.log(
     `💾 Snapshot créé : ${id}`
   );
 
   return meta;
+}
+
+// V6.46 — Copie atomique d'un fichier de sauvegarde vers sa place active :
+// fichier temporaire puis rename (jamais de fichier actif à moitié copié).
+function copyFileAtomicForRestore(source, target) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.${Date.now()}.restore.tmp`;
+  try {
+    fs.copyFileSync(source, temp);
+    fs.renameSync(temp, target);
+  } finally {
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch {}
+  }
+}
+
+// V6.46 — Après une restauration : les copies en mémoire des fichiers
+// remplacés sont relues (état des conversations, notifications, Inbox).
+function reloadMemoryCachesAfterRestore() {
+  try {
+    // Relecture immédiate du JSON restauré : resynchronisation SQLite
+    // planifiée par lib/conversation-state-store.js.
+    conversationStateStore().live();
+  } catch (error) {
+    console.error('❌ Restauration : état des conversations non rechargé :', error.message);
+  }
+  try { notificationsStore().reload(); } catch (error) { console.warn('⚠️ Restauration : notifications non rechargées :', error.message); }
+  try { usersCache = null; usersCacheStamp = null; } catch {}
+  try { resetInboxCachesAfterMessageChange(); } catch {}
+  try { invalidateWhatsAppLogCache(); } catch {}
 }
 
 function restoreFullSnapshot(snapshotId) {
@@ -2311,28 +2744,54 @@ function restoreFullSnapshot(snapshotId) {
     );
   }
 
-  // Protection avant restauration.
-  createFullSnapshot(
-    `before-restore-${safeId}`
+  // V6.46 — Fichiers réellement présents (et lisibles) dans la sauvegarde,
+  // vérifiés AVANT toute modification. Avant, la copie de protection
+  // ci-dessous supprimait (rotation) la sauvegarde à restaurer : rien
+  // n'était restauré, la réponse annonçait un succès et la dernière bonne
+  // sauvegarde était perdue.
+  const binaryDirectories = ['uploads', 'customizations', 'conversation-media', 'conversation-profile', 'conversation-events'];
+  const restorableFiles = snapshotFiles().filter(item =>
+    fileExistsWithContent(path.join(snapshotDir, item.name))
+  );
+  const restorableDirectories = binaryDirectories.filter(name => {
+    try { return fs.statSync(path.join(snapshotDir, name)).isDirectory(); } catch { return false; }
+  });
+  if (!restorableFiles.length && !restorableDirectories.length) {
+    throw new Error('Sauvegarde vide : aucun fichier à restaurer.');
+  }
+  for (const item of restorableFiles) {
+    if (!item.name.endsWith('.json')) continue;
+    try {
+      JSON.parse(fs.readFileSync(path.join(snapshotDir, item.name), 'utf8'));
+    } catch (error) {
+      throw new Error(`Sauvegarde endommagée : ${item.name} illisible (${error.message}). Rien n'a été modifié.`);
+    }
+  }
+
+  // Protection avant restauration : copie de l'état actuel, SANS rotation
+  // (la sauvegarde restaurée ne doit jamais être supprimée).
+  const safetySnapshot = createFullSnapshot(
+    `before-restore-${safeId}`,
+    { prune: false }
   );
 
-  for (const item of snapshotFiles()) {
+  const restoredFiles = [];
+  for (const item of restorableFiles) {
     const source =
       path.join(
         snapshotDir,
         item.name
       );
 
-    if (fs.existsSync(source)) {
-      backupJsonVersion(
-        item.source
-      );
+    backupJsonVersion(
+      item.source
+    );
 
-      fs.copyFileSync(
-        source,
-        item.source
-      );
-    }
+    copyFileAtomicForRestore(
+      source,
+      item.source
+    );
+    restoredFiles.push(item.name);
   }
 
   const snapshotUploads =
@@ -2437,14 +2896,28 @@ function restoreFullSnapshot(snapshotId) {
   }
 
   markInstructionsMigrationDone();
+  reloadMemoryCachesAfterRestore();
+  // V6.46 — Gardée par les rotations suivantes (redémarrage compris) tant
+  // qu'aucun snapshot plus récent de l'état restauré n'existe.
+  markSnapshotRestored(snapshotDir);
+
+  // Rotation seulement maintenant, sans jamais supprimer la sauvegarde
+  // restaurée ni la copie de protection.
+  pruneFullSnapshots({ protectIds: [safeId, safetySnapshot?.id] });
 
   console.log(
-    `♻️ Snapshot restauré : ${safeId}`
+    `♻️ Snapshot restauré : ${safeId} (${restoredFiles.length} fichier(s), ` +
+    `${restorableDirectories.length} dossier(s) ; copie de protection : ${safetySnapshot?.id || 'aucune'})`
   );
 
-  return snapshotMetadata(
-    snapshotDir
-  );
+  return {
+    ...snapshotMetadata(
+      snapshotDir
+    ),
+    restoredFiles,
+    restoredDirectories: restorableDirectories,
+    safetySnapshotId: safeString(safetySnapshot?.id)
+  };
 }
 
 function createExternalDataExport() {
@@ -2483,10 +2956,44 @@ function createExternalDataExport() {
   };
 }
 
-function ensureDailySnapshot() {
+// V6.46 — Taille estimée d'un snapshot (fichiers copiés), pour décider
+// sur l'espace absolu s'il peut être créé.
+function estimateFullSnapshotBytes() {
+  const compactNames = new Set([
+    'products.json', 'instructions.json', 'settings.json', 'customization-requests.json',
+    'commercial-corrections.json', 'quick-replies.json', 'users.json', 'conversation-state.json',
+    'woocommerce-sync.json', 'schedules.json', 'tasks.json', 'daily-reports.json'
+  ]);
+  let total = 0;
+  for (const item of snapshotFiles()) {
+    if (COMPACT_STORAGE_MODE && !compactNames.has(item.name)) continue;
+    try { total += Number(fs.statSync(item.source).size || 0); } catch {}
+  }
+  if (!COMPACT_STORAGE_MODE) {
+    for (const dir of [UPLOADS_DIR, CUSTOMIZATIONS_DIR, CONVERSATION_MEDIA_DIR, CONVERSATION_PROFILE_DIR, CONVERSATION_EVENTS_DIR]) {
+      total += pathSizeBytes(dir);
+    }
+  }
+  return total;
+}
+
+let dailySnapshotSkipLoggedDay = '';
+function ensureDailySnapshot({ quiet = false } = {}) {
+  // V6.46 — Ignoré seulement si l'espace libre ABSOLU ne suffit pas pour
+  // deux fois la taille du snapshot en plus de la marge critique (avant :
+  // ignoré dès que moins de 25 % du disque était libre, même avec des Go).
+  // `quiet` (surveillance périodique) : au plus une alerte par jour.
   const space = storageSpaceInfo();
-  if (space && (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES || (Number.isFinite(space.freeRatio) && space.freeRatio < 0.25))) {
-    console.warn('🧹 Snapshot quotidien ignoré : marge de stockage insuffisante.');
+  const needed = STORAGE_CRITICAL_FREE_BYTES + 2 * estimateFullSnapshotBytes();
+  if (space && space.freeBytes < needed) {
+    const day = new Date().toISOString().slice(0, 10);
+    if (!quiet || dailySnapshotSkipLoggedDay !== day) {
+      dailySnapshotSkipLoggedDay = day;
+      console.error(
+        `🚨 Snapshot quotidien ignoré : marge de stockage insuffisante (${humanBytes(space.freeBytes)} libres, ` +
+        `${humanBytes(needed)} nécessaires).`
+      );
+    }
     return;
   }
   try {
@@ -2495,9 +3002,12 @@ function ensureDailySnapshot() {
         .toISOString()
         .slice(0, 10);
 
+    // V6.46 — Une copie « before-restore-… » (état abandonné lors d'une
+    // restauration) ne compte pas comme snapshot du jour.
     const existsToday =
       listFullSnapshots()
         .some(snapshot =>
+          !isBeforeRestoreSnapshot(snapshot) &&
           String(
             snapshot.createdAt
           ).slice(0, 10) === today
@@ -2571,9 +3081,16 @@ function writeJsonAtomic(filePath, data) {
     } catch {}
   };
 
+  // V6.46 — Fichiers de données de taille raisonnable : contenu forcé sur
+  // disque (fsync) avant le rename, puis le dossier, pour qu'une coupure de
+  // courant ne laisse pas un fichier vide (0 octet) à la place des données.
+  // Les très gros fichiers réécrits souvent (état, journal) ne sont pas
+  // concernés : SQLite et les journaux .jsonl en gardent une copie.
   const atomicAttempt = () => {
-    fs.writeFileSync(tempPath, serialized, 'utf8');
+    const durable = serializedBytes <= (DURABLE_WRITE_MAX_BYTES || 0);
+    writeFileDurably(tempPath, serialized, durable);
     fs.renameSync(tempPath, filePath);
+    if (durable) fsyncDirectoryQuietly(path.dirname(filePath));
   };
 
   try {
@@ -2584,7 +3101,7 @@ function writeJsonAtomic(filePath, data) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
 
     console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
-    emergencyFreeDisposableStorage();
+    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}`, neededBytes: serializedBytes, target: filePath });
 
     try {
       atomicAttempt();
@@ -2610,6 +3127,132 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
+// V6.46 — Écriture durable (fsync) d'un fichier temporaire. `var` : ces
+// fonctions peuvent servir très tôt au chargement du module.
+var DURABLE_WRITE_MAX_BYTES = 8 * 1024 * 1024;
+
+function writeFileDurably(filePath, content, durable = true) {
+  if (!durable) {
+    fs.writeFileSync(filePath, content, 'utf8');
+    return;
+  }
+  const fd = fs.openSync(filePath, 'w');
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+    try { fs.fsyncSync(fd); } catch {}
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function fsyncDirectoryQuietly(directory) {
+  let fd = null;
+  try {
+    fd = fs.openSync(directory, 'r');
+    fs.fsyncSync(fd);
+  } catch {
+    // Non pris en charge sur certains systèmes (Windows) : sans gravité.
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
+// V6.46 — Réécriture atomique d'un fichier texte (journaux .jsonl, index
+// message_id) : fichier temporaire, fsync, rename. Jamais de réécriture en
+// place qu'un arrêt brutal ou un disque plein laisserait tronquée.
+function writeTextFileAtomic(filePath, text) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    writeFileDurably(tempPath, text, Buffer.byteLength(text, 'utf8') <= (DURABLE_WRITE_MAX_BYTES || 0));
+    fs.renameSync(tempPath, filePath);
+    fsyncDirectoryQuietly(path.dirname(filePath));
+  } finally {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+  }
+}
+
+// V6.46 — Fichier illisible mis de côté (<fichier>.corrupt-<date>) avant
+// toute réécriture : il n'est jamais écrasé ni copié sur le .bak valide.
+// Une seule copie par version du fichier (taille + date).
+var quarantinedCorruptFiles;
+function quarantineCorruptDataFile(filePath, label, { copy = false } = {}) {
+  if (!quarantinedCorruptFiles) quarantinedCorruptFiles = new Map();
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const stamp = fileChangeStamp(filePath);
+    if (quarantinedCorruptFiles.get(filePath) === stamp) return '';
+    if (!fileExistsWithContent(filePath)) return '';
+    const target = `${filePath}.corrupt-${timestampId()}`;
+    if (copy) fs.copyFileSync(filePath, target);
+    else fs.renameSync(filePath, target);
+    quarantinedCorruptFiles.set(filePath, copy ? stamp : 'missing');
+    console.error(`🚨 ${label} illisible conservé sous ${path.basename(target)}.`);
+    return target;
+  } catch (error) {
+    console.error(`❌ ${label} illisible non mis de côté :`, error.message);
+    return '';
+  }
+}
+
+// V6.46 — Erreur de LECTURE passagère (trop de fichiers ouverts, E/S,
+// droits, verrou…) : le fichier n'est pas abîmé. Seuls un fichier vide
+// (0 octet) ou un JSON invalide (SyntaxError) justifient de le mettre de
+// côté et de reprendre son .bak ; sinon on garde la dernière valeur connue
+// (ou le .bak en mémoire pour cet appel) sans rien écrire ni mémoriser.
+// Avant : un seul EMFILE remplaçait définitivement users.json / settings.json
+// par leur .bak (IA réactivée, compte désactivé réactivé, compte récent
+// supprimé).
+function jsonReadErrorIsTransient(error) {
+  const code = safeString(error?.code);
+  return Boolean(code) && code !== 'ENOENT' && !(error instanceof SyntaxError);
+}
+
+function readJsonBackupQuietly(filePath, accept) {
+  try {
+    const backupPath = `${filePath}.bak`;
+    if (!fileExistsWithContent(backupPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+    return typeof accept === 'function' && !accept(parsed) ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+// V6.46 — Reprise d'un fichier JSON vide (0 octet) ou illisible depuis son
+// .bak valide (`accept(parsed)` vrai) : le fichier illisible est d'abord mis
+// de côté (.corrupt-<date>), puis le .bak est recopié à sa place (les
+// écritures suivantes ne repartent jamais d'une valeur vide et ne copient
+// jamais une version illisible sur le .bak). Renvoie la valeur du .bak, ou
+// null si aucun .bak valide n'existe.
+function recoverJsonFileFromBackup(filePath, label, accept, reason) {
+  const backupPath = `${filePath}.bak`;
+  let backup = null;
+  try {
+    if (!fileExistsWithContent(backupPath)) return null;
+    backup = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+  } catch (error) {
+    console.error(`❌ ${path.basename(backupPath)} invalide :`, error.message);
+    return null;
+  }
+  if (typeof accept === 'function' && !accept(backup)) return null;
+  if (fileExistsWithContent(filePath)) quarantineCorruptDataFile(filePath, label);
+  try {
+    const temp = `${filePath}.${process.pid}.${Date.now()}.restore.tmp`;
+    fs.copyFileSync(backupPath, temp);
+    fs.renameSync(temp, filePath);
+  } catch (error) {
+    console.warn(`⚠️ ${label} : copie du .bak impossible :`, error.message);
+  }
+  console.error(`♻️ ${label} ${reason} : restauré depuis ${path.basename(backupPath)}.`);
+  return backup;
+}
+
+// V6.46 — Un fichier vide (0 octet) est traité comme un fichier illisible :
+// reprise du .bak (avant : « [] », le catalogue du bot devenait vide). Un
+// fichier illisible est mis de côté puis remplacé par son .bak valide.
 function readJsonArray(filePath, label) {
   const backupPath = `${filePath}.bak`;
 
@@ -2623,25 +3266,64 @@ function readJsonArray(filePath, label) {
     return Array.isArray(parsed) ? parsed : [];
   }
 
-  try {
-    const data = read(filePath);
-    return data === null ? [] : data;
-  } catch (error) {
-    console.error(`❌ Lecture ${label} impossible :`, error.message);
-
+  function readBackup() {
     try {
-      const backup = read(backupPath);
-      if (backup !== null) {
-        console.warn(`♻️ ${label} restauré depuis backup`);
-        return backup;
-      }
+      return read(backupPath);
     } catch (backupError) {
       console.error(
         `❌ Backup ${label} invalide :`,
         backupError.message
       );
+      return null;
+    }
+  }
+
+  function restoreFromBackup(reason) {
+    const backup = readBackup();
+    if (backup === null) return null;
+    console.error(`♻️ ${label} ${reason} : restauré depuis ${path.basename(backupPath)} (${backup.length} élément(s)).`);
+    try {
+      // Le fichier actif reprend le contenu du .bak (relectures suivantes
+      // cohérentes, aucune écriture ne repartira d'une liste vide).
+      const temp = `${filePath}.${process.pid}.${Date.now()}.restore.tmp`;
+      fs.copyFileSync(backupPath, temp);
+      fs.renameSync(temp, filePath);
+    } catch (error) {
+      console.warn(`⚠️ ${label} : copie du .bak impossible :`, error.message);
+    }
+    return backup;
+  }
+
+  try {
+    const data = read(filePath);
+    if (data !== null) return data;
+    // Fichier présent mais vide : jamais lu comme une liste vide si un
+    // .bak valide existe.
+    let size = -1;
+    try { size = fs.statSync(filePath).size; } catch {}
+    if (size === 0) {
+      const backup = restoreFromBackup('vide (0 octet)');
+      if (backup !== null) return backup;
+    }
+    return [];
+  } catch (error) {
+    console.error(`❌ Lecture ${label} impossible :`, error.message);
+
+    if (jsonReadErrorIsTransient(error)) {
+      // Erreur passagère : fichier gardé tel quel, .bak lu en mémoire
+      // seulement pour cet appel.
+      return readJsonBackupQuietly(filePath, Array.isArray) || [];
     }
 
+    const backup = readBackup();
+    if (backup !== null) {
+      quarantineCorruptDataFile(filePath, label);
+      return restoreFromBackup('illisible') || backup;
+    }
+
+    // Aucun .bak valide : copie de sécurité du fichier illisible (il reste
+    // en place ; la prochaine écriture ne le perdra pas).
+    quarantineCorruptDataFile(filePath, label, { copy: true });
     return [];
   }
 }
@@ -2667,13 +3349,36 @@ function loadPurgedRecordHashes() {
   const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
   if (purgedRecordHashesCache.stamp === stamp) return purgedRecordHashesCache.set;
   let hashes = [];
+  let raw = '';
   try {
     if (fs.existsSync(PURGED_RECORD_HASHES_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8') || '{}');
+      raw = fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8');
+      // V6.46 — Fichier vide (0 octet) : traité comme illisible (reprise du
+      // .bak), jamais comme « aucune empreinte ».
+      if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+      const parsed = JSON.parse(raw);
       hashes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.hashes) ? parsed.hashes : []);
     }
   } catch (error) {
-    console.warn('⚠️ Lecture empreintes suppression :', error.message);
+    // V6.46 — Fichier illisible : les empreintes (SHA-256) encore entières
+    // sont récupérées dans le texte, plus celles du .bak ; le fichier est
+    // conservé à part. Avant : liste vide, puis réécrite avec la seule
+    // nouvelle empreinte — les messages supprimés pouvaient revenir.
+    console.error('❌ Lecture empreintes suppression :', error.message);
+    if (jsonReadErrorIsTransient(error)) {
+      // Erreur passagère : dernière liste connue (ou .bak), rien mémorisé.
+      if (purgedRecordHashesCache.stamp) return purgedRecordHashesCache.set;
+      const backup = readJsonBackupQuietly(PURGED_RECORD_HASHES_PATH);
+      return new Set(((Array.isArray(backup) ? backup : backup?.hashes) || []).map(safeString).filter(Boolean));
+    }
+    const recovered = new Set(String(raw).match(/[0-9a-f]{64}/g) || []);
+    try {
+      const backup = JSON.parse(fs.readFileSync(`${PURGED_RECORD_HASHES_PATH}.bak`, 'utf8'));
+      for (const hash of (Array.isArray(backup) ? backup : backup?.hashes) || []) recovered.add(safeString(hash));
+    } catch {}
+    quarantineCorruptDataFile(PURGED_RECORD_HASHES_PATH, '.purged-record-hashes.json', { copy: true });
+    hashes = [...recovered];
+    console.error(`♻️ Empreintes de suppression récupérées : ${hashes.length}.`);
   }
   const set = new Set(hashes.map(safeString).filter(Boolean));
   purgedRecordHashesCache = { stamp, set };
@@ -2733,7 +3438,7 @@ function attachmentDirectionForPurge(entry = {}) {
   return 'incoming';
 }
 
-function applyConversationPurgeTombstones(entry = {}) {
+function applyConversationPurgeTombstones(entry = {}, options = {}) {
   if (!entry || typeof entry !== 'object') return null;
   const hashes = loadPurgedRecordHashes();
   const incomingHash = conversationEntryPartPurgeHash(entry,'incoming');
@@ -2765,10 +3470,17 @@ function applyConversationPurgeTombstones(entry = {}) {
     }
   }
 
+  // V6.45 — Messages masqués (suppression réversible) : remplacés à la
+  // lecture par une mention visible, sans jamais toucher aux fichiers.
+  // Désactivé lors d'une réécriture de fichier (purge définitive).
+  if (options.soft !== false) next = applyConversationSoftDeletions(next, incomingHash, replyHash);
+
   const meaningful = Boolean(
     safeString(next?.incoming) || safeString(next?.reply) ||
     (Array.isArray(next?.attachments) && next.attachments.length) ||
-    ['facebook_message_read','facebook_message_delivery','facebook_message_reaction'].includes(safeString(next?.action))
+    ['facebook_message_read','facebook_message_delivery','facebook_message_reaction'].includes(safeString(next?.action)) ||
+    // V6.45 — Événements WhatsApp sans texte (réaction, reprise de l'IA…).
+    ['customer_reaction','whatsapp_system_event','ai_auto_resumed','meta_delivery_failed'].includes(safeString(next?.action))
   );
   return meaningful ? next : null;
 }
@@ -4240,9 +4952,12 @@ function getBotSettings() {
     const stamp = fileChangeStamp(SETTINGS_PATH);
     if (botSettingsCache && stamp === botSettingsCacheStamp) return botSettingsCache;
 
-    const parsed = JSON.parse(
-      fs.readFileSync(SETTINGS_PATH, 'utf8') || '{}'
-    );
+    const raw = fs.readFileSync(SETTINGS_PATH, 'utf8');
+    // V6.46 — Fichier vide (0 octet) : traité comme illisible (reprise du
+    // .bak). Avant : réglages par défaut (IA réactivée alors que le .bak
+    // disait aiEnabled:false).
+    if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+    const parsed = JSON.parse(raw);
 
     botSettingsCache = normalizeSettings(parsed);
     botSettingsCacheStamp = stamp;
@@ -4253,7 +4968,32 @@ function getBotSettings() {
       error.message
     );
 
-    return normalizeSettings(DEFAULT_SETTINGS);
+    if (jsonReadErrorIsTransient(error)) {
+      // V6.46 — Erreur passagère : dernière valeur connue (sinon le .bak
+      // en mémoire), fichier gardé, rien mémorisé : l'appel suivant relit
+      // le vrai fichier.
+      if (botSettingsCache) return botSettingsCache;
+      const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+      return normalizeSettings(readJsonBackupQuietly(SETTINGS_PATH, isObject) || DEFAULT_SETTINGS);
+    }
+
+    const backup = recoverJsonFileFromBackup(
+      SETTINGS_PATH,
+      'settings.json',
+      value => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
+      'illisible ou vide'
+    );
+    if (backup) {
+      botSettingsCache = normalizeSettings(backup);
+      botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
+      return botSettingsCache;
+    }
+
+    // Aucun .bak valide : réglages par défaut, gardés jusqu'au prochain
+    // changement du fichier (une seule alerte, pas une par message).
+    botSettingsCache = normalizeSettings(DEFAULT_SETTINGS);
+    botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
+    return botSettingsCache;
   }
 }
 
@@ -4265,6 +5005,10 @@ function saveBotSettings(settings) {
     SETTINGS_PATH,
     normalized
   );
+  // V6.46 — Mémoire à jour de ce qui vient d'être écrit (une lecture
+  // suivante en erreur passagère ne renvoie jamais la version d'avant).
+  botSettingsCache = normalized;
+  botSettingsCacheStamp = fileChangeStamp(SETTINGS_PATH);
 
   return normalized;
 }
@@ -4296,26 +5040,51 @@ ensureDailySnapshot();
 
 // V6.33.1 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
-const storageGuardTimer = setInterval(() => {
+// V6.46 — Niveau décidé sur l'espace libre absolu (plus de ratio) ; quand
+// tout va bien : index message_id plafonné et réserve d'espace recréée.
+// V6.46 — Niveau constaté au passage précédent de la surveillance.
+let storageGuardPreviousLevel = '';
+function runStorageGuardTick() {
   if (storagePeriodicGuardRunning) return;
   storagePeriodicGuardRunning = true;
   try {
     const space = storageSpaceInfo();
-    if (!space) return;
-    const critical =
-      space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
-      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
-    const low =
-      critical ||
-      space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
-      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.20);
-    if (!low) return;
+    const probe = storageWriteProbe();
+    const level = storageLevel(space, probe);
+    const critical = level === 'critical';
+    if (level === 'unwritable') {
+      // V6.46 — Droits / montage : alerte, aucune suppression.
+      console.error(`🚨 Storage Guard : ${DATA_DIR} n'est pas accessible en écriture (code=${probe.errorCode || 'inconnu'}) ; aucune sauvegarde supprimée.`);
+      return;
+    }
+    const low = level !== 'ok';
+    const previousLevel = storageGuardPreviousLevel;
+    storageGuardPreviousLevel = level;
+    if (!low) {
+      try { pruneMessageIdIndexForStorageRescue(); } catch {}
+      ensureStorageBallast();
+      // V6.46 — Snapshot du jour recréé dès que l'espace est revenu (avant :
+      // seulement au démarrage — après un disque plein, plus aucune
+      // sauvegarde des comptes ni des produits jusqu'au redémarrage).
+      // Seulement au retour à « ok » après un incident ou s'il n'existe plus
+      // aucun snapshot : jamais à chaque passage (en mode compact, le seul
+      // snapshot de la veille serait remplacé juste après minuit par l'état
+      // du moment, même abîmé par une synchro ou une suppression de masse).
+      const recovered = Boolean(previousLevel) && previousLevel !== 'ok';
+      if (recovered || !listFullSnapshots().some(snapshot => !isBeforeRestoreSnapshot(snapshot))) {
+        try { ensureDailySnapshot({ quiet: true }); } catch {}
+      }
+      return;
+    }
 
     const result = runSafeStorageMaintenance({
       forceEmergency: critical,
-      skipConversationRetention: false
+      skipConversationRetention: false,
+      reason: 'surveillance'
     });
-    if (critical) markRetention15MigrationApplied();
+    // V6.46 — Délai de grâce gardé si l'écriture échoue pour une autre
+    // raison que l'espace (EACCES, EROFS).
+    if (critical && !storageProbeFailsWithoutSpaceError(probe)) markRetention15MigrationApplied();
     console.log('🧹 Storage Guard périodique', {
       critical,
       freed: humanBytes(result.freedBytes),
@@ -4326,8 +5095,12 @@ const storageGuardTimer = setInterval(() => {
   } finally {
     storagePeriodicGuardRunning = false;
   }
-}, STORAGE_GUARD_INTERVAL_MS);
+}
+const storageGuardTimer = setInterval(runStorageGuardTick, STORAGE_GUARD_INTERVAL_MS);
 if (typeof storageGuardTimer.unref === 'function') storageGuardTimer.unref();
+// Première vérification (et création de la réserve) une minute après le démarrage.
+const storageGuardFirstTimer = setTimeout(runStorageGuardTick, 60 * 1000);
+if (typeof storageGuardFirstTimer.unref === 'function') storageGuardFirstTimer.unref();
 
 console.log(
   '💾 Stockage MONDECO :',
@@ -4350,6 +5123,24 @@ if (IS_RAILWAY) {
 // CONTEXTE IA
 // ============================================================
 
+// V6.45 — Décodage des fiches WooCommerce (WPBakery, caractéristiques) et
+// règles catalogue (variations, corrections volontaires, doublons
+// manuels). Chargés ici, avant tout usage (contexte IA et synchronisation).
+const wooDescription = require('./lib/woo-description');
+const wooCatalog = require('./lib/woo-catalog');
+
+// V6.45 — Longueur maximale de la description dans un bloc produit envoyé
+// à l'IA. Une description de plusieurs milliers de caractères (fiches
+// WPBakery) faisait sortir les autres produits du budget de contexte.
+const PRODUCT_CONTEXT_DESCRIPTION_MAX = Math.max(
+  200,
+  Math.min(
+    4000,
+    Number(process.env.MONDECO_PRODUCT_CONTEXT_DESCRIPTION_MAX || 600) || 600
+  )
+);
+const productContextTruncationLogged = new Set();
+
 function availabilityLabel(value) {
   const labels = {
     in_stock: 'En stock',
@@ -4369,8 +5160,10 @@ function availabilityLabel(value) {
 function productToContext(product) {
   const lines = [];
 
+  // V6.45 — Le nom vient toujours en premier (« Produit : … ») : le
+  // classement des blocs et les contrôles de prix s'appuient dessus.
   lines.push(
-    `Produit : ${safeString(product.name)}`
+    `Produit : ${safeString(product.name) || '(sans nom)'}`
   );
 
   if (product.category) {
@@ -4379,15 +5172,62 @@ function productToContext(product) {
     );
   }
 
-  if (product.price) {
+  // V6.45 — Fiche manuelle repérée comme doublon d'un produit du site
+  // (voir flagManualWooDuplicates). Doublon certain : aucun prix n'est
+  // transmis (il est souvent périmé, ex. « Chambre Bianca » 2800 DT), l'IA
+  // doit s'appuyer sur la fiche du site. Doublon possible : prix gardé,
+  // avec un avertissement.
+  const duplicateOfWooId =
+    Number(product.duplicateOfWooId) || 0;
+
+  const duplicateCertain =
+    Boolean(duplicateOfWooId) &&
+    product.duplicateConfidence !== 'possible';
+
+  // V6.45 — Produit variable : prix par variante (« à partir de »).
+  const variationContext =
+    duplicateCertain
+      ? null
+      : wooCatalog.variationContextLines(product);
+
+  if (duplicateOfWooId && !duplicateCertain) {
     lines.push(
-      `Prix normal : ${safeString(product.price)} TND`
+      `Attention : fiche manuelle, doublon possible de la fiche du site réf. ${duplicateOfWooId}. En cas de doute, utiliser la fiche du site.`
     );
   }
 
-  if (product.promoPrice) {
+  if (duplicateCertain) {
     lines.push(
-      `Prix promotionnel : ${safeString(product.promoPrice)} TND`
+      `Attention : ancienne fiche manuelle, doublon de la fiche du site réf. ${duplicateOfWooId}. Prix retiré : citer seulement le prix de la fiche du site, sinon [COMMERCIAL_REQUIRED].`
+    );
+  } else if (variationContext?.priceLines) {
+    lines.push(
+      ...variationContext.priceLines
+    );
+  } else {
+    if (product.price) {
+      lines.push(
+        `Prix normal : ${safeString(product.price)} TND`
+      );
+    }
+
+    // V6.46 — Promotion seulement si elle est en vigueur (dates du site)
+    // et inférieure au prix normal.
+    const promoPrice =
+      wooCatalog.effectivePromoPrice(
+        product
+      );
+
+    if (promoPrice) {
+      lines.push(
+        `Prix promotionnel : ${safeString(promoPrice)} TND`
+      );
+    }
+  }
+
+  if (variationContext?.detailLines?.length) {
+    lines.push(
+      ...variationContext.detailLines
     );
   }
 
@@ -4406,6 +5246,19 @@ function productToContext(product) {
   if (product.composition) {
     lines.push(
       `Composition : ${safeString(product.composition)}`
+    );
+  }
+
+  // V6.45 — Autres caractéristiques lues sur la fiche du site (matière,
+  // plateau, style…), sans la composition ni les dimensions déjà listées.
+  const specsText =
+    wooDescription.otherSpecsText(
+      product.specs
+    );
+
+  if (specsText) {
+    lines.push(
+      `Caractéristiques : ${specsText}`
     );
   }
 
@@ -4458,12 +5311,49 @@ function productToContext(product) {
   }
 
   if (product.description) {
+    // V6.45 — Description plafonnée : un bloc trop long ne doit jamais
+    // évincer les autres produits du budget de contexte.
+    const description =
+      safeString(product.description);
+
+    const shortDescription =
+      description.length > PRODUCT_CONTEXT_DESCRIPTION_MAX
+        ? wooDescription.compactText(
+            description,
+            PRODUCT_CONTEXT_DESCRIPTION_MAX
+          )
+        : description;
+
+    if (
+      shortDescription.length < description.length &&
+      / …$/.test(shortDescription) &&
+      !productContextTruncationLogged.has(product.id || product.name)
+    ) {
+      productContextTruncationLogged.add(product.id || product.name);
+
+      // Une seule ligne par fiche et par démarrage.
+      console.debug(
+        `✂️ Description produit raccourcie pour l’IA : ${safeString(product.name)} (${description.length} → ${shortDescription.length} caractères)`
+      );
+    }
+
     lines.push(
-      `Description : ${safeString(product.description)}`
+      `Description : ${shortDescription}`
     );
   }
 
   return lines.join('\n');
+}
+
+// V6.45 — Ordre des fiches dans le contexte IA : les fiches manuelles
+// repérées comme doublons d'un produit du site passent après toutes les
+// autres (à score égal, le site l'emporte). Tri stable : l'ordre existant
+// est conservé pour le reste.
+function compareProductsForContext(a, b) {
+  return (
+    Number(Boolean(Number(a?.duplicateOfWooId))) -
+    Number(Boolean(Number(b?.duplicateOfWooId)))
+  );
 }
 
 function getBusinessContext() {
@@ -4484,7 +5374,8 @@ function getBusinessContext() {
 
   const activeProducts =
     loadProducts()
-      .filter(product => product.active !== false);
+      .filter(product => product.active !== false)
+      .sort(compareProductsForContext);
 
   const productsText =
     activeProducts
@@ -4570,7 +5461,6 @@ function loadPersistentSessions() {
 }
 
 const sessions = loadPersistentSessions();
-const loginAttempts = new Map();
 
 function persistSessions(force = false) {
   if (!sessionStoreDirty && !force) return;
@@ -4608,6 +5498,14 @@ const PRESENCE_IDLE_MS = 5 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 8;
 const LOGIN_BLOCK_MS =
   15 * 60 * 1000;
+// V6.45 — Seuil par adresse IP (tous comptes) et délai maximal appliqué
+// à un compte visé depuis de nombreuses adresses (voir lib/login-throttle.js).
+const LOGIN_IP_MAX_FAILURES = 30;
+const LOGIN_EMAIL_MAX_DELAY_MS = (() => {
+  const raw = safeString(process.env.LOGIN_EMAIL_MAX_DELAY_MS);
+  const value = raw === '' ? 8000 : Number(raw);
+  return Number.isFinite(value) ? Math.max(0, Math.min(30000, value)) : 8000;
+})();
 
 const ALLOWED_USER_ROLES =
   new Set([
@@ -4789,25 +5687,52 @@ function loadUsers() {
     return Array.isArray(parsed) ? parsed : [];
   };
 
-  try {
-    const result = read(USERS_PATH) || [];
-    usersCache = result;
-    usersCacheStamp = stamp;
+  // V6.46 — users.json vide (0 octet) ou illisible : comptes repris du
+  // .bak, recopié à la place du fichier actif. Avant, un fichier vide était
+  // lu comme « aucun compte » : l'administrateur d'amorçage était recréé
+  // seul et la 2e écriture copiait [admin] sur users.json.bak — les comptes
+  // des commerciaux étaient perdus définitivement.
+  const recover = reason => {
+    const backup = recoverJsonFileFromBackup(USERS_PATH, 'users.json', Array.isArray, reason);
+    if (backup === null) return null;
+    usersCache = backup;
+    usersCacheStamp = fileChangeStamp(USERS_PATH);
     usersStoreUnreadable = false;
-    return result;
+    return backup;
+  };
+
+  let emptyFile = false;
+  try {
+    const result = read(USERS_PATH);
+    if (result !== null) {
+      usersCache = result;
+      usersCacheStamp = stamp;
+      usersStoreUnreadable = false;
+      return result;
+    }
+    emptyFile = true;
   } catch (error) {
     console.error('❌ Lecture users.json impossible :', error.message);
+    if (jsonReadErrorIsTransient(error)) {
+      // V6.46 — Erreur passagère : dernière liste connue (sinon le .bak)
+      // pour cet appel, fichier gardé, rien mémorisé (l'appel suivant relit
+      // users.json) ; écritures bloquées jusqu'à la prochaine lecture
+      // réussie (jamais d'écrasement par une version plus ancienne).
+      usersStoreUnreadable = true;
+      return usersCache || readJsonBackupQuietly(USERS_PATH, Array.isArray) || [];
+    }
   }
 
-  try {
-    const backup = read(`${USERS_PATH}.bak`);
-    if (backup !== null) {
-      console.warn('♻️ users.json restauré depuis users.json.bak');
-      usersStoreUnreadable = false;
-      return backup;
-    }
-  } catch (backupError) {
-    console.error('❌ users.json.bak invalide :', backupError.message);
+  const backup = recover(emptyFile ? 'vide (0 octet)' : 'illisible');
+  if (backup !== null) return backup;
+
+  if (emptyFile) {
+    // Fichier vide sans .bak valide : rien à protéger (comportement antérieur).
+    console.error('❌ users.json vide (0 octet) et aucun users.json.bak valide.');
+    usersCache = [];
+    usersCacheStamp = stamp;
+    usersStoreUnreadable = false;
+    return [];
   }
 
   usersStoreUnreadable = true;
@@ -5424,6 +6349,12 @@ function roleCanAccess(
     '/api/conversations',
     '/api/commercial/send',
     '/api/commercial/send-media',
+    // V6.46 — Stickers : refusés (403) aux commerciaux et responsables
+    // alors que la route applique les mêmes contrôles qu'un envoi texte
+    // (destinataire déduit de la conversation, verrou de réponse).
+    '/api/commercial/send-sticker',
+    '/api/stickers',
+    '/sticker-preview',
     '/api/whatsapp/calls',
     '/api/notifications',
     '/api/quick-replies',
@@ -5965,114 +6896,31 @@ function secureCookie(req) {
 // V6.37 — req.ip tient compte de `trust proxy` (server.js). Lire
 // X-Forwarded-For directement permettait de contourner la limite en
 // changeant cet en-tête à chaque essai.
-function loginAttemptKey(req) {
-  return `ip:${safeString(req.ip) || 'unknown'}`;
+// V6.45 — Limite par couple (e-mail, IP) et par IP, plus un simple délai
+// progressif par e-mail : un attaquant ne peut plus bloquer un compte réel
+// (voir lib/login-throttle.js).
+const loginThrottle = require('./lib/login-throttle').createLoginThrottle({
+  pairMaxFailures: LOGIN_MAX_FAILURES,
+  ipMaxFailures: LOGIN_IP_MAX_FAILURES,
+  blockMs: LOGIN_BLOCK_MS,
+  windowMs: LOGIN_BLOCK_MS,
+  emailSoftThreshold: LOGIN_MAX_FAILURES,
+  emailMaxDelayMs: LOGIN_EMAIL_MAX_DELAY_MS
+});
+
+function loginClientIp(req) {
+  return safeString(req.ip) || 'unknown';
 }
 
-// Limite complémentaire par compte : bloque une attaque distribuée sur
-// plusieurs adresses IP visant le même e-mail.
-function loginEmailAttemptKey(email) {
-  return `email:${normalizeEmail(email)}`;
-}
-
-function getLoginAttemptState(
-  req,
-  key = loginAttemptKey(req)
-) {
-
-  const current =
-    loginAttempts.get(
-      key
-    ) || {
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
-
-  if (
-    current.blockedUntil &&
-    current.blockedUntil <=
-      Date.now()
-  ) {
-    loginAttempts.delete(
-      key
-    );
-
-    return {
-      key,
-      failures:
-        0,
-      blockedUntil:
-        0
-    };
-  }
-
-  return {
-    key,
-    ...current
-  };
-}
-
-function registerLoginFailure(
-  req,
-  key = loginAttemptKey(req)
-) {
-  const state =
-    getLoginAttemptState(
-      req,
-      key
-    );
-
-  const failures =
-    Number(
-      state.failures ||
-      0
-    ) +
-    1;
-
-  const blockedUntil =
-    failures >=
-      LOGIN_MAX_FAILURES
-      ? Date.now() +
-        LOGIN_BLOCK_MS
-      : 0;
-
-  loginAttempts.set(
-    state.key,
-    {
-      failures,
-      blockedUntil,
-      lastFailureAt:
-        Date.now()
-    }
-  );
-
-  return {
-    failures,
-    blockedUntil
-  };
-}
-
-function clearLoginFailures(
-  req,
-  key = loginAttemptKey(req)
-) {
-  loginAttempts.delete(
-    key
-  );
+function maskEmailForLog(email) {
+  const [local, domain] = safeString(email).split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 1)}***@${domain}`;
 }
 
 // Purge des compteurs expirés : sans elle, la Map grossissait sans limite.
 const loginAttemptsSweepTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, state] of loginAttempts.entries()) {
-    const lastActivity = Math.max(
-      Number(state?.blockedUntil || 0),
-      Number(state?.lastFailureAt || 0) + LOGIN_BLOCK_MS
-    );
-    if (lastActivity <= now) loginAttempts.delete(key);
-  }
+  loginThrottle.sweep();
 }, 5 * 60 * 1000);
 if (typeof loginAttemptsSweepTimer.unref === 'function') loginAttemptsSweepTimer.unref();
 
@@ -6284,7 +7132,7 @@ const emailInput=document.getElementById('email');
 const passwordInput=document.getElementById('password');
 const togglePassword=document.getElementById('togglePassword');
 togglePassword.addEventListener('click',()=>{const show=passwordInput.type==='password';passwordInput.type=show?'text':'password';togglePassword.textContent=show?'◌':'◉';});
-form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:emailInput.value,password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'E-mail ou mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
+form.addEventListener('submit',async event=>{event.preventDefault();err.style.display='none';btn.disabled=true;btn.textContent='Connexion...';try{const response=await fetch('/admin/login',{method:'POST',headers:{'Content-Type':'application/json','X-Mondeco-Client':'admin'},body:JSON.stringify({email:emailInput.value,password:passwordInput.value})});const data=await response.json();if(response.ok&&data.success){location.href='/admin';return;}err.textContent=data.error||'E-mail ou mot de passe incorrect.';err.style.display='block';}catch{err.textContent='Impossible de contacter le serveur.';err.style.display='block';}finally{btn.disabled=false;btn.textContent='Se connecter';}});
 </script>
 </body>
 </html>
@@ -6301,24 +7149,7 @@ router.get('/login', (req, res) => {
     .send(renderLoginPage());
 });
 
-router.post('/login', (req, res) => {
-  const attemptState =
-    getLoginAttemptState(
-      req
-    );
-
-  if (
-    attemptState.blockedUntil >
-    Date.now()
-  ) {
-    return res
-      .status(429)
-      .json({
-        error:
-          'Trop de tentatives. Réessayez dans quelques minutes.'
-      });
-  }
-
+router.post('/login', async (req, res) => {
   const email =
     normalizeEmail(
       req.body?.email
@@ -6328,6 +7159,22 @@ router.post('/login', (req, res) => {
     safeString(
       req.body?.password
     );
+
+  const ip = loginClientIp(req);
+
+  // V6.45 — Blocage seulement pour cette adresse IP (ou ce couple
+  // e-mail + IP) : le même compte reste accessible depuis un autre poste.
+  const attempt = loginThrottle.check({ ip, email });
+
+  if (attempt.blocked) {
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(attempt.retryAfterMs / 1000))));
+    return res
+      .status(429)
+      .json({
+        error:
+          'Trop de tentatives. Réessayez dans quelques minutes.'
+      });
+  }
 
   if (
     !email ||
@@ -6341,24 +7188,28 @@ router.post('/login', (req, res) => {
       });
   }
 
-  const emailAttemptKey =
-    loginEmailAttemptKey(
-      email
-    );
+  // Délai progressif (jamais de refus) quand ce compte subit de nombreux
+  // échecs depuis plusieurs adresses : freine une attaque distribuée sans
+  // empêcher le vrai titulaire de se connecter.
+  if (attempt.delayMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, attempt.delayMs));
 
-  if (
-    getLoginAttemptState(
-      req,
-      emailAttemptKey
-    ).blockedUntil >
-    Date.now()
-  ) {
-    return res
-      .status(429)
-      .json({
-        error:
-          'Trop de tentatives. Réessayez dans quelques minutes.'
-      });
+    // V6.45 — Nouvelle vérification après l'attente : des tentatives
+    // envoyées en même temps passaient toutes le premier contrôle puis
+    // attendaient, et aucune n'était refusée (limites (e-mail, IP) et IP
+    // contournées). La suite du traitement est synchrone : le contrôle et
+    // l'enregistrement de l'échec ne peuvent plus être séparés.
+    const recheck = loginThrottle.check({ ip, email });
+
+    if (recheck.blocked) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(recheck.retryAfterMs / 1000))));
+      return res
+        .status(429)
+        .json({
+          error:
+            'Trop de tentatives. Réessayez dans quelques minutes.'
+        });
+    }
   }
 
   const users =
@@ -6387,14 +7238,11 @@ router.post('/login', (req, res) => {
       false ||
     !passwordValid
   ) {
-    registerLoginFailure(
-      req
-    );
+    const failure = loginThrottle.registerFailure({ ip, email });
 
-    registerLoginFailure(
-      req,
-      emailAttemptKey
-    );
+    if (failure.emailThrottleStarted) {
+      console.warn(`🛡️ Connexion : ${failure.emailFailures} échecs récents pour ${maskEmailForLog(email)} (plusieurs postes possibles) — délai progressif appliqué, sans blocage du compte.`);
+    }
 
     return res
       .status(401)
@@ -6404,14 +7252,7 @@ router.post('/login', (req, res) => {
       });
   }
 
-  clearLoginFailures(
-    req
-  );
-
-  clearLoginFailures(
-    req,
-    emailAttemptKey
-  );
+  loginThrottle.registerSuccess({ ip, email });
 
   users[index] = {
     ...users[index],
@@ -6544,20 +7385,9 @@ router.get('/api/stickers', requireAuth, (req, res) => {
   });
 });
 
-// V6.36.5 — Service worker minimal, requis par les navigateurs Android/
-// Chrome pour autoriser l'installation ("Ajouter à l'écran d'accueil").
-// Ne met rien en cache pour l'instant (MONDECO doit toujours afficher des
-// données fraîches) — juste ce qu'il faut pour être reconnu comme
-// installable, sans changer le comportement réseau existant.
-router.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.send(
-    "self.addEventListener('install', () => self.skipWaiting());\n" +
-    "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n" +
-    "self.addEventListener('fetch', () => {});\n"
-  );
-});
+// V6.46 — Le second /sw.js (service worker écrit ici en dur) a été retiré :
+// il n'était jamais servi, Express répondant avec la première route
+// (pwa-assets/sw.js, plus haut), au contenu équivalent.
 
 router.get('/', requireAuth, (req, res) => {
   if (!fs.existsSync(ADMIN_HTML_PATH)) {
@@ -6891,6 +7721,88 @@ router.get(
     return res.sendStatus(404);
   }
 );
+
+// ============================================================
+// V6.45 — VISUEL DE LA PUBLICITÉ D'ORIGINE : RÉPARATION À LA DEMANDE
+// ============================================================
+// Appelée par la carte « publicité d'origine » quand son image est absente
+// ou ne se charge pas (fichier purgé, lien Meta expiré, pub vidéo ancienne
+// sans vignette). Ordre : visuel déjà enregistré pour la même pub (fichier
+// partagé ou autre conversation), liens Meta encore valides, puis API Graph
+// si META_ADS_TOKEN (token avec ads_read) est configuré. Voir
+// lib/ad-visual.js.
+const { createAdVisualRepair } = require('./lib/ad-visual');
+const { canSendMetaToken } = require('./lib/meta-token-host');
+
+// V6.45 — Même écriture que updateConversationState (server.js) : mise à
+// jour atomique sur la source de vérité partagée
+// (lib/conversation-state-store.js : mémoire + SQLite immédiat, JSON groupé).
+// Une prise en main ou un message client arrivés pendant la réparation ne
+// sont plus écrasés par une copie complète de la carte.
+function updateAdVisualConversationState(contact, updater) {
+  const existing = getConversationStateSingle(contact);
+  // Conversation inconnue : rien à réparer, aucune entrée vide créée.
+  if (!existing) return {};
+  const updated = updateConversationStateAdmin(contact, current => {
+    const draft = { ...current };
+    const result = updater(draft) || draft;
+    // Rien à changer (la pub a changé entre-temps, par exemple) : aucune
+    // écriture (une valeur non objet garde l'état courant tel quel).
+    return result === draft ? null : result;
+  });
+  return updated || existing;
+}
+
+let adVisualRepairService = null;
+function adVisualRepairer() {
+  if (!adVisualRepairService) {
+    adVisualRepairService = createAdVisualRepair({
+      mediaDir: CONVERSATION_MEDIA_DIR,
+      getState: contact => getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || null,
+      listStates: () => Object.entries(loadConversationStatesAdmin() || {}),
+      updateState: updateAdVisualConversationState,
+      fileExists: filename =>
+        fs.existsSync(path.join(CONVERSATION_MEDIA_DIR, filename)) ||
+        Boolean(cloudManifestEntry('media', filename)),
+      adsToken: safeString(process.env.META_ADS_TOKEN),
+      graphVersion: META_API_VERSION
+    });
+  }
+  return adVisualRepairService;
+}
+
+router.post('/api/conversations/:contact/ad-visual/refresh', requireAuth, async (req, res) => {
+  try {
+    const contact = safeString(req.params.contact);
+    if (!contact) return res.status(400).json({ error: 'Contact client obligatoire.' });
+    if (!requireCommercialConversationChannelAccess(req, res, contact)) return;
+    const result = await adVisualRepairer().repairConversation(contact, { force: req.body?.force === true });
+    const state = result?.state && typeof result.state === 'object'
+      ? result.state
+      : (getConversationStateSingle(contact) || {});
+    return res.json({
+      ok: Boolean(result?.ok),
+      changed: Boolean(result?.changed),
+      source: safeString(result?.source),
+      reason: safeString(result?.reason),
+      error: safeString(result?.error),
+      adReferral: state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : null,
+      sourceContext: state?.sourceContext && typeof state.sourceContext === 'object'
+        ? {
+            type: safeString(state.sourceContext.type),
+            previewUrl: safeString(state.sourceContext.previewUrl),
+            previewType: safeString(state.sourceContext.previewType),
+            ad: state.sourceContext.ad && typeof state.sourceContext.ad === 'object'
+              ? { adKey: safeString(state.sourceContext.ad.adKey) }
+              : undefined
+          }
+        : null
+    });
+  } catch (error) {
+    console.error('❌ Visuel publicité (réparation) :', error.message);
+    return res.status(500).json({ error: 'Impossible de récupérer le visuel de la publicité.' });
+  }
+});
 
 
 
@@ -9208,12 +10120,19 @@ function registerCommercialEscalation({
 } = {}) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const states = loadConversationStatesAdmin();
-  const existing = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  // V6.45 — Lecture/écriture ciblées sur la source de vérité partagée : le
+  // SLA et l'affectation ne sont plus effacés par la pause IA appliquée
+  // juste après par server.js (pauseAiForCommercial).
+  const existing = getConversationStateSingle(cleanContact) || {};
   const existingStatus = safeString(existing?.sla?.status || existing?.slaStatus);
   if (['pending','late'].includes(existingStatus)) return existing;
 
-  const match = findAutomaticCommercial(channel, new Date());
+  // V6.45 — Conversation déjà prise en main par un commercial : son
+  // affectation est conservée (le SLA mesure seulement sa réponse).
+  const keepAssignee =
+    existing.manualTakeover === true &&
+    Boolean(safeString(existing.assignedUserId) || safeString(existing.assignedTo));
+  const match = keepAssignee ? null : findAutomaticCommercial(channel, new Date());
   const slaMinutes = Math.max(1, Math.min(120, Number(match?.schedule?.slaMinutes || DEFAULT_COMMERCIAL_SLA_MINUTES) || DEFAULT_COMMERCIAL_SLA_MINUTES));
   const startedAt = new Date();
   const dueAt = new Date(startedAt.getTime() + slaMinutes * 60 * 1000);
@@ -9238,8 +10157,16 @@ function registerCommercialEscalation({
       source: safeString(source)
     }
   };
-  states[cleanContact] = updated;
-  saveConversationStatesAdmin(states);
+  updateConversationStateAdmin(cleanContact, current => ({
+    ...current,
+    channel: updated.channel,
+    commercialAttention: updated.commercialAttention,
+    commercialAttentionReason: updated.commercialAttentionReason,
+    assignedTo: updated.assignedTo,
+    assignedUserId: updated.assignedUserId,
+    assignedAt: updated.assignedAt,
+    sla: updated.sla
+  }));
   appendSlaEvent({
     id: slaId,
     event: 'started',
@@ -9259,8 +10186,8 @@ function registerCommercialEscalation({
 function resolveCommercialSla({ contact, actor = {} } = {}) {
   const cleanContact = safeString(contact);
   if (!cleanContact) return null;
-  const states = loadConversationStatesAdmin();
-  const current = states[cleanContact] && typeof states[cleanContact] === 'object' ? states[cleanContact] : {};
+  // V6.45 — Lecture/écriture ciblées (source de vérité partagée).
+  const current = getConversationStateSingle(cleanContact) || {};
   const sla = current.sla && typeof current.sla === 'object' ? current.sla : null;
   if (!sla || !['pending','late'].includes(safeString(sla.status))) return current;
   const answeredAt = new Date();
@@ -9284,8 +10211,13 @@ function resolveCommercialSla({ contact, actor = {} } = {}) {
     imageNeedsCommercial: false,
     sla: updatedSla
   };
-  states[cleanContact] = updated;
-  saveConversationStatesAdmin(states);
+  updateConversationStateAdmin(cleanContact, latest => ({
+    ...latest,
+    commercialAttention: false,
+    commercialAttentionReason: '',
+    imageNeedsCommercial: false,
+    sla: updatedSla
+  }));
   appendSlaEvent({
     event: 'resolved',
     slaId: safeString(sla.id),
@@ -10452,7 +11384,15 @@ const WOO_SYNC_DEFAULT_STATE = {
   lastDeactivated: 0,
   lastWebhookAt: null,
   lastWebhookTopic: '',
-  lastWebhookProductId: null
+  lastWebhookProductId: null,
+  // V6.45 — rapport de synchronisation enrichi.
+  lastVariableProducts: 0,
+  lastVariationsFetched: 0,
+  lastVariationErrors: 0,
+  lastDuplicateManualCount: 0,
+  lastDuplicateManualProducts: [],
+  lastOverridesCount: 0,
+  lastOverrides: []
 };
 
 let wooSyncRunning = false;
@@ -10580,54 +11520,44 @@ function wooPublicStatus(req = null) {
 
     webhookUrl,
 
-    ...sync
+    ...sync,
+
+    // V6.45 — alerte : aucune synchronisation réussie depuis plus de deux
+    // intervalles (catalogue et prix potentiellement périmés).
+    syncStale:
+      Boolean(
+        WOOCOMMERCE_SYNC_ENABLED &&
+        wooConfigured() &&
+        (
+          !sync.lastSuccessAt ||
+          Date.now() - Date.parse(sync.lastSuccessAt) >
+            2 * WOOCOMMERCE_SYNC_MINUTES * 60 * 1000
+        )
+      )
   };
 }
 
+// V6.46 — Photo d'un produit synchronisé (image https du site) pour la
+// simulation de personnalisation et le choix de produit.
+const productImage = require('./lib/product-image');
+
+// V6.45 — Les blocs WPBakery [vc_raw_html] (HTML encodé en URL puis en
+// base64) sont décodés, les autres shortcodes [vc_*] retirés et toutes les
+// entités HTML (&#215;, &#8211;…) décodées.
 function htmlToPlainText(value) {
-  return safeString(value)
-    .replace(
-      /<script[\s\S]*?<\/script>/gi,
-      ' '
+  return wooDescription.htmlToText(
+    wooDescription.expandWooDescriptionHtml(
+      safeString(value)
     )
-    .replace(
-      /<style[\s\S]*?<\/style>/gi,
-      ' '
-    )
-    .replace(
-      /<[^>]+>/g,
-      ' '
-    )
-    .replaceAll('&nbsp;', ' ')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#039;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replace(
-      /\s+/g,
-      ' '
-    )
-    .trim();
+  );
 }
 
+// V6.45 — Le « + » est significatif (« Salon Baya » ≠ « Salon Baya+ ») et
+// les entités HTML sont décodées avant comparaison.
 function normalizeWooLookup(value) {
-  return safeString(value)
-    .normalize('NFD')
-    .replace(
-      /[\u0300-\u036f]/g,
-      ''
-    )
-    .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      ' '
-    )
-    .replace(
-      /\s+/g,
-      ' '
-    )
-    .trim();
+  return wooCatalog.foldProductName(
+    safeString(value)
+  );
 }
 
 function wooAttributeValue(
@@ -10673,7 +11603,8 @@ function wooAttributeValue(
 
     const value =
       options
-        .map(safeString)
+        // V6.45 — entités HTML décodées (« Blanc &amp; Beige »).
+        .map(wooDescription.cleanInlineText)
         .filter(Boolean)
         .join(', ');
 
@@ -10786,7 +11717,8 @@ function mapWooCommerceProduct(product) {
   const category =
     categories
       .map(item =>
-        safeString(
+        // V6.45 — entités HTML décodées (« Salons &amp; Séjours »).
+        wooDescription.cleanInlineText(
           item?.name
         )
       )
@@ -10840,16 +11772,46 @@ function mapWooCommerceProduct(product) {
       ]
     );
 
-  const composition =
+  // V6.45 — Description longue WPBakery décodée : composition, dimensions
+  // par élément et caractéristiques lues dans l'encadré de la fiche.
+  const content =
+    wooDescription.parseWooProductContent(
+      product
+    );
+
+  // Attribut « composition » explicite, sinon la ligne « Composition » de
+  // la fiche, sinon (ancien comportement) un attribut « matière ».
+  const explicitComposition =
     wooAttributeValue(
       product,
       [
-        'composition',
-        'matiere',
-        'matieres',
-        'material',
-        'materials'
+        'composition'
       ]
+    );
+
+  // V6.45 — Pack (chambre + salon + salle à manger) : la composition est
+  // celle de tout le pack, ou vide ; jamais celle d'un seul ensemble ni la
+  // matière. compositionFromPack force le remplacement de la composition
+  // enregistrée par une synchronisation précédente.
+  const compositionFromPack =
+    !explicitComposition &&
+    Boolean(content.multiSet);
+
+  const composition =
+    explicitComposition ||
+    content.composition ||
+    (
+      compositionFromPack
+        ? ''
+        : wooAttributeValue(
+          product,
+          [
+            'matiere',
+            'matieres',
+            'material',
+            'materials'
+          ]
+        )
     );
 
   const showrooms =
@@ -10882,6 +11844,77 @@ function mapWooCommerceProduct(product) {
     safeString(
       product?.price
     );
+
+  // V6.45 — Une promotion programmée (sale_price renseigné mais on_sale
+  // faux) n'est pas encore active : pas de prix promotionnel.
+  // V6.46 — Sans on_sale (anciennes charges utiles), la promotion n'est en
+  // vigueur que si le prix courant du site EST le prix promotionnel ; et
+  // jamais un « promo » supérieur ou égal au prix normal.
+  const rawSalePrice =
+    safeString(
+      product?.sale_price
+    );
+
+  const saleActive =
+    product?.on_sale === true ||
+    (
+      product?.on_sale === undefined &&
+      wooCatalog.priceNumber(rawSalePrice) !== null &&
+      wooCatalog.priceNumber(rawSalePrice) ===
+        wooCatalog.priceNumber(currentPrice)
+    );
+
+  const salePrice =
+    saleActive &&
+    wooCatalog.priceNumber(rawSalePrice) !== null &&
+    (
+      wooCatalog.priceNumber(regularPrice) === null ||
+      wooCatalog.priceNumber(rawSalePrice) <
+        wooCatalog.priceNumber(regularPrice)
+    )
+      ? rawSalePrice
+      : '';
+
+  // V6.46 — Dates de la promotion (GMT) : relues à l'affichage, une
+  // promotion terminée n'est plus annoncée même avant la synchronisation
+  // suivante.
+  const promoStartsAt =
+    salePrice
+      ? safeString(
+          product?.date_on_sale_from_gmt
+        )
+      : '';
+
+  const promoEndsAt =
+    salePrice
+      ? safeString(
+          product?.date_on_sale_to_gmt
+        )
+      : '';
+
+  // V6.45 — Produit variable : variations lues par fetchWooProductVariations
+  // (null = non récupérées, la fiche locale garde alors les précédentes).
+  const isVariable =
+    safeString(
+      product?.type
+    ) === 'variable';
+
+  const variations =
+    isVariable &&
+    Array.isArray(
+      product?.mondecoVariations
+    )
+      ? wooCatalog.mapWooVariations(
+          product.mondecoVariations
+        )
+      : null;
+
+  const variationSummary =
+    variations
+      ? wooCatalog.summarizeVariationPrices(
+          variations
+        )
+      : null;
 
   return {
     woocommerceId:
@@ -10928,21 +11961,35 @@ function mapWooCommerceProduct(product) {
         product?.date_modified
       ),
 
+    // V6.45 — entités HTML décodées (« Lit 90&#215;190 » → « Lit 90×190 »).
     name:
-      safeString(
+      wooDescription.cleanInlineText(
         product?.name
       ),
 
     category,
 
     price:
+      variationSummary?.price ||
       regularPrice ||
       currentPrice,
 
     promoPrice:
-      safeString(
-        product?.sale_price
-      ),
+      variationSummary
+        ? variationSummary.promoPrice
+        : salePrice,
+
+    // V6.46 — Produit variable : dates de la promotion de la variante la
+    // moins chère (celle de price / promoPrice).
+    promoStartsAt:
+      variationSummary
+        ? variationSummary.promoStartsAt || ''
+        : promoStartsAt,
+
+    promoEndsAt:
+      variationSummary
+        ? variationSummary.promoEndsAt || ''
+        : promoEndsAt,
 
     availability:
       wooAvailability(
@@ -10952,9 +11999,25 @@ function mapWooCommerceProduct(product) {
     dimensions:
       wooDimensionsText(
         product
-      ),
+      ) ||
+      content.dimensions,
 
     composition,
+
+    compositionFromPack,
+
+    specs:
+      content.specs,
+
+    variations,
+
+    priceFrom:
+      variationSummary?.priceFrom ||
+      '',
+
+    priceTo:
+      variationSummary?.priceTo ||
+      '',
 
     colors,
 
@@ -10967,11 +12030,10 @@ function mapWooCommerceProduct(product) {
 
     categoryUrl,
 
+    // V6.45 — texte court (description courte, sinon description longue
+    // décodée), plafonné ; les caractéristiques sont dans specs.
     description:
-      htmlToPlainText(
-        product?.short_description ||
-        product?.description
-      ),
+      content.description,
 
     imageUrl,
 
@@ -10982,28 +12044,60 @@ function mapWooCommerceProduct(product) {
   };
 }
 
+// V6.45 — Rapprochement sans collision. Une fiche locale qui porte déjà un
+// autre identifiant WooCommerce n'est JAMAIS reprise par nom : avant, « Salon
+// Baya » et « Salon Baya+ » (le « + » était ignoré), ou les deux « Table à
+// Manger Ronde Violine avec 4 Chaises », fusionnaient en une seule fiche qui
+// changeait de prix à chaque synchronisation. Le SKU et le slug (uniques sur
+// le site) peuvent reprendre une fiche sans identifiant, ou dont
+// l'identifiant n'existe plus sur le site (options.remoteIds, synchronisation
+// complète seulement : produit supprimé puis recréé).
 function findWooProductIndex(
   products,
-  remote
+  remote,
+  options = {}
 ) {
-  if (
-    remote.woocommerceId
-  ) {
+  const remoteId =
+    Number(
+      remote.woocommerceId
+    ) || 0;
+
+  if (remoteId) {
     const byId =
       products.findIndex(
         item =>
           Number(
             item?.woocommerceId
           ) ===
-          Number(
-            remote.woocommerceId
-          )
+          remoteId
       );
 
     if (byId >= 0) {
       return byId;
     }
   }
+
+  const remoteIds =
+    options.remoteIds instanceof Set
+      ? options.remoteIds
+      : null;
+
+  const adoptable = item => {
+    const localId =
+      Number(
+        item?.woocommerceId
+      ) || 0;
+
+    if (!localId) {
+      return true;
+    }
+
+    return Boolean(
+      remoteIds &&
+      localId !== remoteId &&
+      !remoteIds.has(localId)
+    );
+  };
 
   if (
     remote.woocommerceSku
@@ -11017,6 +12111,7 @@ function findWooProductIndex(
       products.findIndex(
         item =>
           sku &&
+          adoptable(item) &&
           (
             normalizeWooLookup(
               item?.woocommerceSku
@@ -11043,6 +12138,8 @@ function findWooProductIndex(
     const bySlug =
       products.findIndex(
         item =>
+          slug &&
+          adoptable(item) &&
           normalizeWooLookup(
             item?.woocommerceSlug
           ) === slug
@@ -11062,6 +12159,9 @@ function findWooProductIndex(
     return -1;
   }
 
+  // Par nom : uniquement une fiche manuelle (jamais synchronisée, sans
+  // identifiant WooCommerce), et seulement si elle est la seule à porter
+  // exactement ce nom.
   const sameNameIndexes =
     products
       .map(
@@ -11070,6 +12170,13 @@ function findWooProductIndex(
           index
         ) => ({
           index,
+          manual:
+            !Number(
+              item?.woocommerceId
+            ) &&
+            safeString(
+              item?.syncSource
+            ) !== 'woocommerce',
           name:
             normalizeWooLookup(
               item?.name
@@ -11078,6 +12185,7 @@ function findWooProductIndex(
       )
       .filter(
         item =>
+          item.manual &&
           item.name ===
           normalizedName
       )
@@ -11135,71 +12243,245 @@ function mergeWooProduct(
       '';
   }
 
+  // V6.45 — Une valeur fournie par le site remplace la valeur locale
+  // (périmée ou saisie avant la synchronisation), sauf correction
+  // volontaire enregistrée dans product.overrides (fiche produit ou
+  // correction commerciale). Si le site ne fournit rien, la valeur locale
+  // est conservée comme avant.
+  // V6.46 — overrides est complété plus bas : les corrections de prix /
+  // disponibilité tombent dès que le site a changé la valeur corrigée.
+  let overrides =
+    wooCatalog.sanitizeOverrides(
+      current?.overrides
+    );
+
+  const wooFieldValue = field =>
+    overrides[field]
+      ? overrides[field].value
+      : (
+          remote[field] ||
+          safeString(
+            current?.[field]
+          )
+        );
+
+  // V6.45 — Variations : si elles n'ont pas pu être relues (null), les
+  // précédentes sont gardées tant que leur prix minimum correspond encore au
+  // prix « à partir de » renvoyé par le site ; sinon elles sont retirées.
+  let variations =
+    remote.variations;
+
+  let price =
+    remote.price;
+
+  let promoPrice =
+    remote.promoPrice;
+
+  let priceFrom =
+    remote.priceFrom;
+
+  let priceTo =
+    remote.priceTo;
+
+  let promoStartsAt =
+    remote.promoStartsAt;
+
+  let promoEndsAt =
+    remote.promoEndsAt;
+
+  if (
+    variations === null &&
+    remote.woocommerceType === 'variable' &&
+    Array.isArray(
+      current?.variations
+    ) &&
+    current.variations.length
+  ) {
+    const kept =
+      wooCatalog.summarizeVariationPrices(
+        current.variations
+      );
+
+    if (
+      kept &&
+      wooCatalog.priceNumber(kept.priceFrom) ===
+        wooCatalog.priceNumber(remote.price)
+    ) {
+      variations =
+        current.variations;
+      price =
+        kept.price;
+      promoPrice =
+        kept.promoPrice;
+      priceFrom =
+        kept.priceFrom;
+      priceTo =
+        kept.priceTo;
+      promoStartsAt =
+        kept.promoStartsAt;
+      promoEndsAt =
+        kept.promoEndsAt;
+    }
+  }
+
+  // V6.46 — Corrections commerciales (prix figé sur demande, promotion
+  // retirée, disponibilité) : gardées tant que le site n'a pas changé la
+  // valeur depuis la correction.
+  const siteOverrides =
+    wooCatalog.resolveSiteOverrides(
+      overrides,
+      {
+        price,
+        promoPrice,
+        availability:
+          remote.availability
+      }
+    );
+
+  overrides =
+    siteOverrides.overrides;
+
+  if (siteOverrides.expired.length) {
+    console.log(
+      `🔄 WooCommerce : correction(s) ${siteOverrides.expired.join(', ')} retirée(s) sur « ${safeString(current?.name)} » (valeur changée sur le site).`
+    );
+  }
+
+  const siteOverride = field =>
+    overrides[field]
+      ? overrides[field].value
+      : null;
+
+  const promoOverridden =
+    Boolean(
+      overrides.promoPrice
+    );
+
   return {
     ...current,
 
+    // V6.46 — nom et catégorie corrigés par l'équipe : gardés.
     name:
-      remote.name ||
-      safeString(
-        current?.name
-      ),
+      overrides.name
+        ? overrides.name.value
+        : (
+            remote.name ||
+            safeString(
+              current?.name
+            )
+          ),
 
     category:
-      remote.category ||
-      safeString(
-        current?.category
-      ) ||
-      'WooCommerce',
+      overrides.category
+        ? overrides.category.value
+        : (
+            remote.category ||
+            safeString(
+              current?.category
+            ) ||
+            'WooCommerce'
+          ),
 
     price:
-      remote.price,
+      siteOverride('price') ??
+      price,
 
     promoPrice:
-      remote.promoPrice,
+      siteOverride('promoPrice') ??
+      promoPrice,
+
+    // Dates de la promotion du site (sans objet si la promotion est
+    // corrigée à la main).
+    promoStartsAt:
+      !promoOverridden &&
+      promoStartsAt
+        ? promoStartsAt
+        : undefined,
+
+    promoEndsAt:
+      !promoOverridden &&
+      promoEndsAt
+        ? promoEndsAt
+        : undefined,
 
     availability:
+      siteOverride('availability') ??
       remote.availability,
 
+    overrides:
+      Object.keys(overrides).length
+        ? overrides
+        : undefined,
+
     dimensions:
-      remote.dimensions ||
-      safeString(
-        current?.dimensions
+      wooFieldValue(
+        'dimensions'
       ),
 
     composition:
-      remote.composition ||
-      safeString(
-        current?.composition
-      ),
+      remote.compositionFromPack &&
+      !overrides.composition
+        ? safeString(
+            remote.composition
+          )
+        : wooFieldValue(
+            'composition'
+          ),
 
     colors:
-      remote.colors ||
-      safeString(
-        current?.colors
+      wooFieldValue(
+        'colors'
       ),
 
     showrooms:
-      remote.showrooms ||
-      safeString(
-        current?.showrooms
+      wooFieldValue(
+        'showrooms'
       ),
 
+    specs:
+      remote.specs &&
+      Object.keys(remote.specs).length
+        ? remote.specs
+        : undefined,
+
+    variations:
+      Array.isArray(variations) &&
+      variations.length
+        ? variations
+        : undefined,
+
+    priceFrom:
+      priceFrom ||
+      undefined,
+
+    priceTo:
+      priceTo ||
+      undefined,
+
+    // V6.46 — liens corrigés par l'équipe : gardés.
     productUrl:
-      remote.productUrl ||
-      safeString(
-        current?.productUrl
-      ),
+      overrides.productUrl
+        ? overrides.productUrl.value
+        : (
+            remote.productUrl ||
+            safeString(
+              current?.productUrl
+            )
+          ),
 
     categoryUrl:
-      remote.categoryUrl ||
-      safeString(
-        current?.categoryUrl
-      ),
+      overrides.categoryUrl
+        ? overrides.categoryUrl.value
+        : (
+            remote.categoryUrl ||
+            safeString(
+              current?.categoryUrl
+            )
+          ),
 
     description:
-      remote.description ||
-      safeString(
-        current?.description
+      wooFieldValue(
+        'description'
       ),
 
     image,
@@ -11235,8 +12517,10 @@ function mergeWooProduct(
     syncSource:
       'woocommerce',
 
+    // V6.46 — fiche masquée ou supprimée par l'équipe : reste inactive.
     active:
-      remote.active,
+      remote.active &&
+      current?.hiddenByAdmin !== true,
 
     wooMissingAt:
       null,
@@ -11268,6 +12552,15 @@ function createLocalProductFromWoo(
     promoPrice:
       remote.promoPrice,
 
+    // V6.46 — dates de la promotion du site (champs optionnels).
+    promoStartsAt:
+      remote.promoStartsAt ||
+      undefined,
+
+    promoEndsAt:
+      remote.promoEndsAt ||
+      undefined,
+
     availability:
       remote.availability,
 
@@ -11282,6 +12575,27 @@ function createLocalProductFromWoo(
 
     showrooms:
       remote.showrooms,
+
+    // V6.45 — caractéristiques et variations (champs optionnels).
+    specs:
+      remote.specs &&
+      Object.keys(remote.specs).length
+        ? remote.specs
+        : undefined,
+
+    variations:
+      Array.isArray(remote.variations) &&
+      remote.variations.length
+        ? remote.variations
+        : undefined,
+
+    priceFrom:
+      remote.priceFrom ||
+      undefined,
+
+    priceTo:
+      remote.priceTo ||
+      undefined,
 
     productUrl:
       remote.productUrl,
@@ -11363,6 +12677,8 @@ function comparableWooProduct(
 
   delete copy.updatedAt;
   delete copy.wooMissingAt;
+  // V6.46 — horodatage technique du dernier webhook.
+  delete copy.wooWebhookAt;
 
   return copy;
 }
@@ -11371,8 +12687,24 @@ function upsertWooProductInArray(
   products,
   wooProduct,
   now =
-    new Date().toISOString()
+    new Date().toISOString(),
+  options = {}
 ) {
+  // V6.45 — Une variation (webhook) n'est pas un produit du catalogue :
+  // elle est rattachée à son produit parent par processWooCommerceWebhook.
+  if (
+    safeString(
+      wooProduct?.type
+    ) === 'variation'
+  ) {
+    return {
+      action:
+        'skipped',
+      product:
+        null
+    };
+  }
+
   const remote =
     mapWooCommerceProduct(
       wooProduct
@@ -11389,7 +12721,8 @@ function upsertWooProductInArray(
   const index =
     findWooProductIndex(
       products,
-      remote
+      remote,
+      options
     );
 
   if (index === -1) {
@@ -11398,6 +12731,11 @@ function upsertWooProductInArray(
         remote,
         now
       );
+
+    if (options.fromWebhook) {
+      created.wooWebhookAt =
+        now;
+    }
 
     products.push(
       created
@@ -11414,12 +12752,74 @@ function upsertWooProductInArray(
   const current =
     products[index];
 
+  // V6.46 — Jamais une donnée plus ancienne par-dessus une plus récente :
+  // la synchronisation complète télécharge toutes les pages AVANT
+  // d'écrire ; un webhook arrivé entre-temps (prix, stock) ne doit pas être
+  // écrasé par cet instantané périmé. Date égale : fusion normale (une
+  // variation modifiée ne change pas toujours la date du produit parent).
+  const currentModifiedMs =
+    wooCatalog.siteDateMs(
+      current?.woocommerceModifiedAt
+    );
+
+  const remoteModifiedMs =
+    wooCatalog.siteDateMs(
+      remote.woocommerceModifiedAt
+    );
+
+  const webhookAtMs =
+    Date.parse(
+      safeString(
+        current?.wooWebhookAt
+      )
+    );
+
+  // V6.46 — La comparaison des dates du site ne vaut que pour les webhooks
+  // (livraisons reçues dans le désordre). La synchronisation complète se
+  // fie à notBeforeMs (webhook reçu pendant sa lecture) et « Rendre au
+  // site » (force) relit toujours la fiche : après une restauration de la
+  // base du site ou un import (dates qui reculent), les bons prix n'étaient
+  // plus jamais repris et « Rendre au site » annonçait un succès sans rien
+  // changer.
+  const compareSiteDates =
+    options.force !== true &&
+    !Number.isFinite(options.notBeforeMs);
+
+  if (
+    (
+      compareSiteDates &&
+      Number.isFinite(currentModifiedMs) &&
+      Number.isFinite(remoteModifiedMs) &&
+      remoteModifiedMs < currentModifiedMs
+    ) ||
+    (
+      options.force !== true &&
+      Number.isFinite(options.notBeforeMs) &&
+      Number.isFinite(webhookAtMs) &&
+      webhookAtMs >= options.notBeforeMs
+    )
+  ) {
+    return {
+      action:
+        'stale',
+      product:
+        current
+    };
+  }
+
   const updated =
     mergeWooProduct(
       current,
       remote,
       now
     );
+
+  // V6.46 — Mise à jour reçue par webhook : datée, pour qu'une
+  // synchronisation commencée avant ne l'écrase pas.
+  if (options.fromWebhook) {
+    updated.wooWebhookAt =
+      now;
+  }
 
   const changed =
     JSON.stringify(
@@ -11441,7 +12841,12 @@ function upsertWooProductInArray(
           woocommerceModifiedAt:
             remote.woocommerceModifiedAt,
           wooMissingAt:
-            null
+            null,
+          ...(
+            options.fromWebhook
+              ? { wooWebhookAt: now }
+              : {}
+          )
         };
 
   return {
@@ -11669,10 +13074,32 @@ async function wooApiRequest(
   }
 }
 
+// V6.46 — Pagination sûre : sans en-tête x-wp-totalpages, on continue tant
+// qu'une page est pleine (avant : une seule page lue, et tout le reste du
+// catalogue passait pour supprimé). Le nombre total annoncé par la
+// première page (x-wp-total) est gardé sur le tableau (wooTotal) pour
+// repérer une lecture incomplète.
+const WOO_PRODUCTS_PER_PAGE = 100;
+const WOO_PRODUCTS_MAX_PAGES = 200;
+
+// V6.46 — Garde-fou : part maximale (en %) des fiches synchronisées actives
+// qu'une synchronisation peut désactiver d'un coup.
+const WOOCOMMERCE_MAX_DEACTIVATE_PERCENT =
+  Math.max(
+    1,
+    Math.min(
+      100,
+      Number(
+        process.env.WOOCOMMERCE_MAX_DEACTIVATE_PERCENT || 10
+      ) || 10
+    )
+  );
+
 async function fetchAllWooProducts() {
   const products = [];
   let page = 1;
   let totalPages = 1;
+  let announcedTotal = null;
 
   do {
     const result =
@@ -11681,7 +13108,7 @@ async function fetchAllWooProducts() {
         {
           query: {
             per_page:
-              100,
+              WOO_PRODUCTS_PER_PAGE,
 
             page,
 
@@ -11711,6 +13138,171 @@ async function fetchAllWooProducts() {
       ...result.data
     );
 
+    const headerPages =
+      Number(
+        result.headers.get(
+          'x-wp-totalpages'
+        )
+      );
+
+    if (page === 1) {
+      const headerTotal =
+        Number(
+          result.headers.get(
+            'x-wp-total'
+          )
+        );
+
+      announcedTotal =
+        Number.isFinite(headerTotal) &&
+        headerTotal >= 0 &&
+        safeString(
+          result.headers.get(
+            'x-wp-total'
+          )
+        ) !== ''
+          ? headerTotal
+          : null;
+    }
+
+    totalPages =
+      Number.isFinite(headerPages) &&
+      headerPages >= 1
+        ? headerPages
+        : (
+            result.data.length >= WOO_PRODUCTS_PER_PAGE
+              ? page + 1
+              : page
+          );
+
+    page += 1;
+  } while (
+    page <= totalPages &&
+    page <= WOO_PRODUCTS_MAX_PAGES
+  );
+
+  products.wooTotal =
+    announcedTotal;
+
+  return products;
+}
+
+// V6.46 — Produits absents de la lecture paginée : relus un par un (par
+// lots, include=…). Un produit retiré du tableau d'une page à l'autre
+// décale la pagination et le premier produit de la page suivante n'était
+// jamais lu, donc désactivé à tort. Retourne les produits encore présents
+// sur le site (publiés ou non) ; ceux qui manquent sont supprimés ou à la
+// corbeille. Erreur réseau : exception (aucune désactivation).
+async function fetchWooProductsByIds(ids) {
+  const list =
+    [...new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map(Number)
+        .filter(id => Number.isInteger(id) && id > 0)
+    )];
+
+  const found = [];
+
+  for (
+    let index = 0;
+    index < list.length;
+    index += WOO_PRODUCTS_PER_PAGE
+  ) {
+    const chunk =
+      list.slice(
+        index,
+        index + WOO_PRODUCTS_PER_PAGE
+      );
+
+    const result =
+      await wooApiRequest(
+        'products',
+        {
+          query: {
+            include:
+              chunk.join(','),
+            per_page:
+              WOO_PRODUCTS_PER_PAGE,
+            status:
+              'any'
+          }
+        }
+      );
+
+    if (
+      !Array.isArray(
+        result.data
+      )
+    ) {
+      throw new Error(
+        'Réponse WooCommerce produits invalide.'
+      );
+    }
+
+    found.push(
+      ...result.data.filter(item =>
+        chunk.includes(
+          Number(
+            item?.id
+          )
+        )
+      )
+    );
+  }
+
+  return found;
+}
+
+// V6.45 — Variations des produits variables. L'API produits ne renvoie pour
+// un produit variable que le prix le plus bas (prix normal et promo vides) :
+// sans les variations, l'IA annonçait ce prix pour toutes les tailles ou
+// couleurs (ex. Lit Capitonné Nuage 590 / 690 DT) et perdait les promotions.
+const WOO_VARIATIONS_CONCURRENCY = 4;
+const WOO_VARIATIONS_MAX_PAGES = 10;
+const WOO_VARIATIONS_BUDGET_MS = 3 * 60 * 1000;
+const WOO_SYNC_REPORT_LIST_MAX = 50;
+
+async function fetchWooProductVariations(productId) {
+  const numericId =
+    Number(
+      productId
+    );
+
+  if (!numericId) {
+    return [];
+  }
+
+  const variations = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const result =
+      await wooApiRequest(
+        `products/${numericId}/variations`,
+        {
+          query: {
+            per_page:
+              100,
+            page
+          }
+        }
+      );
+
+    if (
+      !Array.isArray(
+        result.data
+      )
+    ) {
+      throw new Error(
+        'Réponse WooCommerce variations invalide.'
+      );
+    }
+
+    variations.push(
+      ...result.data
+    );
+
     totalPages =
       Math.max(
         1,
@@ -11723,10 +13315,257 @@ async function fetchAllWooProducts() {
 
     page += 1;
   } while (
-    page <= totalPages
+    page <= totalPages &&
+    page <= WOO_VARIATIONS_MAX_PAGES
   );
 
-  return products;
+  return variations;
+}
+
+// Ajoute product.mondecoVariations à chaque produit variable (lu ensuite
+// par mapWooCommerceProduct). Un échec laisse la fiche locale garder ses
+// variations précédentes ; la synchronisation n'échoue pas pour autant.
+async function attachWooVariations(remoteProducts) {
+  const variable =
+    (Array.isArray(remoteProducts) ? remoteProducts : [])
+      .filter(product =>
+        safeString(
+          product?.type
+        ) === 'variable' &&
+        Number(
+          product?.id
+        )
+      );
+
+  const stats = {
+    variableProducts:
+      variable.length,
+    fetched: 0,
+    errors: 0,
+    skipped: 0
+  };
+
+  const deadline =
+    Date.now() +
+    WOO_VARIATIONS_BUDGET_MS;
+
+  let cursor = 0;
+  let consecutiveErrors = 0;
+
+  const worker = async () => {
+    while (cursor < variable.length) {
+      const product =
+        variable[cursor];
+
+      cursor += 1;
+
+      // Site indisponible ou trop lent : on n'insiste pas.
+      if (
+        Date.now() > deadline ||
+        consecutiveErrors >= 5
+      ) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      try {
+        product.mondecoVariations =
+          await fetchWooProductVariations(
+            product.id
+          );
+
+        stats.fetched += 1;
+        consecutiveErrors = 0;
+      } catch (error) {
+        stats.errors += 1;
+        consecutiveErrors += 1;
+
+        console.warn(
+          '⚠️ Variations WooCommerce non lues :',
+          Number(product.id),
+          error.message
+        );
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      {
+        length:
+          Math.min(
+            WOO_VARIATIONS_CONCURRENCY,
+            variable.length
+          )
+      },
+      worker
+    )
+  );
+
+  return stats;
+}
+
+// V6.45 — Fiches manuelles (jamais synchronisées) qui doublonnent un
+// produit du site, ex. « Chambre Bianca » 2800 DT ou « Lit Bianca + 2
+// chevets » à côté de « Chambre à Coucher Bianca » (WooCommerce). Elles ne
+// sont PAS supprimées ni désactivées : elles sont marquées
+// (duplicateOfWooId / duplicateOfName / duplicateConfidence « high » ou
+// « possible » / duplicateFlaggedAt) pour passer après la fiche du site
+// dans le contexte IA (sans prix si le doublon est certain) et sont listées
+// dans le rapport de synchronisation. product.notDuplicateOfWoo = true
+// désactive ce repérage pour une fiche.
+function flagManualWooDuplicates(
+  products,
+  now =
+    new Date().toISOString()
+) {
+  const isWooRecord = product =>
+    Number(
+      product?.woocommerceId
+    ) > 0 ||
+    safeString(
+      product?.syncSource
+    ) === 'woocommerce';
+
+  const matches =
+    wooCatalog.findManualDuplicates(
+      products.filter(product =>
+        product &&
+        !isWooRecord(product)
+      ),
+      products.filter(product =>
+        product &&
+        isWooRecord(product) &&
+        safeString(
+          product?.syncSource
+        ) === 'woocommerce'
+      )
+    );
+
+  const flagged = [];
+
+  for (
+    let index = 0;
+    index < products.length;
+    index += 1
+  ) {
+    const product =
+      products[index];
+
+    if (!product) {
+      continue;
+    }
+
+    const match =
+      isWooRecord(product)
+        ? null
+        : matches.get(product);
+
+    if (match) {
+      const sameTarget =
+        Number(
+          product.duplicateOfWooId
+        ) === match.wooId;
+
+      if (
+        !sameTarget ||
+        product.duplicateOfName !== match.wooName ||
+        product.duplicateConfidence !== match.confidence
+      ) {
+        products[index] = {
+          ...product,
+          duplicateOfWooId:
+            match.wooId,
+          duplicateOfName:
+            match.wooName,
+          duplicateConfidence:
+            match.confidence,
+          duplicateFlaggedAt:
+            sameTarget &&
+            product.duplicateFlaggedAt
+              ? product.duplicateFlaggedAt
+              : now
+        };
+      }
+
+      flagged.push({
+        id:
+          safeString(product.id),
+        name:
+          safeString(product.name),
+        price:
+          safeString(product.price),
+        promoPrice:
+          safeString(product.promoPrice),
+        duplicateOfWooId:
+          match.wooId,
+        duplicateOfName:
+          match.wooName,
+        confidence:
+          match.confidence
+      });
+
+      continue;
+    }
+
+    if (
+      product.duplicateOfWooId !== undefined ||
+      product.duplicateOfName !== undefined ||
+      product.duplicateConfidence !== undefined ||
+      product.duplicateFlaggedAt !== undefined
+    ) {
+      const cleaned = {
+        ...product
+      };
+
+      delete cleaned.duplicateOfWooId;
+      delete cleaned.duplicateOfName;
+      delete cleaned.duplicateConfidence;
+      delete cleaned.duplicateFlaggedAt;
+
+      products[index] =
+        cleaned;
+    }
+  }
+
+  return flagged;
+}
+
+// V6.45 — Fiches synchronisées dont un champ est volontairement figé
+// (product.overrides) : listées dans le rapport de synchronisation.
+function wooOverridesReport(products) {
+  const list = [];
+
+  for (const product of products) {
+    if (
+      safeString(
+        product?.syncSource
+      ) !== 'woocommerce'
+    ) {
+      continue;
+    }
+
+    const fields =
+      Object.keys(
+        wooCatalog.sanitizeOverrides(
+          product.overrides
+        )
+      );
+
+    if (fields.length) {
+      list.push({
+        id:
+          safeString(product.id),
+        name:
+          safeString(product.name),
+        woocommerceId:
+          Number(product.woocommerceId) || null,
+        fields
+      });
+    }
+  }
+
+  return list;
 }
 
 async function testWooCommerceConnection() {
@@ -11768,7 +13607,8 @@ async function testWooCommerceConnection() {
 
 async function runWooCommerceSync(
   reason =
-    'manual'
+    'manual',
+  options = {}
 ) {
   if (!wooConfigured()) {
     throw new Error(
@@ -11801,8 +13641,89 @@ async function runWooCommerceSync(
   });
 
   try {
+    // V6.46 — Heure de début de lecture : une fiche mise à jour par
+    // webhook après ce moment n'est pas écrasée par cet instantané.
+    const fetchStartedMs =
+      Date.now();
+
     const remoteProducts =
       await fetchAllWooProducts();
+
+    // V6.45 — variations des produits variables (prix par variante).
+    const variationStats =
+      await attachWooVariations(
+        remoteProducts
+      );
+
+    // V6.46 — Produits synchronisés absents de la lecture paginée : relus
+    // directement AVANT toute désactivation (décalage de pagination,
+    // page incomplète). Un produit relu est mis à jour normalement ; seul un
+    // produit introuvable (supprimé, corbeille) est désactivé.
+    const listedIds =
+      new Set(
+        remoteProducts
+          .map(item =>
+            Number(
+              item?.id
+            )
+          )
+          .filter(Boolean)
+      );
+
+    const candidatesMissing =
+      loadProducts()
+        .filter(product =>
+          safeString(
+            product?.syncSource
+          ) === 'woocommerce' &&
+          Number(
+            product?.woocommerceId
+          ) &&
+          !listedIds.has(
+            Number(
+              product.woocommerceId
+            )
+          ) &&
+          (
+            product.active !== false ||
+            product.availability !==
+              'out_of_stock'
+          )
+        )
+        .map(product =>
+          Number(
+            product.woocommerceId
+          )
+        );
+
+    let missingCheckError = '';
+
+    if (candidatesMissing.length) {
+      try {
+        const recovered =
+          await fetchWooProductsByIds(
+            candidatesMissing
+          );
+
+        if (recovered.length) {
+          await attachWooVariations(
+            recovered
+          );
+
+          remoteProducts.push(
+            ...recovered
+          );
+        }
+      } catch (error) {
+        missingCheckError =
+          error.message;
+
+        console.warn(
+          '⚠️ WooCommerce : produits absents non vérifiés, aucune désactivation cette fois :',
+          error.message
+        );
+      }
+    }
 
     const products =
       loadProducts();
@@ -11810,13 +13731,25 @@ async function runWooCommerceSync(
     const now =
       new Date().toISOString();
 
+    // V6.45 — Identifiants présents sur le site, connus AVANT les mises à
+    // jour : une fiche dont l'identifiant a disparu du site peut être
+    // reprise par SKU/slug (produit recréé), jamais une fiche encore vivante.
     const remoteIds =
-      new Set();
+      new Set(
+        remoteProducts
+          .map(item =>
+            Number(
+              item?.id
+            )
+          )
+          .filter(Boolean)
+      );
 
     let created = 0;
     let updated = 0;
     let unchanged = 0;
     let deactivated = 0;
+    let stale = 0;
 
     for (
       const wooProduct
@@ -11837,7 +13770,12 @@ async function runWooCommerceSync(
         upsertWooProductInArray(
           products,
           wooProduct,
-          now
+          now,
+          {
+            remoteIds,
+            notBeforeMs:
+              fetchStartedMs
+          }
         );
 
       if (
@@ -11850,10 +13788,23 @@ async function runWooCommerceSync(
         'updated'
       ) {
         updated += 1;
+      } else if (
+        result.action ===
+        'stale'
+      ) {
+        stale += 1;
       } else {
         unchanged += 1;
       }
     }
+
+    // V6.46 — Désactivation des produits disparus du site, seulement après
+    // vérification directe et jamais en masse : au-delà de
+    // WOOCOMMERCE_MAX_DEACTIVATE_PERCENT % des fiches synchronisées actives
+    // (10 % par défaut, au moins 5 fiches), rien n'est désactivé et une
+    // alerte est enregistrée (relancer avec allowMassDeactivation si la
+    // suppression est voulue).
+    const toDeactivate = [];
 
     for (
       let index = 0;
@@ -11885,13 +13836,72 @@ async function runWooCommerceSync(
         continue;
       }
 
+      // Créé ou mis à jour par webhook pendant la lecture : pas encore
+      // dans cet instantané.
+      const webhookAtMs =
+        Date.parse(
+          safeString(
+            product?.wooWebhookAt
+          )
+        );
+
+      if (
+        Number.isFinite(webhookAtMs) &&
+        webhookAtMs >= fetchStartedMs
+      ) {
+        continue;
+      }
+
       if (
         product.active !== false ||
         product.availability !==
           'out_of_stock'
       ) {
+        toDeactivate.push(
+          index
+        );
+      }
+    }
+
+    const activeSynced =
+      products.filter(product =>
+        safeString(
+          product?.syncSource
+        ) === 'woocommerce' &&
+        product.active !== false
+      ).length;
+
+    const deactivationLimit =
+      Math.max(
+        5,
+        Math.floor(
+          activeSynced *
+          WOOCOMMERCE_MAX_DEACTIVATE_PERCENT /
+          100
+        )
+      );
+
+    let deactivationSkipped = '';
+
+    if (missingCheckError && toDeactivate.length) {
+      deactivationSkipped =
+        `Vérification des produits absents impossible (${missingCheckError}) : ${toDeactivate.length} désactivation(s) reportée(s).`;
+    } else if (
+      toDeactivate.length > deactivationLimit &&
+      options.allowMassDeactivation !== true
+    ) {
+      deactivationSkipped =
+        `${toDeactivate.length} produits absents du site (limite ${deactivationLimit}) : aucune désactivation. Vérifiez le site puis relancez la synchronisation en autorisant la désactivation en masse.`;
+    }
+
+    if (deactivationSkipped) {
+      console.warn(
+        `⚠️ WooCommerce : ${deactivationSkipped}`
+      );
+    } else {
+      for (const index of toDeactivate) {
         products[index] = {
-          ...product,
+          ...products[index],
           active:
             false,
           availability:
@@ -11906,9 +13916,58 @@ async function runWooCommerceSync(
       }
     }
 
+    // V6.45 — fiches manuelles en doublon d'un produit du site (marquées,
+    // jamais supprimées) et corrections volontaires en vigueur.
+    const duplicates =
+      flagManualWooDuplicates(
+        products,
+        now
+      );
+
+    const overrides =
+      wooOverridesReport(
+        products
+      );
+
+    // V6.46 — fiches du site masquées ou supprimées par l'équipe.
+    const hiddenByAdmin =
+      products
+        .filter(product =>
+          safeString(
+            product?.syncSource
+          ) === 'woocommerce' &&
+          product?.hiddenByAdmin === true
+        )
+        .map(product => ({
+          id:
+            safeString(product.id),
+          name:
+            safeString(product.name),
+          woocommerceId:
+            Number(product.woocommerceId) || null,
+          deleted:
+            product.deletedByAdmin === true,
+          at:
+            safeString(
+              product.deletedByAdminAt ||
+              product.hiddenByAdminAt
+            )
+        }));
+
     saveProducts(
       products
     );
+
+    if (duplicates.length) {
+      console.warn(
+        `⚠️ ${duplicates.length} fiche(s) manuelle(s) en doublon probable d’un produit du site (à vérifier puis désactiver) :`,
+        duplicates
+          .slice(0, 10)
+          .map(item =>
+            `${item.name}${item.price ? ` (${item.price} TND)` : ''} → ${item.duplicateOfName} #${item.duplicateOfWooId}`
+          )
+      );
+    }
 
     const syncState =
       saveWooCommerceSyncState({
@@ -11935,7 +13994,56 @@ async function runWooCommerceSync(
           unchanged,
 
         lastDeactivated:
-          deactivated
+          deactivated,
+
+        // V6.46 — lecture incomplète, désactivations reportées, fiches non
+        // écrasées (webhook plus récent), fiches masquées par l'équipe.
+        lastAnnouncedTotal:
+          remoteProducts.wooTotal ??
+          null,
+
+        lastStale:
+          stale,
+
+        lastDeactivationSkipped:
+          deactivationSkipped,
+
+        lastHiddenByAdminCount:
+          hiddenByAdmin.length,
+
+        lastHiddenByAdmin:
+          hiddenByAdmin.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          ),
+
+        lastVariableProducts:
+          variationStats.variableProducts,
+
+        lastVariationsFetched:
+          variationStats.fetched,
+
+        lastVariationErrors:
+          variationStats.errors +
+          variationStats.skipped,
+
+        lastDuplicateManualCount:
+          duplicates.length,
+
+        lastDuplicateManualProducts:
+          duplicates.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          ),
+
+        lastOverridesCount:
+          overrides.length,
+
+        lastOverrides:
+          overrides.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          )
       });
 
     console.log(
@@ -11947,7 +14055,17 @@ async function runWooCommerceSync(
         created,
         updated,
         unchanged,
-        deactivated
+        stale,
+        deactivated,
+        variableProducts:
+          variationStats.variableProducts,
+        variationErrors:
+          variationStats.errors +
+          variationStats.skipped,
+        duplicateManual:
+          duplicates.length,
+        overrides:
+          overrides.length
       }
     );
 
@@ -11961,7 +14079,17 @@ async function runWooCommerceSync(
       created,
       updated,
       unchanged,
+      stale,
       deactivated,
+      deactivationSkipped,
+
+      variations:
+        variationStats,
+
+      duplicateManualProducts:
+        duplicates,
+
+      overrides,
 
       state:
         syncState
@@ -12008,18 +14136,23 @@ function verifyWooWebhookSignature(
     return false;
   }
 
+  // V6.46 — Signature calculée UNIQUEMENT sur les octets reçus (capturés
+  // par express.json dans server.js, ou par express.text sur la route).
+  // Avant, une copie JSON.stringify(req.body) servait de secours : PHP
+  // écrit « https:\/\/mondeco.tn » et « \u00e9 », JavaScript non, donc
+  // TOUTES les livraisons product.created / product.updated étaient
+  // refusées (401) et WooCommerce finissait par désactiver le webhook.
   const rawBody =
-    Buffer.isBuffer(
-      req.rawBody
-    )
-      ? req.rawBody
-      : Buffer.from(
-          JSON.stringify(
-            req.body ||
-            {}
-          ),
-          'utf8'
-        );
+    req.rawBody;
+
+  if (
+    !Buffer.isBuffer(
+      rawBody
+    ) ||
+    !rawBody.length
+  ) {
+    return false;
+  }
 
   const expected =
     crypto
@@ -12082,15 +14215,97 @@ async function processWooCommerceWebhook(
     normalizedTopic ===
       'product.updated'
   ) {
+    let wooProduct =
+      payload;
+
+    // V6.45 — WooCommerce envoie aussi product.created/updated pour une
+    // VARIATION (type « variation », parent_id) : avant, elle devenait une
+    // fausse fiche produit. On relit maintenant le produit parent.
+    if (
+      safeString(
+        payload?.type
+      ) === 'variation'
+    ) {
+      const parentId =
+        Number(
+          payload?.parent_id
+        ) || 0;
+
+      if (
+        !parentId ||
+        !wooConfigured()
+      ) {
+        console.log(
+          `⚡ WooCommerce webhook ${normalizedTopic} : variation ${wooId || '?'} ignorée (parent non relisible).`
+        );
+
+        saveWooCommerceSyncState({
+          lastWebhookAt:
+            now,
+          lastWebhookTopic:
+            normalizedTopic,
+          lastWebhookProductId:
+            wooId
+        });
+
+        return;
+      }
+
+      const parent =
+        await wooApiRequest(
+          `products/${parentId}`
+        );
+
+      wooProduct =
+        parent.data;
+    }
+
+    // V6.45 — produit variable : variations relues à chaque mise à jour.
+    if (
+      safeString(
+        wooProduct?.type
+      ) === 'variable' &&
+      wooConfigured()
+    ) {
+      try {
+        wooProduct = {
+          ...wooProduct,
+          mondecoVariations:
+            await fetchWooProductVariations(
+              wooProduct.id
+            )
+        };
+      } catch (error) {
+        console.warn(
+          '⚠️ Variations WooCommerce non lues (webhook) :',
+          Number(wooProduct?.id) || null,
+          error.message
+        );
+      }
+    }
+
     const products =
       loadProducts();
 
+    // V6.46 — fromWebhook : fiche datée (wooWebhookAt) pour qu'une
+    // synchronisation commencée avant ne l'écrase ni ne la désactive.
     const result =
       upsertWooProductInArray(
         products,
-        payload,
-        now
+        wooProduct,
+        now,
+        {
+          fromWebhook:
+            true
+        }
       );
+
+    // V6.45 — un nouveau produit du site peut rendre une fiche manuelle
+    // doublon (marquage seulement, voir flagManualWooDuplicates).
+    flagManualWooDuplicates(
+      products,
+      now
+    );
 
     saveProducts(
       products
@@ -12236,8 +14451,8 @@ async function installWooCommerceWebhooks(
     const topic
     of topics
   ) {
-    const found =
-      existing.find(
+    const matching =
+      existing.filter(
         item =>
           safeString(
             item?.topic
@@ -12248,12 +14463,62 @@ async function installWooCommerceWebhooks(
           deliveryUrl.replace(/\/+$/, '')
       );
 
-    if (found) {
+    // V6.46 — Un webhook existant mais désactivé (WooCommerce le coupe
+    // après plusieurs livraisons refusées) ou en pause est réactivé, avec
+    // le secret actuel (sinon « already_exists » sans aucune livraison).
+    const found =
+      matching.find(item =>
+        safeString(
+          item?.status
+        ).toLowerCase() === 'active'
+      ) ||
+      matching[0];
+
+    if (
+      found &&
+      safeString(
+        found.status
+      ).toLowerCase() === 'active'
+    ) {
       results.push({
         topic,
         status:
           'already_exists',
         id:
+          found.id
+      });
+
+      continue;
+    }
+
+    if (found) {
+      const reactivated =
+        await wooApiRequest(
+          `webhooks/${Number(found.id)}`,
+          {
+            method:
+              'PUT',
+
+            body: {
+              status:
+                'active',
+
+              secret:
+                WOOCOMMERCE_WEBHOOK_SECRET
+            }
+          }
+        );
+
+      results.push({
+        topic,
+        status:
+          'reactivated',
+        previousStatus:
+          safeString(
+            found.status
+          ) || 'unknown',
+        id:
+          reactivated.data?.id ||
           found.id
       });
 
@@ -12314,7 +14579,15 @@ router.post(
     type:
       () => true,
     limit:
-      '64kb'
+      '64kb',
+    // V6.46 — corps brut gardé pour la signature (livraison reçue avec un
+    // Content-Type autre que JSON).
+    verify(req, res, buffer) {
+      req.rawBody =
+        Buffer.from(
+          buffer
+        );
+    }
   }),
 
   (req, res) => {
@@ -12423,9 +14696,32 @@ router.post(
         )
       );
 
-    const payload =
+    // V6.46 — Corps lu par express.text (Content-Type non JSON) : décodé
+    // ici, depuis les octets signés.
+    let payload =
       req.body ||
       {};
+
+    if (
+      typeof payload === 'string' ||
+      Buffer.isBuffer(payload)
+    ) {
+      try {
+        payload =
+          JSON.parse(
+            req.rawBody.toString(
+              'utf8'
+            )
+          );
+      } catch {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Corps du webhook illisible.'
+          });
+      }
+    }
 
     res
       .status(200)
@@ -12519,9 +14815,15 @@ router.post(
   requireAuth,
   async (req, res) => {
     try {
+      // V6.46 — allowMassDeactivation : désactivation en masse confirmée
+      // par l'équipe (produits réellement retirés du site).
       const result =
         await runWooCommerceSync(
-          'manual-admin'
+          'manual-admin',
+          {
+            allowMassDeactivation:
+              req.body?.allowMassDeactivation === true
+          }
         );
 
       return res.json({
@@ -12609,7 +14911,10 @@ function startWooCommerceAutoSync() {
       );
     },
     20000
-  );
+  // V6.46 — Minuteries sans effet sur l'arrêt du processus (le serveur
+  // HTTP le garde en vie) : un script ou un test qui charge Admin.js peut
+  // se terminer.
+  ).unref();
 
   wooSyncIntervalHandle =
     setInterval(
@@ -12631,6 +14936,8 @@ function startWooCommerceAutoSync() {
       },
       intervalMs
     );
+
+  wooSyncIntervalHandle.unref();
 }
 
 startWooCommerceAutoSync();
@@ -12639,11 +14946,263 @@ startWooCommerceAutoSync();
 // API PRODUITS
 // ============================================================
 
+// V6.46 — Prix saisi dans une fiche ou une correction : normalisé
+// (« 4 190 DT » → « 4190 ») ou refusé s'il est illisible. Une valeur
+// identique à la valeur enregistrée est gardée telle quelle.
+function productPriceInput(
+  value,
+  currentValue
+) {
+  const raw =
+    safeString(
+      value
+    );
+
+  if (!raw) {
+    return {
+      value: ''
+    };
+  }
+
+  if (
+    raw ===
+    safeString(
+      currentValue
+    )
+  ) {
+    return {
+      value: raw
+    };
+  }
+
+  const normalized =
+    wooCatalog.normalizePriceInput(
+      raw
+    );
+
+  if (normalized === null) {
+    return {
+      error:
+        `Prix « ${raw.slice(0, 40)} » illisible : écrivez un nombre, ex. 4190.`
+    };
+  }
+
+  return {
+    value:
+      normalized
+  };
+}
+
+// V6.46 — Avertissement pour une modification d'une fiche du site qui sera
+// reprise du site (voir wooCatalog.siteManagedChanges).
+function siteManagedWarning(fields) {
+  const list =
+    Array.isArray(fields)
+      ? fields
+      : [];
+
+  const labels = {
+    price:
+      'Prix normal',
+    promoPrice:
+      'Prix promotionnel'
+  };
+
+  const parts = [];
+
+  const prices =
+    list
+      .filter(field => labels[field])
+      .map(field => labels[field]);
+
+  if (prices.length) {
+    parts.push(
+      `${prices.join(' et ')} : produit synchronisé avec mondeco.tn, la valeur du site reviendra à la prochaine synchronisation. Corrigez-la sur le site, ou cochez « Figer le prix » pour l’imposer à l’IA.`
+    );
+  }
+
+  if (list.includes('variations')) {
+    parts.push(
+      'Prix par variante (taille, couleur…) : seul le site fait foi, le prix ne peut pas être figé ici.'
+    );
+  }
+
+  if (list.includes('active')) {
+    parts.push(
+      'Actif : ce produit n’est pas publié sur mondeco.tn, il redeviendra inactif à la prochaine synchronisation.'
+    );
+  }
+
+  return parts.join(' ');
+}
+
 router.get(
   '/api/products',
   requireAuth,
   (req, res) => {
     return res.json(loadProducts());
+  }
+);
+
+// V6.46 — « Rendre au site » : retire les corrections volontaires et le
+// masquage (ou la suppression) d'une fiche synchronisée ; les valeurs du
+// site sont relues tout de suite si possible, sinon à la synchronisation
+// suivante.
+router.post(
+  '/api/products/:id/site-reset',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const products =
+        loadProducts();
+
+      const index =
+        products.findIndex(
+          item =>
+            item?.id === req.params.id
+        );
+
+      if (index === -1) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit introuvable.'
+          });
+      }
+
+      const product =
+        products[index];
+
+      if (
+        safeString(
+          product.syncSource
+        ) !== 'woocommerce'
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ce produit n’est pas synchronisé avec le site.'
+          });
+      }
+
+      const reset = {
+        ...product,
+        active:
+          safeString(
+            product.woocommerceStatus
+          ) === 'publish' &&
+          !product.wooMissingAt,
+        updatedAt:
+          new Date().toISOString()
+      };
+
+      for (const key of [
+        'overrides',
+        'hiddenByAdmin',
+        'hiddenByAdminAt',
+        'hiddenByAdminBy',
+        'deletedByAdmin',
+        'deletedByAdminAt'
+      ]) {
+        delete reset[key];
+      }
+
+      products[index] =
+        reset;
+
+      saveProducts(
+        products
+      );
+
+      let refreshed = false;
+
+      if (
+        wooConfigured() &&
+        Number(
+          reset.woocommerceId
+        )
+      ) {
+        try {
+          const remote =
+            await wooApiRequest(
+              `products/${Number(reset.woocommerceId)}`
+            );
+
+          let wooProduct =
+            remote.data;
+
+          if (
+            safeString(
+              wooProduct?.type
+            ) === 'variable'
+          ) {
+            wooProduct = {
+              ...wooProduct,
+              mondecoVariations:
+                await fetchWooProductVariations(
+                  wooProduct.id
+                )
+            };
+          }
+
+          const latest =
+            loadProducts();
+
+          // V6.46 — force : relue même si la date du site a reculé ;
+          // « refreshed » seulement si la fiche a vraiment été relue.
+          const upsert =
+            upsertWooProductInArray(
+              latest,
+              wooProduct,
+              new Date().toISOString(),
+              {
+                fromWebhook:
+                  true,
+                force:
+                  true
+              }
+            );
+
+          saveProducts(
+            latest
+          );
+
+          refreshed =
+            upsert?.action !== 'stale';
+        } catch (error) {
+          console.warn(
+            '⚠️ Relecture du produit du site :',
+            error.message
+          );
+        }
+      }
+
+      return res.json({
+        success:
+          true,
+        refreshed,
+        product:
+          loadProducts().find(
+            item =>
+              item?.id === req.params.id
+          ) ||
+          reset
+      });
+    } catch (error) {
+      console.error(
+        '❌ Retour au site :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de rendre la fiche au site.'
+        });
+    }
   }
 );
 
@@ -12702,6 +15261,29 @@ router.post(
           });
       }
 
+      // V6.46 — prix normalisés (« 4 190 DT » → « 4190 ») ou refusés.
+      const priceInput =
+        productPriceInput(
+          req.body?.price
+        );
+
+      const promoInput =
+        productPriceInput(
+          req.body?.promoPrice
+        );
+
+      if (priceInput.error || promoInput.error) {
+        deleteFileIfExists(req.file.path);
+
+        return res
+          .status(400)
+          .json({
+            error:
+              priceInput.error ||
+              promoInput.error
+          });
+      }
+
       const now =
         new Date().toISOString();
 
@@ -12711,10 +15293,10 @@ router.post(
         category,
 
         price:
-          safeString(req.body?.price),
+          priceInput.value,
 
         promoPrice:
-          safeString(req.body?.promoPrice),
+          promoInput.value,
 
         availability:
           safeString(req.body?.availability) ||
@@ -12877,7 +15459,14 @@ router.put(
           });
       }
 
-      if (!req.file && !current.image) {
+      // V6.46 — Modification partielle (« Pas un doublon », « Revenir à la
+      // valeur du site ») d'une ancienne fiche sans photo : pas de photo
+      // exigée (avant : erreur 400, action impossible).
+      if (
+        !req.file &&
+        !current.image &&
+        !parseBoolean(req.body?.partialUpdate, false)
+      ) {
         return res
           .status(400)
           .json({
@@ -12886,20 +15475,62 @@ router.put(
           });
       }
 
+      // V6.46 — Prix saisi lisible (« 4 190 », « 4190 DT », « 4.190 » →
+      // « 4190 ») ; un prix illisible est refusé au lieu de disparaître du
+      // catalogue Meta ou d'y passer à 4,19 TND. Une valeur inchangée n'est
+      // pas revérifiée (anciennes fiches).
+      const priceFields = {};
+
+      for (const field of ['price', 'promoPrice']) {
+        const value =
+          req.body?.[field] !== undefined
+            ? productPriceInput(
+                req.body[field],
+                current[field]
+              )
+            : {
+                value:
+                  safeString(
+                    current[field]
+                  )
+              };
+
+        if (value.error) {
+          if (req.file) {
+            deleteFileIfExists(req.file.path);
+          }
+
+          return res
+            .status(400)
+            .json({
+              error:
+                value.error
+            });
+        }
+
+        priceFields[field] =
+          value.value;
+      }
+
+      // V6.46 — « Figer le prix » : demande explicite de l'équipe pour
+      // qu'un prix / une promotion d'une fiche du site ne soit pas repris
+      // du site à la synchronisation suivante.
+      const lockPrice =
+        parseBoolean(
+          req.body?.lockPrice,
+          false
+        );
+
       const updated = {
         ...current,
         name,
         category,
 
         price:
-          req.body?.price !== undefined
-            ? safeString(req.body.price)
-            : safeString(current.price),
+          priceFields.price,
 
         promoPrice:
-          req.body?.promoPrice !== undefined
-            ? safeString(req.body.promoPrice)
-            : safeString(current.promoPrice),
+          priceFields.promoPrice,
 
         availability:
           req.body?.availability !== undefined
@@ -12998,6 +15629,125 @@ router.put(
           new Date().toISOString()
       };
 
+      // V6.45 — Fiche synchronisée avec le site : un champ modifié ici
+      // (composition, dimensions, couleurs, showrooms, description) devient
+      // une correction volontaire que la synchronisation n'écrase plus ;
+      // vider le champ rend la main au site.
+      // V6.46 — aussi le nom, la catégorie, les liens et la disponibilité ;
+      // le prix et la promotion seulement avec « Figer le prix » ; « Actif »
+      // décoché : fiche masquée (hiddenByAdmin), même après synchronisation.
+      const editor =
+        safeString(
+          req.user?.name ||
+          req.user?.email ||
+          req.user?.id
+        );
+
+      const siteManaged =
+        wooCatalog.siteManagedChanges(
+          current,
+          updated,
+          {
+            lockPrice
+          }
+        );
+
+      const withOverrides =
+        wooCatalog.applyAdminVisibility(
+          current,
+          wooCatalog.recordProductOverrides(
+            current,
+            updated,
+            {
+              by:
+                editor,
+              source:
+                'admin-product-form',
+              lockPrice
+            }
+          ),
+          {
+            by:
+              editor
+          }
+        );
+
+      if (withOverrides !== updated) {
+        for (const key of Object.keys(updated)) {
+          if (!(key in withOverrides)) {
+            delete updated[key];
+          }
+        }
+
+        Object.assign(
+          updated,
+          withOverrides
+        );
+      }
+
+      // V6.46 — « Figer le prix » décoché : le prix et la promotion figés
+      // sont rendus au site (valeurs reprises à la synchronisation).
+      if (
+        req.body?.lockPrice !== undefined &&
+        !lockPrice &&
+        updated.overrides &&
+        (updated.overrides.price || updated.overrides.promoPrice)
+      ) {
+        const remaining = {
+          ...updated.overrides
+        };
+
+        delete remaining.price;
+        delete remaining.promoPrice;
+
+        if (Object.keys(remaining).length) {
+          updated.overrides = remaining;
+        } else {
+          delete updated.overrides;
+        }
+      }
+
+      // V6.46 — « Revenir à la valeur du site » : correction retirée
+      // explicitement (même si la valeur envoyée ne change rien, ex.
+      // disponibilité déjà égale à celle du site). Prix et nom exclus.
+      const revertField =
+        safeString(req.body?.revertOverride);
+
+      if (
+        revertField &&
+        !['name', 'category', 'price', 'promoPrice'].includes(revertField) &&
+        updated.overrides &&
+        Object.prototype.hasOwnProperty.call(updated.overrides, revertField)
+      ) {
+        const remaining = {
+          ...updated.overrides
+        };
+
+        delete remaining[revertField];
+
+        if (Object.keys(remaining).length) {
+          updated.overrides = remaining;
+        } else {
+          delete updated.overrides;
+        }
+      }
+
+      // V6.46 — « Pas un doublon » (page Produits) : la fiche manuelle
+      // n'est plus repérée comme doublon d'une fiche du site
+      // (flagManualWooDuplicates l'ignore). Champ facultatif : les
+      // formulaires existants ne l'envoient pas et ne changent rien.
+      if (req.body?.notDuplicateOfWoo !== undefined) {
+        if (parseBoolean(req.body.notDuplicateOfWoo, false)) {
+          updated.notDuplicateOfWoo = true;
+          delete updated.duplicateOfWooId;
+          delete updated.duplicateOfName;
+          delete updated.duplicateConfidence;
+          delete updated.duplicateFlaggedAt;
+        } else {
+          delete updated.notDuplicateOfWoo;
+        }
+      }
+
       if (req.file) {
         updated.image =
           `/admin/uploads/${req.file.filename}`;
@@ -13025,7 +15775,21 @@ router.put(
         archiveFileBeforeDelete(oldImagePath, 'product-images');
       }
 
-      return res.json(updated);
+      // V6.46 — Avertissement visible : modification qui sera reprise du
+      // site (jamais en silence).
+      const warning =
+        siteManagedWarning(
+          siteManaged
+        );
+
+      return res.json(
+        warning
+          ? {
+              ...updated,
+              warning
+            }
+          : updated
+      );
     } catch (error) {
       console.error(
         '❌ Modification produit :',
@@ -13061,6 +15825,47 @@ router.delete(
           .json({
             error: 'Produit introuvable.'
           });
+      }
+
+      // V6.46 — Fiche synchronisée avec le site : gardée, inactive et
+      // marquée (deletedByAdmin). Supprimée pour de bon, la synchronisation
+      // suivante la recréait (nouvel identifiant, de nouveau en vente).
+      if (
+        safeString(
+          product.syncSource
+        ) === 'woocommerce' &&
+        Number(
+          product.woocommerceId
+        )
+      ) {
+        const index =
+          products.indexOf(
+            product
+          );
+
+        products[index] =
+          wooCatalog.adminTombstone(
+            product,
+            {
+              by:
+                safeString(
+                  req.user?.name ||
+                  req.user?.email ||
+                  req.user?.id
+                )
+            }
+          );
+
+        saveProducts(
+          products
+        );
+
+        return res.json({
+          success: true,
+          hidden: true,
+          message:
+            'Produit du site mondeco.tn masqué pour l’IA et le catalogue (il reste en ligne sur le site). « Rendre au site » le réactive.'
+        });
       }
 
       saveProducts(
@@ -13755,6 +16560,53 @@ router.get(
 // API RÉPONSES RAPIDES COMMERCIALES
 // ============================================================
 
+// V6.45 — Les réponses rapides partent telles quelles chez les clients (y
+// compris automatiquement vers les prospects publicitaires). Seuls les
+// administrateurs, responsables commerciaux et éditeurs (contenu IA) les
+// créent, modifient ou suppriment ; les commerciaux les utilisent en
+// lecture seule. Chaque changement est tracé (auteur, date, ancien texte)
+// dans le journal d'activité de l'équipe.
+const QUICK_REPLY_EDITOR_ROLES = new Set(['admin', 'responsable_commercial', 'editor']);
+const QUICK_REPLIES_MAX_ITEMS = 500;
+
+function requireQuickReplyEditor(req, res, next) {
+  if (QUICK_REPLY_EDITOR_ROLES.has(safeString(req.user?.role))) return next();
+  return res.status(403).json({
+    error: 'Lecture seule : seuls un administrateur, un responsable commercial ou un éditeur peuvent modifier les réponses rapides.',
+    errorCode: 'QUICK_REPLY_READ_ONLY'
+  });
+}
+
+function quickReplyActor(req) {
+  return {
+    id: safeString(req.user?.id),
+    name: safeString(req.user?.name || req.user?.email)
+  };
+}
+
+function quickReplyAuditSnapshot(item = {}) {
+  return {
+    title: safeString(item?.title),
+    shortcut: safeString(item?.shortcut),
+    content: safeString(item?.content).slice(0, 4000),
+    active: item?.active !== false
+  };
+}
+
+function auditQuickReplyChange(req, type, item = {}, extra = {}) {
+  const actor = quickReplyActor(req);
+  return appendTeamActivity({
+    type,
+    userId: actor.id,
+    userName: actor.name,
+    userRole: safeString(req.user?.role),
+    quickReplyId: safeString(item?.id),
+    shortcut: safeString(item?.shortcut),
+    title: safeString(item?.title),
+    ...extra
+  });
+}
+
 router.get(
   '/api/quick-replies',
   requireAuth,
@@ -13776,9 +16628,35 @@ router.get(
   }
 );
 
+// V6.45 — Historique des modifications (journal d'activité de l'équipe) :
+// qui a créé, modifié, importé ou supprimé une réponse rapide, avec l'ancien
+// et le nouveau texte. Lecture directe des fichiers journaliers (pas de
+// migration de l'ancien journal unique).
+router.get(
+  '/api/quick-replies/history',
+  requireAuth,
+  requireQuickReplyEditor,
+  (req, res) => {
+    const days = Math.min(90, Math.max(1, Number(req.query?.days) || 30));
+    const timezone = safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis');
+    const today = dateKeyInTimezone(new Date(), timezone);
+    const items = [];
+    for (let offset = 0; offset < days; offset += 1) {
+      const filePath = teamActivityDayPath(teamDateAdd(today, -offset));
+      if (!fs.existsSync(filePath)) continue;
+      forEachJsonlRecordSync(filePath, item => {
+        if (safeString(item?.type).startsWith('quick_reply_')) items.push(item);
+      });
+    }
+    items.sort((a, b) => safeString(b?.time).localeCompare(safeString(a?.time)));
+    return res.json({ items: items.slice(0, 500) });
+  }
+);
+
 router.post(
   '/api/quick-replies',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const title =
       safeString(req.body?.title);
@@ -13819,8 +16697,21 @@ router.post(
         });
     }
 
+    // V6.45 — Plus d'éviction silencieuse des plus anciennes réponses
+    // (saveQuickReplies ne garde que les 500 dernières).
+    if (items.length >= QUICK_REPLIES_MAX_ITEMS) {
+      return res
+        .status(409)
+        .json({
+          error:
+            `Limite de ${QUICK_REPLIES_MAX_ITEMS} réponses rapides atteinte : supprimez-en avant d’en ajouter.`
+        });
+    }
+
     const now =
       new Date().toISOString();
+
+    const actor = quickReplyActor(req);
 
     const item = {
       id: crypto.randomUUID(),
@@ -13830,11 +16721,16 @@ router.post(
       active: true,
       source: 'manual',
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      createdBy: actor.id,
+      createdByName: actor.name,
+      updatedBy: actor.id,
+      updatedByName: actor.name
     };
 
     items.push(item);
     saveQuickReplies(items);
+    auditQuickReplyChange(req, 'quick_reply_create', item, { after: quickReplyAuditSnapshot(item) });
 
     return res
       .status(201)
@@ -13847,6 +16743,7 @@ router.post(
 router.post(
   '/api/quick-replies/import',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const incoming = Array.isArray(req.body?.items) ? req.body.items.slice(0, 500) : [];
     if (!incoming.length) {
@@ -13859,7 +16756,12 @@ router.post(
     );
     let imported = 0;
     let skipped = 0;
+    // V6.45 — Import en ajout seul : au-delà de la limite, les nouvelles
+    // réponses sont ignorées au lieu d'évincer les réponses existantes.
+    let skippedForLimit = 0;
     const now = new Date().toISOString();
+    const actor = quickReplyActor(req);
+    const importedShortcuts = [];
 
     for (const raw of incoming) {
       const title = safeString(raw?.title);
@@ -13867,6 +16769,11 @@ router.post(
       const shortcut = normalizeQuickReplyShortcut(raw?.shortcut || title);
       if (!title || !content || !shortcut || usedShortcuts.has(shortcut)) {
         skipped += 1;
+        continue;
+      }
+      if (items.length >= QUICK_REPLIES_MAX_ITEMS) {
+        skipped += 1;
+        skippedForLimit += 1;
         continue;
       }
       items.push({
@@ -13877,20 +16784,32 @@ router.post(
         active: true,
         source: 'manual-import',
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        createdBy: actor.id,
+        createdByName: actor.name,
+        updatedBy: actor.id,
+        updatedByName: actor.name
       });
       usedShortcuts.add(shortcut);
+      importedShortcuts.push(shortcut);
       imported += 1;
     }
 
-    if (imported) saveQuickReplies(items);
-    return res.json({ success: true, imported, skipped, total: items.length });
+    if (imported) {
+      saveQuickReplies(items);
+      auditQuickReplyChange(req, 'quick_reply_import', {}, {
+        imported,
+        shortcuts: importedShortcuts.slice(0, 500)
+      });
+    }
+    return res.json({ success: true, imported, skipped, skippedForLimit, total: items.length });
   }
 );
 
 router.put(
   '/api/quick-replies/:id',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const items =
       loadQuickReplies();
@@ -13953,6 +16872,9 @@ router.put(
         });
     }
 
+    const before = quickReplyAuditSnapshot(items[index]);
+    const actor = quickReplyActor(req);
+
     items[index] = {
       ...items[index],
       title,
@@ -13962,10 +16884,16 @@ router.put(
         req.body?.active ??
         items[index].active,
       updatedAt:
-        new Date().toISOString()
+        new Date().toISOString(),
+      updatedBy: actor.id,
+      updatedByName: actor.name
     };
 
     saveQuickReplies(items);
+    auditQuickReplyChange(req, 'quick_reply_update', items[index], {
+      before,
+      after: quickReplyAuditSnapshot(items[index])
+    });
 
     return res.json(
       items[index]
@@ -13976,6 +16904,7 @@ router.put(
 router.delete(
   '/api/quick-replies/:id',
   requireAuth,
+  requireQuickReplyEditor,
   (req, res) => {
     const items =
       loadQuickReplies();
@@ -13995,7 +16924,10 @@ router.delete(
         });
     }
 
+    const removed = items.find(item => item.id === req.params.id) || {};
     saveQuickReplies(next);
+    // Le texte supprimé reste dans le journal : récupérable par un admin.
+    auditQuickReplyChange(req, 'quick_reply_delete', removed, { before: quickReplyAuditSnapshot(removed) });
 
     return res.json({
       success: true
@@ -14409,6 +17341,36 @@ router.post(
         }
       }
 
+      // V6.46 — Prix corrigé : nombre lisible exigé (« 4 190 DT » → 4190).
+      if (
+        (field === 'price' || field === 'promoPrice') &&
+        value
+      ) {
+        const normalizedPrice =
+          wooCatalog.normalizePriceInput(
+            value
+          );
+
+        if (normalizedPrice === null) {
+          return res
+            .status(400)
+            .json({
+              error:
+                `Prix « ${value.slice(0, 40)} » illisible : écrivez un nombre, ex. 4190.`
+            });
+        }
+
+        value =
+          normalizedPrice;
+      }
+
+      // V6.46 — « Figer le prix » : demande explicite pour une fiche du site.
+      const lockPrice =
+        parseBoolean(
+          req.body?.lockPrice,
+          false
+        );
+
       const products =
         loadProducts();
 
@@ -14432,12 +17394,70 @@ router.post(
       const oldValue =
         safeString(product[field]);
 
-      products[index] = {
+      // V6.45 — Sur une fiche synchronisée avec le site, une correction de
+      // composition, dimensions, couleurs, showrooms ou description est
+      // enregistrée comme correction volontaire (product.overrides) : la
+      // synchronisation ne l'écrase plus.
+      // V6.46 — La disponibilité aussi ; le prix et la promotion seulement
+      // avec « Figer le prix » (lockPrice). Une correction de prix ou de
+      // disponibilité tombe d'elle-même quand le site change cette valeur.
+      const isWooProduct =
+        safeString(
+          product.syncSource
+        ) === 'woocommerce';
+
+      const correctionDate =
+        new Date().toISOString();
+
+      const corrected = {
         ...product,
         [field]: value,
         updatedAt:
-          new Date().toISOString()
+          correctionDate
       };
+
+      const siteManaged =
+        wooCatalog.siteManagedChanges(
+          product,
+          corrected,
+          {
+            fields: [field],
+            lockPrice
+          }
+        );
+
+      products[index] =
+        wooCatalog.recordProductOverrides(
+          product,
+          corrected,
+          {
+            fields: [field],
+            by:
+              safeString(
+                req.user?.name ||
+                req.user?.email ||
+                req.user?.id
+              ),
+            at:
+              correctionDate,
+            source:
+              'commercial-correction',
+            lockPrice
+          }
+        );
+
+      const wooWarning =
+        isWooProduct &&
+        siteManaged.length
+          ? siteManagedWarning(
+              siteManaged
+            )
+          : (
+              isWooProduct &&
+              products[index]?.overrides?.[field]?.siteValue !== undefined
+                ? `${COMMERCIAL_PRODUCT_FIELDS[field]} : correction prioritaire sur le site tant que cette valeur ne change pas sur mondeco.tn.`
+                : ''
+            );
 
       saveProducts(products);
 
@@ -14482,7 +17502,13 @@ router.post(
       return res.json({
         correction,
         product:
-          products[index]
+          products[index],
+        // V6.45 — avertissement (prix / disponibilité d'une fiche du site).
+        ...(
+          wooWarning
+            ? { warning: wooWarning }
+            : {}
+        )
       });
     } catch (error) {
       console.error(
@@ -14591,7 +17617,9 @@ router.post(
 
       const contact = safeString(req.body?.contact || req.body?.phone);
       if (!requireCommercialMessageChannelAccess(req, res, 'whatsapp')) return;
-      const externalContact = safeString(req.body?.externalContact) || normalizePhone(contact);
+      // V6.45 — Numéro appelé déduit de la conversation (comme les envois).
+      const externalContact = commercialSendRecipient(req, res, contact, 'whatsapp');
+      if (externalContact === null) return;
       const phone = normalizePhone(externalContact);
       const sdp = safeString(req.body?.sdp);
 
@@ -14602,6 +17630,10 @@ router.post(
       if (!sdp || !sdp.startsWith('v=0')) {
         return res.status(400).json({ error: 'Session audio WebRTC invalide.' });
       }
+
+      // V6.45 — Même verrou que /commercial/send : un commercial n'appelle
+      // pas le client d'un collègue en service (409 CONVERSATION_LOCKED).
+      if (!acquireCommercialConversationReply(req, res, contact, 'whatsapp')) return;
 
       const result = await whatsappCallHandler({
         action: 'start',
@@ -14685,6 +17717,52 @@ router.post(
   }
 );
 
+// V6.45 — Le destinataire réel est déduit côté serveur de la conversation
+// dont les droits ont été vérifiés (contact). Avant, les droits étaient
+// contrôlés sur body.contact mais le message partait vers
+// body.externalContact : un commercial pouvait viser une conversation
+// « leurre » et écrire au client d'un collègue malgré le verrou.
+// Un externalContact différent du contact est refusé (400).
+function commercialSendRecipient(req, res, contact, channel) {
+  const cleanContact = safeString(contact);
+  const derived =
+    channel === 'instagram'
+      ? cleanContact.replace(/^instagram:/, '')
+      : channel === 'facebook'
+        ? cleanContact.replace(/^facebook:/, '')
+        : normalizePhone(cleanContact);
+  const requested = safeString(req.body?.externalContact);
+  if (!derived) {
+    res.status(400).json({ error: 'Contact client obligatoire.' });
+    return null;
+  }
+  const sameTarget = (left, right) =>
+    channel === 'whatsapp'
+      ? Boolean(normalizePhone(left)) && normalizePhone(left) === normalizePhone(right)
+      : Boolean(safeString(left)) && safeString(left) === safeString(right);
+
+  if (!requested || sameTarget(requested, derived)) return derived;
+
+  // Anciennes conversations sociales : identifiant externe mémorisé côté
+  // serveur pour ce contact (état SQLite ou cache Admin, tant que les deux
+  // ne sont pas unifiés).
+  const storedCandidates = [
+    safeString((getConversationStateSingle(cleanContact) || {})?.externalContact),
+    safeString(readConversationStatesAdminCached()?.[cleanContact]?.externalContact)
+  ].filter(Boolean);
+  const stored = storedCandidates.find(candidate => sameTarget(requested, candidate));
+  if (stored) {
+    return channel === 'whatsapp' ? normalizePhone(stored) : stored;
+  }
+
+  console.warn(`🛡️ Envoi commercial refusé : destinataire différent de la conversation (utilisateur ${safeString(req.user?.id) || 'inconnu'}, canal ${channel}).`);
+  res.status(400).json({
+    error: 'Destinataire incohérent avec la conversation ouverte. Rechargez la conversation puis réessayez.',
+    errorCode: 'RECIPIENT_MISMATCH'
+  });
+  return null;
+}
+
 router.post(
   '/api/commercial/send',
   requireAuth,
@@ -14721,17 +17799,13 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
-
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        commercialSendRecipient(req, res, contact, channel);
+
+      if (externalContact === null) return;
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       const phone =
         channel === 'whatsapp'
@@ -14880,17 +17954,13 @@ router.post(
             ? 'instagram'
             : 'whatsapp';
 
-      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
-
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
       const externalContact =
-        safeString(
-          req.body?.externalContact
-        ) ||
-        (channel === 'instagram'
-          ? contact.replace(/^instagram:/, '')
-          : channel === 'facebook'
-            ? contact.replace(/^facebook:/, '')
-            : normalizePhone(contact));
+        commercialSendRecipient(req, res, contact, channel);
+
+      if (externalContact === null) return;
+
+      if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
       if (channel === 'facebook') {
         return res
@@ -15025,7 +18095,10 @@ router.post(
       if (channel !== 'whatsapp') {
         return res.status(400).json({ error: 'Les fiches produit et les boutons sont disponibles uniquement sur WhatsApp.' });
       }
-      const externalContact = normalizePhone(safeString(req.body?.externalContact) || contact);
+      // V6.45 — Destinataire déduit de la conversation vérifiée.
+      const recipient = commercialSendRecipient(req, res, contact, channel);
+      if (recipient === null) return;
+      const externalContact = normalizePhone(recipient);
       if (!externalContact) return res.status(400).json({ error: 'Numéro client obligatoire.' });
 
       const kind = safeString(req.body?.kind) === 'product' ? 'product' : 'buttons';
@@ -15101,10 +18174,13 @@ router.post(
       // V6.36.8 — Stickers WhatsApp uniquement pour l'instant.
       const channel = 'whatsapp';
 
+      // V6.45 — Destinataire vérifié AVANT la prise en charge.
+      const externalContact =
+        commercialSendRecipient(req, res, contact, channel);
+      if (externalContact === null) return;
+
       if (!acquireCommercialConversationReply(req, res, contact, channel)) return;
 
-      const externalContact =
-        safeString(req.body?.externalContact) || normalizePhone(contact);
       const phone = normalizePhone(externalContact);
       const stickerId = safeString(req.body?.stickerId);
 
@@ -15443,9 +18519,57 @@ router.post(
         const localPath =
           getLocalProductImagePath(product);
 
+        // V6.46 — Fiche synchronisée (image https du site, pas de fichier
+        // local) : l'image du site est téléchargée.
         if (
-          !localPath ||
-          !fs.existsSync(localPath)
+          (
+            !localPath ||
+            !fs.existsSync(localPath)
+          ) &&
+          productImage.remoteImageUrl(product)
+        ) {
+          try {
+            const remote =
+              await productImage.loadProductImage(
+                product,
+                {
+                  allowedMimes: [
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp'
+                  ]
+                }
+              );
+
+            if (remote) {
+              sourceImage = {
+                buffer:
+                  remote.buffer,
+                mimetype:
+                  remote.mimetype,
+                originalname:
+                  remote.originalname,
+                size:
+                  remote.size
+              };
+
+              sourceImageUrl =
+                safeString(product.image);
+            }
+          } catch (error) {
+            console.warn(
+              '⚠️ Photo du site pour la simulation :',
+              error.message
+            );
+          }
+        }
+
+        if (
+          !sourceImage &&
+          (
+            !localPath ||
+            !fs.existsSync(localPath)
+          )
         ) {
           return res
             .status(400)
@@ -15454,6 +18578,11 @@ router.post(
                 'La photo du produit est introuvable. Ajoutez une image de référence.'
             });
         }
+      }
+
+      if (!sourceImage && product) {
+        const localPath =
+          getLocalProductImagePath(product);
 
         sourceImage = {
           buffer:
@@ -16336,7 +19465,7 @@ let inboxTombstoneMemo = new WeakMap();
 let inboxTombstoneStamp = '';
 
 function inboxCleanEntry(entry) {
-  const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
+  const stamp = `${fileChangeStamp(PURGED_RECORD_HASHES_PATH)}|${messageSoftDeletionsStamp()}`;
   if (stamp !== inboxTombstoneStamp) {
     inboxTombstoneMemo = new WeakMap();
     inboxTombstoneStamp = stamp;
@@ -16587,315 +19716,87 @@ let loadWhatsAppLogInFlight = null;
 // si son contenu a changé depuis le dernier chargement.
 // (variables déclarées tout en haut du fichier, voir juste après DATA_DIR)
 
-function readConversationStatesAdminCached() {
-  if (conversationStatesCacheAdmin) return conversationStatesCacheAdmin;
-  loadConversationStatesAdmin();
-  return conversationStatesCacheAdmin || {};
+// V6.45 — Source de vérité UNIQUE pour l'état des conversations, partagée
+// par Admin.js et server.js (même processus) : voir
+// lib/conversation-state-store.js. Avant, Admin.js n'écrivait que le cache
+// JSON (synchronisé vers SQLite 8 à 60 s plus tard) tandis que server.js
+// lisait SQLite en premier : une prise en main, une réactivation de l'IA,
+// une affectation ou un SLA écrits ici étaient ignorés par le bot puis
+// effacés par sa première écriture suivante. Désormais chaque modification
+// est visible immédiatement des deux côtés et écrite tout de suite dans
+// SQLite ; le fichier JSON (même format) reste écrit de façon groupée, au
+// plus une fois par minute et toujours à l'arrêt.
+// `var` + création à la demande : ces fonctions peuvent être appelées très
+// tôt au chargement du module (voir V6.36.2 plus haut).
+var conversationStateStoreInstance;
+function conversationStateStore() {
+  if (!conversationStateStoreInstance) {
+    conversationStateStoreInstance = createConversationStateStore({
+      jsonPath: CONVERSATION_STATE_PATH_ADMIN,
+      openDb: getSqliteDb,
+      writeJson: (filePath, data) => writeJsonAtomic(filePath, data),
+      fileStamp: fileChangeStamp,
+      slim: slimConversationState,
+      // V6.36.62 / V6.37.3 — JSON complet au plus une fois par minute.
+      writeDebounceMs: 8000,
+      jsonMinIntervalMs: Math.max(
+        10 * 1000,
+        Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
+      ),
+      slowLogMs: 500,
+      // V6.46 — /health « degraded » tant que la dernière écriture SQLite a échoué.
+      onWriteResult: (ok, error) => {
+        try { sqliteConnection.noteWrite(ok, error); } catch {}
+      },
+      logger: console
+    });
+  }
+  return conversationStateStoreInstance;
 }
 
-function loadConversationStatesAdmin() {
+// Carte vivante, en lecture seule (statistiques rapides).
+function readConversationStatesAdminCached() {
   try {
-    if (!fs.existsSync(CONVERSATION_STATE_PATH_ADMIN)) return {};
-    const stamp = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-    if (conversationStatesCacheAdmin && stamp === conversationStatesCacheStampAdmin) {
-      // Copie superficielle : rapide (proportionnelle au nombre de
-      // conversations, pas à la taille du fichier), et protège le cache
-      // partagé contre une mutation accidentelle par un appelant qui ne
-      // sauvegarderait pas ensuite.
-      return { ...conversationStatesCacheAdmin };
-    }
-    const parsed = JSON.parse(
-      fs.readFileSync(CONVERSATION_STATE_PATH_ADMIN, 'utf8') || '{}'
-    );
-    const result = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
-    const firstLoad = !conversationStatesCacheAdmin;
-    conversationStatesCacheAdmin = result;
-    conversationStatesCacheStampAdmin = stamp;
-    conversationStatesUnreadable = false;
-    if (firstLoad) {
-      const recovered = overlayNewerSqliteStates(result);
-      // SQLite est considéré à jour pour ces objets : les enregistrements
-      // suivants ne réécriront que les conversations modifiées.
-      const refs = sqliteSyncedStateRefs();
-      for (const [contact, state] of Object.entries(result)) refs.set(contact, state);
-      // Conversations reprises depuis SQLite : le JSON sera réécrit au
-      // prochain enregistrement groupé pour les contenir aussi.
-      if (recovered) saveConversationStatesAdmin(result);
-    }
-    return { ...result };
+    return conversationStateStore().live() || {};
   } catch (error) {
-    // V6.37.2 — Fichier présent mais illisible : on bloque toute écriture
-    // (voir flushConversationStatesWrite) pour ne jamais remplacer les
-    // conversations existantes par une liste vide.
-    conversationStatesUnreadable = true;
-    console.error('❌ Lecture conversation-state.json impossible (écritures suspendues) :', error.message);
+    console.error('❌ Lecture de l’état des conversations :', error.message);
     return {};
   }
 }
 
-
-// V6.36.62 — Écriture différée et regroupée : conversation-state.json a
-// dépassé 24 Mo / 9700+ conversations, et fs.writeFileSync (bloquant)
-// prenait 600ms à plus d'1s à chaque appel, mesuré directement sur les
-// phases d'envoi WhatsApp (updateConversationState). Réécrire le fichier
-// entier à CHAQUE message devient de plus en plus coûteux avec le volume,
-// peu importe le format JSON. Au lieu d'écrire immédiatement, on met à
-// jour le cache mémoire tout de suite (rapide, non-bloquant pour le
-// commercial) et on programme une seule écriture disque groupée
-// STATE_WRITE_DEBOUNCE_MS après la dernière modification — plusieurs
-// messages rapprochés ne déclenchent qu'une seule écriture physique.
-const STATE_WRITE_DEBOUNCE_MS = 8000;
-let pendingStateWriteTimer = null;
-let pendingStateToWrite = null;
-
-// V6.37.2 — Dernier objet d'état écrit dans SQLite pour chaque conversation.
-// Le code remplace toujours l'objet d'une conversation modifiée
-// ({ ...current, ... }) au lieu de le modifier sur place : comparer les
-// références suffit pour savoir quelles conversations ont changé, sans
-// rien re-sérialiser. Avant, CHAQUE écriture groupée réécrivait les
-// ~38 000 conversations dans SQLite (JSON.stringify de chacune), ce qui
-// bloquait le serveur plusieurs secondes. Au premier flush après un
-// démarrage, la Map est vide : tout est synchronisé une fois, comme avant.
-// `var` (initialisée à la demande) : loadConversationStatesAdmin() peut être
-// appelé avant cette ligne au démarrage.
-var sqliteSyncedStateRefsMap;
-function sqliteSyncedStateRefs() {
-  if (!sqliteSyncedStateRefsMap) sqliteSyncedStateRefsMap = new Map();
-  return sqliteSyncedStateRefsMap;
+// Copie superficielle de toutes les conversations. Les objets d'état ne
+// doivent pas être modifiés sur place : remplacer l'entrée
+// (states[contact] = { ...state, ... }) puis saveConversationStatesAdmin().
+function loadConversationStatesAdmin() {
+  try {
+    return conversationStateStore().loadAll();
+  } catch (error) {
+    console.error('❌ Lecture de l’état des conversations :', error.message);
+    return {};
+  }
 }
-
-// V6.37.3 — Le fichier JSON complet (77 Mo en production) n'est plus réécrit
-// à chaque enregistrement groupé : SQLite reçoit les conversations modifiées
-// à chaque fois (rapide), le JSON au plus une fois par minute, et toujours
-// à l'arrêt, avant un snapshot ou un export. Au démarrage, les conversations
-// plus récentes dans SQLite que dans le JSON sont réintégrées (voir
-// overlayNewerSqliteStates).
-const STATE_JSON_MIN_INTERVAL_MS = Math.max(
-  10 * 1000,
-  Number(process.env.MONDECO_STATE_JSON_MIN_INTERVAL_MS) || 60 * 1000
-);
-const STATE_FLUSH_SLOW_LOG_MS = 500;
-var stateJsonPending;
-var stateJsonTimer;
-var lastStateJsonWriteAt;
-// `var` sans valeur initiale : loadConversationStatesAdmin() peut être
-// appelé avant cette ligne, il ne faut pas réinitialiser l'indicateur ici.
-var conversationStatesUnreadable;
 
 // `force` (par défaut) : écrit aussi le fichier JSON complet. Les écouteurs
-// SIGTERM/SIGINT/beforeExit et les appels explicites forcent l'écriture ;
-// la minuterie d'enregistrement groupé passe `false`.
+// SIGTERM/SIGINT/beforeExit et les appels explicites (snapshot, export)
+// forcent l'écriture.
 function flushConversationStatesWrite(force = true) {
-  const forceJson = force !== false;
-  const startedAt = Date.now();
-  let sqliteMs = 0;
-  let sqliteRows = 0;
-
-  if (pendingStateToWrite) {
-    const toWrite = pendingStateToWrite;
-    pendingStateToWrite = null;
-    if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
-    pendingStateWriteTimer = null;
-    stateJsonPending = toWrite;
-
-    // SQLite d'abord : il n'est ainsi jamais en retard sur le JSON.
-    const sqliteStartedAt = Date.now();
-    // V6.36.70 — Synchronisation SQLite à chaque flush groupé. Nécessaire
-    // car 40+ endroits du code (assigner, prioriser, terminer une
-    // conversation, etc.) modifient encore SEULEMENT le JSON via
-    // saveConversationStatesAdmin, sans jamais écrire dans SQLite —
-    // seul le chemin updateConversationState (envoi de message WhatsApp,
-    // V6.36.63) écrivait dans les deux. Sans cette synchronisation, un
-    // admin assignant une conversation risquait de voir son changement
-    // écrasé au message suivant, qui lisait SQLite en priorité (obsolète).
-    // V6.37.2 — Seules les conversations modifiées depuis le dernier
-    // enregistrement sont réécrites (comparaison de références) ; la
-    // resynchronisation complète se fait une fois, en arrière-plan, après
-    // le démarrage (voir sqliteBackgroundFullSync).
-    try {
-      const db = getSqliteDb();
-      if (db) {
-        const upsert = db.prepare(`
-          INSERT INTO conversation_states (contact, data, updated_at)
-          VALUES (@contact, @data, @updated_at)
-          ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-        `);
-        const now = Date.now();
-        const changed = [];
-        for (const [contact, state] of Object.entries(toWrite)) {
-          if (!contact) continue;
-          if (sqliteSyncedStateRefs().get(contact) !== state) changed.push([contact, state]);
-        }
-        const syncChanged = db.transaction((entries) => {
-          for (const [contact, state] of entries) {
-            upsert.run({ contact, data: JSON.stringify(state), updated_at: now });
-          }
-        });
-        syncChanged(changed);
-        sqliteRows = changed.length;
-        for (const [contact, state] of changed) sqliteSyncedStateRefs().set(contact, state);
-        // Nettoyage des conversations supprimées du JSON (références obsolètes).
-        const refs = sqliteSyncedStateRefs();
-        if (refs.size > Object.keys(toWrite).length * 1.2 + 100) {
-          for (const contact of refs.keys()) {
-            if (!(contact in toWrite)) refs.delete(contact);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ Synchronisation SQLite (flush groupé) :', error.message);
-    }
-    sqliteMs = Date.now() - sqliteStartedAt;
-  }
-
-  if (!stateJsonPending) return;
-
-  if (conversationStatesUnreadable) {
-    console.error('🚨 conversation-state.json non écrit : le fichier existant est illisible. Restaurez une sauvegarde puis redémarrez.');
-    stateJsonPending = null;
-    return;
-  }
-
-  const sinceLastJson = Date.now() - (lastStateJsonWriteAt || 0);
-  if (!forceJson && sinceLastJson < STATE_JSON_MIN_INTERVAL_MS) {
-    if (!stateJsonTimer) {
-      stateJsonTimer = setTimeout(() => {
-        stateJsonTimer = null;
-        flushConversationStatesWrite(false);
-      }, STATE_JSON_MIN_INTERVAL_MS - sinceLastJson);
-      if (typeof stateJsonTimer.unref === 'function') stateJsonTimer.unref();
-    }
-    if (sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
-      console.warn(`⏱️ État des conversations : SQLite ${sqliteMs} ms (${sqliteRows} conversation(s)) | JSON différé`);
-    }
-    return;
-  }
-
-  if (stateJsonTimer) {
-    clearTimeout(stateJsonTimer);
-    stateJsonTimer = null;
-  }
-
-  const toWriteJson = stateJsonPending;
-  stateJsonPending = null;
-  const jsonStartedAt = Date.now();
-  try {
-    writeJsonAtomic(CONVERSATION_STATE_PATH_ADMIN, toWriteJson);
-    conversationStatesCacheStampAdmin = fileChangeStamp(CONVERSATION_STATE_PATH_ADMIN);
-    lastStateJsonWriteAt = Date.now();
-  } catch (error) {
-    console.error('❌ Écriture différée conversation-state.json :', error.message);
-    // Nouvelle tentative au prochain enregistrement.
-    if (!stateJsonPending) stateJsonPending = toWriteJson;
-  }
-  const jsonMs = Date.now() - jsonStartedAt;
-
-  if (jsonMs + sqliteMs >= STATE_FLUSH_SLOW_LOG_MS) {
-    let sizeMb = 0;
-    try { sizeMb = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).size / 1e6; } catch {}
-    console.warn(
-      `⏱️ État des conversations : ${Date.now() - startedAt} ms | JSON ${jsonMs} ms (${sizeMb.toFixed(1)} Mo) | SQLite ${sqliteMs} ms (${sqliteRows} conversation(s))`
-    );
-  }
+  conversationStateStore().flush(force !== false);
 }
 
-// V6.37.3 — Au premier chargement : réintègre les conversations plus
-// récentes dans SQLite que dans le fichier JSON (le JSON n'étant écrit
-// qu'une fois par minute, un arrêt brutal peut le laisser en retard).
-function overlayNewerSqliteStates(states) {
-  try {
-    const db = getSqliteDb();
-    if (!db) return 0;
-    const jsonMtimeMs = fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs;
-    const rows = db
-      .prepare('SELECT contact, data FROM conversation_states WHERE updated_at > ?')
-      // Marge de 2 s : l'ancien code synchronisait SQLite juste APRÈS
-      // l'écriture du JSON, avec un horodatage légèrement postérieur.
-      .all(Math.floor(jsonMtimeMs) + 2000);
-    let applied = 0;
-    for (const row of rows) {
-      try {
-        const data = JSON.parse(row.data);
-        if (data && typeof data === 'object') {
-          states[row.contact] = data;
-          applied++;
-        }
-      } catch {}
-    }
-    if (applied) {
-      console.log(`♻️ État des conversations : ${applied} conversation(s) plus récente(s) reprise(s) depuis SQLite.`);
-    }
-    return applied;
-  } catch (error) {
-    console.warn('⚠️ Reprise SQLite → état des conversations :', error.message);
-    return 0;
-  }
-}
-
-// V6.37.3 — Resynchronisation complète JSON → SQLite, une fois par
-// démarrage, par lots de 500 conversations en laissant la main entre deux
-// lots (le serveur reste réactif). Avant, elle avait lieu à CHAQUE
-// enregistrement groupé et bloquait le serveur plusieurs secondes.
-async function sqliteBackgroundFullSync() {
-  const db = getSqliteDb();
-  if (!db) return;
-  const startedAt = Date.now();
-  const entries = Object.entries(loadConversationStatesAdmin());
-  const upsert = db.prepare(`
-    INSERT INTO conversation_states (contact, data, updated_at)
-    VALUES (@contact, @data, @updated_at)
-    ON CONFLICT(contact) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-  `);
-  // Horodatage = celui du fichier JSON : ces lignes ne sont pas « plus
-  // récentes » que le JSON et ne seront pas reprises au démarrage suivant.
-  let asOf = Date.now();
-  try { asOf = Math.floor(fs.statSync(CONVERSATION_STATE_PATH_ADMIN).mtimeMs); } catch {}
-  const runBatch = db.transaction(batch => {
-    for (const [contact, state] of batch) {
-      upsert.run({ contact, data: JSON.stringify(state), updated_at: asOf });
-    }
-  });
-  const refs = sqliteSyncedStateRefs();
-  let synced = 0;
-  for (let index = 0; index < entries.length; index += 500) {
-    // On ignore les conversations modifiées entre-temps : l'enregistrement
-    // groupé normal s'en charge avec leur version la plus récente.
-    const current = conversationStatesCacheAdmin || {};
-    const batch = entries
-      .slice(index, index + 500)
-      .filter(([contact, state]) => contact && current[contact] === state);
-    if (batch.length) {
-      runBatch(batch);
-      for (const [contact, state] of batch) refs.set(contact, state);
-      synced += batch.length;
-    }
-    await new Promise(resolve => setImmediate(resolve));
-  }
-  console.log(`🗄️ SQLite resynchronisé en arrière-plan : ${synced} conversation(s) en ${Date.now() - startedAt} ms.`);
-}
-
+// V6.37.3 — Resynchronisation complète mémoire → SQLite, une fois par
+// démarrage, par lots (le serveur reste réactif).
 const sqliteBackgroundSyncTimer = setTimeout(() => {
-  sqliteBackgroundFullSync().catch(error => console.error('❌ Resynchronisation SQLite en arrière-plan :', error.message));
+  conversationStateStore().backgroundFullSync().catch(error => console.error('❌ Resynchronisation SQLite en arrière-plan :', error.message));
 }, 3 * 60 * 1000);
 if (typeof sqliteBackgroundSyncTimer.unref === 'function') sqliteBackgroundSyncTimer.unref();
 
+// Enregistre une carte complète obtenue par loadConversationStatesAdmin().
+// V6.45 — Les conversations modifiées par quelqu'un d'autre depuis cette
+// copie (prise en main, message client…) ne sont plus écrasées : seules les
+// conversations réellement changées par l'appelant sont appliquées, et
+// écrites tout de suite dans SQLite.
 function saveConversationStatesAdmin(states) {
-  const safeStates =
-    states &&
-    typeof states === 'object' &&
-    !Array.isArray(states)
-      ? states
-      : {};
-
-  // Le cache mémoire est mis à jour immédiatement : toute lecture
-  // ultérieure (même avant l'écriture disque réelle) voit déjà les bons
-  // états. Seule l'écriture physique sur disque est différée.
-  conversationStatesCacheAdmin = safeStates;
-  pendingStateToWrite = safeStates;
-
-  if (pendingStateWriteTimer) clearTimeout(pendingStateWriteTimer);
-  pendingStateWriteTimer = setTimeout(() => flushConversationStatesWrite(false), STATE_WRITE_DEBOUNCE_MS);
-  if (typeof pendingStateWriteTimer.unref === 'function') pendingStateWriteTimer.unref();
+  conversationStateStore().saveAll(states);
 }
 
 // Sécurité : si le process s'arrête proprement (redémarrage pm2, déploiement),
@@ -16904,6 +19805,13 @@ function saveConversationStatesAdmin(states) {
 process.on('SIGTERM', flushConversationStatesWrite);
 process.on('SIGINT', flushConversationStatesWrite);
 process.on('beforeExit', flushConversationStatesWrite);
+// V6.46 — 'exit' est aussi émis après process.exit() (exception non
+// rattrapée, sortie forcée) : dernière écriture synchrone du JSON d'état.
+process.on('exit', () => {
+  // Dossier de données disparu (volume démonté) : ne pas le recréer vide.
+  if (!fs.existsSync(DATA_DIR)) return;
+  try { flushConversationStatesWrite(); } catch {}
+});
 
 // V6.37.2 — Migration unique : allège adReferral dans toutes les
 // conversations existantes (raw, mediaUrl déjà copiée localement ; voir
@@ -16961,32 +19869,18 @@ const adReferralSlimTimer = setTimeout(() => {
 }, 60 * 1000);
 if (typeof adReferralSlimTimer.unref === 'function') adReferralSlimTimer.unref();
 
+// V6.45 — Lecture-modification-écriture atomique d'UNE conversation, sur la
+// source de vérité partagée (mémoire + SQLite immédiat). Utilisée aussi par
+// server.js (updateConversationState) : une écriture d'un côté ne peut plus
+// effacer celle de l'autre.
 function updateConversationStateAdmin(
   contact,
   updater
 ) {
-  const states =
-    loadConversationStatesAdmin();
-
-  const current =
-    states[contact] &&
-    typeof states[contact] === 'object'
-      ? states[contact]
-      : {};
-
-  const updated =
-    updater({
-      ...current
-    }) || current;
-
-  states[contact] =
-    updated;
-
-  saveConversationStatesAdmin(
-    states
+  return conversationStateStore().update(
+    contact,
+    updater
   );
-
-  return updated;
 }
 
 // ============================================================
@@ -16997,12 +19891,61 @@ function notificationUserKey(user) {
   return safeString(user?.id || user?.email || user?.role || 'admin');
 }
 
+// V6.46 — Notifications : UNE copie en mémoire partagée par server.js et
+// Admin.js (lib/json-object-store.js), plafonnée à chaque enregistrement
+// (MONDECO_MAX_NOTIFICATIONS, HISTORY_IMPORT_DAYS) et écrite de façon
+// groupée (≤ 5 s, et à l'arrêt). Avant, chaque message client relisait et
+// réécrivait tout notifications.json de façon bloquante, et le plafond
+// n'était appliqué qu'en cas de manque d'espace disque. Fichier illisible :
+// conservé sous notifications.json.corrupt-<date> (jamais écrasé), la
+// sauvegarde .bak est reprise si elle est valide.
+var notificationsObjectStore;
+function notificationsStore() {
+  if (!notificationsObjectStore) {
+    notificationsObjectStore = createJsonObjectStore({
+      filePath: NOTIFICATIONS_PATH,
+      label: 'notifications.json',
+      write: (filePath, data) => writeJsonAtomic(filePath, data),
+      flushDelayMs: 1500,
+      maxDelayMs: 5000,
+      onUnreadable: 'quarantine'
+    });
+  }
+  return notificationsObjectStore;
+}
+
+function notificationItemTimeMs(item) {
+  const ms = Date.parse(safeString(item?.createdAt));
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+// Plafond : notifications plus anciennes que la rétention retirées (les
+// éléments sans date sont gardés), puis seulement les MAX_NOTIFICATION_ITEMS
+// plus récentes. L'ordre d'origine est conservé.
+function capNotificationItems(items, now = Date.now()) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  const cutoff = now - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+  let kept = list.filter(item => {
+    const ms = notificationItemTimeMs(item);
+    return !Number.isFinite(ms) || ms >= cutoff;
+  });
+  if (kept.length > MAX_NOTIFICATION_ITEMS) {
+    const ranked = kept
+      .map((item, index) => ({ item, index, ms: notificationItemTimeMs(item) }))
+      .sort((a, b) => (Number.isFinite(a.ms) ? a.ms : 0) - (Number.isFinite(b.ms) ? b.ms : 0) || a.index - b.index);
+    const keep = new Set(ranked.slice(-MAX_NOTIFICATION_ITEMS).map(entry => entry.index));
+    kept = kept.filter((item, index) => keep.has(index));
+  }
+  return kept;
+}
+
+// Copie modifiable (le tableau items est copié : ajouter un élément n'a
+// aucun effet tant que saveNotificationsStore() n'est pas appelé).
 function loadNotificationsStore() {
   try {
-    if (!fs.existsSync(NOTIFICATIONS_PATH)) return { items: [] };
-    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
+    const data = notificationsStore().getAll();
     return {
-      items: Array.isArray(parsed?.items) ? parsed.items : []
+      items: Array.isArray(data?.items) ? data.items.slice() : []
     };
   } catch (error) {
     console.warn('⚠️ Lecture notifications.json :', error.message);
@@ -17010,19 +19953,25 @@ function loadNotificationsStore() {
   }
 }
 
-let notificationsReadCache = { stamp: '', store: { items: [] } };
+// Lecture seule (aucune copie) : ne pas modifier le résultat.
 function loadNotificationsStoreReadOnly() {
-  const stamp = fileChangeStamp(NOTIFICATIONS_PATH);
-  if (stamp !== notificationsReadCache.stamp) {
-    notificationsReadCache = { stamp, store: loadNotificationsStore() };
+  try {
+    const data = notificationsStore().getAll();
+    return { items: Array.isArray(data?.items) ? data.items : [] };
+  } catch (error) {
+    console.warn('⚠️ Lecture notifications.json :', error.message);
+    return { items: [] };
   }
-  return notificationsReadCache.store;
 }
 
 function saveNotificationsStore(store) {
-  writeJsonAtomic(NOTIFICATIONS_PATH, {
-    items: Array.isArray(store?.items) ? store.items : []
+  notificationsStore().replaceAll({
+    items: capNotificationItems(store?.items)
   });
+}
+
+function flushNotificationsStore() {
+  try { return notificationsStore().flush(); } catch { return false; }
 }
 
 function notificationVisibleToUser(item, user, states = {}) {
@@ -18618,9 +21567,10 @@ async function persistFacebookHistoryAttachments(message) {
       // V6.35.9 — Même protection réseau (timeout + retry) que les autres
       // appels Meta : le téléchargement d'une pièce jointe historique
       // (photo/vidéo) subissait le même "fetch failed" non protégé.
-      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, {
+      // V6.45 — token joint seulement vers un hôte Meta autorisé.
+      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, canSendMetaToken(remoteUrl) ? {
         headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}
-      });
+      } : {});
       if(!response.ok) response = await fetchFacebookAttachmentWithRetry(remoteUrl);
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer=Buffer.from(await response.arrayBuffer());
@@ -19824,7 +22774,11 @@ router.post('/api/facebook-realtime/sync', requireAuth, async (req, res) => {
 // (application WhatsApp uniquement). C'etait la VRAIE source des
 // messages Facebook continuant d'arriver malgre la suppression des
 // donnees et le blocage du webhook.
-if (false && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
+// V6.46 — Plus de `if (false)` écrit en dur : ces tâches suivent les mêmes
+// interrupteurs que les webhooks (FACEBOOK_WEBHOOK_ENABLED,
+// INSTAGRAM_WEBHOOK_ENABLED ; défaut false = comportement inchangé).
+const SOCIAL_CHANNELS_ENABLED_V646 = require('./lib/runtime-check').resolveChannelFlags(process.env);
+if (SOCIAL_CHANNELS_ENABLED_V646.facebook && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
   const initialFacebookRealtimeTimer = setTimeout(() => {
     runFacebookRealtimeRecovery({ force: true }).catch(() => {});
   }, 12000);
@@ -19844,15 +22798,24 @@ if (false && FACEBOOK_PAGE_ID && FACEBOOK_MESSENGER_TOKEN) {
 const SOCIAL_COMMENTS_POLL_MS = 15 * 60 * 1000;
 // Patch session (13/10) - job serveur commentaires Facebook/Instagram
 // desactive (application WhatsApp uniquement).
-if (false && FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) {
+// V6.46 — Synchronisés seulement pour le(s) canal(aux) activé(s).
+const SOCIAL_COMMENTS_SYNC_CHANNEL_V646 =
+  SOCIAL_CHANNELS_ENABLED_V646.facebook && SOCIAL_CHANNELS_ENABLED_V646.instagram
+    ? 'all'
+    : SOCIAL_CHANNELS_ENABLED_V646.facebook
+      ? 'facebook'
+      : SOCIAL_CHANNELS_ENABLED_V646.instagram
+        ? 'instagram'
+        : '';
+if (SOCIAL_COMMENTS_SYNC_CHANNEL_V646 && FACEBOOK_PAGE_ID && FACEBOOK_COMMENTS_TOKEN) {
   const initialSocialCommentsTimer = setTimeout(() => {
-    runSocialCommentsSync('all').catch(() => {});
+    runSocialCommentsSync(SOCIAL_COMMENTS_SYNC_CHANNEL_V646).catch(() => {});
   }, 20000);
   if (typeof initialSocialCommentsTimer.unref === 'function') {
     initialSocialCommentsTimer.unref();
   }
   const socialCommentsTimer = setInterval(() => {
-    runSocialCommentsSync('all').catch(() => {});
+    runSocialCommentsSync(SOCIAL_COMMENTS_SYNC_CHANNEL_V646).catch(() => {});
   }, SOCIAL_COMMENTS_POLL_MS);
   if (typeof socialCommentsTimer.unref === 'function') {
     socialCommentsTimer.unref();
@@ -21657,6 +24620,16 @@ function reconcileAnsweredConversationStates(log = [], statesInput = null) {
 let fastPendingStatusCache = null;
 let fastPendingStatusCacheAt = 0;
 const FAST_PENDING_STATUS_CACHE_MS = 30000;
+// V6.46 — Nombre « à répondre » jamais plus ancien que les notifications
+// renvoyées avec lui : une notification plus récente que le cache le fait
+// recalculer. Avant, le premier message après « tout traité » arrivait avec
+// « 0 en attente » (cache de 30 s) et la bulle retirait aussitôt son alerte.
+function invalidatePendingStatusCacheBefore(eventMs) {
+  if (fastPendingStatusCache && Number.isFinite(eventMs) && eventMs >= fastPendingStatusCacheAt) {
+    fastPendingStatusCache = null;
+  }
+}
+
 function fastPendingMessageStatusFromStates() {
   if (fastPendingStatusCache && (Date.now() - fastPendingStatusCacheAt) < FAST_PENDING_STATUS_CACHE_MS) {
     return fastPendingStatusCache;
@@ -21894,13 +24867,19 @@ function pickerSearchText(value) {
   return safeString(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+// V6.46 — cardBody : texte exact de la fiche envoyée (prix en vigueur,
+// dimensions, couleurs, disponibilité en mots) pour l'aperçu de l'Inbox.
+const { productCardBody: whatsappProductCardBody } = require('./lib/whatsapp-interactive');
+
 function productPickerItem(product) {
   return {
     id: safeString(product?.id),
     name: safeString(product?.name),
     price: safeString(product?.price),
-    promoPrice: safeString(product?.promoPrice),
+    promoPrice: wooCatalog.effectivePromoPrice(product),
     dimensions: safeString(product?.dimensions),
+    availability: safeString(product?.availability),
+    cardBody: whatsappProductCardBody(product || {}),
     hasImage: Boolean(getLocalProductImagePath(product) || /^https:\/\//i.test(safeString(product?.image))),
     hasUrl: /^https:\/\//i.test(safeString(product?.productUrl))
   };
@@ -22424,43 +25403,202 @@ function rewriteConversationArrayFileForPurge(filePath, targetHash, part) {
     const hash = conversationEntryPartPurgeHash(original, part);
     if (hash !== targetHash) { next.push(original); continue; }
     removed += 1;
-    const transformed = applyConversationPurgeTombstones(original);
+    const transformed = applyConversationPurgeTombstones(original, { soft:false });
     if (transformed) next.push(transformed);
   }
   if (removed) writeJsonAtomic(filePath, next);
   return removed;
 }
 
-function rewritePersistentConversationEventsForPurge(targetHash, part) {
-  let removed = 0;
-  const roots = [
-    CONVERSATION_EVENTS_DIR,
-    path.join(DATA_DIR, 'conversation-archive-recovered')
-  ];
+// V6.46 — Suppression définitive dans les journaux permanents
+// conversation-events-*.jsonl : réécriture ATOMIQUE (fichier temporaire
+// puis rename ; avant : réécriture en place qu'un arrêt brutal ou un disque
+// plein laissait tronquée, seule copie permanente de la journée), lecture
+// asynchrone, et seuls les jours du message sont traités avant la réponse :
+// les autres jours sont vérifiés en arrière-plan (l'empreinte enregistrée
+// masque déjà le message partout à la lecture). Avant, chaque suppression
+// relisait tout l'historique de façon bloquante (3,9 s pour 65 Mo).
+var conversationEventsRewriteChain;
+function serializeConversationEventsRewrite(task) {
+  const run = (conversationEventsRewriteChain || Promise.resolve()).then(task, task);
+  conversationEventsRewriteChain = run.catch(() => {});
+  return run;
+}
+
+function conversationEventFilesForPurge() {
+  const files = [];
   const visit = directory => {
     if (!fs.existsSync(directory)) return;
     for (const entry of fs.readdirSync(directory, { withFileTypes:true })) {
       const filePath = path.join(directory, entry.name);
       if (entry.isDirectory()) { visit(filePath); continue; }
       if (!entry.isFile() || !/^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
-      const output = [];
-      let changed = false;
-      for (const line of fs.readFileSync(filePath,'utf8').split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try {
-          const original = JSON.parse(line);
-          if (conversationEntryPartPurgeHash(original, part) === targetHash) {
-            removed += 1;
-            changed = true;
-            const transformed = applyConversationPurgeTombstones(original);
-            if (transformed) output.push(JSON.stringify(transformed));
-          } else output.push(line);
-        } catch { output.push(line); }
-      }
-      if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+      files.push(filePath);
     }
   };
-  for (const root of roots) visit(root);
+  visit(CONVERSATION_EVENTS_DIR);
+  visit(path.join(DATA_DIR, 'conversation-archive-recovered'));
+  return files;
+}
+
+function conversationEventFileDay(filePath) {
+  const match = /conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(path.basename(filePath));
+  return match ? match[1] : '';
+}
+
+// Jours (UTC, comme l'écriture des journaux) où le message a pu être écrit.
+function conversationPurgeCandidateDays(target = {}) {
+  const days = new Set();
+  for (const value of [target?.time, target?.reply_time, target?.created_time, target?.timestamp, target?.incoming_at]) {
+    const ms = Date.parse(safeString(value));
+    if (!Number.isFinite(ms)) continue;
+    for (const offset of [-1, 0, 1]) {
+      days.add(new Date(ms + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+    }
+  }
+  return days;
+}
+
+// Textes cherchés avant d'analyser une ligne (évite JSON.parse + SHA-256
+// sur chaque ligne de l'historique).
+function conversationPurgeNeedles(target = {}) {
+  const id = safeString(target?.message_id || target?.meta_message_id || target?.mid || target?.id);
+  const value = id || safeString(target?.contact);
+  if (!value) return [];
+  return [JSON.stringify(value).slice(1, -1)];
+}
+
+// V6.46 — Fichier raccourci pendant la réécriture (restauration, rotation
+// externe) : nouvel essai planifié sur la même file (avant : abandon
+// silencieux, le texte supprimé restait sur disque, seulement masqué).
+const CONVERSATION_PURGE_REWRITE_MAX_RETRIES = 3;
+const CONVERSATION_PURGE_REWRITE_RETRY_MS = Math.max(10, Number(process.env.MONDECO_PURGE_REWRITE_RETRY_MS) || 5000);
+
+function retryConversationEventsPurgeLater(filePath, targetHash, part, needles, attempt) {
+  if (attempt > CONVERSATION_PURGE_REWRITE_MAX_RETRIES) {
+    console.error(
+      `❌ Suppression définitive : ${path.basename(filePath)} encore modifié pendant la réécriture après ` +
+      `${CONVERSATION_PURGE_REWRITE_MAX_RETRIES} essai(s) ; le message reste masqué à l'affichage mais présent dans ce journal. Relancez la suppression.`
+    );
+    return;
+  }
+  const timer = setTimeout(() => {
+    serializeConversationEventsRewrite(
+      () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles, attempt)
+    )
+      .then(removed => {
+        if (!removed) return;
+        try { resetInboxCachesAfterMessageChange(); } catch {}
+        console.log(`🗑 Suppression définitive : ${removed} copie(s) retirée(s) de ${path.basename(filePath)} (nouvel essai).`);
+      })
+      .catch(error => console.error(`❌ Suppression définitive (nouvel essai) ${path.basename(filePath)} :`, error.message));
+  }, CONVERSATION_PURGE_REWRITE_RETRY_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+async function purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles = [], attempt = 0) {
+  let readSize = 0;
+  try {
+    readSize = Number((await fs.promises.stat(filePath)).size || 0);
+  } catch {
+    return 0;
+  }
+  if (!readSize) return 0;
+
+  const buffer = Buffer.alloc(readSize);
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    await handle.read(buffer, 0, readSize, 0);
+  } finally {
+    await handle.close();
+  }
+  const text = buffer.toString('utf8');
+  if (needles.length && !needles.some(needle => text.includes(needle))) return 0;
+
+  const lines = text.split(/\r?\n/);
+  const output = [];
+  let removed = 0;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (needles.length && !needles.some(needle => line.includes(needle))) {
+      output.push(line);
+      continue;
+    }
+    try {
+      const original = JSON.parse(line);
+      if (conversationEntryPartPurgeHash(original, part) === targetHash) {
+        removed += 1;
+        const transformed = applyConversationPurgeTombstones(original, { soft:false });
+        if (transformed) output.push(JSON.stringify(transformed));
+      } else output.push(line);
+    } catch { output.push(line); }
+    if (index % 2000 === 1999) await new Promise(resolve => setImmediate(resolve));
+  }
+  if (!removed) return 0;
+
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.purge.tmp`;
+  try {
+    await fs.promises.writeFile(tempPath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+    // --- Section synchrone (aucun await) : les ajouts de server.js faits
+    // pendant la lecture sont recopiés à la fin, puis le rename remplace le
+    // fichier d'un seul coup.
+    const currentSize = Number(fs.statSync(filePath).size || 0);
+    if (currentSize < readSize) {
+      console.warn(`⚠️ Suppression définitive : ${path.basename(filePath)} modifié pendant la réécriture, nouvelle tentative dans ${Math.round(CONVERSATION_PURGE_REWRITE_RETRY_MS / 1000)} s.`);
+      retryConversationEventsPurgeLater(filePath, targetHash, part, needles, attempt + 1);
+      return 0;
+    }
+    if (currentSize > readSize) {
+      const tail = Buffer.alloc(currentSize - readSize);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        fs.readSync(fd, tail, 0, tail.length, readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.appendFileSync(tempPath, tail);
+    }
+    fs.renameSync(tempPath, filePath);
+    return removed;
+  } catch (error) {
+    console.error(`❌ Suppression définitive : ${path.basename(filePath)} non réécrit (fichier d'origine intact) :`, error.message);
+    return 0;
+  } finally {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+  }
+}
+
+async function rewritePersistentConversationEventsForPurge(targetHash, part, target = {}) {
+  const files = conversationEventFilesForPurge();
+  const days = conversationPurgeCandidateDays(target);
+  const needles = conversationPurgeNeedles(target);
+  const preferred = files.filter(filePath => days.has(conversationEventFileDay(filePath)));
+  const others = files.filter(filePath => !days.has(conversationEventFileDay(filePath)));
+  let removed = 0;
+  for (const filePath of preferred) {
+    removed += await serializeConversationEventsRewrite(
+      () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles)
+    );
+  }
+  if (others.length) {
+    setImmediate(async () => {
+      let backgroundRemoved = 0;
+      for (const filePath of others) {
+        try {
+          backgroundRemoved += await serializeConversationEventsRewrite(
+            () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles)
+          );
+        } catch (error) {
+          console.error(`❌ Suppression définitive (arrière-plan) ${path.basename(filePath)} :`, error.message);
+        }
+      }
+      if (backgroundRemoved) {
+        resetInboxCachesAfterMessageChange();
+        console.log(`🗑 Suppression définitive : ${backgroundRemoved} copie(s) supplémentaire(s) retirée(s) des journaux.`);
+      }
+    });
+  }
   return removed;
 }
 function purgeMessageIdsFromIndex(entry = {}) {
@@ -22468,7 +25606,8 @@ function purgeMessageIdsFromIndex(entry = {}) {
   if (!ids.size || !fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
   const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH,'utf8').split(/\r?\n/).filter(Boolean);
   const next = lines.filter(line => !ids.has(safeString(line)));
-  if (next.length !== lines.length) fs.writeFileSync(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '', 'utf8');
+  // V6.46 — Réécriture atomique (temporaire + rename), jamais en place.
+  if (next.length !== lines.length) writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '');
   return lines.length - next.length;
 }
 
@@ -22489,54 +25628,91 @@ function purgeNotificationsForConversationEntry(entry = {}) {
   return before - store.items.length;
 }
 
+// V6.46 — Le journal est relu AVANT de toucher à l'état, puis seule la
+// conversation concernée est modifiée, sur sa version la plus récente
+// (updateConversationStateAdmin, sans await). Avant, une copie de TOUTES
+// les conversations prise avant l'await de loadWhatsAppLog() était
+// réenregistrée après : une prise en main ou une nouvelle conversation
+// arrivée pendant ces secondes pouvait être annulée.
 async function rebuildConversationStateAfterPurge(contact) {
-  const states = loadConversationStatesAdmin();
-  const current = states[contact] && typeof states[contact] === 'object' ? states[contact] : {};
-  let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === safeString(contact));
-  entries = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
-  if (!entries.length) {
-    delete states[contact];
-    saveConversationStatesAdmin(states);
-    return {};
-  }
-  const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
-  const evidence = conversationDirectionalEvidence(entries, cleanState);
-  const latestInbound = [...entries].reverse().find(item => conversationEntryNeedsDirection(item).inbound) || {};
-  const latestBot = [...entries].reverse().find(item => {
-    const flags = conversationEntryNeedsDirection(item);
-    return flags.outbound && !conversationEntryIsBusinessReply(item);
-  }) || {};
-  states[contact] = {
-    ...current,
-    lastCustomerAt:safeString(evidence.latestInboundIso),
-    lastHumanAt:safeString(evidence.latestHumanIso),
-    lastBotAt:safeString(latestBot?.time || latestBot?.reply_time),
-    lastAnsweredAt:safeString(evidence.latestOutboundIso),
-    lastAnsweredCustomerAt:evidence.answered ? safeString(evidence.latestInboundIso) : '',
-    unreadCount:evidence.pending ? 1 : 0,
-    lastUnreadMessageId:evidence.pending ? safeString(latestInbound?.message_id || latestInbound?.meta_message_id) : '',
-    awaitingResponse:evidence.pending,
-    updatedAt:new Date().toISOString()
-  };
-  saveConversationStatesAdmin(states);
-  return states[contact];
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return {};
+  let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === cleanContact);
+  entries = cleanContact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
+
+  const known = readConversationStatesAdminCached()?.[cleanContact];
+  if (!known || typeof known !== 'object' || !Object.keys(known).length) return {};
+
+  let result = {};
+  updateConversationStateAdmin(cleanContact, current => {
+    if (!current || !Object.keys(current).length) return undefined;
+    if (!entries.length) {
+      // V6.45 — Plus de suppression de la conversation quand son dernier
+      // message est purgé : affectation, origine publicitaire et fiche client
+      // sont conservées (seuls les compteurs de messages sont remis à zéro).
+      result = {
+        ...current,
+        unreadCount:0,
+        lastUnreadMessageId:'',
+        awaitingResponse:false,
+        updatedAt:new Date().toISOString()
+      };
+      return result;
+    }
+    const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
+    const evidence = conversationDirectionalEvidence(entries, cleanState);
+    const latestInbound = [...entries].reverse().find(item => conversationEntryNeedsDirection(item).inbound) || {};
+    const latestBot = [...entries].reverse().find(item => {
+      const flags = conversationEntryNeedsDirection(item);
+      return flags.outbound && !conversationEntryIsBusinessReply(item);
+    }) || {};
+    result = {
+      ...current,
+      lastCustomerAt:safeString(evidence.latestInboundIso),
+      lastHumanAt:safeString(evidence.latestHumanIso),
+      lastBotAt:safeString(latestBot?.time || latestBot?.reply_time),
+      lastAnsweredAt:safeString(evidence.latestOutboundIso),
+      lastAnsweredCustomerAt:evidence.answered ? safeString(evidence.latestInboundIso) : '',
+      unreadCount:evidence.pending ? 1 : 0,
+      lastUnreadMessageId:evidence.pending ? safeString(latestInbound?.message_id || latestInbound?.meta_message_id) : '',
+      awaitingResponse:evidence.pending,
+      updatedAt:new Date().toISOString()
+    };
+    return result;
+  });
+  return result;
 }
 
-async function purgeConversationMessagePart(target, part) {
-  const targetHash = conversationEntryPartPurgeHash(target, part);
+async function purgeConversationMessagePart(target, part, knownHash = '') {
+  // V6.45 — knownHash : empreinte d'origine d'un message masqué (l'entrée
+  // affichée porte la mention « Message masqué », pas le texte d'origine).
+  const targetHash = safeString(knownHash) || conversationEntryPartPurgeHash(target, part);
   if (!targetHash) throw new Error('Empreinte de message invalide.');
   rememberPurgedHashes([targetHash]);
   let removed = 0;
   removed += rewriteConversationArrayFileForPurge(CONVERSATIONS_LOG_PATH,targetHash,part);
   removed += rewriteConversationArrayFileForPurge(INSTAGRAM_HISTORY_PATH,targetHash,part);
   removed += rewriteConversationArrayFileForPurge(FACEBOOK_HISTORY_PATH,targetHash,part);
-  removed += rewritePersistentConversationEventsForPurge(targetHash,part);
+  removed += await rewritePersistentConversationEventsForPurge(targetHash,part,target);
   purgeMessageIdsFromIndex(target);
   purgeNotificationsForConversationEntry(target);
   combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
   persistentConversationEventsCache = { stamp:'', entries:[] };
   const state = await rebuildConversationStateAfterPurge(safeString(target?.contact));
   return { targetHash, removed, state };
+}
+
+// V6.45 — Réponses IA : un commercial ne voit (et ne traite) que les
+// canaux de son planning du jour, comme dans la boîte de réception. Les
+// autres rôles gardent la même portée que dans la boîte de réception.
+function aiRepliesEntryChannel(entry) {
+  return conversationStateChannel(safeString(entry?.contact), { channel: safeString(entry?.channel) });
+}
+
+function aiRepliesChannelFilter(user) {
+  if (safeString(user?.role) !== 'commercial') return () => true;
+  const scope = plannedChannelSetForUser(user);
+  return entry => channelScopeAllowsMessage(scope, aiRepliesEntryChannel(entry));
 }
 
 router.post('/api/ai-replies/resolve-alert', requireAuth, (req, res) => {
@@ -22559,6 +25735,9 @@ router.post('/api/ai-replies/resolve-alert', requireAuth, (req, res) => {
       const matchesId = messageId && safeString(entry?.message_id) === messageId;
       const matchesTime = !messageId && time && safeString(entry?.time) === time;
       if (matchesId || matchesTime) {
+        if (!aiRepliesChannelFilter(req.user)(entry)) {
+          return res.status(403).json({ error: 'Accès refusé : ce canal de messages ne fait pas partie de votre planning du jour.' });
+        }
         entry.alertResolved = true;
         entry.alertResolvedAt = new Date().toISOString();
         entry.alertResolvedBy = safeString(req.user?.name || req.user?.email || 'Équipe MONDECO');
@@ -22588,9 +25767,11 @@ router.get('/api/ai-replies/alert-count', requireAuth, (req, res) => {
     // Évite de relire + JSON.parse ~16 Mo à chaque polling du badge.
     // Le cache est automatiquement rechargé lorsque le stamp du fichier change.
     const entries = loadPerformanceConversationsLogCached();
+    const allowedChannel = aiRepliesChannelFilter(req.user);
     let count = 0;
     for (const entry of entries) {
       if (
+        allowedChannel(entry) &&
         Array.isArray(entry?.alertFlags) &&
         entry.alertFlags.length > 0 &&
         !entry?.alertResolved
@@ -22620,7 +25801,8 @@ router.get('/api/ai-replies', requireAuth, (req, res) => {
       return res.json({ replies: [], stats: { total: 0, byChannel: {}, transferRate: 0, alerts: 0 } });
     }
     const raw = JSON.parse(fs.readFileSync(logPath, 'utf8') || '[]');
-    const entries = Array.isArray(raw) ? raw : [];
+    // V6.45 — Commercial : uniquement les canaux de son planning du jour.
+    const entries = (Array.isArray(raw) ? raw : []).filter(aiRepliesChannelFilter(req.user));
 
     const isRealAiReply = entry => safeString(entry?.action) === 'ai_reply' && safeString(entry?.reply);
     const hasAlert = entry => Array.isArray(entry?.alertFlags) && entry.alertFlags.length > 0 && !entry?.alertResolved;
@@ -22895,9 +26077,13 @@ router.get('/api/conversations/:contact', requireAuth, async (req, res) => {
       },
       entries: entries.map(entry => ({
         ...entry,
+        // V6.45 — Pas de clé de suppression pour une partie déjà masquée
+        // (restauration : entry.softDeleted[part].id, administrateurs).
+        // Entrée partiellement masquée : clé calculée sur le texte d'origine
+        // (softDeleted.keys), pas sur la mention affichée.
         purgeKeys:{
-          incoming: (safeString(entry?.incoming) || attachmentDirectionForPurge(entry) === 'incoming') ? conversationEntryPartPurgeHash(entry,'incoming') : '',
-          reply: (safeString(entry?.reply) || attachmentDirectionForPurge(entry) === 'outgoing') ? conversationEntryPartPurgeHash(entry,'reply') : ''
+          incoming: !entry?.softDeleted?.incoming && (safeString(entry?.incoming) || attachmentDirectionForPurge(entry) === 'incoming') ? (safeString(entry?.softDeleted?.keys?.incoming) || conversationEntryPartPurgeHash(entry,'incoming')) : '',
+          reply: !entry?.softDeleted?.reply && (safeString(entry?.reply) || attachmentDirectionForPurge(entry) === 'outgoing') ? (safeString(entry?.softDeleted?.keys?.reply) || conversationEntryPartPurgeHash(entry,'reply')) : ''
         }
       })),
       hasMore,
@@ -23035,33 +26221,412 @@ router.post('/api/conversations/:contact/profile/suggest', requireAuth, async (r
   }
 });
 
+// ============================================================
+// V6.45 — SUPPRESSION RÉVERSIBLE (MASQUAGE) D'UN MESSAGE
+// ============================================================
+// Avant : n'importe quel commercial pouvait effacer définitivement
+// n'importe quel message de n'importe quelle conversation, sans trace, et
+// la conversation disparaissait de la boîte de réception une fois vide.
+// Désormais :
+// - un commercial ne peut masquer que les messages d'une conversation qui
+//   lui est affectée (et d'un canal de son planning) ;
+// - le message est MASQUÉ, jamais effacé : les fichiers ne changent pas,
+//   l'affichage montre « 🗑 Message masqué par … », la conversation reste
+//   dans la boîte de réception ; un administrateur peut le restaurer ;
+// - chaque masquage, restauration ou purge est tracé (journal d'activité
+//   de l'équipe + message-deletions.json : qui, quand, aperçu du texte) ;
+// - la suppression définitive (?permanent=1) reste possible pour un
+//   administrateur uniquement (ex. demande d'effacement d'un client).
+const MESSAGE_SOFT_DELETIONS_MAX_ITEMS = 20000;
+
+function messageSoftDeletionsPath() {
+  return path.join(DATA_DIR, 'message-deletions.json');
+}
+
+function activeMessageSoftDeletionMap(items = []) {
+  const map = new Map();
+  for (const item of items) {
+    const key = safeString(item?.purgeKey);
+    if (!key || item?.restoredAt || item?.purgedAt) continue;
+    map.set(key, item);
+  }
+  return map;
+}
+
+// Cache porté par la fonction (déclaration hissée) : utilisable même par
+// un appel très matinal, sans variable « let » en zone morte.
+function loadMessageSoftDeletionsState() {
+  const now = Date.now();
+  const cached = loadMessageSoftDeletionsState.cache;
+  if (cached && now - cached.checkedAt < 1000) return cached;
+  const filePath = messageSoftDeletionsPath();
+  const stamp = fileChangeStamp(filePath);
+  if (cached && cached.stamp === stamp) {
+    cached.checkedAt = now;
+    return cached;
+  }
+  let items = [];
+  let readError = false;
+  try {
+    if (fs.existsSync(filePath)) {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8') || '{}');
+      items = Array.isArray(parsed?.items) ? parsed.items : (Array.isArray(parsed) ? parsed : []);
+    }
+  } catch (error) {
+    console.warn('⚠️ Lecture des messages masqués :', error.message);
+    readError = true;
+    if (cached) {
+      cached.checkedAt = now;
+      return cached;
+    }
+  }
+  const state = { stamp, checkedAt: now, items, active: activeMessageSoftDeletionMap(items), readError };
+  loadMessageSoftDeletionsState.cache = state;
+  return state;
+}
+
+function messageSoftDeletionsStamp() {
+  return loadMessageSoftDeletionsState().stamp;
+}
+
+function saveMessageSoftDeletions(items) {
+  const state = loadMessageSoftDeletionsState();
+  if (state.readError) {
+    // Ne jamais écraser un journal illisible par une liste partielle.
+    throw new Error('Journal des messages masqués illisible : opération annulée.');
+  }
+  let next = Array.isArray(items) ? items : [];
+  if (next.length > MESSAGE_SOFT_DELETIONS_MAX_ITEMS) {
+    // On retire d'abord les plus anciens éléments déjà restaurés ou purgés.
+    let excess = next.length - MESSAGE_SOFT_DELETIONS_MAX_ITEMS;
+    next = next.filter(item => {
+      if (excess > 0 && (item?.restoredAt || item?.purgedAt)) {
+        excess -= 1;
+        return false;
+      }
+      return true;
+    });
+  }
+  const filePath = messageSoftDeletionsPath();
+  writeJsonAtomic(filePath, { version: 1, items: next });
+  loadMessageSoftDeletionsState.cache = {
+    stamp: fileChangeStamp(filePath),
+    checkedAt: Date.now(),
+    items: next,
+    active: activeMessageSoftDeletionMap(next),
+    readError: false
+  };
+}
+
+function publicMessageSoftDeletionInfo(record = {}) {
+  return {
+    id: safeString(record.id),
+    deletedAt: safeString(record.deletedAt),
+    deletedByName: safeString(record.deletedByName)
+  };
+}
+
+function applyConversationSoftDeletions(entry, incomingHash, replyHash) {
+  const active = loadMessageSoftDeletionsState().active;
+  if (!active.size || !entry || typeof entry !== 'object') return entry;
+  const incomingRecord = incomingHash ? active.get(incomingHash) : null;
+  const replyRecord = replyHash ? active.get(replyHash) : null;
+  if (!incomingRecord && !replyRecord) return entry;
+
+  const direction = attachmentDirectionForPurge(entry);
+  const next = { ...entry };
+  const softDeleted = { keys: { incoming: incomingHash, reply: replyHash } };
+
+  if (incomingRecord && (safeString(next.incoming) || (direction === 'incoming' && Array.isArray(next.attachments) && next.attachments.length))) {
+    next.incoming = safeString(incomingRecord.label) || '🗑 Message masqué';
+    if (direction === 'incoming') {
+      next.attachments = [];
+      next.attachment_type = '';
+      next.attachment_url = '';
+    }
+    softDeleted.incoming = publicMessageSoftDeletionInfo(incomingRecord);
+  }
+  if (replyRecord && (safeString(next.reply) || (direction === 'outgoing' && Array.isArray(next.attachments) && next.attachments.length))) {
+    next.reply = safeString(replyRecord.label) || '🗑 Message masqué';
+    if (direction === 'outgoing') {
+      next.attachments = [];
+      next.attachment_type = '';
+      next.attachment_url = '';
+    }
+    softDeleted.reply = publicMessageSoftDeletionInfo(replyRecord);
+  }
+  if (!softDeleted.incoming && !softDeleted.reply) return entry;
+  next.softDeleted = softDeleted;
+  return next;
+}
+
+function messageSoftDeletionLabel(actorName, iso) {
+  let when = '';
+  try {
+    when = new Date(iso).toLocaleString('fr-FR', {
+      timeZone: safeTimezone(getBotSettings()?.timezone || 'Africa/Tunis'),
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {}
+  return `🗑 Message masqué par ${safeString(actorName) || 'un membre de l’équipe'}${when ? ` le ${when}` : ''}`;
+}
+
+// Après un masquage ou une restauration, l'Inbox est relue depuis les
+// fichiers (comme après une purge) : les entrées en cache sont déjà
+// « nettoyées » et ne peuvent pas être démasquées sur place.
+function resetInboxCachesAfterMessageChange() {
+  combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
+  persistentConversationEventsCache = { stamp:'', entries:[] };
+}
+
+// Un commercial ne masque que dans une conversation de son planning du
+// jour ET qui lui est affectée. Tant que l'état des conversations existe
+// en double (cache Admin écrit en différé + SQLite lu par server.js),
+// l'affectation est acceptée si l'une des deux sources la confirme : sinon
+// un commercial à qui l'on vient d'affecter une conversation serait refusé
+// pendant quelques secondes alors que l'interface lui montre le bouton.
+function requireCommercialMessageHideAccess(req, res, contact) {
+  if (safeString(req.user?.role) !== 'commercial') return true;
+  const cleanContact = safeString(contact);
+  const adminState = readConversationStatesAdminCached()?.[cleanContact] || {};
+  const sqliteState = getConversationStateSingle(cleanContact) || {};
+  const channel = conversationStateChannel(cleanContact, { channel: safeString(adminState?.channel || sqliteState?.channel) });
+  if (!requireCommercialMessageChannelAccess(req, res, channel)) return false;
+  if (conversationAssignedToUser(adminState, req.user) || conversationAssignedToUser(sqliteState, req.user)) return true;
+  res.status(403).json({
+    error: 'Lecture seule : seuls les messages d’une conversation qui vous est affectée peuvent être masqués.',
+    errorCode: 'CONVERSATION_NOT_ASSIGNED'
+  });
+  return false;
+}
+
+function messageDeletionActor(req) {
+  return {
+    userId: safeString(req.user?.id),
+    userName: safeString(req.user?.name || req.user?.email),
+    userRole: safeString(req.user?.role)
+  };
+}
+
+// V6.45 — Notifications d'un message client masqué : l'aperçu (visible de
+// toute l'équipe dans la cloche) est remplacé par la mention de masquage,
+// à la lecture (la restauration le fait réapparaître).
+function hiddenMessageNotificationMasker() {
+  const byMessageId = new Map();
+  const byPreview = new Map();
+  try {
+    for (const record of loadMessageSoftDeletionsState().active.values()) {
+      if (safeString(record?.part) !== 'incoming') continue;
+      const contact = safeString(record?.contact);
+      if (!contact) continue;
+      if (safeString(record?.messageId)) byMessageId.set(`${contact}|${safeString(record.messageId)}`, record);
+      if (safeString(record?.preview)) byPreview.set(`${contact}|${safeString(record.preview)}`, record);
+    }
+  } catch {
+    return () => ({});
+  }
+  if (!byMessageId.size && !byPreview.size) return () => ({});
+  return item => {
+    const contact = safeString(item?.contact);
+    const record =
+      byMessageId.get(`${contact}|${safeString(item?.messageId)}`) ||
+      byPreview.get(`${contact}|${safeString(item?.preview)}`);
+    return record ? { preview: safeString(record.label) || 'Message masqué', attachmentPreview: '' } : {};
+  };
+}
+
+function entryPartPreview(entry = {}, part = 'incoming') {
+  const text = safeString(part === 'incoming' ? entry?.incoming : entry?.reply);
+  if (text) return text.slice(0, 1000);
+  const attachments = Array.isArray(entry?.attachments) ? entry.attachments : [];
+  return attachments.length ? `[${attachments.length} pièce(s) jointe(s)]` : '';
+}
+
+async function findConversationEntryForDeletion(contact, purgeKey, part) {
+  let target = (await loadWhatsAppLog()).find(entry =>
+    safeString(entry?.contact) === contact && (
+      conversationEntryPartPurgeHash(entry, part) === purgeKey ||
+      safeString(entry?.softDeleted?.keys?.[part]) === purgeKey
+    )
+  );
+  if (!target) {
+    target = await findArchivedConversationEntryForPurge(contact, purgeKey, part);
+  }
+  return target || null;
+}
+
 router.delete('/api/conversations/:contact/messages/:purgeKey', requireCommercialAccess, async (req,res) => {
   try {
     const contact = safeString(req.params.contact);
     const purgeKey = safeString(req.params.purgeKey);
     const part = safeString(req.query?.part).toLowerCase();
+    const permanent = ['1','true','oui','yes'].includes(safeString(req.query?.permanent ?? req.body?.permanent).toLowerCase());
     if (!contact || !purgeKey || !['incoming','reply'].includes(part)) {
       return res.status(400).json({ error:'Message ou type de suppression invalide.' });
     }
-    let target = (await loadWhatsAppLog()).find(entry =>
-      safeString(entry?.contact) === contact && conversationEntryPartPurgeHash(entry,part) === purgeKey
-    );
-    if (!target) {
-      target = await findArchivedConversationEntryForPurge(contact,purgeKey,part);
+    if (permanent && safeString(req.user?.role) !== 'admin') {
+      return res.status(403).json({ error:'Suppression définitive réservée aux administrateurs. Le message peut être masqué.' });
     }
+    // Un commercial : canal de son planning ET conversation qui lui est affectée.
+    if (!requireCommercialMessageHideAccess(req, res, contact)) return;
+
+    const target = await findConversationEntryForDeletion(contact, purgeKey, part);
     if (!target) return res.status(404).json({ error:'Message introuvable ou déjà supprimé.' });
-    const result = await purgeConversationMessagePart(target,part);
+
+    const actor = messageDeletionActor(req);
+    const channel = conversationStateChannel(contact, { channel: safeString(target?.channel) });
+    // Empreinte d'origine (texte réel) : différente de celle de l'entrée
+    // affichée quand la partie est déjà masquée.
+    const softRecord = target?.softDeleted?.[part] ? target.softDeleted[part] : null;
+    const originalKey = softRecord ? safeString(target?.softDeleted?.keys?.[part]) || purgeKey : purgeKey;
+
+    if (permanent) {
+      const result = await purgeConversationMessagePart(target, part, softRecord ? originalKey : '');
+      const state = loadMessageSoftDeletionsState();
+      const items = state.items.map(item =>
+        safeString(item?.purgeKey) === originalKey && !item?.purgedAt
+          ? { ...item, purgedAt: new Date().toISOString(), purgedByUserId: actor.userId, purgedByName: actor.userName, preview: '' }
+          : item
+      );
+      if (items.some((item, index) => item !== state.items[index])) saveMessageSoftDeletions(items);
+      appendTeamActivity({
+        type: 'message_purge',
+        ...actor,
+        contact,
+        channel,
+        part,
+        purgeKey: originalKey,
+        messageId: safeString(target?.message_id || target?.meta_message_id),
+        removedLocal: result.removed
+      });
+      return res.json({
+        success:true,
+        permanentlyDeleted:true,
+        removedLocal:result.removed,
+        // Les APIs de messagerie privées ne fournissent pas ici un unsend business générique.
+        remoteDeleted:false,
+        state:result.state
+      });
+    }
+
+    const existing = softRecord || loadMessageSoftDeletionsState().active.get(purgeKey);
+    if (existing) {
+      return res.status(409).json({ error:'Ce message est déjà masqué.', deletionId: safeString(existing.id) });
+    }
+
+    const now = new Date().toISOString();
+    const record = {
+      id: crypto.randomUUID(),
+      contact,
+      channel,
+      part,
+      purgeKey,
+      messageId: safeString(target?.message_id || target?.meta_message_id),
+      entryTime: safeString(target?.time || target?.created_time || target?.timestamp),
+      preview: entryPartPreview(target, part),
+      deletedAt: now,
+      deletedByUserId: actor.userId,
+      deletedByName: actor.userName,
+      deletedByRole: actor.userRole,
+      label: messageSoftDeletionLabel(actor.userName, now)
+    };
+    // V6.45 — Dernier message du client masqué : son texte disparaît aussi
+    // de l'état de la conversation (lastCustomerText, renvoyé aux
+    // commerciaux et repris par « IA répond aux non-lus »).
+    if (part === 'incoming') {
+      const original = safeString(target?.incoming);
+      try {
+        updateConversationStateAdmin(contact, current => {
+          if (!original || safeString(current?.lastCustomerText) !== original) return current;
+          record.maskedLastCustomerText = true;
+          return { ...current, lastCustomerText: record.label };
+        });
+      } catch (stateError) {
+        console.warn('⚠️ Masquage du dernier message client (état) :', stateError.message);
+      }
+    }
+    saveMessageSoftDeletions([...loadMessageSoftDeletionsState().items, record]);
+    resetInboxCachesAfterMessageChange();
+    appendTeamActivity({
+      type: 'message_hide',
+      ...actor,
+      contact,
+      channel,
+      part,
+      purgeKey,
+      deletionId: record.id,
+      messageId: record.messageId
+    });
     return res.json({
       success:true,
-      permanentlyDeleted:true,
-      removedLocal:result.removed,
-      // Les APIs de messagerie privées ne fournissent pas ici un unsend business générique.
-      remoteDeleted:false,
-      state:result.state
+      hidden:true,
+      permanentlyDeleted:false,
+      recoverable:true,
+      deletionId:record.id,
+      remoteDeleted:false
     });
   } catch (error) {
-    console.error('❌ Suppression définitive message :', error);
-    return res.status(500).json({ error:'Suppression définitive impossible : '+safeString(error?.message) });
+    console.error('❌ Suppression message :', error);
+    return res.status(500).json({ error:'Suppression impossible : '+safeString(error?.message) });
+  }
+});
+
+// V6.45 — Messages masqués : liste et restauration (administrateurs).
+router.get('/api/message-deletions', requireAdmin, (req, res) => {
+  const contact = safeString(req.query?.contact);
+  const includeClosed = safeString(req.query?.all) === '1';
+  const items = loadMessageSoftDeletionsState().items
+    .filter(item => (!contact || safeString(item?.contact) === contact) && (includeClosed || (!item?.restoredAt && !item?.purgedAt)))
+    .slice(-500)
+    .reverse();
+  return res.json({ items });
+});
+
+router.post('/api/message-deletions/:id/restore', requireAdmin, (req, res) => {
+  try {
+    const id = safeString(req.params.id);
+    const state = loadMessageSoftDeletionsState();
+    const record = state.items.find(item => safeString(item?.id) === id);
+    if (!record) return res.status(404).json({ error:'Message masqué introuvable.' });
+    if (record.purgedAt) return res.status(409).json({ error:'Ce message a été supprimé définitivement.' });
+    if (record.restoredAt) return res.json({ success:true, alreadyRestored:true });
+    const actor = messageDeletionActor(req);
+    const now = new Date().toISOString();
+    saveMessageSoftDeletions(state.items.map(item =>
+      item === record ? { ...item, restoredAt: now, restoredByUserId: actor.userId, restoredByName: actor.userName } : item
+    ));
+    // V6.45 — Texte du dernier message client remis dans l'état s'il avait
+    // été masqué (et n'a pas été remplacé depuis par un nouveau message).
+    if (record.maskedLastCustomerText && safeString(record.contact)) {
+      try {
+        updateConversationStateAdmin(safeString(record.contact), current =>
+          safeString(current?.lastCustomerText) === safeString(record.label)
+            ? { ...current, lastCustomerText: safeString(record.preview) }
+            : current
+        );
+      } catch (stateError) {
+        console.warn('⚠️ Restauration du dernier message client (état) :', stateError.message);
+      }
+    }
+    // Le texte d'origine n'est pas en mémoire : relecture des sources.
+    resetInboxCachesAfterMessageChange();
+    appendTeamActivity({
+      type: 'message_restore',
+      ...actor,
+      contact: safeString(record.contact),
+      channel: safeString(record.channel),
+      part: safeString(record.part),
+      purgeKey: safeString(record.purgeKey),
+      deletionId: id
+    });
+    return res.json({ success:true, restored:true });
+  } catch (error) {
+    console.error('❌ Restauration message :', error);
+    return res.status(500).json({ error:'Restauration impossible : '+safeString(error?.message) });
   }
 });
 
@@ -23540,12 +27105,21 @@ router.get(
       const sinceMs = Date.parse(safeString(req.query?.since));
       const store = loadNotificationsStoreReadOnly();
 
+      let newestNotificationMs = NaN;
+      for (const item of store.items) {
+        const ms = Date.parse(item?.createdAt || '');
+        if (Number.isFinite(ms) && !(ms <= newestNotificationMs)) newestNotificationMs = ms;
+      }
+      invalidatePendingStatusCacheBefore(newestNotificationMs);
+
       const pendingMessageMap = pendingMessageStatusByContact();
       const notificationChannelScope = plannedChannelSetForUser(req.user);
+      const hiddenPreview = hiddenMessageNotificationMasker();
       let messageItems = store.items
         .filter(item => notificationVisibleToUser(item, req.user, states))
         .map(item => ({
           ...item,
+          ...hiddenPreview(item),
           read: Array.isArray(item?.readBy) && item.readBy.includes(userKey),
           channel: safeString(item?.channel) || (safeString(item?.contact).startsWith('instagram:') ? 'instagram' : safeString(item?.contact).startsWith('facebook:') ? 'facebook' : 'whatsapp'),
           assignedTo: safeString(states[item?.contact]?.assignedTo || item?.assignedTo),
@@ -23649,6 +27223,9 @@ router.get(
       for (const [contact, state] of Object.entries(states)) {
         if (req.user?.role === 'commercial' && safeString(state?.assignedUserId) !== safeString(req.user.id)) continue;
         if (notificationChannelScope && !channelScopeAllowsMessage(notificationChannelScope, state?.channel || (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp'))) continue;
+        // V6.46 — Conversation résolue (ex. résolution groupée) : plus
+        // d'alerte de délai (elle revenait dans la bulle d'alertes).
+        if (state?.resolved === true) continue;
         const sla = computeLiveSla(state);
         if (!sla || !['pending','late'].includes(sla.status)) continue;
         const remaining = Number(sla.remainingMs);
@@ -23957,7 +27534,9 @@ router.post(
   requireAdmin,
   (req, res) => {
     try {
-      const result = runSafeStorageMaintenance({ forceEmergency: true });
+      // V6.46 — Action explicite d'un administrateur : seule voie qui
+      // supprime les médias anciens (hors favoris / sans réponse / pubs).
+      const result = runSafeStorageMaintenance({ forceEmergency: true, allowMediaPurge: true, reason: 'nettoyage administrateur' });
       markRetention15MigrationApplied();
       persistentConversationEventsCache = { stamp: '', entries: [] };
       combinedConversationLogCache = {
@@ -24363,5 +27942,9 @@ module.exports = {
   requireAdmin,
   flushConversationStatesWrite,
   loadProducts,
-  getLocalProductImagePath
+  getLocalProductImagePath,
+  // V6.46 — notifications : une seule copie mémoire (écriture groupée,
+  // plafonnée) partagée avec server.js.
+  loadNotificationsStore,
+  saveNotificationsStore
 };

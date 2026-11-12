@@ -1,10 +1,17 @@
 // MONDECO - Detecte si un message nomme un produit
 const fs = require('fs');
-const PRODUCTS = '/data/products.json';
+const path = require('path');
+const { decodeHtmlEntities } = require('./lib/woo-description');
+// V6.45 — Même dossier de données qu'Admin.js (avant : '/data/products.json'
+// codé en dur, faux dès que DATA_DIR pointe ailleurs).
+// V6.46 — règle partagée (lib/data-dir.js).
+const DATA_DIR = require('./lib/data-dir').resolveDataDir();
+const PRODUCTS = path.join(DATA_DIR, 'products.json');
 let cache = { t: 0, words: null };
 
+// V6.46 — entités HTML décodées (« &#8211; », « &amp; ») avant découpage.
 function norm(t) {
-  return String(t || '').toLowerCase()
+  return decodeHtmlEntities(String(t || '')).toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 }
