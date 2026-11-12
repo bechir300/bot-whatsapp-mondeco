@@ -100,7 +100,10 @@ const {
   flushConversationStatesWrite,
   // V6.44 — Fiche produit envoyée par l'IA.
   loadProducts,
-  getLocalProductImagePath
+  getLocalProductImagePath,
+  // V6.46 — Notifications : copie mémoire partagée avec Admin.js.
+  loadNotificationsStore: loadSharedNotificationsStore,
+  saveNotificationsStore: saveSharedNotificationsStore
 } = require('./Admin');
 
 const app = express();
@@ -617,9 +620,31 @@ function writeJsonAtomic(filePath, data) {
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
+  // V6.46 — Fichiers de taille raisonnable (≤ 2 Mo existants / ≤ 8 Mo
+  // écrits) : copie .bak de la version précédente (reprise si le fichier
+  // devient illisible, comme côté Admin.js) et contenu forcé sur disque
+  // (fsync) avant le rename. Les gros fichiers réécrits très souvent
+  // (conversation-log.json) gardent l'écriture rapide : leur copie
+  // permanente est dans conversation-events/*.jsonl.
+  const serializedBytes = Buffer.byteLength(serialized, 'utf8');
+  const durable = serializedBytes <= 8 * 1024 * 1024;
+  if (existingSizeHint > 0 && existingSizeHint <= COMPACT_JSON_THRESHOLD_BYTES) {
+    try { fs.copyFileSync(filePath, `${filePath}.bak`); } catch {}
+  }
+
   const attempt = () => {
     try {
-      fs.writeFileSync(tmp, serialized, 'utf8');
+      if (durable) {
+        const fd = fs.openSync(tmp, 'w');
+        try {
+          fs.writeFileSync(fd, serialized, 'utf8');
+          try { fs.fsyncSync(fd); } catch {}
+        } finally {
+          fs.closeSync(fd);
+        }
+      } else {
+        fs.writeFileSync(tmp, serialized, 'utf8');
+      }
       fs.renameSync(tmp, filePath);
     } finally {
       try {
@@ -685,13 +710,46 @@ function isoDateKey(value = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+// V6.46 — Ajout d'une ligne à un journal .jsonl sans jamais le corrompre :
+// - un ajout interrompu (disque plein, ENOSPC au milieu de l'écriture) est
+//   annulé (le fichier reprend sa taille d'avant) ;
+// - au premier ajout dans un fichier (et après un échec), le dernier octet
+//   est vérifié : une ligne tronquée par un arrêt brutal est terminée par
+//   un saut de ligne au lieu d'absorber l'événement suivant.
+// Avant, la ligne suivante était collée à la ligne tronquée : le premier
+// message après le retour de l'espace disque était illisible lui aussi.
+const jsonlTailVerified = new Set();
+
+function appendTextLineSafely(filePath, text) {
+  const fd = fs.openSync(filePath, 'a+');
+  let sizeBefore = 0;
+  try {
+    sizeBefore = Number(fs.fstatSync(fd).size || 0);
+    let payload = text;
+    if (sizeBefore > 0 && !jsonlTailVerified.has(filePath)) {
+      const last = Buffer.alloc(1);
+      fs.readSync(fd, last, 0, 1, sizeBefore - 1);
+      if (last[0] !== 0x0a) payload = `\n${payload}`;
+    }
+    const data = Buffer.from(payload, 'utf8');
+    let offset = 0;
+    while (offset < data.length) {
+      offset += fs.writeSync(fd, data, offset, data.length - offset);
+    }
+    jsonlTailVerified.add(filePath);
+  } catch (error) {
+    jsonlTailVerified.delete(filePath);
+    try { fs.ftruncateSync(fd, sizeBefore); } catch {}
+    throw error;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+
 function appendJsonLine(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  withStorageRetry(() => fs.appendFileSync(
-    filePath,
-    `${JSON.stringify(value)}\n`,
-    'utf8'
-  ), path.basename(filePath));
+  const line = `${JSON.stringify(value)}\n`;
+  withStorageRetry(() => appendTextLineSafely(filePath, line), path.basename(filePath));
 }
 
 function appendPersistentConversationEvent(entry) {
@@ -722,21 +780,107 @@ function loadPersistentMessageIds() {
   }
 }
 
+// V6.46 — Index plafonné en mémoire aussi (les plus anciens identifiants
+// sortent en premier) ; un identifiant non écrit (disque plein) est gardé
+// et réécrit avec les événements en attente.
+const PERSISTENT_MESSAGE_IDS_MAX = 120000;
+const pendingPersistentMessageIds = [];
+
+function rememberPersistentMessageId(id) {
+  persistentMessageIds.add(id);
+  if (persistentMessageIds.size > PERSISTENT_MESSAGE_IDS_MAX) {
+    let excess = persistentMessageIds.size - Math.floor(PERSISTENT_MESSAGE_IDS_MAX * 0.8);
+    for (const old of persistentMessageIds) {
+      if (excess-- <= 0) break;
+      persistentMessageIds.delete(old);
+    }
+  }
+}
+
+function appendMessageIdLine(id) {
+  fs.mkdirSync(path.dirname(MESSAGE_ID_INDEX_PATH), { recursive: true });
+  withStorageRetry(
+    () => appendTextLineSafely(MESSAGE_ID_INDEX_PATH, `${id}\n`),
+    'conversation-message-ids.jsonl'
+  );
+}
+
 function persistMessageId(value) {
   const id = safeString(value);
   if (!id || persistentMessageIds.has(id)) return;
 
-  persistentMessageIds.add(id);
+  rememberPersistentMessageId(id);
 
   try {
-    withStorageRetry(() => fs.appendFileSync(
-      MESSAGE_ID_INDEX_PATH,
-      `${id}\n`,
-      'utf8'
-    ), 'conversation-message-ids.jsonl');
+    appendMessageIdLine(id);
   } catch (error) {
-    console.warn('⚠️ Index message_id non enregistré :', error.message);
+    console.warn('⚠️ Index message_id non enregistré (nouvel essai plus tard) :', error.message);
+    if (pendingPersistentMessageIds.length < 20000) pendingPersistentMessageIds.push(id);
+    schedulePendingPersistentWritesRetry();
   }
+}
+
+// V6.46 — Événements de conversation non écrits (disque plein) : gardés en
+// mémoire, dans l'ordre, et réécrits dès que possible (toutes les 15 s, et
+// à l'arrêt). Le message client reste aussi dans le journal récent en
+// mémoire et dans les notifications, donc visible après libération.
+const pendingPersistentEvents = [];
+const PENDING_PERSISTENT_EVENTS_MAX = 20000;
+let pendingPersistentWritesTimer = null;
+let pendingPersistentEventsAlertAt = 0;
+
+function queuePendingPersistentEvent(entry, error) {
+  if (pendingPersistentEvents.length >= PENDING_PERSISTENT_EVENTS_MAX) {
+    console.error('🚨 File des événements non écrits pleine : événement le plus ancien abandonné.');
+    pendingPersistentEvents.shift();
+  }
+  pendingPersistentEvents.push(entry);
+  if (Date.now() - pendingPersistentEventsAlertAt > 60 * 1000) {
+    pendingPersistentEventsAlertAt = Date.now();
+    console.error(
+      `🚨 Journal permanent des conversations non écrit (${safeString(error?.code || error?.message)}) : ` +
+      `${pendingPersistentEvents.length} événement(s) gardé(s) en mémoire, nouvel essai automatique. Libérez de l'espace disque.`
+    );
+  }
+  schedulePendingPersistentWritesRetry();
+}
+
+function flushPendingPersistentWrites() {
+  let written = 0;
+  while (pendingPersistentEvents.length) {
+    const entry = pendingPersistentEvents[0];
+    try {
+      appendPersistentConversationEvent(entry);
+    } catch {
+      return written;
+    }
+    pendingPersistentEvents.shift();
+    written++;
+  }
+  while (pendingPersistentMessageIds.length) {
+    try {
+      appendMessageIdLine(pendingPersistentMessageIds[0]);
+    } catch {
+      return written;
+    }
+    pendingPersistentMessageIds.shift();
+  }
+  if (written) {
+    console.log(`✅ Journal permanent : ${written} événement(s) en attente écrit(s).`);
+  }
+  return written;
+}
+
+function schedulePendingPersistentWritesRetry() {
+  if (pendingPersistentWritesTimer) return;
+  pendingPersistentWritesTimer = setTimeout(() => {
+    pendingPersistentWritesTimer = null;
+    try { flushPendingPersistentWrites(); } catch {}
+    if (pendingPersistentEvents.length || pendingPersistentMessageIds.length) {
+      schedulePendingPersistentWritesRetry();
+    }
+  }, 15 * 1000);
+  if (typeof pendingPersistentWritesTimer.unref === 'function') pendingPersistentWritesTimer.unref();
 }
 
 loadPersistentMessageIds();
@@ -783,17 +927,16 @@ function conversationMediaPreview(entry) {
   return 'Nouveau message client';
 }
 
+// V6.46 — Même copie mémoire que Admin.js (écriture groupée, plafonnée) :
+// un message client ne relit et ne réécrit plus tout notifications.json,
+// et une notification en attente ne peut plus être écrasée par un
+// « marquer comme lu » de l'Admin (ou l'inverse).
 function loadNotificationsStore() {
-  const parsed = readJsonObject(NOTIFICATIONS_PATH, { items: [] });
-  return {
-    items: Array.isArray(parsed?.items) ? parsed.items : []
-  };
+  return loadSharedNotificationsStore();
 }
 
 function saveNotificationsStore(store) {
-  writeJsonAtomic(NOTIFICATIONS_PATH, {
-    items: Array.isArray(store?.items) ? store.items : []
-  });
+  saveSharedNotificationsStore(store);
 }
 
 function registerConversationNotification(entry) {
@@ -1431,27 +1574,136 @@ let historyLogCache = null;
 // V6.36.65 — Écriture différée pour conversation-log.json, voir
 // commentaire détaillé au point d'appel dans logConversation().
 const HISTORY_WRITE_DEBOUNCE_MS = 1500;
+// V6.46 — Attente maximale : sous un trafic continu, l'écriture n'est plus
+// repoussée indéfiniment par chaque nouveau message.
+const HISTORY_WRITE_MAX_DELAY_MS = 5000;
+const HISTORY_WRITE_RETRY_MS = 15000;
 let pendingHistoryLogWriteTimer = null;
 let pendingHistoryLogToWrite = null;
+let pendingHistoryLogSince = 0;
+// V6.46 — Entrées ajoutées depuis la dernière écriture réussie : reprises
+// si le fichier est réécrit entre-temps par Admin.js (rétention, purge,
+// rattrapage Facebook…) au lieu d'être perdues.
+let historyLogUnflushed = [];
 
 function flushHistoryLogWrite() {
   if (!pendingHistoryLogToWrite) return;
   const toWrite = pendingHistoryLogToWrite;
-  pendingHistoryLogToWrite = null;
+  if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
   pendingHistoryLogWriteTimer = null;
+  // Fichier modifié hors de server.js depuis la dernière lecture : on le
+  // relit et on y ajoute nos entrées en attente avant d'écrire.
+  const merged = currentHistoryLogEntries();
   try {
-    writeJsonAtomic(HISTORY_PATH, toWrite);
+    writeJsonAtomic(HISTORY_PATH, merged);
     historyLogCacheStamp = fileChangeStamp(HISTORY_PATH);
+    historyLogCache = merged;
+    if (pendingHistoryLogToWrite === toWrite || pendingHistoryLogToWrite === merged) {
+      pendingHistoryLogToWrite = null;
+      pendingHistoryLogSince = 0;
+      historyLogUnflushed = [];
+    }
   } catch (error) {
-    console.error('❌ Écriture différée conversation-log.json :', error.message);
+    // V6.46 — Les entrées restent en attente (avant : perdues jusqu'au
+    // message suivant) ; nouvel essai automatique.
+    console.error('❌ Écriture différée conversation-log.json (nouvel essai) :', error.message);
+    pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, HISTORY_WRITE_RETRY_MS);
+    if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
   }
+}
+
+function scheduleHistoryLogWrite() {
+  if (!pendingHistoryLogSince) pendingHistoryLogSince = Date.now();
+  if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
+  const waited = Date.now() - pendingHistoryLogSince;
+  const delay = Math.max(0, Math.min(HISTORY_WRITE_DEBOUNCE_MS, HISTORY_WRITE_MAX_DELAY_MS - waited));
+  pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, delay);
+  if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
 }
 
 process.on('SIGTERM', flushHistoryLogWrite);
 process.on('SIGINT', flushHistoryLogWrite);
 process.on('beforeExit', flushHistoryLogWrite);
+// V6.46 — Aussi après process.exit() (exception non rattrapée).
+process.on('exit', () => {
+  // Dossier de données disparu (volume démonté) : ne pas le recréer vide.
+  if (!fs.existsSync(DATA_DIR)) return;
+  try { flushHistoryLogWrite(); } catch {}
+  try { flushPendingPersistentWrites(); } catch {}
+});
 
 let historyLogCacheStamp = null;
+
+// V6.46 — Lecture de conversation-log.json pour un ajout :
+// - l'empreinte est mémorisée dès la lecture (avant : seulement après la
+//   première écriture, donc après un redémarrage chaque message d'une
+//   rafale relisait le fichier et effaçait les précédents non écrits) ;
+// - fichier illisible ou vide : conservé sous conversation-log.json.corrupt-<date>
+//   (jamais écrasé), reprise du .bak s'il est valide ;
+// - fichier réécrit par Admin.js pendant une écriture en attente : nos
+//   entrées non écrites sont ajoutées à la nouvelle version.
+function readHistoryLogFileForAppend() {
+  if (!fs.existsSync(HISTORY_PATH)) return [];
+  let raw = '';
+  try {
+    raw = fs.readFileSync(HISTORY_PATH, 'utf8');
+    if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('❌ conversation-log.json illisible :', error.message);
+    const quarantine = `${HISTORY_PATH}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      if (raw.trim()) {
+        fs.renameSync(HISTORY_PATH, quarantine);
+        console.error(`🚨 conversation-log.json illisible conservé sous ${path.basename(quarantine)} (la copie permanente reste dans conversation-events/).`);
+      }
+    } catch (renameError) {
+      console.error('❌ conversation-log.json illisible non mis de côté :', renameError.message);
+    }
+    try {
+      const backup = JSON.parse(fs.readFileSync(`${HISTORY_PATH}.bak`, 'utf8'));
+      if (Array.isArray(backup)) {
+        console.warn(`♻️ conversation-log.json repris depuis conversation-log.json.bak (${backup.length} entrée(s)).`);
+        return backup;
+      }
+    } catch {}
+    return [];
+  }
+}
+
+function currentHistoryLogEntries() {
+  const stamp = fileChangeStamp(HISTORY_PATH);
+  if (historyLogCache && stamp === historyLogCacheStamp) {
+    return historyLogCache;
+  }
+  let logs = readHistoryLogFileForAppend();
+  if (historyLogUnflushed.length) {
+    logs = logs.concat(historyLogUnflushed);
+    if (logs.length > 5000) logs = logs.slice(-5000);
+  }
+  historyLogCache = logs;
+  historyLogCacheStamp = fileChangeStamp(HISTORY_PATH);
+  if (pendingHistoryLogToWrite) pendingHistoryLogToWrite = logs;
+  return logs;
+}
+
+// Ajout d'une entrée au journal récent (mémoire immédiate, disque groupé).
+function appendHistoryLogEntry(entry) {
+  let logs = currentHistoryLogEntries().slice();
+  logs.push(entry);
+  // Cache de compatibilité : limité pour garder les lectures rapides.
+  // La copie permanente est dans conversation-events/*.jsonl.
+  if (logs.length > 5000) {
+    logs = logs.slice(-5000);
+  }
+  historyLogUnflushed.push(entry);
+  if (historyLogUnflushed.length > 5000) historyLogUnflushed = historyLogUnflushed.slice(-5000);
+  historyLogCache = logs;
+  pendingHistoryLogToWrite = logs;
+  scheduleHistoryLogWrite();
+  return logs;
+}
 
 // Les webhooks Instagram renvoient aussi les messages envoyés par le compte.
 // On mémorise les IDs envoyés par l'API pour ne pas les confondre avec une
@@ -1797,42 +2049,12 @@ function logConversation(entry) {
         : undefined
     };
 
-    let logs = [];
-
-    const historyStamp = fileChangeStamp(HISTORY_PATH);
-    if (historyLogCache && historyStamp === historyLogCacheStamp) {
-      logs = historyLogCache.slice();
-    } else if (fs.existsSync(HISTORY_PATH)) {
-      try {
-        const parsed = JSON.parse(
-          fs.readFileSync(HISTORY_PATH, 'utf8') ||
-          '[]'
-        );
-
-        if (Array.isArray(parsed)) {
-          logs = parsed;
-        }
-      } catch {
-        logs = [];
-      }
-    }
-
-    // V6.19.6 : l'événement complet est conservé en append-only AVANT
-    // d'actualiser le cache JSON récent. Un déploiement ne touche jamais
-    // aux fichiers déjà présents dans /data/conversation-events/.
-    appendPersistentConversationEvent(entry);
-
-    persistMessageId(entry?.message_id);
-    persistMessageId(entry?.meta_message_id);
-
-    logs.push(entry);
-
-    // Cache de compatibilité : limité pour garder les lectures rapides.
-    // La copie permanente est dans conversation-events/*.jsonl.
-    if (logs.length > 5000) {
-      logs = logs.slice(-5000);
-    }
-
+    // V6.46 — Le message est d'abord enregistré en mémoire (journal récent,
+    // index des identifiants, notification), indépendamment du disque :
+    // avant, un ENOSPC sur le journal permanent sautait tout le reste et
+    // le message client disparaissait définitivement (le webhook était déjà
+    // acquitté, Meta ne le renvoie pas).
+    //
     // V6.36.65 — Écriture différée, même principe que le correctif
     // conversation-state.json (V6.36.62) : conversation-log.json atteint
     // 14+ Mo, et writeJsonAtomic (bloquant) ajoutait 150-180ms mesurés à
@@ -1841,11 +2063,30 @@ function logConversation(entry) {
     // seule l'écriture PHYSIQUE sur disque est groupée toutes les
     // HISTORY_WRITE_DEBOUNCE_MS pour éviter de réécrire 14 Mo à chaque
     // message individuel.
-    historyLogCache = logs;
-    pendingHistoryLogToWrite = logs;
-    if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
-    pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, HISTORY_WRITE_DEBOUNCE_MS);
-    if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
+    try {
+      appendHistoryLogEntry(entry);
+    } catch (historyError) {
+      console.error('❌ Journal récent (conversation-log.json) :', historyError.message);
+    }
+
+    // V6.19.6 : l'événement complet est conservé en append-only. Un
+    // déploiement ne touche jamais aux fichiers déjà présents dans
+    // /data/conversation-events/. V6.46 — Disque plein : l'événement est
+    // gardé en mémoire (dans l'ordre) et réécrit automatiquement ; les
+    // événements déjà en attente passent avant pour garder l'ordre.
+    if (pendingPersistentEvents.length) {
+      queuePendingPersistentEvent(entry, new Error('événements précédents en attente'));
+      try { flushPendingPersistentWrites(); } catch {}
+    } else {
+      try {
+        appendPersistentConversationEvent(entry);
+      } catch (appendError) {
+        queuePendingPersistentEvent(entry, appendError);
+      }
+    }
+
+    persistMessageId(entry?.message_id);
+    persistMessageId(entry?.meta_message_id);
 
     registerConversationNotification(entry);
     // Patch session (06/10) - Invalidation centralisee du cache Inbox : jusqu ici, seul l envoi commercial manuel (ligne ~5688) invalidait le cache memoire de la fusion Inbox apres un message. Les 44 autres flux (message client entrant, reponse IA automatique, webhooks Facebook/Instagram) ne le faisaient jamais, laissant la liste de conversations affichee figee jusqu a expiration naturelle du cache (5 min) ou fermeture/reouverture de l app. Deplace ici, dans logConversation elle meme, pour couvrir tous les flux en un seul endroit.
@@ -14032,6 +14273,13 @@ let shuttingDown = false;
 function flushAllPendingWrites() {
   try { flushAllJsonStores(); } catch (error) { console.error('❌ Arrêt : historique IA non écrit :', error.message); }
   try { flushHistoryLogWrite(); } catch (error) { console.error('❌ Arrêt : journal non écrit :', error.message); }
+  // V6.46 — Événements gardés en mémoire pendant un disque plein.
+  try {
+    flushPendingPersistentWrites();
+    if (pendingPersistentEvents.length) {
+      console.error(`🚨 Arrêt : ${pendingPersistentEvents.length} événement(s) de conversation non écrit(s) (disque plein).`);
+    }
+  } catch (error) { console.error('❌ Arrêt : journal permanent non écrit :', error.message); }
   try { flushConversationStatesWrite(); } catch (error) { console.error('❌ Arrêt : état des conversations non écrit :', error.message); }
 }
 

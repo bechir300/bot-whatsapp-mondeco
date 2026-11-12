@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
-const { createJsonObjectStore } = require('./lib/json-object-store');
+const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const { KPI_SCHEMA_VERSION, computeDailyKpis, combineKpis } = require('./lib/kpi');
 const { loadReferenceCases, buildCatalogCases, runAiEvaluation } = require('./lib/ai-eval');
 const { slimConversationState } = require('./lib/ad-referral');
@@ -1011,11 +1011,112 @@ function removePathForStorageRescue(targetPath, label = '') {
   }
 }
 
-function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_FILE) {
+// V6.46 — Storage Rescue : décisions sur l'espace libre ABSOLU (octets),
+// jamais sur un ratio. Avant, « moins de 20 % libres » (des dizaines de Go
+// sur un gros disque) déclenchait à chaque démarrage la suppression de TOUS
+// les snapshots, de tous les .bak et versions JSON, de la corbeille, du
+// dossier des photos de profil et des médias clients de plus de 7 jours,
+// et le snapshot quotidien était sauté.
+// - 'critical' : écriture impossible, ou moins de MONDECO_STORAGE_CRITICAL_FREE_MB ;
+// - 'low'      : moins de MONDECO_STORAGE_RESCUE_FREE_MB ;
+// - 'ok'       : sinon (espace inconnu mais écriture possible = 'ok').
+// En urgence, on supprime du plus jetable au plus précieux, du plus ancien
+// au plus récent, et on s'arrête dès que la marge cible est retrouvée. Le
+// snapshot le plus récent, les .bak des données (produits, comptes,
+// instructions, réglages, réponses rapides…) et la dernière version JSON
+// ne sont supprimés que si l'espace reste CRITIQUE après tout le reste.
+// Les médias des conversations ne sont jamais supprimés automatiquement :
+// seulement par l'action explicite « Nettoyer le stockage » (administrateur).
+// Les photos de profil encore utilisées par une conversation sont gardées.
+const STORAGE_CORE_BACKUP_NAMES = new Set([
+  'products.json.bak',
+  'users.json.bak',
+  'instructions.json.bak',
+  'settings.json.bak',
+  'quick-replies.json.bak',
+  'customization-requests.json.bak',
+  'commercial-corrections.json.bak',
+  'schedules.json.bak',
+  'tasks.json.bak',
+  'woocommerce-sync.json.bak',
+  'standing-commercial-access.json.bak'
+]);
+
+// Réserve d'espace : fichier caché supprimé en premier en cas d'ENOSPC
+// (marge immédiate pour enregistrer les messages), recréé quand l'espace
+// redevient suffisant. MONDECO_STORAGE_BALLAST_MB=0 la désactive.
+const STORAGE_BALLAST_PATH = path.join(DATA_DIR, '.storage-ballast');
+const STORAGE_BALLAST_BYTES = Math.max(
+  0,
+  Math.min(
+    256,
+    safeString(process.env.MONDECO_STORAGE_BALLAST_MB) === ''
+      ? 16
+      : (Number(process.env.MONDECO_STORAGE_BALLAST_MB) || 0)
+  )
+) * 1024 * 1024;
+
+function storageHasHeadroom(minFreeBytes) {
+  const probe = storageWriteProbe();
+  if (!probe.writable) return false;
+  const space = storageSpaceInfo();
+  if (!space) return true;
+  return space.freeBytes >= minFreeBytes;
+}
+
+function storageLevel(space = storageSpaceInfo(), probe = storageWriteProbe()) {
+  if (probe && probe.writable === false) return 'critical';
+  if (!space) return 'ok';
+  if (space.freeBytes < STORAGE_CRITICAL_FREE_BYTES) return 'critical';
+  if (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES) return 'low';
+  return 'ok';
+}
+
+function releaseStorageBallast() {
+  try {
+    if (!fs.existsSync(STORAGE_BALLAST_PATH)) return 0;
+    const bytes = Number(fs.statSync(STORAGE_BALLAST_PATH).size || 0);
+    fs.unlinkSync(STORAGE_BALLAST_PATH);
+    console.error(`🛟 Réserve de stockage libérée (${humanBytes(bytes)}) : le disque est presque plein, libérez de l'espace.`);
+    return bytes;
+  } catch (error) {
+    console.warn('⚠️ Réserve de stockage non libérée :', error.message);
+    return 0;
+  }
+}
+
+function ensureStorageBallast() {
+  if (!STORAGE_BALLAST_BYTES) return false;
+  try {
+    if (fs.existsSync(STORAGE_BALLAST_PATH) && fs.statSync(STORAGE_BALLAST_PATH).size >= STORAGE_BALLAST_BYTES) return true;
+    const space = storageSpaceInfo();
+    if (!space || space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES + 2 * STORAGE_BALLAST_BYTES) return false;
+    const temp = `${STORAGE_BALLAST_PATH}.${process.pid}.part`;
+    const fd = fs.openSync(temp, 'w');
+    try {
+      const chunk = crypto.randomBytes(1024 * 1024);
+      for (let written = 0; written < STORAGE_BALLAST_BYTES; written += chunk.length) {
+        fs.writeSync(fd, chunk, 0, Math.min(chunk.length, STORAGE_BALLAST_BYTES - written));
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temp, STORAGE_BALLAST_PATH);
+    return true;
+  } catch (error) {
+    try { fs.unlinkSync(`${STORAGE_BALLAST_PATH}.${process.pid}.part`); } catch {}
+    console.warn('⚠️ Réserve de stockage non créée :', error.message);
+    return false;
+  }
+}
+
+function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_FILE, enough = null) {
   let freed = 0;
   try {
     if (!fs.existsSync(JSON_BACKUPS_DIR)) return 0;
 
+    // Candidats de tous les fichiers, supprimés du plus ancien au plus récent.
+    const candidates = [];
     for (const entry of fs.readdirSync(JSON_BACKUPS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const dir = path.join(JSON_BACKUPS_DIR, entry.name);
@@ -1032,14 +1133,17 @@ function pruneJsonBackupTreeForStorageRescue(keepPerFile = MAX_JSON_BACKUPS_PER_
         })
         .filter(Boolean)
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      candidates.push(...files.slice(Math.max(0, keepPerFile)));
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
 
-      for (const file of files.slice(Math.max(0, keepPerFile))) {
-        try {
-          fs.unlinkSync(file.fullPath);
-          freed += file.size;
-        } catch (error) {
-          console.warn('⚠️ Storage Rescue : ancien backup JSON non supprimé :', error.message);
-        }
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+      } catch (error) {
+        console.warn('⚠️ Storage Rescue : ancien backup JSON non supprimé :', error.message);
       }
     }
   } catch (error) {
@@ -1078,11 +1182,15 @@ function compactExistingSnapshotBinaryCopies() {
   return freed;
 }
 
-function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS) {
+// Garde les `keep` snapshots les plus récents ; supprime les autres du plus
+// ancien au plus récent, en s'arrêtant dès que `enough()` est vrai.
+function pruneFullSnapshotsForStorageRescue(keep = MAX_FULL_SNAPSHOTS, enough = null) {
   let freed = 0;
   try {
     const snapshots = listFullSnapshots();
-    for (const snapshot of snapshots.slice(Math.max(0, keep))) {
+    const removable = snapshots.slice(Math.max(0, keep)).reverse();
+    for (const snapshot of removable) {
+      if (typeof enough === 'function' && enough()) break;
       freed += removePathForStorageRescue(
         path.join(SNAPSHOTS_DIR, snapshot.id),
         `snapshot ${snapshot.id}`
@@ -1117,41 +1225,153 @@ function cleanupStaleStorageTempFiles() {
 }
 
 
-function cleanupLooseBackupFilesForEmergency() {
+// V6.46 — `includeCore: false` : les .bak des données métier (produits,
+// comptes, instructions…) sont gardés ; seuls ceux des caches régénérables
+// partent. Du plus ancien au plus récent, arrêt dès que `enough()`.
+function cleanupLooseBackupFilesForEmergency({ includeCore = false, enough = null } = {}) {
   let freed = 0;
   try {
     if (!fs.existsSync(DATA_DIR)) return 0;
+    const candidates = [];
     for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
       if (!entry.name.endsWith('.bak')) continue;
+      if (!includeCore && STORAGE_CORE_BACKUP_NAMES.has(entry.name)) continue;
       const fullPath = path.join(DATA_DIR, entry.name);
       try {
         const stat = fs.statSync(fullPath);
-        fs.unlinkSync(fullPath);
-        freed += Number(stat.size || 0);
+        candidates.push({ fullPath, name: entry.name, size: Number(stat.size || 0), mtimeMs: stat.mtimeMs });
+      } catch {}
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+        console.log(`🧹 Storage Rescue : ${file.name} supprimé (${humanBytes(file.size)}).`);
       } catch {}
     }
   } catch {}
   return freed;
 }
 
+function pruneRecycleBinForStorageRescue(enough = null) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(RECYCLE_DIR)) return 0;
+    const entries = fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })
+      .map(entry => {
+        const fullPath = path.join(RECYCLE_DIR, entry.name);
+        try { return { name: entry.name, fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs }; } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const entry of entries) {
+      if (typeof enough === 'function' && enough()) break;
+      freed += removePathForStorageRescue(entry.fullPath, `recycle/${entry.name}`);
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : corbeille non nettoyée :', error.message);
+  }
+  return freed;
+}
+
+function storageReferencedBasename(value, prefix) {
+  const raw = safeString(value);
+  if (!raw || (prefix && !raw.includes(prefix))) return '';
+  let fileName = safeString(raw.split('/').pop()).split(/[?#]/)[0];
+  try { fileName = decodeURIComponent(fileName); } catch {}
+  return fileName;
+}
+
+// Photos de profil encore affichées (état des conversations, notifications).
+function collectReferencedProfileBasenames() {
+  const output = new Set();
+  const add = value => {
+    const name = storageReferencedBasename(value, '/conversation-profile/');
+    if (name) output.add(name);
+  };
+  try {
+    for (const state of Object.values(readConversationStatesAdminCached() || {})) {
+      if (state && typeof state === 'object') add(state.profilePicture);
+    }
+  } catch {}
+  try {
+    for (const item of loadNotificationsStoreReadOnly().items) add(item?.profilePicture);
+  } catch {}
+  return output;
+}
+
+// Photos de profil plus utilisées par aucune conversation (cache orphelin),
+// plus anciennes que `olderThanMs`, de la plus ancienne à la plus récente.
+function pruneUnreferencedProfilePictures({ olderThanMs = 0, enough = null } = {}) {
+  let freed = 0;
+  try {
+    if (!fs.existsSync(CONVERSATION_PROFILE_DIR)) return 0;
+    const referenced = collectReferencedProfileBasenames();
+    const cutoff = Date.now() - Math.max(0, Number(olderThanMs) || 0);
+    const candidates = [];
+    for (const entry of fs.readdirSync(CONVERSATION_PROFILE_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || referenced.has(entry.name)) continue;
+      const fullPath = path.join(CONVERSATION_PROFILE_DIR, entry.name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs >= cutoff) continue;
+        candidates.push({ fullPath, size: Number(stat.size || 0), mtimeMs: stat.mtimeMs });
+      } catch {}
+    }
+    candidates.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const file of candidates) {
+      if (typeof enough === 'function' && enough()) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        freed += file.size;
+      } catch {}
+    }
+    if (freed) console.log(`🧹 Storage Rescue : photos de profil inutilisées supprimées (${humanBytes(freed)}).`);
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : photos de profil non nettoyées :', error.message);
+  }
+  return freed;
+}
+
+// V6.46 — Purge des médias anciens : UNIQUEMENT sur demande explicite d'un
+// administrateur (« Nettoyer le stockage »), jamais au démarrage ni par la
+// surveillance automatique. Médias des conversations ⭐ Favori / sans
+// réponse et visuels de publicités toujours conservés.
+function purgeOldConversationMediaOnAdminRequest() {
+  if (CLOUD_STORAGE_ENABLED) return 0;
+  const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
+  // V6.45 — visuels (images) des publicités d'origine de TOUTES les
+  // conversations : petits, partagés par pub, et impossibles à
+  // retélécharger une fois le lien Meta expiré.
+  for (const name of collectAdVisualMediaBasenames()) favoriteMedia.add(name);
+  const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const freed = pruneFilesOlderThan(
+    CONVERSATION_MEDIA_DIR,
+    mediaCutoff,
+    'conversation-media (nettoyage administrateur)',
+    { recursive: true, preserveBasenames: favoriteMedia }
+  );
+  if (freed) {
+    console.warn(`🧹 Nettoyage administrateur : médias de plus de ${EMERGENCY_MEDIA_RETENTION_DAYS} jours supprimés (${humanBytes(freed)}).`);
+  }
+  return freed;
+}
+
+// V6.46 — Passe par la copie mémoire partagée (notificationsStore) : plus
+// de lecture/écriture directe du fichier qui écraserait une notification
+// en attente d'écriture.
 function pruneNotificationsForStorageRescue() {
   try {
     if (!fs.existsSync(NOTIFICATIONS_PATH)) return 0;
     const beforeSize = Number(fs.statSync(NOTIFICATIONS_PATH).size || 0);
-    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
-    const items = Array.isArray(parsed?.items) ? parsed.items : [];
-    const cutoff = Date.now() - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
-    const kept = items
-      .filter(item => {
-        const ms = Date.parse(safeString(item?.createdAt));
-        return !Number.isFinite(ms) || ms >= cutoff;
-      })
-      .sort((a, b) => (Date.parse(safeString(b?.createdAt)) || 0) - (Date.parse(safeString(a?.createdAt)) || 0))
-      .slice(0, MAX_NOTIFICATION_ITEMS);
-
-    if (kept.length === items.length && items.length <= MAX_NOTIFICATION_ITEMS) return 0;
-    writeJsonAtomic(NOTIFICATIONS_PATH, { items: kept });
+    const items = loadNotificationsStoreReadOnly().items;
+    const kept = capNotificationItems(items);
+    if (kept.length === items.length) return 0;
+    saveNotificationsStore({ items: kept });
+    flushNotificationsStore();
     const afterSize = fs.existsSync(NOTIFICATIONS_PATH) ? Number(fs.statSync(NOTIFICATIONS_PATH).size || 0) : 0;
     return Math.max(0, beforeSize - afterSize);
   } catch (error) {
@@ -1168,7 +1388,8 @@ function pruneMessageIdIndexForStorageRescue() {
     const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
     if (lines.length <= MAX_MESSAGE_ID_LINES) return 0;
     const kept = lines.slice(-MAX_MESSAGE_ID_LINES);
-    fs.writeFileSync(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`, 'utf8');
+    // V6.46 — Réécriture atomique (temporaire + rename), jamais en place.
+    writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, `${kept.join('\n')}\n`);
     const afterSize = Number(fs.statSync(MESSAGE_ID_INDEX_PATH).size || 0);
     return Math.max(0, beforeSize - afterSize);
   } catch (error) {
@@ -1179,50 +1400,56 @@ function pruneMessageIdIndexForStorageRescue() {
 
 // Libère uniquement des caches et sauvegardes régénérables, sans toucher aux
 // produits, instructions, utilisateurs, tâches, favoris ni conversation-state.
-function emergencyFreeDisposableStorage() {
+// V6.46 — Par paliers, du plus jetable au plus précieux, arrêt dès que la
+// marge cible (MONDECO_STORAGE_RESCUE_FREE_MB) est retrouvée.
+// `allowMediaPurge` : action explicite d'un administrateur uniquement.
+function emergencyFreeDisposableStorage({ allowMediaPurge = false, reason = 'urgence' } = {}) {
   if (storageEmergencyCleanupRunning) return 0;
   storageEmergencyCleanupRunning = true;
   let freed = 0;
+  const steps = [];
+  const enough = () => storageHasHeadroom(STORAGE_RESCUE_TARGET_FREE_BYTES);
+  const stillCritical = () => !storageHasHeadroom(STORAGE_CRITICAL_FREE_BYTES);
+  const step = (label, fn) => {
+    const bytes = Number(fn() || 0);
+    if (bytes > 0) {
+      freed += bytes;
+      steps.push(`${label} ${humanBytes(bytes)}`);
+    }
+  };
   try {
-    freed += cleanupStaleStorageTempFiles();
-    freed += cleanupLooseBackupFilesForEmergency();
-    freed += pruneJsonBackupTreeForStorageRescue(0);
-    freed += compactExistingSnapshotBinaryCopies();
-    freed += pruneFullSnapshotsForStorageRescue(0);
+    if (!enough()) step('réserve', releaseStorageBallast);
+    if (!enough()) step('fichiers temporaires', cleanupStaleStorageTempFiles);
+    if (allowMediaPurge) step('corbeille', () => pruneRecycleBinForStorageRescue());
+    else if (!enough()) step('corbeille', () => pruneRecycleBinForStorageRescue(enough));
+    if (!enough()) step('copies redondantes des snapshots', compactExistingSnapshotBinaryCopies);
+    if (!enough()) step('anciens snapshots', () => pruneFullSnapshotsForStorageRescue(1, enough));
+    if (!enough()) step('anciennes versions JSON', () => pruneJsonBackupTreeForStorageRescue(1, enough));
+    if (!enough()) step('.bak des caches', () => cleanupLooseBackupFilesForEmergency({ includeCore: false, enough }));
+    if (!enough()) step('photos de profil inutilisées', () => pruneUnreferencedProfilePictures({ enough }));
 
-    if (fs.existsSync(RECYCLE_DIR)) {
-      for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
-        freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
-      }
-    }
-
-    // V6.33.1 : si Cloudinary est configuré, ne pas jeter les médias avant
-    // leur migration. Le transfert cloud démarre juste après le Storage Rescue
-    // et libère le Volume fichier par fichier. Sans Cloudinary, conserver
-    // l'ancien comportement d'urgence.
-    if (!CLOUD_STORAGE_ENABLED) {
-      if (fs.existsSync(CONVERSATION_PROFILE_DIR)) {
-        freed += removePathForStorageRescue(CONVERSATION_PROFILE_DIR, 'conversation-profile (cache)');
-        try { fs.mkdirSync(CONVERSATION_PROFILE_DIR, { recursive: true }); } catch {}
-      }
-
-      const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
-      // V6.45 — visuels (images) des publicités d'origine de TOUTES les
-      // conversations : petits, partagés par pub, et impossibles à
-      // retélécharger une fois le lien Meta expiré.
-      for (const name of collectAdVisualMediaBasenames()) favoriteMedia.add(name);
-      const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-      freed += pruneFilesOlderThan(
-        CONVERSATION_MEDIA_DIR,
-        mediaCutoff,
-        'conversation-media urgence',
-        { recursive: true, preserveBasenames: favoriteMedia }
+    // Dernier recours : l'espace reste CRITIQUE malgré tout le reste.
+    if (stillCritical()) {
+      console.error(
+        `🚨 Stockage critique (${reason}) : suppression des dernières sauvegardes pour permettre l'enregistrement des messages. ` +
+        'Libérez de l’espace ou agrandissez le volume au plus vite.'
       );
+      step('dernières versions JSON', () => pruneJsonBackupTreeForStorageRescue(0, () => !stillCritical()));
+      if (stillCritical()) step('.bak des données', () => cleanupLooseBackupFilesForEmergency({ includeCore: true, enough: () => !stillCritical() }));
+      if (stillCritical()) step('dernier snapshot', () => pruneFullSnapshotsForStorageRescue(0, () => !stillCritical()));
     }
+
+    if (allowMediaPurge) step('médias anciens', purgeOldConversationMediaOnAdminRequest);
   } catch (error) {
     console.warn('⚠️ Storage Rescue urgence :', error.message);
   } finally {
     storageEmergencyCleanupRunning = false;
+  }
+  if (steps.length) {
+    // console.error : déclenche l'alerte (ALERT_WEBHOOK_URL).
+    console.error(`🛟 Storage Rescue (${reason}) : ${steps.join(' · ')} — ${humanBytes(freed)} libérés au total.`);
+  } else if (!enough()) {
+    console.error(`🚨 Storage Rescue (${reason}) : aucun fichier jetable à supprimer, l'espace reste insuffisant. Libérez de l'espace sur le volume.`);
   }
   return freed;
 }
@@ -1230,14 +1457,10 @@ function emergencyFreeDisposableStorage() {
 function ensureStorageHeadroom() {
   const space = storageSpaceInfo();
   const probe = storageWriteProbe();
-  const critical =
-    !probe.writable ||
-    !space ||
-    space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
-    (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
+  const critical = storageLevel(space, probe) === 'critical';
 
   if (!critical) return { cleaned: false, freedBytes: 0, space, writable: probe.writable };
-  const freedBytes = emergencyFreeDisposableStorage();
+  const freedBytes = emergencyFreeDisposableStorage({ reason: 'ENOSPC' });
   const after = storageSpaceInfo();
   const afterProbe = storageWriteProbe();
   return {
@@ -1551,9 +1774,9 @@ function pruneSafeConversationCaches({ emergency = false } = {}) {
 
   // Les photos de profil sont un cache cosmétique. En manque d'espace, on peut
   // retirer les anciennes sans supprimer les conversations ni les données métier.
+  // V6.46 — seulement celles qu'aucune conversation n'affiche plus.
   if (emergency) {
-    const profileCutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    freed += pruneFilesOlderThan(CONVERSATION_PROFILE_DIR, profileCutoff, 'conversation-profile', { recursive: true });
+    freed += pruneUnreferencedProfilePictures({ olderThanMs: 14 * 24 * 60 * 60 * 1000 });
   }
   return freed;
 }
@@ -1621,35 +1844,40 @@ function markRetention15MigrationApplied() {
   return next;
 }
 
-function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false } = {}) {
+// V6.46 — `forceEmergency` : nettoyage par paliers même si l'espace semble
+// suffisant (bouton administrateur) ; `allowMediaPurge` : action explicite
+// d'un administrateur uniquement. Le niveau est décidé sur l'espace libre
+// absolu (storageLevel), jamais sur un ratio.
+function runSafeStorageMaintenance({ forceEmergency = false, skipConversationRetention = false, allowMediaPurge = false, reason = 'entretien' } = {}) {
   const before = storageSpaceInfo();
+  const level = storageLevel(before, storageWriteProbe());
   let freed = 0;
 
   // En urgence, commencer par ce qui ne nécessite aucune nouvelle écriture.
   // Cela crée immédiatement de la marge pour pouvoir ensuite compacter les JSON.
-  if (forceEmergency) {
-    freed += emergencyFreeDisposableStorage();
-  } else {
-    freed += cleanupStaleStorageTempFiles();
-    freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
-    freed += compactExistingSnapshotBinaryCopies();
-    freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+  if (forceEmergency || level === 'critical') {
+    freed += emergencyFreeDisposableStorage({ allowMediaPurge, reason });
   }
 
+  // Entretien courant : seulement jusqu'aux limites configurées.
+  freed += cleanupStaleStorageTempFiles();
+  freed += pruneJsonBackupTreeForStorageRescue(MAX_JSON_BACKUPS_PER_FILE);
+  if (COMPACT_STORAGE_MODE) freed += compactExistingSnapshotBinaryCopies();
+  freed += pruneFullSnapshotsForStorageRescue(MAX_FULL_SNAPSHOTS);
+
   if (!skipConversationRetention) {
-    freed += pruneSafeConversationCaches({ emergency: forceEmergency || (before && before.freeRatio < 0.20) });
+    freed += pruneSafeConversationCaches({ emergency: level !== 'ok' });
   }
 
   freed += pruneNotificationsForStorageRescue();
   freed += pruneMessageIdIndexForStorageRescue();
 
-  if (fs.existsSync(RECYCLE_DIR) && (forceEmergency || (before && before.freeRatio < 0.15))) {
-    for (const entry of fs.readdirSync(RECYCLE_DIR, { withFileTypes: true })) {
-      freed += removePathForStorageRescue(path.join(RECYCLE_DIR, entry.name), `recycle/${entry.name}`);
-    }
+  // Espace bas (sans être critique) : paliers jetables jusqu'à la marge cible.
+  if (!forceEmergency && level === 'low') {
+    freed += emergencyFreeDisposableStorage({ reason });
   }
   const after = storageSpaceInfo();
-  return { before, after, freedBytes: freed, breakdown: storageBreakdown() };
+  return { before, after, level, freedBytes: freed, breakdown: storageBreakdown() };
 }
 
 function runStartupStorageRescue() {
@@ -1657,11 +1885,11 @@ function runStartupStorageRescue() {
 
   const before = storageSpaceInfo();
   const beforeProbe = storageWriteProbe();
-  const lowSpace =
-    !before ||
-    before.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
-    (Number.isFinite(before.freeRatio) && before.freeRatio < 0.20) ||
-    !beforeProbe.writable;
+  // V6.46 — Espace libre ABSOLU (MONDECO_STORAGE_RESCUE_FREE_MB /
+  // MONDECO_STORAGE_CRITICAL_FREE_MB), plus de ratio : un disque « rempli à
+  // 80 % » avec des Go libres n'est pas en manque d'espace.
+  const level = storageLevel(before, beforeProbe);
+  const lowSpace = level !== 'ok';
 
   const retentionReady = retention15MigrationReady();
   // V6.33.1 : la période de grâce ne doit jamais laisser le Volume atteindre ENOSPC.
@@ -1669,8 +1897,9 @@ function runStartupStorageRescue() {
   // est appliquée immédiatement, tout en préservant les conversations ⭐ Favori.
   const emergencyRetentionOverride = lowSpace && !retentionReady;
   const result = runSafeStorageMaintenance({
-    forceEmergency: lowSpace,
-    skipConversationRetention: !retentionReady && !emergencyRetentionOverride
+    forceEmergency: level === 'critical',
+    skipConversationRetention: !retentionReady && !emergencyRetentionOverride,
+    reason: 'démarrage'
   });
   if (retentionReady || emergencyRetentionOverride) markRetention15MigrationApplied();
   const afterProbe = storageWriteProbe();
@@ -1688,6 +1917,7 @@ function runStartupStorageRescue() {
 
   console.log('🛟 MONDECO Storage Rescue', {
     mode: 'compact',
+    level,
     retentionDays: HISTORY_IMPORT_DAYS,
     retentionApplied: retentionReady,
     estimatedFreed: humanBytes(result.freedBytes),
@@ -2145,9 +2375,16 @@ function listFullSnapshots() {
     );
 }
 
-function pruneFullSnapshots() {
+// V6.46 — `protectIds` : snapshots jamais supprimés par ce nettoyage
+// (sauvegarde en cours de restauration et sa copie de protection).
+function pruneFullSnapshots({ protectIds = [] } = {}) {
   const snapshots =
     listFullSnapshots();
+  const protectedIds = new Set(
+    (Array.isArray(protectIds) ? protectIds : [protectIds])
+      .map(safeString)
+      .filter(Boolean)
+  );
 
   for (
     const snapshot
@@ -2155,6 +2392,7 @@ function pruneFullSnapshots() {
       MAX_FULL_SNAPSHOTS
     )
   ) {
+    if (protectedIds.has(snapshot.id)) continue;
     try {
       fs.rmSync(
         path.join(
@@ -2175,10 +2413,14 @@ function pruneFullSnapshots() {
   }
 }
 
-function createFullSnapshot(reason = 'manual') {
+// V6.46 — `prune: false` : aucun ancien snapshot supprimé (copie de
+// protection faite juste avant une restauration, voir restoreFullSnapshot).
+function createFullSnapshot(reason = 'manual', { prune = true, protectIds = [] } = {}) {
   // V6.37.3 — Le JSON d'état n'étant écrit qu'une fois par minute, on
   // l'écrit avant de le copier dans le snapshot.
   try { flushConversationStatesWrite(); } catch (error) { console.warn('⚠️ Snapshot : état non écrit :', error.message); }
+  // V6.46 — Notifications et autres magasins à écriture groupée aussi.
+  try { flushAllJsonStores(); } catch (error) { console.warn('⚠️ Snapshot : écritures groupées non faites :', error.message); }
 
   const id =
     `snapshot-${timestampId()}`;
@@ -2316,13 +2558,42 @@ function createFullSnapshot(reason = 'manual') {
     'utf8'
   );
 
-  pruneFullSnapshots();
+  if (prune !== false) pruneFullSnapshots({ protectIds });
 
   console.log(
     `💾 Snapshot créé : ${id}`
   );
 
   return meta;
+}
+
+// V6.46 — Copie atomique d'un fichier de sauvegarde vers sa place active :
+// fichier temporaire puis rename (jamais de fichier actif à moitié copié).
+function copyFileAtomicForRestore(source, target) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temp = `${target}.${process.pid}.${Date.now()}.restore.tmp`;
+  try {
+    fs.copyFileSync(source, temp);
+    fs.renameSync(temp, target);
+  } finally {
+    try { if (fs.existsSync(temp)) fs.unlinkSync(temp); } catch {}
+  }
+}
+
+// V6.46 — Après une restauration : les copies en mémoire des fichiers
+// remplacés sont relues (état des conversations, notifications, Inbox).
+function reloadMemoryCachesAfterRestore() {
+  try {
+    // Relecture immédiate du JSON restauré : resynchronisation SQLite
+    // planifiée par lib/conversation-state-store.js.
+    conversationStateStore().live();
+  } catch (error) {
+    console.error('❌ Restauration : état des conversations non rechargé :', error.message);
+  }
+  try { notificationsStore().reload(); } catch (error) { console.warn('⚠️ Restauration : notifications non rechargées :', error.message); }
+  try { usersCache = null; usersCacheStamp = null; } catch {}
+  try { resetInboxCachesAfterMessageChange(); } catch {}
+  try { invalidateWhatsAppLogCache(); } catch {}
 }
 
 function restoreFullSnapshot(snapshotId) {
@@ -2355,28 +2626,54 @@ function restoreFullSnapshot(snapshotId) {
     );
   }
 
-  // Protection avant restauration.
-  createFullSnapshot(
-    `before-restore-${safeId}`
+  // V6.46 — Fichiers réellement présents (et lisibles) dans la sauvegarde,
+  // vérifiés AVANT toute modification. Avant, la copie de protection
+  // ci-dessous supprimait (rotation) la sauvegarde à restaurer : rien
+  // n'était restauré, la réponse annonçait un succès et la dernière bonne
+  // sauvegarde était perdue.
+  const binaryDirectories = ['uploads', 'customizations', 'conversation-media', 'conversation-profile', 'conversation-events'];
+  const restorableFiles = snapshotFiles().filter(item =>
+    fileExistsWithContent(path.join(snapshotDir, item.name))
+  );
+  const restorableDirectories = binaryDirectories.filter(name => {
+    try { return fs.statSync(path.join(snapshotDir, name)).isDirectory(); } catch { return false; }
+  });
+  if (!restorableFiles.length && !restorableDirectories.length) {
+    throw new Error('Sauvegarde vide : aucun fichier à restaurer.');
+  }
+  for (const item of restorableFiles) {
+    if (!item.name.endsWith('.json')) continue;
+    try {
+      JSON.parse(fs.readFileSync(path.join(snapshotDir, item.name), 'utf8'));
+    } catch (error) {
+      throw new Error(`Sauvegarde endommagée : ${item.name} illisible (${error.message}). Rien n'a été modifié.`);
+    }
+  }
+
+  // Protection avant restauration : copie de l'état actuel, SANS rotation
+  // (la sauvegarde restaurée ne doit jamais être supprimée).
+  const safetySnapshot = createFullSnapshot(
+    `before-restore-${safeId}`,
+    { prune: false }
   );
 
-  for (const item of snapshotFiles()) {
+  const restoredFiles = [];
+  for (const item of restorableFiles) {
     const source =
       path.join(
         snapshotDir,
         item.name
       );
 
-    if (fs.existsSync(source)) {
-      backupJsonVersion(
-        item.source
-      );
+    backupJsonVersion(
+      item.source
+    );
 
-      fs.copyFileSync(
-        source,
-        item.source
-      );
-    }
+    copyFileAtomicForRestore(
+      source,
+      item.source
+    );
+    restoredFiles.push(item.name);
   }
 
   const snapshotUploads =
@@ -2481,14 +2778,25 @@ function restoreFullSnapshot(snapshotId) {
   }
 
   markInstructionsMigrationDone();
+  reloadMemoryCachesAfterRestore();
+
+  // Rotation seulement maintenant, sans jamais supprimer la sauvegarde
+  // restaurée ni la copie de protection.
+  pruneFullSnapshots({ protectIds: [safeId, safetySnapshot?.id] });
 
   console.log(
-    `♻️ Snapshot restauré : ${safeId}`
+    `♻️ Snapshot restauré : ${safeId} (${restoredFiles.length} fichier(s), ` +
+    `${restorableDirectories.length} dossier(s) ; copie de protection : ${safetySnapshot?.id || 'aucune'})`
   );
 
-  return snapshotMetadata(
-    snapshotDir
-  );
+  return {
+    ...snapshotMetadata(
+      snapshotDir
+    ),
+    restoredFiles,
+    restoredDirectories: restorableDirectories,
+    safetySnapshotId: safeString(safetySnapshot?.id)
+  };
 }
 
 function createExternalDataExport() {
@@ -2527,10 +2835,38 @@ function createExternalDataExport() {
   };
 }
 
+// V6.46 — Taille estimée d'un snapshot (fichiers copiés), pour décider
+// sur l'espace absolu s'il peut être créé.
+function estimateFullSnapshotBytes() {
+  const compactNames = new Set([
+    'products.json', 'instructions.json', 'settings.json', 'customization-requests.json',
+    'commercial-corrections.json', 'quick-replies.json', 'users.json', 'conversation-state.json',
+    'woocommerce-sync.json', 'schedules.json', 'tasks.json', 'daily-reports.json'
+  ]);
+  let total = 0;
+  for (const item of snapshotFiles()) {
+    if (COMPACT_STORAGE_MODE && !compactNames.has(item.name)) continue;
+    try { total += Number(fs.statSync(item.source).size || 0); } catch {}
+  }
+  if (!COMPACT_STORAGE_MODE) {
+    for (const dir of [UPLOADS_DIR, CUSTOMIZATIONS_DIR, CONVERSATION_MEDIA_DIR, CONVERSATION_PROFILE_DIR, CONVERSATION_EVENTS_DIR]) {
+      total += pathSizeBytes(dir);
+    }
+  }
+  return total;
+}
+
 function ensureDailySnapshot() {
+  // V6.46 — Ignoré seulement si l'espace libre ABSOLU ne suffit pas pour
+  // deux fois la taille du snapshot en plus de la marge critique (avant :
+  // ignoré dès que moins de 25 % du disque était libre, même avec des Go).
   const space = storageSpaceInfo();
-  if (space && (space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES || (Number.isFinite(space.freeRatio) && space.freeRatio < 0.25))) {
-    console.warn('🧹 Snapshot quotidien ignoré : marge de stockage insuffisante.');
+  const needed = STORAGE_CRITICAL_FREE_BYTES + 2 * estimateFullSnapshotBytes();
+  if (space && space.freeBytes < needed) {
+    console.error(
+      `🚨 Snapshot quotidien ignoré : marge de stockage insuffisante (${humanBytes(space.freeBytes)} libres, ` +
+      `${humanBytes(needed)} nécessaires).`
+    );
     return;
   }
   try {
@@ -2615,9 +2951,16 @@ function writeJsonAtomic(filePath, data) {
     } catch {}
   };
 
+  // V6.46 — Fichiers de données de taille raisonnable : contenu forcé sur
+  // disque (fsync) avant le rename, puis le dossier, pour qu'une coupure de
+  // courant ne laisse pas un fichier vide (0 octet) à la place des données.
+  // Les très gros fichiers réécrits souvent (état, journal) ne sont pas
+  // concernés : SQLite et les journaux .jsonl en gardent une copie.
   const atomicAttempt = () => {
-    fs.writeFileSync(tempPath, serialized, 'utf8');
+    const durable = serializedBytes <= (DURABLE_WRITE_MAX_BYTES || 0);
+    writeFileDurably(tempPath, serialized, durable);
     fs.renameSync(tempPath, filePath);
+    if (durable) fsyncDirectoryQuietly(path.dirname(filePath));
   };
 
   try {
@@ -2628,7 +2971,7 @@ function writeJsonAtomic(filePath, data) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
 
     console.warn(`🛟 ENOSPC pendant ${path.basename(filePath)} : nettoyage automatique puis nouvelle tentative.`);
-    emergencyFreeDisposableStorage();
+    emergencyFreeDisposableStorage({ reason: `ENOSPC ${path.basename(filePath)}` });
 
     try {
       atomicAttempt();
@@ -2654,6 +2997,79 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
+// V6.46 — Écriture durable (fsync) d'un fichier temporaire. `var` : ces
+// fonctions peuvent servir très tôt au chargement du module.
+var DURABLE_WRITE_MAX_BYTES = 8 * 1024 * 1024;
+
+function writeFileDurably(filePath, content, durable = true) {
+  if (!durable) {
+    fs.writeFileSync(filePath, content, 'utf8');
+    return;
+  }
+  const fd = fs.openSync(filePath, 'w');
+  try {
+    fs.writeFileSync(fd, content, 'utf8');
+    try { fs.fsyncSync(fd); } catch {}
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function fsyncDirectoryQuietly(directory) {
+  let fd = null;
+  try {
+    fd = fs.openSync(directory, 'r');
+    fs.fsyncSync(fd);
+  } catch {
+    // Non pris en charge sur certains systèmes (Windows) : sans gravité.
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+}
+
+// V6.46 — Réécriture atomique d'un fichier texte (journaux .jsonl, index
+// message_id) : fichier temporaire, fsync, rename. Jamais de réécriture en
+// place qu'un arrêt brutal ou un disque plein laisserait tronquée.
+function writeTextFileAtomic(filePath, text) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  try {
+    writeFileDurably(tempPath, text, Buffer.byteLength(text, 'utf8') <= (DURABLE_WRITE_MAX_BYTES || 0));
+    fs.renameSync(tempPath, filePath);
+    fsyncDirectoryQuietly(path.dirname(filePath));
+  } finally {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+  }
+}
+
+// V6.46 — Fichier illisible mis de côté (<fichier>.corrupt-<date>) avant
+// toute réécriture : il n'est jamais écrasé ni copié sur le .bak valide.
+// Une seule copie par version du fichier (taille + date).
+var quarantinedCorruptFiles;
+function quarantineCorruptDataFile(filePath, label, { copy = false } = {}) {
+  if (!quarantinedCorruptFiles) quarantinedCorruptFiles = new Map();
+  try {
+    if (!fs.existsSync(filePath)) return '';
+    const stamp = fileChangeStamp(filePath);
+    if (quarantinedCorruptFiles.get(filePath) === stamp) return '';
+    if (!fileExistsWithContent(filePath)) return '';
+    const target = `${filePath}.corrupt-${timestampId()}`;
+    if (copy) fs.copyFileSync(filePath, target);
+    else fs.renameSync(filePath, target);
+    quarantinedCorruptFiles.set(filePath, copy ? stamp : 'missing');
+    console.error(`🚨 ${label} illisible conservé sous ${path.basename(target)}.`);
+    return target;
+  } catch (error) {
+    console.error(`❌ ${label} illisible non mis de côté :`, error.message);
+    return '';
+  }
+}
+
+// V6.46 — Un fichier vide (0 octet) est traité comme un fichier illisible :
+// reprise du .bak (avant : « [] », le catalogue du bot devenait vide). Un
+// fichier illisible est mis de côté puis remplacé par son .bak valide.
 function readJsonArray(filePath, label) {
   const backupPath = `${filePath}.bak`;
 
@@ -2667,25 +3083,58 @@ function readJsonArray(filePath, label) {
     return Array.isArray(parsed) ? parsed : [];
   }
 
-  try {
-    const data = read(filePath);
-    return data === null ? [] : data;
-  } catch (error) {
-    console.error(`❌ Lecture ${label} impossible :`, error.message);
-
+  function readBackup() {
     try {
-      const backup = read(backupPath);
-      if (backup !== null) {
-        console.warn(`♻️ ${label} restauré depuis backup`);
-        return backup;
-      }
+      return read(backupPath);
     } catch (backupError) {
       console.error(
         `❌ Backup ${label} invalide :`,
         backupError.message
       );
+      return null;
+    }
+  }
+
+  function restoreFromBackup(reason) {
+    const backup = readBackup();
+    if (backup === null) return null;
+    console.error(`♻️ ${label} ${reason} : restauré depuis ${path.basename(backupPath)} (${backup.length} élément(s)).`);
+    try {
+      // Le fichier actif reprend le contenu du .bak (relectures suivantes
+      // cohérentes, aucune écriture ne repartira d'une liste vide).
+      const temp = `${filePath}.${process.pid}.${Date.now()}.restore.tmp`;
+      fs.copyFileSync(backupPath, temp);
+      fs.renameSync(temp, filePath);
+    } catch (error) {
+      console.warn(`⚠️ ${label} : copie du .bak impossible :`, error.message);
+    }
+    return backup;
+  }
+
+  try {
+    const data = read(filePath);
+    if (data !== null) return data;
+    // Fichier présent mais vide : jamais lu comme une liste vide si un
+    // .bak valide existe.
+    let size = -1;
+    try { size = fs.statSync(filePath).size; } catch {}
+    if (size === 0) {
+      const backup = restoreFromBackup('vide (0 octet)');
+      if (backup !== null) return backup;
+    }
+    return [];
+  } catch (error) {
+    console.error(`❌ Lecture ${label} impossible :`, error.message);
+
+    const backup = readBackup();
+    if (backup !== null) {
+      quarantineCorruptDataFile(filePath, label);
+      return restoreFromBackup('illisible') || backup;
     }
 
+    // Aucun .bak valide : copie de sécurité du fichier illisible (il reste
+    // en place ; la prochaine écriture ne le perdra pas).
+    quarantineCorruptDataFile(filePath, label, { copy: true });
     return [];
   }
 }
@@ -2711,13 +3160,27 @@ function loadPurgedRecordHashes() {
   const stamp = fileChangeStamp(PURGED_RECORD_HASHES_PATH);
   if (purgedRecordHashesCache.stamp === stamp) return purgedRecordHashesCache.set;
   let hashes = [];
+  let raw = '';
   try {
     if (fs.existsSync(PURGED_RECORD_HASHES_PATH)) {
-      const parsed = JSON.parse(fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8') || '{}');
+      raw = fs.readFileSync(PURGED_RECORD_HASHES_PATH,'utf8');
+      const parsed = JSON.parse(raw || '{}');
       hashes = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.hashes) ? parsed.hashes : []);
     }
   } catch (error) {
-    console.warn('⚠️ Lecture empreintes suppression :', error.message);
+    // V6.46 — Fichier illisible : les empreintes (SHA-256) encore entières
+    // sont récupérées dans le texte, plus celles du .bak ; le fichier est
+    // conservé à part. Avant : liste vide, puis réécrite avec la seule
+    // nouvelle empreinte — les messages supprimés pouvaient revenir.
+    console.error('❌ Lecture empreintes suppression :', error.message);
+    const recovered = new Set(String(raw).match(/[0-9a-f]{64}/g) || []);
+    try {
+      const backup = JSON.parse(fs.readFileSync(`${PURGED_RECORD_HASHES_PATH}.bak`, 'utf8'));
+      for (const hash of (Array.isArray(backup) ? backup : backup?.hashes) || []) recovered.add(safeString(hash));
+    } catch {}
+    quarantineCorruptDataFile(PURGED_RECORD_HASHES_PATH, '.purged-record-hashes.json', { copy: true });
+    hashes = [...recovered];
+    console.error(`♻️ Empreintes de suppression récupérées : ${hashes.length}.`);
   }
   const set = new Set(hashes.map(safeString).filter(Boolean));
   purgedRecordHashesCache = { stamp, set };
@@ -4347,24 +4810,26 @@ ensureDailySnapshot();
 
 // V6.33.1 — surveillance préventive. Le Volume est contrôlé périodiquement
 // afin d'éviter d'attendre le prochain redémarrage pour découvrir ENOSPC.
-const storageGuardTimer = setInterval(() => {
+// V6.46 — Niveau décidé sur l'espace libre absolu (plus de ratio) ; quand
+// tout va bien : index message_id plafonné et réserve d'espace recréée.
+function runStorageGuardTick() {
   if (storagePeriodicGuardRunning) return;
   storagePeriodicGuardRunning = true;
   try {
     const space = storageSpaceInfo();
-    if (!space) return;
-    const critical =
-      space.freeBytes < STORAGE_CRITICAL_FREE_BYTES ||
-      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.10);
-    const low =
-      critical ||
-      space.freeBytes < STORAGE_RESCUE_TARGET_FREE_BYTES ||
-      (Number.isFinite(space.freeRatio) && space.freeRatio < 0.20);
-    if (!low) return;
+    const level = storageLevel(space, storageWriteProbe());
+    const critical = level === 'critical';
+    const low = level !== 'ok';
+    if (!low) {
+      try { pruneMessageIdIndexForStorageRescue(); } catch {}
+      ensureStorageBallast();
+      return;
+    }
 
     const result = runSafeStorageMaintenance({
       forceEmergency: critical,
-      skipConversationRetention: false
+      skipConversationRetention: false,
+      reason: 'surveillance'
     });
     if (critical) markRetention15MigrationApplied();
     console.log('🧹 Storage Guard périodique', {
@@ -4377,8 +4842,12 @@ const storageGuardTimer = setInterval(() => {
   } finally {
     storagePeriodicGuardRunning = false;
   }
-}, STORAGE_GUARD_INTERVAL_MS);
+}
+const storageGuardTimer = setInterval(runStorageGuardTick, STORAGE_GUARD_INTERVAL_MS);
 if (typeof storageGuardTimer.unref === 'function') storageGuardTimer.unref();
+// Première vérification (et création de la réserve) une minute après le démarrage.
+const storageGuardFirstTimer = setTimeout(runStorageGuardTick, 60 * 1000);
+if (typeof storageGuardFirstTimer.unref === 'function') storageGuardFirstTimer.unref();
 
 console.log(
   '💾 Stockage MONDECO :',
@@ -17827,6 +18296,13 @@ function saveConversationStatesAdmin(states) {
 process.on('SIGTERM', flushConversationStatesWrite);
 process.on('SIGINT', flushConversationStatesWrite);
 process.on('beforeExit', flushConversationStatesWrite);
+// V6.46 — 'exit' est aussi émis après process.exit() (exception non
+// rattrapée, sortie forcée) : dernière écriture synchrone du JSON d'état.
+process.on('exit', () => {
+  // Dossier de données disparu (volume démonté) : ne pas le recréer vide.
+  if (!fs.existsSync(DATA_DIR)) return;
+  try { flushConversationStatesWrite(); } catch {}
+});
 
 // V6.37.2 — Migration unique : allège adReferral dans toutes les
 // conversations existantes (raw, mediaUrl déjà copiée localement ; voir
@@ -17906,12 +18382,61 @@ function notificationUserKey(user) {
   return safeString(user?.id || user?.email || user?.role || 'admin');
 }
 
+// V6.46 — Notifications : UNE copie en mémoire partagée par server.js et
+// Admin.js (lib/json-object-store.js), plafonnée à chaque enregistrement
+// (MONDECO_MAX_NOTIFICATIONS, HISTORY_IMPORT_DAYS) et écrite de façon
+// groupée (≤ 5 s, et à l'arrêt). Avant, chaque message client relisait et
+// réécrivait tout notifications.json de façon bloquante, et le plafond
+// n'était appliqué qu'en cas de manque d'espace disque. Fichier illisible :
+// conservé sous notifications.json.corrupt-<date> (jamais écrasé), la
+// sauvegarde .bak est reprise si elle est valide.
+var notificationsObjectStore;
+function notificationsStore() {
+  if (!notificationsObjectStore) {
+    notificationsObjectStore = createJsonObjectStore({
+      filePath: NOTIFICATIONS_PATH,
+      label: 'notifications.json',
+      write: (filePath, data) => writeJsonAtomic(filePath, data),
+      flushDelayMs: 1500,
+      maxDelayMs: 5000,
+      onUnreadable: 'quarantine'
+    });
+  }
+  return notificationsObjectStore;
+}
+
+function notificationItemTimeMs(item) {
+  const ms = Date.parse(safeString(item?.createdAt));
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+// Plafond : notifications plus anciennes que la rétention retirées (les
+// éléments sans date sont gardés), puis seulement les MAX_NOTIFICATION_ITEMS
+// plus récentes. L'ordre d'origine est conservé.
+function capNotificationItems(items, now = Date.now()) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  const cutoff = now - HISTORY_IMPORT_DAYS * 24 * 60 * 60 * 1000;
+  let kept = list.filter(item => {
+    const ms = notificationItemTimeMs(item);
+    return !Number.isFinite(ms) || ms >= cutoff;
+  });
+  if (kept.length > MAX_NOTIFICATION_ITEMS) {
+    const ranked = kept
+      .map((item, index) => ({ item, index, ms: notificationItemTimeMs(item) }))
+      .sort((a, b) => (Number.isFinite(a.ms) ? a.ms : 0) - (Number.isFinite(b.ms) ? b.ms : 0) || a.index - b.index);
+    const keep = new Set(ranked.slice(-MAX_NOTIFICATION_ITEMS).map(entry => entry.index));
+    kept = kept.filter((item, index) => keep.has(index));
+  }
+  return kept;
+}
+
+// Copie modifiable (le tableau items est copié : ajouter un élément n'a
+// aucun effet tant que saveNotificationsStore() n'est pas appelé).
 function loadNotificationsStore() {
   try {
-    if (!fs.existsSync(NOTIFICATIONS_PATH)) return { items: [] };
-    const parsed = JSON.parse(fs.readFileSync(NOTIFICATIONS_PATH, 'utf8') || '{}');
+    const data = notificationsStore().getAll();
     return {
-      items: Array.isArray(parsed?.items) ? parsed.items : []
+      items: Array.isArray(data?.items) ? data.items.slice() : []
     };
   } catch (error) {
     console.warn('⚠️ Lecture notifications.json :', error.message);
@@ -17919,19 +18444,25 @@ function loadNotificationsStore() {
   }
 }
 
-let notificationsReadCache = { stamp: '', store: { items: [] } };
+// Lecture seule (aucune copie) : ne pas modifier le résultat.
 function loadNotificationsStoreReadOnly() {
-  const stamp = fileChangeStamp(NOTIFICATIONS_PATH);
-  if (stamp !== notificationsReadCache.stamp) {
-    notificationsReadCache = { stamp, store: loadNotificationsStore() };
+  try {
+    const data = notificationsStore().getAll();
+    return { items: Array.isArray(data?.items) ? data.items : [] };
+  } catch (error) {
+    console.warn('⚠️ Lecture notifications.json :', error.message);
+    return { items: [] };
   }
-  return notificationsReadCache.store;
 }
 
 function saveNotificationsStore(store) {
-  writeJsonAtomic(NOTIFICATIONS_PATH, {
-    items: Array.isArray(store?.items) ? store.items : []
+  notificationsStore().replaceAll({
+    items: capNotificationItems(store?.items)
   });
+}
+
+function flushNotificationsStore() {
+  try { return notificationsStore().flush(); } catch { return false; }
 }
 
 function notificationVisibleToUser(item, user, states = {}) {
@@ -23341,36 +23872,166 @@ function rewriteConversationArrayFileForPurge(filePath, targetHash, part) {
   return removed;
 }
 
-function rewritePersistentConversationEventsForPurge(targetHash, part) {
-  let removed = 0;
-  const roots = [
-    CONVERSATION_EVENTS_DIR,
-    path.join(DATA_DIR, 'conversation-archive-recovered')
-  ];
+// V6.46 — Suppression définitive dans les journaux permanents
+// conversation-events-*.jsonl : réécriture ATOMIQUE (fichier temporaire
+// puis rename ; avant : réécriture en place qu'un arrêt brutal ou un disque
+// plein laissait tronquée, seule copie permanente de la journée), lecture
+// asynchrone, et seuls les jours du message sont traités avant la réponse :
+// les autres jours sont vérifiés en arrière-plan (l'empreinte enregistrée
+// masque déjà le message partout à la lecture). Avant, chaque suppression
+// relisait tout l'historique de façon bloquante (3,9 s pour 65 Mo).
+var conversationEventsRewriteChain;
+function serializeConversationEventsRewrite(task) {
+  const run = (conversationEventsRewriteChain || Promise.resolve()).then(task, task);
+  conversationEventsRewriteChain = run.catch(() => {});
+  return run;
+}
+
+function conversationEventFilesForPurge() {
+  const files = [];
   const visit = directory => {
     if (!fs.existsSync(directory)) return;
     for (const entry of fs.readdirSync(directory, { withFileTypes:true })) {
       const filePath = path.join(directory, entry.name);
       if (entry.isDirectory()) { visit(filePath); continue; }
       if (!entry.isFile() || !/^conversation-events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
-      const output = [];
-      let changed = false;
-      for (const line of fs.readFileSync(filePath,'utf8').split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try {
-          const original = JSON.parse(line);
-          if (conversationEntryPartPurgeHash(original, part) === targetHash) {
-            removed += 1;
-            changed = true;
-            const transformed = applyConversationPurgeTombstones(original, { soft:false });
-            if (transformed) output.push(JSON.stringify(transformed));
-          } else output.push(line);
-        } catch { output.push(line); }
-      }
-      if (changed) fs.writeFileSync(filePath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+      files.push(filePath);
     }
   };
-  for (const root of roots) visit(root);
+  visit(CONVERSATION_EVENTS_DIR);
+  visit(path.join(DATA_DIR, 'conversation-archive-recovered'));
+  return files;
+}
+
+function conversationEventFileDay(filePath) {
+  const match = /conversation-events-(\d{4}-\d{2}-\d{2})\.jsonl$/.exec(path.basename(filePath));
+  return match ? match[1] : '';
+}
+
+// Jours (UTC, comme l'écriture des journaux) où le message a pu être écrit.
+function conversationPurgeCandidateDays(target = {}) {
+  const days = new Set();
+  for (const value of [target?.time, target?.reply_time, target?.created_time, target?.timestamp, target?.incoming_at]) {
+    const ms = Date.parse(safeString(value));
+    if (!Number.isFinite(ms)) continue;
+    for (const offset of [-1, 0, 1]) {
+      days.add(new Date(ms + offset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+    }
+  }
+  return days;
+}
+
+// Textes cherchés avant d'analyser une ligne (évite JSON.parse + SHA-256
+// sur chaque ligne de l'historique).
+function conversationPurgeNeedles(target = {}) {
+  const id = safeString(target?.message_id || target?.meta_message_id || target?.mid || target?.id);
+  const value = id || safeString(target?.contact);
+  if (!value) return [];
+  return [JSON.stringify(value).slice(1, -1)];
+}
+
+async function purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles = []) {
+  let readSize = 0;
+  try {
+    readSize = Number((await fs.promises.stat(filePath)).size || 0);
+  } catch {
+    return 0;
+  }
+  if (!readSize) return 0;
+
+  const buffer = Buffer.alloc(readSize);
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    await handle.read(buffer, 0, readSize, 0);
+  } finally {
+    await handle.close();
+  }
+  const text = buffer.toString('utf8');
+  if (needles.length && !needles.some(needle => text.includes(needle))) return 0;
+
+  const lines = text.split(/\r?\n/);
+  const output = [];
+  let removed = 0;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    if (needles.length && !needles.some(needle => line.includes(needle))) {
+      output.push(line);
+      continue;
+    }
+    try {
+      const original = JSON.parse(line);
+      if (conversationEntryPartPurgeHash(original, part) === targetHash) {
+        removed += 1;
+        const transformed = applyConversationPurgeTombstones(original, { soft:false });
+        if (transformed) output.push(JSON.stringify(transformed));
+      } else output.push(line);
+    } catch { output.push(line); }
+    if (index % 2000 === 1999) await new Promise(resolve => setImmediate(resolve));
+  }
+  if (!removed) return 0;
+
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.purge.tmp`;
+  try {
+    await fs.promises.writeFile(tempPath, output.length ? `${output.join('\n')}\n` : '', 'utf8');
+    // --- Section synchrone (aucun await) : les ajouts de server.js faits
+    // pendant la lecture sont recopiés à la fin, puis le rename remplace le
+    // fichier d'un seul coup.
+    const currentSize = Number(fs.statSync(filePath).size || 0);
+    if (currentSize < readSize) {
+      console.warn(`⚠️ Suppression définitive : ${path.basename(filePath)} modifié pendant la réécriture, nouvelle tentative plus tard.`);
+      return 0;
+    }
+    if (currentSize > readSize) {
+      const tail = Buffer.alloc(currentSize - readSize);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        fs.readSync(fd, tail, 0, tail.length, readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.appendFileSync(tempPath, tail);
+    }
+    fs.renameSync(tempPath, filePath);
+    return removed;
+  } catch (error) {
+    console.error(`❌ Suppression définitive : ${path.basename(filePath)} non réécrit (fichier d'origine intact) :`, error.message);
+    return 0;
+  } finally {
+    try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch {}
+  }
+}
+
+async function rewritePersistentConversationEventsForPurge(targetHash, part, target = {}) {
+  const files = conversationEventFilesForPurge();
+  const days = conversationPurgeCandidateDays(target);
+  const needles = conversationPurgeNeedles(target);
+  const preferred = files.filter(filePath => days.has(conversationEventFileDay(filePath)));
+  const others = files.filter(filePath => !days.has(conversationEventFileDay(filePath)));
+  let removed = 0;
+  for (const filePath of preferred) {
+    removed += await serializeConversationEventsRewrite(
+      () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles)
+    );
+  }
+  if (others.length) {
+    setImmediate(async () => {
+      let backgroundRemoved = 0;
+      for (const filePath of others) {
+        try {
+          backgroundRemoved += await serializeConversationEventsRewrite(
+            () => purgeTargetFromConversationEventsFile(filePath, targetHash, part, needles)
+          );
+        } catch (error) {
+          console.error(`❌ Suppression définitive (arrière-plan) ${path.basename(filePath)} :`, error.message);
+        }
+      }
+      if (backgroundRemoved) {
+        resetInboxCachesAfterMessageChange();
+        console.log(`🗑 Suppression définitive : ${backgroundRemoved} copie(s) supplémentaire(s) retirée(s) des journaux.`);
+      }
+    });
+  }
   return removed;
 }
 function purgeMessageIdsFromIndex(entry = {}) {
@@ -23378,7 +24039,8 @@ function purgeMessageIdsFromIndex(entry = {}) {
   if (!ids.size || !fs.existsSync(MESSAGE_ID_INDEX_PATH)) return 0;
   const lines = fs.readFileSync(MESSAGE_ID_INDEX_PATH,'utf8').split(/\r?\n/).filter(Boolean);
   const next = lines.filter(line => !ids.has(safeString(line)));
-  if (next.length !== lines.length) fs.writeFileSync(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '', 'utf8');
+  // V6.46 — Réécriture atomique (temporaire + rename), jamais en place.
+  if (next.length !== lines.length) writeTextFileAtomic(MESSAGE_ID_INDEX_PATH, next.length ? `${next.join('\n')}\n` : '');
   return lines.length - next.length;
 }
 
@@ -23399,47 +24061,59 @@ function purgeNotificationsForConversationEntry(entry = {}) {
   return before - store.items.length;
 }
 
+// V6.46 — Le journal est relu AVANT de toucher à l'état, puis seule la
+// conversation concernée est modifiée, sur sa version la plus récente
+// (updateConversationStateAdmin, sans await). Avant, une copie de TOUTES
+// les conversations prise avant l'await de loadWhatsAppLog() était
+// réenregistrée après : une prise en main ou une nouvelle conversation
+// arrivée pendant ces secondes pouvait être annulée.
 async function rebuildConversationStateAfterPurge(contact) {
-  const states = loadConversationStatesAdmin();
-  const current = states[contact] && typeof states[contact] === 'object' ? states[contact] : {};
-  let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === safeString(contact));
-  entries = contact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
-  if (!entries.length) {
-    // V6.45 — Plus de suppression de la conversation quand son dernier
-    // message est purgé : affectation, origine publicitaire et fiche client
-    // sont conservées (seuls les compteurs de messages sont remis à zéro).
-    if (!Object.keys(current).length) return {};
-    states[contact] = {
+  const cleanContact = safeString(contact);
+  if (!cleanContact) return {};
+  let entries = (await loadWhatsAppLog()).filter(item => safeString(item?.contact) === cleanContact);
+  entries = cleanContact.startsWith('instagram:') ? normalizeInstagramThreadEntries(entries) : entries.sort(conversationEntryComparator);
+
+  const known = readConversationStatesAdminCached()?.[cleanContact];
+  if (!known || typeof known !== 'object' || !Object.keys(known).length) return {};
+
+  let result = {};
+  updateConversationStateAdmin(cleanContact, current => {
+    if (!current || !Object.keys(current).length) return undefined;
+    if (!entries.length) {
+      // V6.45 — Plus de suppression de la conversation quand son dernier
+      // message est purgé : affectation, origine publicitaire et fiche client
+      // sont conservées (seuls les compteurs de messages sont remis à zéro).
+      result = {
+        ...current,
+        unreadCount:0,
+        lastUnreadMessageId:'',
+        awaitingResponse:false,
+        updatedAt:new Date().toISOString()
+      };
+      return result;
+    }
+    const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
+    const evidence = conversationDirectionalEvidence(entries, cleanState);
+    const latestInbound = [...entries].reverse().find(item => conversationEntryNeedsDirection(item).inbound) || {};
+    const latestBot = [...entries].reverse().find(item => {
+      const flags = conversationEntryNeedsDirection(item);
+      return flags.outbound && !conversationEntryIsBusinessReply(item);
+    }) || {};
+    result = {
       ...current,
-      unreadCount:0,
-      lastUnreadMessageId:'',
-      awaitingResponse:false,
+      lastCustomerAt:safeString(evidence.latestInboundIso),
+      lastHumanAt:safeString(evidence.latestHumanIso),
+      lastBotAt:safeString(latestBot?.time || latestBot?.reply_time),
+      lastAnsweredAt:safeString(evidence.latestOutboundIso),
+      lastAnsweredCustomerAt:evidence.answered ? safeString(evidence.latestInboundIso) : '',
+      unreadCount:evidence.pending ? 1 : 0,
+      lastUnreadMessageId:evidence.pending ? safeString(latestInbound?.message_id || latestInbound?.meta_message_id) : '',
+      awaitingResponse:evidence.pending,
       updatedAt:new Date().toISOString()
     };
-    saveConversationStatesAdmin(states);
-    return states[contact];
-  }
-  const cleanState = { ...current, lastCustomerAt:'', lastHumanAt:'', lastBotAt:'', lastAnsweredAt:'', lastAnsweredCustomerAt:'', unreadCount:0, lastUnreadMessageId:'' };
-  const evidence = conversationDirectionalEvidence(entries, cleanState);
-  const latestInbound = [...entries].reverse().find(item => conversationEntryNeedsDirection(item).inbound) || {};
-  const latestBot = [...entries].reverse().find(item => {
-    const flags = conversationEntryNeedsDirection(item);
-    return flags.outbound && !conversationEntryIsBusinessReply(item);
-  }) || {};
-  states[contact] = {
-    ...current,
-    lastCustomerAt:safeString(evidence.latestInboundIso),
-    lastHumanAt:safeString(evidence.latestHumanIso),
-    lastBotAt:safeString(latestBot?.time || latestBot?.reply_time),
-    lastAnsweredAt:safeString(evidence.latestOutboundIso),
-    lastAnsweredCustomerAt:evidence.answered ? safeString(evidence.latestInboundIso) : '',
-    unreadCount:evidence.pending ? 1 : 0,
-    lastUnreadMessageId:evidence.pending ? safeString(latestInbound?.message_id || latestInbound?.meta_message_id) : '',
-    awaitingResponse:evidence.pending,
-    updatedAt:new Date().toISOString()
-  };
-  saveConversationStatesAdmin(states);
-  return states[contact];
+    return result;
+  });
+  return result;
 }
 
 async function purgeConversationMessagePart(target, part, knownHash = '') {
@@ -23452,7 +24126,7 @@ async function purgeConversationMessagePart(target, part, knownHash = '') {
   removed += rewriteConversationArrayFileForPurge(CONVERSATIONS_LOG_PATH,targetHash,part);
   removed += rewriteConversationArrayFileForPurge(INSTAGRAM_HISTORY_PATH,targetHash,part);
   removed += rewriteConversationArrayFileForPurge(FACEBOOK_HISTORY_PATH,targetHash,part);
-  removed += rewritePersistentConversationEventsForPurge(targetHash,part);
+  removed += await rewritePersistentConversationEventsForPurge(targetHash,part,target);
   purgeMessageIdsFromIndex(target);
   purgeNotificationsForConversationEntry(target);
   combinedConversationLogCache = { liveStamp:'', historyStamp:'', facebookHistoryStamp:'', persistentStamp:'', entries:[] };
@@ -25283,7 +25957,9 @@ router.post(
   requireAdmin,
   (req, res) => {
     try {
-      const result = runSafeStorageMaintenance({ forceEmergency: true });
+      // V6.46 — Action explicite d'un administrateur : seule voie qui
+      // supprime les médias anciens (hors favoris / sans réponse / pubs).
+      const result = runSafeStorageMaintenance({ forceEmergency: true, allowMediaPurge: true, reason: 'nettoyage administrateur' });
       markRetention15MigrationApplied();
       persistentConversationEventsCache = { stamp: '', entries: [] };
       combinedConversationLogCache = {
@@ -25689,5 +26365,9 @@ module.exports = {
   requireAdmin,
   flushConversationStatesWrite,
   loadProducts,
-  getLocalProductImagePath
+  getLocalProductImagePath,
+  // V6.46 — notifications : une seule copie mémoire (écriture groupée,
+  // plafonnée) partagée avec server.js.
+  loadNotificationsStore,
+  saveNotificationsStore
 };
