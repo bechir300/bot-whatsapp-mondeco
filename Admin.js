@@ -131,16 +131,21 @@ const CONVERSATION_STATE_PATH_ADMIN = path.join(DATA_DIR, 'conversation-state.js
 // setConversationStateSingle) utilisent SQLite directement pour les accès
 // à une seule conversation — le vrai point chaud de performance.
 const SQLITE_DB_PATH = path.join(DATA_DIR, 'mondeco.db');
-let sqliteDb = null;
 
-function getSqliteDb() {
-  if (sqliteDb) return sqliteDb;
-  try {
-    const Database = require('better-sqlite3');
-    sqliteDb = new Database(SQLITE_DB_PATH);
-    sqliteDb.pragma('journal_mode = WAL');
-    sqliteDb.pragma('synchronous = NORMAL');
-    sqliteDb.exec(`
+// V6.46 — Ouverture mémorisée (lib/sqlite-health.js) : un échec n'est plus
+// retenté (require + new Database + log) à chaque accès mais après une
+// attente croissante, n'est écrit qu'une fois (une seule alerte) et
+// apparaît dans /health (« degraded », HTTP 503). Même base, mêmes pragmas.
+const {
+  createSqliteConnection: createSqliteConnectionV646,
+  registerSqliteConnection: registerSqliteConnectionV646
+} = require('./lib/sqlite-health');
+const sqliteConnection = registerSqliteConnectionV646(createSqliteConnectionV646({
+  dbPath: SQLITE_DB_PATH,
+  initialize(db) {
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    db.exec(`
       CREATE TABLE IF NOT EXISTS conversation_states (
         contact TEXT PRIMARY KEY,
         data TEXT NOT NULL,
@@ -148,12 +153,12 @@ function getSqliteDb() {
       );
       CREATE INDEX IF NOT EXISTS idx_conversation_states_updated_at ON conversation_states(updated_at);
     `);
-    console.log('✅ SQLite (mondeco.db) initialisé.');
-  } catch (error) {
-    console.error('❌ Initialisation SQLite échouée :', error.message);
-    sqliteDb = null;
-  }
-  return sqliteDb;
+  },
+  logger: console
+}));
+
+function getSqliteDb() {
+  return sqliteConnection.get();
 }
 
 // V6.45 — Lecture d'UNE conversation sur la source de vérité partagée
@@ -5593,6 +5598,12 @@ function roleCanAccess(
     '/api/conversations',
     '/api/commercial/send',
     '/api/commercial/send-media',
+    // V6.46 — Stickers : refusés (403) aux commerciaux et responsables
+    // alors que la route applique les mêmes contrôles qu'un envoi texte
+    // (destinataire déduit de la conversation, verrou de réponse).
+    '/api/commercial/send-sticker',
+    '/api/stickers',
+    '/sticker-preview',
     '/api/whatsapp/calls',
     '/api/notifications',
     '/api/quick-replies',
@@ -6623,20 +6634,9 @@ router.get('/api/stickers', requireAuth, (req, res) => {
   });
 });
 
-// V6.36.5 — Service worker minimal, requis par les navigateurs Android/
-// Chrome pour autoriser l'installation ("Ajouter à l'écran d'accueil").
-// Ne met rien en cache pour l'instant (MONDECO doit toujours afficher des
-// données fraîches) — juste ce qu'il faut pour être reconnu comme
-// installable, sans changer le comportement réseau existant.
-router.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.send(
-    "self.addEventListener('install', () => self.skipWaiting());\n" +
-    "self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));\n" +
-    "self.addEventListener('fetch', () => {});\n"
-  );
-});
+// V6.46 — Le second /sw.js (service worker écrit ici en dur) a été retiré :
+// il n'était jamais servi, Express répondant avec la première route
+// (pwa-assets/sw.js, plus haut), au contenu équivalent.
 
 router.get('/', requireAuth, (req, res) => {
   if (!fs.existsSync(ADMIN_HTML_PATH)) {
