@@ -154,8 +154,8 @@ test('montants sans devise : « est à 2800 », « pour 2800 », « بـ 2800 »
   assert.deepStrictEqual(checkReplyFacts('Chambre Bianca : 2800 😊', { status: 'resolved', product: BIANCA, catalog: products }).badAmounts, [2800]);
   assert.strictEqual(checkReplyFacts('Chambre Bianca : 2800 😊', { status: 'resolved', product: lit, catalog: products }).ok, true);
   // Jamais un téléphone ni une année.
-  for (const reply of ['Pour connaître le tarif, appelez le 70 123 456.', 'Prix valable en 2026.', 'Ce prix est garanti jusqu’en 2027.', 'Le showroom répond seulement au 98 765 432 😊']) {
-    assert.strictEqual(checkReplyFacts(reply, { status: 'resolved', product: BIANCA }).ok, true, reply);
+  for (const reply of ['Pour connaître le tarif, appelez le 70 123 456.', 'Prix valable en 2026.', 'Ce prix est garanti jusqu’en 2027.', 'Le showroom répond seulement au 98 765 432 😊', 'Livraison possible pour le code postal 4000.', 'Le dressing fait 260 de large et la coiffeuse 104.']) {
+    assert.strictEqual(checkReplyFacts(reply, { status: 'resolved', product: BIANCA, catalog: products }).ok, true, reply);
   }
   // « 6.590,000 DT » : 6590 dt et 590 millimes de zéro.
   assert.strictEqual(parseAmountString('6.590,000'), 6590);
