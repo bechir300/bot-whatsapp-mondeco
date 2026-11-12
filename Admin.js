@@ -4489,9 +4489,16 @@ function productToContext(product) {
       );
     }
 
-    if (product.promoPrice) {
+    // V6.46 — Promotion seulement si elle est en vigueur (dates du site)
+    // et inférieure au prix normal.
+    const promoPrice =
+      wooCatalog.effectivePromoPrice(
+        product
+      );
+
+    if (promoPrice) {
       lines.push(
-        `Prix promotionnel : ${safeString(product.promoPrice)} TND`
+        `Prix promotionnel : ${safeString(promoPrice)} TND`
       );
     }
   }
@@ -10786,6 +10793,10 @@ function wooPublicStatus(req = null) {
   };
 }
 
+// V6.46 — Photo d'un produit synchronisé (image https du site) pour la
+// simulation de personnalisation et le choix de produit.
+const productImage = require('./lib/product-image');
+
 // V6.45 — Les blocs WPBakery [vc_raw_html] (HTML encodé en URL puis en
 // base64) sont décodés, les autres shortcodes [vc_*] retirés et toutes les
 // entités HTML (&#215;, &#8211;…) décodées.
@@ -11092,12 +11103,50 @@ function mapWooCommerceProduct(product) {
 
   // V6.45 — Une promotion programmée (sale_price renseigné mais on_sale
   // faux) n'est pas encore active : pas de prix promotionnel.
+  // V6.46 — Sans on_sale (anciennes charges utiles), la promotion n'est en
+  // vigueur que si le prix courant du site EST le prix promotionnel ; et
+  // jamais un « promo » supérieur ou égal au prix normal.
+  const rawSalePrice =
+    safeString(
+      product?.sale_price
+    );
+
+  const saleActive =
+    product?.on_sale === true ||
+    (
+      product?.on_sale === undefined &&
+      wooCatalog.priceNumber(rawSalePrice) !== null &&
+      wooCatalog.priceNumber(rawSalePrice) ===
+        wooCatalog.priceNumber(currentPrice)
+    );
+
   const salePrice =
-    product?.on_sale === false
-      ? ''
-      : safeString(
-          product?.sale_price
-        );
+    saleActive &&
+    wooCatalog.priceNumber(rawSalePrice) !== null &&
+    (
+      wooCatalog.priceNumber(regularPrice) === null ||
+      wooCatalog.priceNumber(rawSalePrice) <
+        wooCatalog.priceNumber(regularPrice)
+    )
+      ? rawSalePrice
+      : '';
+
+  // V6.46 — Dates de la promotion (GMT) : relues à l'affichage, une
+  // promotion terminée n'est plus annoncée même avant la synchronisation
+  // suivante.
+  const promoStartsAt =
+    salePrice
+      ? safeString(
+          product?.date_on_sale_from_gmt
+        )
+      : '';
+
+  const promoEndsAt =
+    salePrice
+      ? safeString(
+          product?.date_on_sale_to_gmt
+        )
+      : '';
 
   // V6.45 — Produit variable : variations lues par fetchWooProductVariations
   // (null = non récupérées, la fiche locale garde alors les précédentes).
@@ -11185,6 +11234,16 @@ function mapWooCommerceProduct(product) {
       variationSummary
         ? variationSummary.promoPrice
         : salePrice,
+
+    promoStartsAt:
+      variationSummary
+        ? ''
+        : promoStartsAt,
+
+    promoEndsAt:
+      variationSummary
+        ? ''
+        : promoEndsAt,
 
     availability:
       wooAvailability(
@@ -11443,7 +11502,9 @@ function mergeWooProduct(
   // volontaire enregistrée dans product.overrides (fiche produit ou
   // correction commerciale). Si le site ne fournit rien, la valeur locale
   // est conservée comme avant.
-  const overrides =
+  // V6.46 — overrides est complété plus bas : les corrections de prix /
+  // disponibilité tombent dès que le site a changé la valeur corrigée.
+  let overrides =
     wooCatalog.sanitizeOverrides(
       current?.overrides
     );
@@ -11507,28 +11568,94 @@ function mergeWooProduct(
     }
   }
 
+  // V6.46 — Corrections commerciales (prix figé sur demande, promotion
+  // retirée, disponibilité) : gardées tant que le site n'a pas changé la
+  // valeur depuis la correction.
+  const siteOverrides =
+    wooCatalog.resolveSiteOverrides(
+      overrides,
+      {
+        price,
+        promoPrice,
+        availability:
+          remote.availability
+      }
+    );
+
+  overrides =
+    siteOverrides.overrides;
+
+  if (siteOverrides.expired.length) {
+    console.log(
+      `🔄 WooCommerce : correction(s) ${siteOverrides.expired.join(', ')} retirée(s) sur « ${safeString(current?.name)} » (valeur changée sur le site).`
+    );
+  }
+
+  const siteOverride = field =>
+    overrides[field]
+      ? overrides[field].value
+      : null;
+
+  const promoOverridden =
+    Boolean(
+      overrides.promoPrice
+    );
+
   return {
     ...current,
 
+    // V6.46 — nom et catégorie corrigés par l'équipe : gardés.
     name:
-      remote.name ||
-      safeString(
-        current?.name
-      ),
+      overrides.name
+        ? overrides.name.value
+        : (
+            remote.name ||
+            safeString(
+              current?.name
+            )
+          ),
 
     category:
-      remote.category ||
-      safeString(
-        current?.category
-      ) ||
-      'WooCommerce',
+      overrides.category
+        ? overrides.category.value
+        : (
+            remote.category ||
+            safeString(
+              current?.category
+            ) ||
+            'WooCommerce'
+          ),
 
-    price,
+    price:
+      siteOverride('price') ??
+      price,
 
-    promoPrice,
+    promoPrice:
+      siteOverride('promoPrice') ??
+      promoPrice,
+
+    // Dates de la promotion du site (sans objet si la promotion est
+    // corrigée à la main).
+    promoStartsAt:
+      !promoOverridden &&
+      remote.promoStartsAt
+        ? remote.promoStartsAt
+        : undefined,
+
+    promoEndsAt:
+      !promoOverridden &&
+      remote.promoEndsAt
+        ? remote.promoEndsAt
+        : undefined,
 
     availability:
+      siteOverride('availability') ??
       remote.availability,
+
+    overrides:
+      Object.keys(overrides).length
+        ? overrides
+        : undefined,
 
     dimensions:
       wooFieldValue(
@@ -11575,17 +11702,26 @@ function mergeWooProduct(
       priceTo ||
       undefined,
 
+    // V6.46 — liens corrigés par l'équipe : gardés.
     productUrl:
-      remote.productUrl ||
-      safeString(
-        current?.productUrl
-      ),
+      overrides.productUrl
+        ? overrides.productUrl.value
+        : (
+            remote.productUrl ||
+            safeString(
+              current?.productUrl
+            )
+          ),
 
     categoryUrl:
-      remote.categoryUrl ||
-      safeString(
-        current?.categoryUrl
-      ),
+      overrides.categoryUrl
+        ? overrides.categoryUrl.value
+        : (
+            remote.categoryUrl ||
+            safeString(
+              current?.categoryUrl
+            )
+          ),
 
     description:
       wooFieldValue(
@@ -11625,8 +11761,10 @@ function mergeWooProduct(
     syncSource:
       'woocommerce',
 
+    // V6.46 — fiche masquée ou supprimée par l'équipe : reste inactive.
     active:
-      remote.active,
+      remote.active &&
+      current?.hiddenByAdmin !== true,
 
     wooMissingAt:
       null,
@@ -11657,6 +11795,15 @@ function createLocalProductFromWoo(
 
     promoPrice:
       remote.promoPrice,
+
+    // V6.46 — dates de la promotion du site (champs optionnels).
+    promoStartsAt:
+      remote.promoStartsAt ||
+      undefined,
+
+    promoEndsAt:
+      remote.promoEndsAt ||
+      undefined,
 
     availability:
       remote.availability,
@@ -11774,6 +11921,8 @@ function comparableWooProduct(
 
   delete copy.updatedAt;
   delete copy.wooMissingAt;
+  // V6.46 — horodatage technique du dernier webhook.
+  delete copy.wooWebhookAt;
 
   return copy;
 }
@@ -11827,6 +11976,11 @@ function upsertWooProductInArray(
         now
       );
 
+    if (options.fromWebhook) {
+      created.wooWebhookAt =
+        now;
+    }
+
     products.push(
       created
     );
@@ -11842,12 +11996,61 @@ function upsertWooProductInArray(
   const current =
     products[index];
 
+  // V6.46 — Jamais une donnée plus ancienne par-dessus une plus récente :
+  // la synchronisation complète télécharge toutes les pages AVANT
+  // d'écrire ; un webhook arrivé entre-temps (prix, stock) ne doit pas être
+  // écrasé par cet instantané périmé. Date égale : fusion normale (une
+  // variation modifiée ne change pas toujours la date du produit parent).
+  const currentModifiedMs =
+    wooCatalog.siteDateMs(
+      current?.woocommerceModifiedAt
+    );
+
+  const remoteModifiedMs =
+    wooCatalog.siteDateMs(
+      remote.woocommerceModifiedAt
+    );
+
+  const webhookAtMs =
+    Date.parse(
+      safeString(
+        current?.wooWebhookAt
+      )
+    );
+
+  if (
+    (
+      Number.isFinite(currentModifiedMs) &&
+      Number.isFinite(remoteModifiedMs) &&
+      remoteModifiedMs < currentModifiedMs
+    ) ||
+    (
+      Number.isFinite(options.notBeforeMs) &&
+      Number.isFinite(webhookAtMs) &&
+      webhookAtMs >= options.notBeforeMs
+    )
+  ) {
+    return {
+      action:
+        'stale',
+      product:
+        current
+    };
+  }
+
   const updated =
     mergeWooProduct(
       current,
       remote,
       now
     );
+
+  // V6.46 — Mise à jour reçue par webhook : datée, pour qu'une
+  // synchronisation commencée avant ne l'écrase pas.
+  if (options.fromWebhook) {
+    updated.wooWebhookAt =
+      now;
+  }
 
   const changed =
     JSON.stringify(
@@ -11869,7 +12072,12 @@ function upsertWooProductInArray(
           woocommerceModifiedAt:
             remote.woocommerceModifiedAt,
           wooMissingAt:
-            null
+            null,
+          ...(
+            options.fromWebhook
+              ? { wooWebhookAt: now }
+              : {}
+          )
         };
 
   return {
@@ -12097,10 +12305,32 @@ async function wooApiRequest(
   }
 }
 
+// V6.46 — Pagination sûre : sans en-tête x-wp-totalpages, on continue tant
+// qu'une page est pleine (avant : une seule page lue, et tout le reste du
+// catalogue passait pour supprimé). Le nombre total annoncé par la
+// première page (x-wp-total) est gardé sur le tableau (wooTotal) pour
+// repérer une lecture incomplète.
+const WOO_PRODUCTS_PER_PAGE = 100;
+const WOO_PRODUCTS_MAX_PAGES = 200;
+
+// V6.46 — Garde-fou : part maximale (en %) des fiches synchronisées actives
+// qu'une synchronisation peut désactiver d'un coup.
+const WOOCOMMERCE_MAX_DEACTIVATE_PERCENT =
+  Math.max(
+    1,
+    Math.min(
+      100,
+      Number(
+        process.env.WOOCOMMERCE_MAX_DEACTIVATE_PERCENT || 10
+      ) || 10
+    )
+  );
+
 async function fetchAllWooProducts() {
   const products = [];
   let page = 1;
   let totalPages = 1;
+  let announcedTotal = null;
 
   do {
     const result =
@@ -12109,7 +12339,7 @@ async function fetchAllWooProducts() {
         {
           query: {
             per_page:
-              100,
+              WOO_PRODUCTS_PER_PAGE,
 
             page,
 
@@ -12139,22 +12369,119 @@ async function fetchAllWooProducts() {
       ...result.data
     );
 
-    totalPages =
-      Math.max(
-        1,
+    const headerPages =
+      Number(
+        result.headers.get(
+          'x-wp-totalpages'
+        )
+      );
+
+    if (page === 1) {
+      const headerTotal =
         Number(
           result.headers.get(
-            'x-wp-totalpages'
+            'x-wp-total'
           )
-        ) || 1
-      );
+        );
+
+      announcedTotal =
+        Number.isFinite(headerTotal) &&
+        headerTotal >= 0 &&
+        safeString(
+          result.headers.get(
+            'x-wp-total'
+          )
+        ) !== ''
+          ? headerTotal
+          : null;
+    }
+
+    totalPages =
+      Number.isFinite(headerPages) &&
+      headerPages >= 1
+        ? headerPages
+        : (
+            result.data.length >= WOO_PRODUCTS_PER_PAGE
+              ? page + 1
+              : page
+          );
 
     page += 1;
   } while (
-    page <= totalPages
+    page <= totalPages &&
+    page <= WOO_PRODUCTS_MAX_PAGES
   );
 
+  products.wooTotal =
+    announcedTotal;
+
   return products;
+}
+
+// V6.46 — Produits absents de la lecture paginée : relus un par un (par
+// lots, include=…). Un produit retiré du tableau d'une page à l'autre
+// décale la pagination et le premier produit de la page suivante n'était
+// jamais lu, donc désactivé à tort. Retourne les produits encore présents
+// sur le site (publiés ou non) ; ceux qui manquent sont supprimés ou à la
+// corbeille. Erreur réseau : exception (aucune désactivation).
+async function fetchWooProductsByIds(ids) {
+  const list =
+    [...new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map(Number)
+        .filter(id => Number.isInteger(id) && id > 0)
+    )];
+
+  const found = [];
+
+  for (
+    let index = 0;
+    index < list.length;
+    index += WOO_PRODUCTS_PER_PAGE
+  ) {
+    const chunk =
+      list.slice(
+        index,
+        index + WOO_PRODUCTS_PER_PAGE
+      );
+
+    const result =
+      await wooApiRequest(
+        'products',
+        {
+          query: {
+            include:
+              chunk.join(','),
+            per_page:
+              WOO_PRODUCTS_PER_PAGE,
+            status:
+              'any'
+          }
+        }
+      );
+
+    if (
+      !Array.isArray(
+        result.data
+      )
+    ) {
+      throw new Error(
+        'Réponse WooCommerce produits invalide.'
+      );
+    }
+
+    found.push(
+      ...result.data.filter(item =>
+        chunk.includes(
+          Number(
+            item?.id
+          )
+        )
+      )
+    );
+  }
+
+  return found;
 }
 
 // V6.45 — Variations des produits variables. L'API produits ne renvoie pour
@@ -12511,7 +12838,8 @@ async function testWooCommerceConnection() {
 
 async function runWooCommerceSync(
   reason =
-    'manual'
+    'manual',
+  options = {}
 ) {
   if (!wooConfigured()) {
     throw new Error(
@@ -12544,6 +12872,11 @@ async function runWooCommerceSync(
   });
 
   try {
+    // V6.46 — Heure de début de lecture : une fiche mise à jour par
+    // webhook après ce moment n'est pas écrasée par cet instantané.
+    const fetchStartedMs =
+      Date.now();
+
     const remoteProducts =
       await fetchAllWooProducts();
 
@@ -12552,6 +12885,76 @@ async function runWooCommerceSync(
       await attachWooVariations(
         remoteProducts
       );
+
+    // V6.46 — Produits synchronisés absents de la lecture paginée : relus
+    // directement AVANT toute désactivation (décalage de pagination,
+    // page incomplète). Un produit relu est mis à jour normalement ; seul un
+    // produit introuvable (supprimé, corbeille) est désactivé.
+    const listedIds =
+      new Set(
+        remoteProducts
+          .map(item =>
+            Number(
+              item?.id
+            )
+          )
+          .filter(Boolean)
+      );
+
+    const candidatesMissing =
+      loadProducts()
+        .filter(product =>
+          safeString(
+            product?.syncSource
+          ) === 'woocommerce' &&
+          Number(
+            product?.woocommerceId
+          ) &&
+          !listedIds.has(
+            Number(
+              product.woocommerceId
+            )
+          ) &&
+          (
+            product.active !== false ||
+            product.availability !==
+              'out_of_stock'
+          )
+        )
+        .map(product =>
+          Number(
+            product.woocommerceId
+          )
+        );
+
+    let missingCheckError = '';
+
+    if (candidatesMissing.length) {
+      try {
+        const recovered =
+          await fetchWooProductsByIds(
+            candidatesMissing
+          );
+
+        if (recovered.length) {
+          await attachWooVariations(
+            recovered
+          );
+
+          remoteProducts.push(
+            ...recovered
+          );
+        }
+      } catch (error) {
+        missingCheckError =
+          error.message;
+
+        console.warn(
+          '⚠️ WooCommerce : produits absents non vérifiés, aucune désactivation cette fois :',
+          error.message
+        );
+      }
+    }
 
     const products =
       loadProducts();
@@ -12577,6 +12980,7 @@ async function runWooCommerceSync(
     let updated = 0;
     let unchanged = 0;
     let deactivated = 0;
+    let stale = 0;
 
     for (
       const wooProduct
@@ -12599,7 +13003,9 @@ async function runWooCommerceSync(
           wooProduct,
           now,
           {
-            remoteIds
+            remoteIds,
+            notBeforeMs:
+              fetchStartedMs
           }
         );
 
@@ -12613,10 +13019,23 @@ async function runWooCommerceSync(
         'updated'
       ) {
         updated += 1;
+      } else if (
+        result.action ===
+        'stale'
+      ) {
+        stale += 1;
       } else {
         unchanged += 1;
       }
     }
+
+    // V6.46 — Désactivation des produits disparus du site, seulement après
+    // vérification directe et jamais en masse : au-delà de
+    // WOOCOMMERCE_MAX_DEACTIVATE_PERCENT % des fiches synchronisées actives
+    // (10 % par défaut, au moins 5 fiches), rien n'est désactivé et une
+    // alerte est enregistrée (relancer avec allowMassDeactivation si la
+    // suppression est voulue).
+    const toDeactivate = [];
 
     for (
       let index = 0;
@@ -12648,13 +13067,72 @@ async function runWooCommerceSync(
         continue;
       }
 
+      // Créé ou mis à jour par webhook pendant la lecture : pas encore
+      // dans cet instantané.
+      const webhookAtMs =
+        Date.parse(
+          safeString(
+            product?.wooWebhookAt
+          )
+        );
+
+      if (
+        Number.isFinite(webhookAtMs) &&
+        webhookAtMs >= fetchStartedMs
+      ) {
+        continue;
+      }
+
       if (
         product.active !== false ||
         product.availability !==
           'out_of_stock'
       ) {
+        toDeactivate.push(
+          index
+        );
+      }
+    }
+
+    const activeSynced =
+      products.filter(product =>
+        safeString(
+          product?.syncSource
+        ) === 'woocommerce' &&
+        product.active !== false
+      ).length;
+
+    const deactivationLimit =
+      Math.max(
+        5,
+        Math.floor(
+          activeSynced *
+          WOOCOMMERCE_MAX_DEACTIVATE_PERCENT /
+          100
+        )
+      );
+
+    let deactivationSkipped = '';
+
+    if (missingCheckError && toDeactivate.length) {
+      deactivationSkipped =
+        `Vérification des produits absents impossible (${missingCheckError}) : ${toDeactivate.length} désactivation(s) reportée(s).`;
+    } else if (
+      toDeactivate.length > deactivationLimit &&
+      options.allowMassDeactivation !== true
+    ) {
+      deactivationSkipped =
+        `${toDeactivate.length} produits absents du site (limite ${deactivationLimit}) : aucune désactivation. Vérifiez le site puis relancez la synchronisation en autorisant la désactivation en masse.`;
+    }
+
+    if (deactivationSkipped) {
+      console.warn(
+        `⚠️ WooCommerce : ${deactivationSkipped}`
+      );
+    } else {
+      for (const index of toDeactivate) {
         products[index] = {
-          ...product,
+          ...products[index],
           active:
             false,
           availability:
@@ -12681,6 +13159,31 @@ async function runWooCommerceSync(
       wooOverridesReport(
         products
       );
+
+    // V6.46 — fiches du site masquées ou supprimées par l'équipe.
+    const hiddenByAdmin =
+      products
+        .filter(product =>
+          safeString(
+            product?.syncSource
+          ) === 'woocommerce' &&
+          product?.hiddenByAdmin === true
+        )
+        .map(product => ({
+          id:
+            safeString(product.id),
+          name:
+            safeString(product.name),
+          woocommerceId:
+            Number(product.woocommerceId) || null,
+          deleted:
+            product.deletedByAdmin === true,
+          at:
+            safeString(
+              product.deletedByAdminAt ||
+              product.hiddenByAdminAt
+            )
+        }));
 
     saveProducts(
       products
@@ -12724,6 +13227,27 @@ async function runWooCommerceSync(
         lastDeactivated:
           deactivated,
 
+        // V6.46 — lecture incomplète, désactivations reportées, fiches non
+        // écrasées (webhook plus récent), fiches masquées par l'équipe.
+        lastAnnouncedTotal:
+          remoteProducts.wooTotal ??
+          null,
+
+        lastStale:
+          stale,
+
+        lastDeactivationSkipped:
+          deactivationSkipped,
+
+        lastHiddenByAdminCount:
+          hiddenByAdmin.length,
+
+        lastHiddenByAdmin:
+          hiddenByAdmin.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          ),
+
         lastVariableProducts:
           variationStats.variableProducts,
 
@@ -12762,6 +13286,7 @@ async function runWooCommerceSync(
         created,
         updated,
         unchanged,
+        stale,
         deactivated,
         variableProducts:
           variationStats.variableProducts,
@@ -12785,7 +13310,9 @@ async function runWooCommerceSync(
       created,
       updated,
       unchanged,
+      stale,
       deactivated,
+      deactivationSkipped,
 
       variations:
         variationStats,
@@ -12840,18 +13367,23 @@ function verifyWooWebhookSignature(
     return false;
   }
 
+  // V6.46 — Signature calculée UNIQUEMENT sur les octets reçus (capturés
+  // par express.json dans server.js, ou par express.text sur la route).
+  // Avant, une copie JSON.stringify(req.body) servait de secours : PHP
+  // écrit « https:\/\/mondeco.tn » et « \u00e9 », JavaScript non, donc
+  // TOUTES les livraisons product.created / product.updated étaient
+  // refusées (401) et WooCommerce finissait par désactiver le webhook.
   const rawBody =
-    Buffer.isBuffer(
-      req.rawBody
-    )
-      ? req.rawBody
-      : Buffer.from(
-          JSON.stringify(
-            req.body ||
-            {}
-          ),
-          'utf8'
-        );
+    req.rawBody;
+
+  if (
+    !Buffer.isBuffer(
+      rawBody
+    ) ||
+    !rawBody.length
+  ) {
+    return false;
+  }
 
   const expected =
     crypto
@@ -12986,11 +13518,17 @@ async function processWooCommerceWebhook(
     const products =
       loadProducts();
 
+    // V6.46 — fromWebhook : fiche datée (wooWebhookAt) pour qu'une
+    // synchronisation commencée avant ne l'écrase ni ne la désactive.
     const result =
       upsertWooProductInArray(
         products,
         wooProduct,
-        now
+        now,
+        {
+          fromWebhook:
+            true
+        }
       );
 
     // V6.45 — un nouveau produit du site peut rendre une fiche manuelle
@@ -13144,8 +13682,8 @@ async function installWooCommerceWebhooks(
     const topic
     of topics
   ) {
-    const found =
-      existing.find(
+    const matching =
+      existing.filter(
         item =>
           safeString(
             item?.topic
@@ -13156,12 +13694,62 @@ async function installWooCommerceWebhooks(
           deliveryUrl.replace(/\/+$/, '')
       );
 
-    if (found) {
+    // V6.46 — Un webhook existant mais désactivé (WooCommerce le coupe
+    // après plusieurs livraisons refusées) ou en pause est réactivé, avec
+    // le secret actuel (sinon « already_exists » sans aucune livraison).
+    const found =
+      matching.find(item =>
+        safeString(
+          item?.status
+        ).toLowerCase() === 'active'
+      ) ||
+      matching[0];
+
+    if (
+      found &&
+      safeString(
+        found.status
+      ).toLowerCase() === 'active'
+    ) {
       results.push({
         topic,
         status:
           'already_exists',
         id:
+          found.id
+      });
+
+      continue;
+    }
+
+    if (found) {
+      const reactivated =
+        await wooApiRequest(
+          `webhooks/${Number(found.id)}`,
+          {
+            method:
+              'PUT',
+
+            body: {
+              status:
+                'active',
+
+              secret:
+                WOOCOMMERCE_WEBHOOK_SECRET
+            }
+          }
+        );
+
+      results.push({
+        topic,
+        status:
+          'reactivated',
+        previousStatus:
+          safeString(
+            found.status
+          ) || 'unknown',
+        id:
+          reactivated.data?.id ||
           found.id
       });
 
@@ -13222,7 +13810,15 @@ router.post(
     type:
       () => true,
     limit:
-      '64kb'
+      '64kb',
+    // V6.46 — corps brut gardé pour la signature (livraison reçue avec un
+    // Content-Type autre que JSON).
+    verify(req, res, buffer) {
+      req.rawBody =
+        Buffer.from(
+          buffer
+        );
+    }
   }),
 
   (req, res) => {
@@ -13331,9 +13927,32 @@ router.post(
         )
       );
 
-    const payload =
+    // V6.46 — Corps lu par express.text (Content-Type non JSON) : décodé
+    // ici, depuis les octets signés.
+    let payload =
       req.body ||
       {};
+
+    if (
+      typeof payload === 'string' ||
+      Buffer.isBuffer(payload)
+    ) {
+      try {
+        payload =
+          JSON.parse(
+            req.rawBody.toString(
+              'utf8'
+            )
+          );
+      } catch {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Corps du webhook illisible.'
+          });
+      }
+    }
 
     res
       .status(200)
@@ -13427,9 +14046,15 @@ router.post(
   requireAuth,
   async (req, res) => {
     try {
+      // V6.46 — allowMassDeactivation : désactivation en masse confirmée
+      // par l'équipe (produits réellement retirés du site).
       const result =
         await runWooCommerceSync(
-          'manual-admin'
+          'manual-admin',
+          {
+            allowMassDeactivation:
+              req.body?.allowMassDeactivation === true
+          }
         );
 
       return res.json({
@@ -13547,11 +14172,257 @@ startWooCommerceAutoSync();
 // API PRODUITS
 // ============================================================
 
+// V6.46 — Prix saisi dans une fiche ou une correction : normalisé
+// (« 4 190 DT » → « 4190 ») ou refusé s'il est illisible. Une valeur
+// identique à la valeur enregistrée est gardée telle quelle.
+function productPriceInput(
+  value,
+  currentValue
+) {
+  const raw =
+    safeString(
+      value
+    );
+
+  if (!raw) {
+    return {
+      value: ''
+    };
+  }
+
+  if (
+    raw ===
+    safeString(
+      currentValue
+    )
+  ) {
+    return {
+      value: raw
+    };
+  }
+
+  const normalized =
+    wooCatalog.normalizePriceInput(
+      raw
+    );
+
+  if (normalized === null) {
+    return {
+      error:
+        `Prix « ${raw.slice(0, 40)} » illisible : écrivez un nombre, ex. 4190.`
+    };
+  }
+
+  return {
+    value:
+      normalized
+  };
+}
+
+// V6.46 — Avertissement pour une modification d'une fiche du site qui sera
+// reprise du site (voir wooCatalog.siteManagedChanges).
+function siteManagedWarning(fields) {
+  const list =
+    Array.isArray(fields)
+      ? fields
+      : [];
+
+  const labels = {
+    price:
+      'Prix normal',
+    promoPrice:
+      'Prix promotionnel'
+  };
+
+  const parts = [];
+
+  const prices =
+    list
+      .filter(field => labels[field])
+      .map(field => labels[field]);
+
+  if (prices.length) {
+    parts.push(
+      `${prices.join(' et ')} : produit synchronisé avec mondeco.tn, la valeur du site reviendra à la prochaine synchronisation. Corrigez-la sur le site, ou cochez « Figer le prix » pour l’imposer à l’IA.`
+    );
+  }
+
+  if (list.includes('variations')) {
+    parts.push(
+      'Prix par variante (taille, couleur…) : seul le site fait foi, le prix ne peut pas être figé ici.'
+    );
+  }
+
+  if (list.includes('active')) {
+    parts.push(
+      'Actif : ce produit n’est pas publié sur mondeco.tn, il redeviendra inactif à la prochaine synchronisation.'
+    );
+  }
+
+  return parts.join(' ');
+}
+
 router.get(
   '/api/products',
   requireAuth,
   (req, res) => {
     return res.json(loadProducts());
+  }
+);
+
+// V6.46 — « Rendre au site » : retire les corrections volontaires et le
+// masquage (ou la suppression) d'une fiche synchronisée ; les valeurs du
+// site sont relues tout de suite si possible, sinon à la synchronisation
+// suivante.
+router.post(
+  '/api/products/:id/site-reset',
+  requireAuth,
+  async (req, res) => {
+    try {
+      const products =
+        loadProducts();
+
+      const index =
+        products.findIndex(
+          item =>
+            item?.id === req.params.id
+        );
+
+      if (index === -1) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Produit introuvable.'
+          });
+      }
+
+      const product =
+        products[index];
+
+      if (
+        safeString(
+          product.syncSource
+        ) !== 'woocommerce'
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Ce produit n’est pas synchronisé avec le site.'
+          });
+      }
+
+      const reset = {
+        ...product,
+        active:
+          safeString(
+            product.woocommerceStatus
+          ) === 'publish' &&
+          !product.wooMissingAt,
+        updatedAt:
+          new Date().toISOString()
+      };
+
+      for (const key of [
+        'overrides',
+        'hiddenByAdmin',
+        'hiddenByAdminAt',
+        'hiddenByAdminBy',
+        'deletedByAdmin',
+        'deletedByAdminAt'
+      ]) {
+        delete reset[key];
+      }
+
+      products[index] =
+        reset;
+
+      saveProducts(
+        products
+      );
+
+      let refreshed = false;
+
+      if (
+        wooConfigured() &&
+        Number(
+          reset.woocommerceId
+        )
+      ) {
+        try {
+          const remote =
+            await wooApiRequest(
+              `products/${Number(reset.woocommerceId)}`
+            );
+
+          let wooProduct =
+            remote.data;
+
+          if (
+            safeString(
+              wooProduct?.type
+            ) === 'variable'
+          ) {
+            wooProduct = {
+              ...wooProduct,
+              mondecoVariations:
+                await fetchWooProductVariations(
+                  wooProduct.id
+                )
+            };
+          }
+
+          const latest =
+            loadProducts();
+
+          upsertWooProductInArray(
+            latest,
+            wooProduct,
+            new Date().toISOString(),
+            {
+              fromWebhook:
+                true
+            }
+          );
+
+          saveProducts(
+            latest
+          );
+
+          refreshed = true;
+        } catch (error) {
+          console.warn(
+            '⚠️ Relecture du produit du site :',
+            error.message
+          );
+        }
+      }
+
+      return res.json({
+        success:
+          true,
+        refreshed,
+        product:
+          loadProducts().find(
+            item =>
+              item?.id === req.params.id
+          ) ||
+          reset
+      });
+    } catch (error) {
+      console.error(
+        '❌ Retour au site :',
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          error:
+            'Impossible de rendre la fiche au site.'
+        });
+    }
   }
 );
 
@@ -13610,6 +14481,29 @@ router.post(
           });
       }
 
+      // V6.46 — prix normalisés (« 4 190 DT » → « 4190 ») ou refusés.
+      const priceInput =
+        productPriceInput(
+          req.body?.price
+        );
+
+      const promoInput =
+        productPriceInput(
+          req.body?.promoPrice
+        );
+
+      if (priceInput.error || promoInput.error) {
+        deleteFileIfExists(req.file.path);
+
+        return res
+          .status(400)
+          .json({
+            error:
+              priceInput.error ||
+              promoInput.error
+          });
+      }
+
       const now =
         new Date().toISOString();
 
@@ -13619,10 +14513,10 @@ router.post(
         category,
 
         price:
-          safeString(req.body?.price),
+          priceInput.value,
 
         promoPrice:
-          safeString(req.body?.promoPrice),
+          promoInput.value,
 
         availability:
           safeString(req.body?.availability) ||
@@ -13794,20 +14688,62 @@ router.put(
           });
       }
 
+      // V6.46 — Prix saisi lisible (« 4 190 », « 4190 DT », « 4.190 » →
+      // « 4190 ») ; un prix illisible est refusé au lieu de disparaître du
+      // catalogue Meta ou d'y passer à 4,19 TND. Une valeur inchangée n'est
+      // pas revérifiée (anciennes fiches).
+      const priceFields = {};
+
+      for (const field of ['price', 'promoPrice']) {
+        const value =
+          req.body?.[field] !== undefined
+            ? productPriceInput(
+                req.body[field],
+                current[field]
+              )
+            : {
+                value:
+                  safeString(
+                    current[field]
+                  )
+              };
+
+        if (value.error) {
+          if (req.file) {
+            deleteFileIfExists(req.file.path);
+          }
+
+          return res
+            .status(400)
+            .json({
+              error:
+                value.error
+            });
+        }
+
+        priceFields[field] =
+          value.value;
+      }
+
+      // V6.46 — « Figer le prix » : demande explicite de l'équipe pour
+      // qu'un prix / une promotion d'une fiche du site ne soit pas repris
+      // du site à la synchronisation suivante.
+      const lockPrice =
+        parseBoolean(
+          req.body?.lockPrice,
+          false
+        );
+
       const updated = {
         ...current,
         name,
         category,
 
         price:
-          req.body?.price !== undefined
-            ? safeString(req.body.price)
-            : safeString(current.price),
+          priceFields.price,
 
         promoPrice:
-          req.body?.promoPrice !== undefined
-            ? safeString(req.body.promoPrice)
-            : safeString(current.promoPrice),
+          priceFields.promoPrice,
 
         availability:
           req.body?.availability !== undefined
@@ -13910,25 +14846,75 @@ router.put(
       // (composition, dimensions, couleurs, showrooms, description) devient
       // une correction volontaire que la synchronisation n'écrase plus ;
       // vider le champ rend la main au site.
-      const withOverrides =
-        wooCatalog.recordProductOverrides(
+      // V6.46 — aussi le nom, la catégorie, les liens et la disponibilité ;
+      // le prix et la promotion seulement avec « Figer le prix » ; « Actif »
+      // décoché : fiche masquée (hiddenByAdmin), même après synchronisation.
+      const editor =
+        safeString(
+          req.user?.name ||
+          req.user?.email ||
+          req.user?.id
+        );
+
+      const siteManaged =
+        wooCatalog.siteManagedChanges(
           current,
           updated,
           {
+            lockPrice
+          }
+        );
+
+      const withOverrides =
+        wooCatalog.applyAdminVisibility(
+          current,
+          wooCatalog.recordProductOverrides(
+            current,
+            updated,
+            {
+              by:
+                editor,
+              source:
+                'admin-product-form',
+              lockPrice
+            }
+          ),
+          {
             by:
-              safeString(
-                req.user?.name ||
-                req.user?.email ||
-                req.user?.id
-              ),
-            source:
-              'admin-product-form'
+              editor
           }
         );
 
       if (withOverrides !== updated) {
-        if (withOverrides.overrides) {
-          updated.overrides = withOverrides.overrides;
+        for (const key of Object.keys(updated)) {
+          if (!(key in withOverrides)) {
+            delete updated[key];
+          }
+        }
+
+        Object.assign(
+          updated,
+          withOverrides
+        );
+      }
+
+      // V6.46 — « Figer le prix » décoché : le prix et la promotion figés
+      // sont rendus au site (valeurs reprises à la synchronisation).
+      if (
+        req.body?.lockPrice !== undefined &&
+        !lockPrice &&
+        updated.overrides &&
+        (updated.overrides.price || updated.overrides.promoPrice)
+      ) {
+        const remaining = {
+          ...updated.overrides
+        };
+
+        delete remaining.price;
+        delete remaining.promoPrice;
+
+        if (Object.keys(remaining).length) {
+          updated.overrides = remaining;
         } else {
           delete updated.overrides;
         }
@@ -13961,7 +14947,21 @@ router.put(
         archiveFileBeforeDelete(oldImagePath, 'product-images');
       }
 
-      return res.json(updated);
+      // V6.46 — Avertissement visible : modification qui sera reprise du
+      // site (jamais en silence).
+      const warning =
+        siteManagedWarning(
+          siteManaged
+        );
+
+      return res.json(
+        warning
+          ? {
+              ...updated,
+              warning
+            }
+          : updated
+      );
     } catch (error) {
       console.error(
         '❌ Modification produit :',
@@ -13997,6 +14997,47 @@ router.delete(
           .json({
             error: 'Produit introuvable.'
           });
+      }
+
+      // V6.46 — Fiche synchronisée avec le site : gardée, inactive et
+      // marquée (deletedByAdmin). Supprimée pour de bon, la synchronisation
+      // suivante la recréait (nouvel identifiant, de nouveau en vente).
+      if (
+        safeString(
+          product.syncSource
+        ) === 'woocommerce' &&
+        Number(
+          product.woocommerceId
+        )
+      ) {
+        const index =
+          products.indexOf(
+            product
+          );
+
+        products[index] =
+          wooCatalog.adminTombstone(
+            product,
+            {
+              by:
+                safeString(
+                  req.user?.name ||
+                  req.user?.email ||
+                  req.user?.id
+                )
+            }
+          );
+
+        saveProducts(
+          products
+        );
+
+        return res.json({
+          success: true,
+          hidden: true,
+          message:
+            'Produit du site mondeco.tn masqué pour l’IA et le catalogue (il reste en ligne sur le site). « Rendre au site » le réactive.'
+        });
       }
 
       saveProducts(
@@ -15472,6 +16513,36 @@ router.post(
         }
       }
 
+      // V6.46 — Prix corrigé : nombre lisible exigé (« 4 190 DT » → 4190).
+      if (
+        (field === 'price' || field === 'promoPrice') &&
+        value
+      ) {
+        const normalizedPrice =
+          wooCatalog.normalizePriceInput(
+            value
+          );
+
+        if (normalizedPrice === null) {
+          return res
+            .status(400)
+            .json({
+              error:
+                `Prix « ${value.slice(0, 40)} » illisible : écrivez un nombre, ex. 4190.`
+            });
+        }
+
+        value =
+          normalizedPrice;
+      }
+
+      // V6.46 — « Figer le prix » : demande explicite pour une fiche du site.
+      const lockPrice =
+        parseBoolean(
+          req.body?.lockPrice,
+          false
+        );
+
       const products =
         loadProducts();
 
@@ -15498,8 +16569,10 @@ router.post(
       // V6.45 — Sur une fiche synchronisée avec le site, une correction de
       // composition, dimensions, couleurs, showrooms ou description est
       // enregistrée comme correction volontaire (product.overrides) : la
-      // synchronisation ne l'écrase plus. Les prix et la disponibilité
-      // restent ceux du site (à corriger sur mondeco.tn).
+      // synchronisation ne l'écrase plus.
+      // V6.46 — La disponibilité aussi ; le prix et la promotion seulement
+      // avec « Figer le prix » (lockPrice). Une correction de prix ou de
+      // disponibilité tombe d'elle-même quand le site change cette valeur.
       const isWooProduct =
         safeString(
           product.syncSource
@@ -15508,15 +16581,27 @@ router.post(
       const correctionDate =
         new Date().toISOString();
 
+      const corrected = {
+        ...product,
+        [field]: value,
+        updatedAt:
+          correctionDate
+      };
+
+      const siteManaged =
+        wooCatalog.siteManagedChanges(
+          product,
+          corrected,
+          {
+            fields: [field],
+            lockPrice
+          }
+        );
+
       products[index] =
         wooCatalog.recordProductOverrides(
           product,
-          {
-            ...product,
-            [field]: value,
-            updatedAt:
-              correctionDate
-          },
+          corrected,
           {
             fields: [field],
             by:
@@ -15528,15 +16613,23 @@ router.post(
             at:
               correctionDate,
             source:
-              'commercial-correction'
+              'commercial-correction',
+            lockPrice
           }
         );
 
       const wooWarning =
         isWooProduct &&
-        !wooCatalog.WOO_OVERRIDABLE_FIELDS.includes(field)
-          ? `${COMMERCIAL_PRODUCT_FIELDS[field]} : produit synchronisé avec le site, la valeur du site reviendra à la prochaine synchronisation. Corrigez-la aussi sur mondeco.tn.`
-          : '';
+        siteManaged.length
+          ? siteManagedWarning(
+              siteManaged
+            )
+          : (
+              isWooProduct &&
+              products[index]?.overrides?.[field]?.siteValue !== undefined
+                ? `${COMMERCIAL_PRODUCT_FIELDS[field]} : correction prioritaire sur le site tant que cette valeur ne change pas sur mondeco.tn.`
+                : ''
+            );
 
       saveProducts(products);
 
@@ -16598,9 +17691,57 @@ router.post(
         const localPath =
           getLocalProductImagePath(product);
 
+        // V6.46 — Fiche synchronisée (image https du site, pas de fichier
+        // local) : l'image du site est téléchargée.
         if (
-          !localPath ||
-          !fs.existsSync(localPath)
+          (
+            !localPath ||
+            !fs.existsSync(localPath)
+          ) &&
+          productImage.remoteImageUrl(product)
+        ) {
+          try {
+            const remote =
+              await productImage.loadProductImage(
+                product,
+                {
+                  allowedMimes: [
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp'
+                  ]
+                }
+              );
+
+            if (remote) {
+              sourceImage = {
+                buffer:
+                  remote.buffer,
+                mimetype:
+                  remote.mimetype,
+                originalname:
+                  remote.originalname,
+                size:
+                  remote.size
+              };
+
+              sourceImageUrl =
+                safeString(product.image);
+            }
+          } catch (error) {
+            console.warn(
+              '⚠️ Photo du site pour la simulation :',
+              error.message
+            );
+          }
+        }
+
+        if (
+          !sourceImage &&
+          (
+            !localPath ||
+            !fs.existsSync(localPath)
+          )
         ) {
           return res
             .status(400)
@@ -16609,6 +17750,11 @@ router.post(
                 'La photo du produit est introuvable. Ajoutez une image de référence.'
             });
         }
+      }
+
+      if (!sourceImage && product) {
+        const localPath =
+          getLocalProductImagePath(product);
 
         sourceImage = {
           buffer:
@@ -22804,13 +23950,19 @@ function pickerSearchText(value) {
   return safeString(value).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+// V6.46 — cardBody : texte exact de la fiche envoyée (prix en vigueur,
+// dimensions, couleurs, disponibilité en mots) pour l'aperçu de l'Inbox.
+const { productCardBody: whatsappProductCardBody } = require('./lib/whatsapp-interactive');
+
 function productPickerItem(product) {
   return {
     id: safeString(product?.id),
     name: safeString(product?.name),
     price: safeString(product?.price),
-    promoPrice: safeString(product?.promoPrice),
+    promoPrice: wooCatalog.effectivePromoPrice(product),
     dimensions: safeString(product?.dimensions),
+    availability: safeString(product?.availability),
+    cardBody: whatsappProductCardBody(product || {}),
     hasImage: Boolean(getLocalProductImagePath(product) || /^https:\/\//i.test(safeString(product?.image))),
     hasUrl: /^https:\/\//i.test(safeString(product?.productUrl))
   };
