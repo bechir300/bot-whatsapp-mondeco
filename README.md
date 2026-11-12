@@ -83,7 +83,11 @@ curl -s http://127.0.0.1:3000/health # « status »: « ok », « version » = v
 - **supprimez `WEBHOOK_SIGNATURE_REQUIRED=false` de `.env`** s'il y figure (conseillé avant V6.45 ; il laisse passer sans signature les canaux sans App Secret) ;
 - déplacez le `.env` dans le dossier de l'application s'il était ailleurs (une alerte au démarrage le signale) ;
 - sur un VPS avec Nginx local, ajoutez `HOST=127.0.0.1` (le port de l'application n'est alors plus joignable directement depuis Internet) ;
-- `/health` peut maintenant répondre **503 « degraded »** (voir ci-dessous) : adaptez la supervision si elle n'attendait que 200.
+- `/health` peut maintenant répondre **503 « degraded »** (voir ci-dessous) : adaptez la supervision si elle n'attendait que 200 ;
+- WooCommerce : cliquez une fois sur **« Installer les webhooks »** (page WooCommerce) pour réactiver les webhooks que le site avait désactivés (signatures refusées avant V6.46) ;
+- catalogue Meta (`/catalog-feed.csv`) : les identifiants des articles deviennent les identifiants WooCommerce (ceux du pixel du site, `CATALOG_FEED_ID`) ; Meta recrée les articles une fois : vérifiez les publicités et ensembles de produits qui citent des identifiants d'articles ;
+- « Supprimer » sur une fiche du site la masque désormais (badge « Supprimé (masqué) », bouton « Rendre au site ») au lieu de l'effacer ;
+- stockage : les décisions de nettoyage portent sur l'espace libre en Mo (`MONDECO_STORAGE_RESCUE_FREE_MB`, `MONDECO_STORAGE_CRITICAL_FREE_MB`) ; les médias des conversations ne sont plus supprimés automatiquement (bouton « Nettoyer le stockage » seulement) ; des fichiers `*.corrupt-<date>` peuvent apparaître dans `DATA_DIR` : gardés pour examen, à ne pas supprimer sans vérification.
 
 Lors d'un redémarrage, le serveur reçoit `SIGTERM` : il cesse d'accepter des connexions, termine les messages en cours, enregistre les fichiers en attente (journal, état des conversations, historique IA) puis s'arrête (au plus `SHUTDOWN_GRACE_MS`, 20 s par défaut).
 

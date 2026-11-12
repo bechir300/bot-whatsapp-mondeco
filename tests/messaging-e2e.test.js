@@ -75,7 +75,10 @@ async function test(label, fn) {
         SHUTDOWN_GRACE_MS: '2000',
         MONDECO_TEST_CONTROL: controlPath,
         MONDECO_TEST_SENT: sentPath,
-        MONDECO_TEST_MOCK_PORT: String(mockPort)
+        MONDECO_TEST_MOCK_PORT: String(mockPort),
+        // V6.46 — 22 h à Tunis : dans la plage horaire de l'IA (18h–10h),
+        // quelle que soit l'heure du test (tests/helpers/meta-mock-preload.js).
+        MONDECO_TEST_TUNIS_HOUR: '22'
       },
       stdio: ['ignore', logStream, logStream]
     });

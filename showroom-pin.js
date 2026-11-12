@@ -5,11 +5,9 @@ const loc = require('./location-showrooms');
 
 // V6.46 — Interrupteur d'arrêt cherché dans le dossier des données
 // (DATA_DIR, même règle que server.js) ; l'ancien emplacement /data reste lu.
-const DATA_DIR = (
-  process.env.DATA_DIR ||
-  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
-  __dirname
-).trim();
+// V6.46 — règle partagée (lib/data-dir.js) : DATA_DIR, sinon le volume
+// Railway, sinon le dossier de l'application.
+const DATA_DIR = require('./lib/data-dir').resolveDataDir();
 const OFF_FLAGS = [path.join(DATA_DIR, 'showroom-pin.off'), '/data/showroom-pin.off'];
 const COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const sent = new Map();

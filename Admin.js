@@ -14570,7 +14570,10 @@ function startWooCommerceAutoSync() {
       );
     },
     20000
-  );
+  // V6.46 — Minuteries sans effet sur l'arrêt du processus (le serveur
+  // HTTP le garde en vie) : un script ou un test qui charge Admin.js peut
+  // se terminer.
+  ).unref();
 
   wooSyncIntervalHandle =
     setInterval(
@@ -14592,6 +14595,8 @@ function startWooCommerceAutoSync() {
       },
       intervalMs
     );
+
+  wooSyncIntervalHandle.unref();
 }
 
 startWooCommerceAutoSync();

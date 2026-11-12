@@ -84,3 +84,31 @@ globalThis.fetch = async function patchedFetch(url, options = {}) {
   if (target.hostname === '127.0.0.1' || target.hostname === 'localhost') return originalFetch(url, options);
   throw new TypeError(`fetch failed (bloqué par le test : ${target.hostname})`);
 };
+
+// V6.46 — Horloge de Tunis simulée (opt-in) : MONDECO_TEST_TUNIS_HOUR=22
+// fait voir à l'application une heure de Tunis fixe, via un fuseau Etc/GMT
+// décalé à la place de « Africa/Tunis » (Intl.DateTimeFormat). La plage
+// horaire de l'IA (18h–10h, server.js isWithinAiActiveHours) ne dépend
+// plus de l'heure à laquelle les tests sont lancés. Les horodatages
+// (Date.now) ne sont pas modifiés.
+const TUNIS_HOUR = String(process.env.MONDECO_TEST_TUNIS_HOUR || '').trim();
+if (/^\d{1,2}$/.test(TUNIS_HOUR) && Number(TUNIS_HOUR) < 24) {
+  const target = Number(TUNIS_HOUR);
+  const RealDateTimeFormat = Intl.DateTimeFormat;
+  const fakeZone = () => {
+    let offset = target - new Date().getUTCHours();
+    if (offset > 14) offset -= 24;
+    if (offset < -12) offset += 24;
+    // Etc/GMT-N = UTC+N (signe inversé, convention POSIX).
+    return offset === 0 ? 'Etc/GMT' : offset > 0 ? `Etc/GMT-${offset}` : `Etc/GMT+${-offset}`;
+  };
+  const PatchedDateTimeFormat = function DateTimeFormat(locales, options) {
+    if (options && /^africa\/tunis$/i.test(String(options.timeZone || ''))) {
+      options = { ...options, timeZone: fakeZone() };
+    }
+    return new RealDateTimeFormat(locales, options);
+  };
+  PatchedDateTimeFormat.prototype = RealDateTimeFormat.prototype;
+  PatchedDateTimeFormat.supportedLocalesOf = RealDateTimeFormat.supportedLocalesOf.bind(RealDateTimeFormat);
+  Intl.DateTimeFormat = PatchedDateTimeFormat;
+}

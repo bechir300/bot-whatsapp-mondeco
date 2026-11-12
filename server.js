@@ -10424,10 +10424,16 @@ async function processWhatsAppWebhook(body) {
 
         if (!statusPhone || !['sent', 'delivered', 'read'].includes(statusKind)) continue;
         const statusContact = makeConversationKey('whatsapp', statusPhone);
+        // V6.46 — Statuts reçus dans le désordre (Meta ne garantit pas
+        // l'ordre) : l'horodatage le plus récent est gardé, jamais un plus
+        // ancien (✓✓ / « vu » ne reculent plus dans le centre de pilotage).
+        const laterIso = (previous, next) => (
+          Date.parse(previous || '') > Date.parse(next || '') ? previous : next
+        );
         updateConversationState(statusContact, current => {
           const patch = { ...current };
-          if (statusKind === 'read') patch.lastReadByCustomerAt = statusIso;
-          if (statusKind === 'delivered' || statusKind === 'read') patch.lastDeliveredAt = statusIso;
+          if (statusKind === 'read') patch.lastReadByCustomerAt = laterIso(current?.lastReadByCustomerAt, statusIso);
+          if (statusKind === 'delivered' || statusKind === 'read') patch.lastDeliveredAt = laterIso(current?.lastDeliveredAt, statusIso);
           return patch;
         });
       }
