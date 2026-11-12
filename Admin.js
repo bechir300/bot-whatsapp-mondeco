@@ -15348,6 +15348,22 @@ router.put(
         }
       }
 
+      // V6.46 — « Pas un doublon » (page Produits) : la fiche manuelle
+      // n'est plus repérée comme doublon d'une fiche du site
+      // (flagManualWooDuplicates l'ignore). Champ facultatif : les
+      // formulaires existants ne l'envoient pas et ne changent rien.
+      if (req.body?.notDuplicateOfWoo !== undefined) {
+        if (parseBoolean(req.body.notDuplicateOfWoo, false)) {
+          updated.notDuplicateOfWoo = true;
+          delete updated.duplicateOfWooId;
+          delete updated.duplicateOfName;
+          delete updated.duplicateConfidence;
+          delete updated.duplicateFlaggedAt;
+        } else {
+          delete updated.notDuplicateOfWoo;
+        }
+      }
+
       if (req.file) {
         updated.image =
           `/admin/uploads/${req.file.filename}`;

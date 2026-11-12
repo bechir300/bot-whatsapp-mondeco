@@ -98,6 +98,13 @@ const response = (buffer, type = 'image/jpeg', status = 200) =>
       // Fiche manuelle : rien n'est enregistré.
       const manual = { name: 'Table Opale', price: '890' };
       assert.strictEqual(catalog.recordProductOverrides(manual, { ...manual, price: '790' }, { lockPrice: true }).overrides, undefined);
+      // V6.46 (intégration) — fiche du site sans disponibilité : la route PUT
+      // complète par « unknown » ; ce n'est pas une correction.
+      const noAvailability = { name: 'Chambre Bianca', price: '3290', syncSource: 'woocommerce', composition: 'Lit 160' };
+      const partial = catalog.recordProductOverrides(noAvailability, { ...noAvailability, availability: 'unknown', composition: '' }, meta);
+      assert.strictEqual(partial.overrides, undefined);
+      const explicit = catalog.recordProductOverrides({ ...noAvailability, availability: 'in_stock' }, { ...noAvailability, availability: 'unknown' }, meta);
+      assert.strictEqual(explicit.overrides.availability.value, 'unknown');
     });
 
     await test('G2 — masquage par l’équipe et suppression (tombstone) d’une fiche du site', async () => {
