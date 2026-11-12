@@ -1202,6 +1202,10 @@ function emergencyFreeDisposableStorage() {
       }
 
       const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
+      // V6.45 — visuels (images) des publicités d'origine de TOUTES les
+      // conversations : petits, partagés par pub, et impossibles à
+      // retélécharger une fois le lien Meta expiré.
+      for (const name of collectAdVisualMediaBasenames()) favoriteMedia.add(name);
       const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
       freed += pruneFilesOlderThan(
         CONVERSATION_MEDIA_DIR,
@@ -1405,6 +1409,41 @@ function collectFavoriteConversationMediaBasenames(favoriteContacts) {
     }
   } catch {}
 
+  return output;
+}
+
+// V6.45 — Noms des fichiers images des visuels de publicités (adReferral
+// et contexte « publicité » Instagram/Messenger) de toutes les
+// conversations, plus les visuels partagés ad-visual-*. Les vidéos (anciens
+// enregistrements de pubs vidéo, jusqu'à 20 Mo chacune) ne sont pas
+// protégées : la réparation les remplace par la vignette.
+function collectAdVisualMediaBasenames() {
+  const output = new Set();
+  const isImageName = name => /\.(jpe?g|png|webp|gif)$/i.test(name);
+  const add = value => {
+    const raw = safeString(value);
+    if (!raw.startsWith('/admin/conversation-media/')) return;
+    let fileName = safeString(raw.split('/').pop()).split(/[?#]/)[0];
+    try { fileName = decodeURIComponent(fileName); } catch {}
+    if (fileName && isImageName(fileName)) output.add(fileName);
+  };
+  try {
+    for (const state of Object.values(loadConversationStatesAdmin() || {})) {
+      if (!state || typeof state !== 'object') continue;
+      add(state.adReferral?.storedMediaUrl);
+      if (safeString(state.sourceContext?.type) === 'ad') {
+        add(state.sourceContext?.previewUrl);
+        add(state.sourceContext?.ad?.storedMediaUrl);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : visuels publicités non listés :', error.message);
+  }
+  try {
+    for (const name of fs.readdirSync(CONVERSATION_MEDIA_DIR)) {
+      if (name.startsWith('ad-visual-') && isImageName(name)) output.add(name);
+    }
+  } catch {}
   return output;
 }
 
@@ -7002,6 +7041,85 @@ router.get(
     return res.sendStatus(404);
   }
 );
+
+// ============================================================
+// V6.45 — VISUEL DE LA PUBLICITÉ D'ORIGINE : RÉPARATION À LA DEMANDE
+// ============================================================
+// Appelée par la carte « publicité d'origine » quand son image est absente
+// ou ne se charge pas (fichier purgé, lien Meta expiré, pub vidéo ancienne
+// sans vignette). Ordre : visuel déjà enregistré pour la même pub (fichier
+// partagé ou autre conversation), liens Meta encore valides, puis API Graph
+// si META_ADS_TOKEN (token avec ads_read) est configuré. Voir
+// lib/ad-visual.js.
+const { createAdVisualRepair } = require('./lib/ad-visual');
+const { canSendMetaToken } = require('./lib/meta-token-host');
+
+// Même écriture que updateConversationState (server.js) : SQLite d'abord
+// (lu en priorité par server.js), puis le cache JSON en miroir.
+function updateAdVisualConversationState(contact, updater) {
+  const current = getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || {};
+  const draft = { ...current };
+  const result = updater(draft) || draft;
+  // Rien à changer (la pub a changé entre-temps, par exemple) : aucune écriture.
+  if (result === draft) return current;
+  const updated = slimConversationState(result);
+  setConversationStateSingle(contact, updated);
+  const states = loadConversationStatesAdmin();
+  states[contact] = updated;
+  saveConversationStatesAdmin(states);
+  return updated;
+}
+
+let adVisualRepairService = null;
+function adVisualRepairer() {
+  if (!adVisualRepairService) {
+    adVisualRepairService = createAdVisualRepair({
+      mediaDir: CONVERSATION_MEDIA_DIR,
+      getState: contact => getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || null,
+      listStates: () => Object.entries(loadConversationStatesAdmin() || {}),
+      updateState: updateAdVisualConversationState,
+      fileExists: filename =>
+        fs.existsSync(path.join(CONVERSATION_MEDIA_DIR, filename)) ||
+        Boolean(cloudManifestEntry('media', filename)),
+      adsToken: safeString(process.env.META_ADS_TOKEN),
+      graphVersion: META_API_VERSION
+    });
+  }
+  return adVisualRepairService;
+}
+
+router.post('/api/conversations/:contact/ad-visual/refresh', requireAuth, async (req, res) => {
+  try {
+    const contact = safeString(req.params.contact);
+    if (!contact) return res.status(400).json({ error: 'Contact client obligatoire.' });
+    if (!requireCommercialConversationChannelAccess(req, res, contact)) return;
+    const result = await adVisualRepairer().repairConversation(contact, { force: req.body?.force === true });
+    const state = result?.state && typeof result.state === 'object'
+      ? result.state
+      : (getConversationStateSingle(contact) || {});
+    return res.json({
+      ok: Boolean(result?.ok),
+      changed: Boolean(result?.changed),
+      source: safeString(result?.source),
+      reason: safeString(result?.reason),
+      error: safeString(result?.error),
+      adReferral: state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : null,
+      sourceContext: state?.sourceContext && typeof state.sourceContext === 'object'
+        ? {
+            type: safeString(state.sourceContext.type),
+            previewUrl: safeString(state.sourceContext.previewUrl),
+            previewType: safeString(state.sourceContext.previewType),
+            ad: state.sourceContext.ad && typeof state.sourceContext.ad === 'object'
+              ? { adKey: safeString(state.sourceContext.ad.adKey) }
+              : undefined
+          }
+        : null
+    });
+  } catch (error) {
+    console.error('❌ Visuel publicité (réparation) :', error.message);
+    return res.status(500).json({ error: 'Impossible de récupérer le visuel de la publicité.' });
+  }
+});
 
 
 
@@ -19504,9 +19622,10 @@ async function persistFacebookHistoryAttachments(message) {
       // V6.35.9 — Même protection réseau (timeout + retry) que les autres
       // appels Meta : le téléchargement d'une pièce jointe historique
       // (photo/vidéo) subissait le même "fetch failed" non protégé.
-      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, {
+      // V6.45 — token joint seulement vers un hôte Meta autorisé.
+      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, canSendMetaToken(remoteUrl) ? {
         headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}
-      });
+      } : {});
       if(!response.ok) response = await fetchFacebookAttachmentWithRetry(remoteUrl);
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer=Buffer.from(await response.arrayBuffer());
