@@ -34,7 +34,7 @@ Vérifiez avec `node -v` avant toute mise à jour. Installation de Node.js 22 : 
 
 ### Branche et version à déployer
 
-- **Production : un tag de version `vX.Y.Z`** (même numéro que `package.json`, ex. `v6.46.0`), créé sur la branche de production **`fix/annonces-prix-audit`** une fois la CI verte. Revenir en arrière = `git checkout` du tag précédent.
+- **Production : un tag de version `vX.Y.Z`** (même numéro que `package.json`, ex. `v6.46.0`), créé sur la branche de production (celle qui reçoit les PR, actuellement **`ccr-1b9e884b-twmazf`**) une fois la CI verte. Revenir en arrière = `git checkout` du tag précédent.
 - ⚠️ **`main` est obsolète** (code d'août 2026, version 1.0.0, sans les corrections de sécurité V6.37+) et **`vps-production` aussi** : ne déployez jamais depuis ces branches, ni avec un simple `git pull` sur la branche par défaut.
 - Création d'un tag (équipe technique) : `git tag -a v6.46.0 -m "MONDECO 6.46.0" && git push origin v6.46.0`.
 
