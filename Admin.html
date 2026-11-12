@@ -10110,6 +10110,9 @@ function productCatalogBadgesHtml(product){
 async function updateProductFields(id, fields){
   const formData = new FormData();
   for(const [key, value] of Object.entries(fields)) formData.append(key, value);
+  // V6.46 — Modification partielle (« Pas un doublon », « Revenir à la
+  // valeur du site ») : pas de photo exigée (fiches anciennes sans image).
+  formData.append('partialUpdate', 'true');
   return apiFetch(`${API}/products/${encodeURIComponent(id)}`, { method:'PUT', body:formData });
 }
 
@@ -10212,7 +10215,46 @@ function availabilityLabel(value){
   return labels[value] || value || 'À confirmer';
 }
 
+// V6.46 — Valeurs chargées dans le formulaire par editProduct : à
+// l'enregistrement d'une fiche existante, seuls les champs réellement
+// modifiés par l'utilisateur sont envoyés (la route garde la valeur actuelle
+// des autres). Avant, un formulaire ouvert le matin renvoyait TOUS les
+// champs : le nom, la disponibilité ou l'état « Actif » changés depuis par
+// le site devenaient des corrections permanentes (produit en rupture
+// annoncé « En stock », produit publié masqué).
+let productFormSnapshot = null;
+const PRODUCT_FORM_FIELDS = [
+  ['name', 'productName'],
+  ['category', 'productCategory'],
+  ['price', 'productPrice'],
+  ['promoPrice', 'productPromoPrice'],
+  ['availability', 'productAvailability'],
+  ['dimensions', 'productDimensions'],
+  ['composition', 'productComposition'],
+  ['colors', 'productColors'],
+  ['showrooms', 'productShowrooms'],
+  ['productUrl', 'productUrl'],
+  ['categoryUrl', 'productCategoryUrl'],
+  ['description', 'productDescription'],
+  ['customizableColor', 'productCustomColor', 'checked'],
+  ['customizableFabric', 'productCustomFabric', 'checked'],
+  ['customizableDimensions', 'productCustomDimensions', 'checked'],
+  ['customizableCorner', 'productCustomCorner', 'checked'],
+  ['active', 'productActive', 'checked'],
+  ['lockPrice', 'productLockPrice', 'checked']
+];
+
+function readProductFormValues(){
+  const values = {};
+  for(const [key, elementId, property] of PRODUCT_FORM_FIELDS){
+    const element = document.getElementById(elementId);
+    values[key] = property === 'checked' ? String(Boolean(element?.checked)) : String(element?.value ?? '');
+  }
+  return values;
+}
+
 function resetProductForm(){
+  productFormSnapshot = null;
   document.getElementById('productForm').reset();
   document.getElementById('productId').value = '';
   document.getElementById('productActive').checked = true;
@@ -10290,6 +10332,7 @@ window.editProduct = function(id){
   document.getElementById('productLockPrice').checked = Boolean(product.overrides?.price || product.overrides?.promoPrice);
   document.getElementById('productModalTitle').textContent = `Modifier ${product.name}`;
   document.getElementById('productImage').required = !product.image;
+  productFormSnapshot = { id: product.id, values: readProductFormValues() };
   const syncNotice = document.getElementById('productSyncNotice');
   const syncNoticeHtml = productSyncNoticeHtml(product);
   if(syncNotice && syncNoticeHtml){ syncNotice.innerHTML = syncNoticeHtml; syncNotice.classList.remove('hidden'); }
@@ -10333,30 +10376,37 @@ document.getElementById('productForm').addEventListener('submit', async event =>
   const id = document.getElementById('productId').value;
   const formData = new FormData();
 
-  formData.append('name', document.getElementById('productName').value);
-  formData.append('category', document.getElementById('productCategory').value);
-  formData.append('price', document.getElementById('productPrice').value);
-  formData.append('promoPrice', document.getElementById('productPromoPrice').value);
-  formData.append('availability', document.getElementById('productAvailability').value);
-  formData.append('dimensions', document.getElementById('productDimensions').value);
-  formData.append('composition', document.getElementById('productComposition').value);
-  formData.append('colors', document.getElementById('productColors').value);
-  formData.append('showrooms', document.getElementById('productShowrooms').value);
-  formData.append('productUrl', document.getElementById('productUrl').value);
-  formData.append('categoryUrl', document.getElementById('productCategoryUrl').value);
-  formData.append('description', document.getElementById('productDescription').value);
-  formData.append('customizableColor', document.getElementById('productCustomColor').checked);
-  formData.append('customizableFabric', document.getElementById('productCustomFabric').checked);
-  formData.append('customizableDimensions', document.getElementById('productCustomDimensions').checked);
-  formData.append('customizableCorner', document.getElementById('productCustomCorner').checked);
-  formData.append('active', document.getElementById('productActive').checked);
-  // V6.46 — prix figé (fiche du site) sur demande explicite.
-  formData.append('lockPrice', document.getElementById('productLockPrice').checked);
+  // V6.46 — Fiche existante : seulement les champs modifiés depuis
+  // l'ouverture du formulaire ; nouvelle fiche : tous les champs.
+  const values = readProductFormValues();
+  const base = id && productFormSnapshot && productFormSnapshot.id === id
+    ? productFormSnapshot.values
+    : null;
+  let changedCount = 0;
+  for(const [key, value] of Object.entries(values)){
+    if(key === 'lockPrice') continue;
+    if(base && base[key] === value) continue;
+    formData.append(key, value);
+    changedCount += 1;
+  }
+  // V6.46 — prix figé (fiche du site) sur demande explicite : envoyé avec
+  // un prix modifié ou quand la case change.
+  const priceChanged = !base || base.price !== values.price || base.promoPrice !== values.promoPrice;
+  if(!base || priceChanged || base.lockPrice !== values.lockPrice){
+    formData.append('lockPrice', values.lockPrice);
+    if(base && base.lockPrice !== values.lockPrice) changedCount += 1;
+  }
 
   const image = document.getElementById('productImage').files?.[0];
 
   if(image){
     formData.append('image', image);
+  }
+
+  if(base && !changedCount && !image){
+    // Rien de modifié : aucune écriture.
+    closeModal('productModal');
+    return;
   }
 
   try{

@@ -12652,13 +12652,26 @@ function upsertWooProductInArray(
       )
     );
 
+  // V6.46 — La comparaison des dates du site ne vaut que pour les webhooks
+  // (livraisons reçues dans le désordre). La synchronisation complète se
+  // fie à notBeforeMs (webhook reçu pendant sa lecture) et « Rendre au
+  // site » (force) relit toujours la fiche : après une restauration de la
+  // base du site ou un import (dates qui reculent), les bons prix n'étaient
+  // plus jamais repris et « Rendre au site » annonçait un succès sans rien
+  // changer.
+  const compareSiteDates =
+    options.force !== true &&
+    !Number.isFinite(options.notBeforeMs);
+
   if (
     (
+      compareSiteDates &&
       Number.isFinite(currentModifiedMs) &&
       Number.isFinite(remoteModifiedMs) &&
       remoteModifiedMs < currentModifiedMs
     ) ||
     (
+      options.force !== true &&
       Number.isFinite(options.notBeforeMs) &&
       Number.isFinite(webhookAtMs) &&
       webhookAtMs >= options.notBeforeMs
@@ -15015,21 +15028,27 @@ router.post(
           const latest =
             loadProducts();
 
-          upsertWooProductInArray(
-            latest,
-            wooProduct,
-            new Date().toISOString(),
-            {
-              fromWebhook:
-                true
-            }
-          );
+          // V6.46 — force : relue même si la date du site a reculé ;
+          // « refreshed » seulement si la fiche a vraiment été relue.
+          const upsert =
+            upsertWooProductInArray(
+              latest,
+              wooProduct,
+              new Date().toISOString(),
+              {
+                fromWebhook:
+                  true,
+                force:
+                  true
+              }
+            );
 
           saveProducts(
             latest
           );
 
-          refreshed = true;
+          refreshed =
+            upsert?.action !== 'stale';
         } catch (error) {
           console.warn(
             '⚠️ Relecture du produit du site :',
@@ -15318,7 +15337,14 @@ router.put(
           });
       }
 
-      if (!req.file && !current.image) {
+      // V6.46 — Modification partielle (« Pas un doublon », « Revenir à la
+      // valeur du site ») d'une ancienne fiche sans photo : pas de photo
+      // exigée (avant : erreur 400, action impossible).
+      if (
+        !req.file &&
+        !current.image &&
+        !parseBoolean(req.body?.partialUpdate, false)
+      ) {
         return res
           .status(400)
           .json({

@@ -94,8 +94,8 @@ async function test(label, fn) {
     }
     return false;
   }
-  async function deliver(body, { signature, contentType = 'application/json', topic = 'product.updated' } = {}) {
-    const response = await fetch(`${base}/admin/api/woocommerce/webhook`, {
+  async function deliver(body, { signature, contentType = 'application/json', topic = 'product.updated', urlPath = '/admin/api/woocommerce/webhook' } = {}) {
+    const response = await fetch(`${base}${urlPath}`, {
       method: 'POST',
       headers: {
         'content-type': contentType,
@@ -173,6 +173,14 @@ async function test(label, fn) {
       await wait(400);
       const liora = readProducts().find(item => Number(item.woocommerceId) === 69317);
       assert.strictEqual(liora.price, '12970');
+    });
+
+    await test('V6.46 — adresse saisie avec une barre oblique finale : signature vérifiée et livraison acceptée (avant : 403 CSRF)', async () => {
+      const php = phpJson({ ...product, regular_price: '13070', date_modified_gmt: '2026-11-12T09:00:00' });
+      const result = await deliver(php, { signature: sign(php), urlPath: '/admin/api/woocommerce/webhook/' });
+      assert.strictEqual(result.status, 200, JSON.stringify(result.json));
+      const updated = await waitFor(() => readProducts().some(item => Number(item.woocommerceId) === 69317 && item.price === '13070'));
+      assert.ok(updated, 'prix mis à jour');
     });
 
     console.log(`${passed} test(s) webhook WooCommerce de bout en bout OK`);

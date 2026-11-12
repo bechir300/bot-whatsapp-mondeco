@@ -93,6 +93,14 @@ test('fiche manuelle « Chambre Bianca » 2800 : la fiche du site l’emporte', 
   assert.strictEqual(resolvedId(resolveProduct({ adProductHint: 'Chambre Bianca | Reel 20s', message: 'Prix' }, withManual)), 60068);
 });
 
+test('V6.46 — doublon certain ignoré même quand la fiche du site est masquée dans l’Admin', () => {
+  const hidden = products.map(product => (Number(product.woocommerceId) === 60068 ? { ...product, active: false, hiddenByAdmin: true } : product));
+  const index = buildProductIndex([...hidden, { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true }]);
+  const resolution = resolveProduct({ message: 'prix chambre bianca' }, index);
+  assert.ok(!resolution.product || resolution.product.id !== 'manual-bianca', 'jamais l’ancienne copie à 2800 DT');
+  assert.ok(!(resolution.candidates || []).some(candidate => candidate.id === 'manual-bianca'));
+});
+
 test('doublon local marqué duplicateOfWooId ignoré', () => {
   const withDuplicate = buildProductIndex([...products, { id: 'dup', name: 'Chambre à coucher Bianca', price: '2800', duplicateOfWooId: 60068, active: true }]);
   const result = resolveProduct({ message: 'chambre à coucher bianca' }, withDuplicate);

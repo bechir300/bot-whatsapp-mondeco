@@ -60,7 +60,7 @@ globalThis.__srv = { generateReply, generateReplySuggestion, generateVisionReply
   buildSmartBusinessContextDetailed, resolveConversationProduct, findMatchingQuickReplyForAd, rememberAdReferral,
   getConversationState, getLimitedHistoryForAI, normalizeForSearch, scoreContextBlock, stripReasoningLeak,
   appendCategoryLink, inferAdProductHint, recordAiHistoryReply, getCurrentMonthAiCostUsd, httpServer,
-  handleHumanMessageEcho,
+  handleHumanMessageEcho, takeAiReplyTurn,
   MAX_PRODUCT_CONTEXT_CHARS, MAX_PINNED_PRODUCT_CHARS };`;
   }
   return originalCompile.call(this, content, filename);
@@ -143,6 +143,25 @@ async function test(label, fn) {
     assert.ok(reply.startsWith(cannedReply));
     assert.ok(reply.endsWith(`Voir le produit : ${BIANCA.productUrl}`));
     assert.ok(!reply.includes('/categorie-produit/dressing/'));
+  });
+
+  await test('V6.46 — fiche produit automatique : produit identifié du tour (jamais un doublon), aucune après une question de choix', async () => {
+    const { findProductForCard } = require('../lib/product-card-auto');
+    const catalog = [...products, { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true }];
+    const contact = '21698000012';
+    rememberBiancaAd(contact);
+    cannedReply = 'La Chambre Bianca est à 6590 dt au lieu de 7200 dt 😊';
+    const reply = await S.generateReply(contact, 'Prix', 'whatsapp');
+    const turn = S.takeAiReplyTurn(contact);
+    assert.strictEqual(turn.kind, 'ai');
+    assert.strictEqual(turn.product.id, BIANCA.id);
+    assert.strictEqual(findProductForCard(reply, catalog, turn)?.id, BIANCA.id, 'fiche du site à 6590/7200, pas la copie à 2800');
+
+    const other = '21698000013';
+    const question = await S.generateReply(other, 'prix bianca', 'whatsapp');
+    const questionTurn = S.takeAiReplyTurn(other);
+    assert.strictEqual(questionTurn.kind, 'disambiguation');
+    assert.strictEqual(findProductForCard(question, catalog, questionTurn), null, 'aucune fiche après « Lequel vous intéresse ? »');
   });
 
   await test('« BIANCA » seul depuis la pub : le produit de la pub est épinglé', async () => {

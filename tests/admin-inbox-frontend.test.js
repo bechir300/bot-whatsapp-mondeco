@@ -354,7 +354,8 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
   fs.writeFileSync(path.join(dataDir, 'products.json'), JSON.stringify([
     { id: 'woo-bianca', name: 'Chambre à Coucher Bianca', category: 'Chambres', price: '3290', image: 'https://mondeco.tn/bianca.jpg', composition: 'Lit 160, armoire', active: true, syncSource: 'woocommerce', woocommerceId: 69317, overrides: { composition: { value: 'Lit 160, armoire', by: 'Admin', at: '2026-11-10T10:00:00Z', source: 'admin-product-form' } } },
     { id: 'man-bianca', name: 'Chambre Bianca', category: 'Chambres', price: '2800', image: 'https://mondeco.tn/b.jpg', active: true, duplicateOfWooId: 69317, duplicateOfName: 'Chambre à Coucher Bianca', duplicateConfidence: 'high', duplicateFlaggedAt: '2026-11-11T10:00:00Z' },
-    { id: 'man-lit', name: 'Lit Bianca', category: 'Chambres', price: '1500', image: 'https://mondeco.tn/l.jpg', active: true, duplicateOfWooId: 69317, duplicateOfName: 'Chambre à Coucher Bianca', duplicateConfidence: 'possible' }
+    { id: 'man-lit', name: 'Lit Bianca', category: 'Chambres', price: '1500', image: 'https://mondeco.tn/l.jpg', active: true, duplicateOfWooId: 69317, duplicateOfName: 'Chambre à Coucher Bianca', duplicateConfidence: 'possible' },
+    { id: 'man-2', name: 'Salon Ancien', category: 'Salons', price: '1900', active: true, duplicateOfWooId: 522, duplicateOfName: 'Salon Moderne', duplicateConfidence: 'high' }
   ], null, 2));
   const child = spawn(process.execPath, ['server.js'], {
     cwd: root,
@@ -397,6 +398,22 @@ const BASIC = ['escapeHtml', 'jsArg', 'formatDate', 'formatShortTime', 'formatEl
       assert.strictEqual(product.notDuplicateOfWoo, true);
       for (const key of ['duplicateOfWooId', 'duplicateOfName', 'duplicateConfidence', 'duplicateFlaggedAt']) assert.strictEqual(product[key], undefined, key);
       assert.strictEqual(product.price, '2800', 'le reste de la fiche est inchangé');
+    });
+
+    await test('V6.46 — route produit : modification partielle d’une fiche sans photo acceptée (avant : 400 « pas de photo »), formulaire complet toujours refusé', async () => {
+      const partial = new FormData();
+      partial.append('notDuplicateOfWoo', 'true');
+      partial.append('partialUpdate', 'true');
+      const res = await request('PUT', '/admin/api/products/man-2', { body: partial, cookie });
+      assert.strictEqual(res.status, 200, await res.text());
+      const product = readProducts().find(item => item.id === 'man-2');
+      assert.strictEqual(product.notDuplicateOfWoo, true);
+      assert.strictEqual(product.duplicateOfWooId, undefined);
+      assert.strictEqual(product.partialUpdate, undefined, 'drapeau jamais enregistré');
+      const full = new FormData();
+      full.append('description', 'x');
+      const refused = await request('PUT', '/admin/api/products/man-2', { body: full, cookie });
+      assert.strictEqual(refused.status, 400);
     });
 
     await test('route produit : « Revenir à la valeur du site » retire la correction (champ vidé)', async () => {

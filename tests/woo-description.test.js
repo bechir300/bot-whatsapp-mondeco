@@ -220,6 +220,23 @@ try {
     assert.strictEqual(found.get(manual[1]).confidence, 'possible');
   });
 
+  test('V6.46 — fiche du site masquée / supprimée dans l’Admin mais publiée : l’ancienne fiche manuelle reste un doublon', () => {
+    const woo = [
+      { id: 'w1', name: 'Chambre à Coucher Bianca', woocommerceId: 60068, syncSource: 'woocommerce', active: false, hiddenByAdmin: true, woocommerceStatus: 'publish' },
+      { id: 'w2', name: 'Salon Baya', woocommerceId: 52452, syncSource: 'woocommerce', active: false, woocommerceStatus: 'draft' },
+      { id: 'w3', name: 'Table Opale', woocommerceId: 7, syncSource: 'woocommerce', active: false, hiddenByAdmin: true, woocommerceStatus: 'publish', wooMissingAt: '2026-11-01T00:00:00Z' }
+    ];
+    const manual = [
+      { id: 'm1', name: 'Chambre Bianca', active: true },
+      { id: 'm2', name: 'Salon Baya', active: true },
+      { id: 'm3', name: 'Table Opale', active: true }
+    ];
+    const found = catalog.findManualDuplicates(manual, woo);
+    assert.strictEqual(found.get(manual[0])?.wooId, 60068, 'Bianca masquée dans l’Admin, encore en vente sur le site');
+    assert.strictEqual(found.get(manual[1]), undefined, 'brouillon du site : plus une cible');
+    assert.strictEqual(found.get(manual[2]), undefined, 'retirée du site : plus une cible');
+  });
+
   test('doublons manuels : tailles ou quantités différentes = produits différents', () => {
     const woo = [
       { id: 'a', name: 'Matelas Royal Confortex 160×190 cm', woocommerceId: 1, syncSource: 'woocommerce' },

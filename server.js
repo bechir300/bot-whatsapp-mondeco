@@ -211,7 +211,8 @@ app.use(
       // V6.46 — Corps brut gardé aussi pour le webhook WooCommerce : sa
       // signature HMAC porte sur les octets envoyés par PHP (« \/ »,
       // « é »), qu'un JSON.stringify ne reproduit jamais.
-      const urlPath = String(req.originalUrl || '').split('?')[0];
+      // V6.46 — « /webhook/ » (barre finale) traité comme « /webhook ».
+      const urlPath = String(req.originalUrl || '').split('?')[0].replace(/\/+$/, '');
       if (
         urlPath === '/webhook' ||
         urlPath === '/admin/api/woocommerce/webhook'
@@ -5844,6 +5845,34 @@ const GENERATE_REPLY_LEAK_PATTERNS = [
 const aiFactGuardFiredAt =
   new Map();
 
+// V6.46 — Nature de la dernière réponse générée pour chaque contact
+// (question de choix, clarification, transfert, réponse IA) et produit
+// identifié pour CE tour : la fiche produit automatique suit ce produit et
+// n'est jamais envoyée après une question de choix (avant : recherche par
+// nom dans tout le catalogue → fiche d'un autre produit ou d'un doublon).
+const aiReplyTurnContext =
+  new Map();
+
+function rememberAiReplyTurn(contact, kind, product = null) {
+  const key = safeString(contact);
+  if (!key) return;
+  aiReplyTurnContext.set(key, { kind: safeString(kind), product: product || null, at: Date.now() });
+  if (aiReplyTurnContext.size > 2000) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [entryKey, entry] of aiReplyTurnContext) {
+      if (entry.at < cutoff) aiReplyTurnContext.delete(entryKey);
+    }
+  }
+}
+
+function takeAiReplyTurn(contact, withinMs = 10 * 60 * 1000) {
+  const key = safeString(contact);
+  const entry = aiReplyTurnContext.get(key);
+  aiReplyTurnContext.delete(key);
+  if (!entry || Date.now() - entry.at > withinMs) return null;
+  return entry;
+}
+
 function aiFactGuardFiredRecently(contact, withinMs = 2 * 60 * 1000) {
   const at = aiFactGuardFiredAt.get(safeString(contact));
   if (!at) return false;
@@ -5945,10 +5974,12 @@ async function generateReply(
   if (decision.action === 'handoff') {
     logAiProductResolution(userId, resolution, { decision: decision.reason });
     addHistoryMessage(userId, 'user', cleanText);
+    rememberAiReplyTurn(userId, 'handoff');
     return '[COMMERCIAL_REQUIRED]';
   }
 
   if (decision.action === 'reply') {
+    rememberAiReplyTurn(userId, decision.kind || 'question');
     // Même plage horaire que l'IA : en journée, l'équipe répond.
     if (!evalSession && !isWithinAiActiveHours()) {
       addHistoryMessage(userId, 'user', cleanText);
@@ -6057,6 +6088,12 @@ async function generateReply(
       : appendCategoryLink(guarded.reply, {
           product: resolution?.status === 'resolved' ? resolution.product : null
         });
+
+  rememberAiReplyTurn(
+    userId,
+    guarded.fired ? 'guarded' : 'ai',
+    resolution?.status === 'resolved' ? resolution.product : null
+  );
 
   logAiProductResolution(userId, resolution, {
     decision: 'ai',
@@ -11666,7 +11703,13 @@ async function maybeSendAiProductCard(from, reply, inboundAtMs = NaN) {
     if (getBotSettings()?.aiProductCards !== true) return;
     // V6.45 — Pas de fiche quand le garde-fou factuel vient de remplacer la réponse.
     if (aiFactGuardFiredRecently(from)) return;
-    const product = findProductForCard(reply, loadProducts());
+    // V6.46 — Fiche du produit identifié pour ce tour ; aucune après une
+    // question de choix, une clarification ou un transfert.
+    const turn = takeAiReplyTurn(from);
+    const product = findProductForCard(reply, loadProducts(), {
+      kind: turn?.kind || '',
+      product: turn?.product || null
+    });
     if (!product) return;
 
     const state = getConversationState(from) || {};

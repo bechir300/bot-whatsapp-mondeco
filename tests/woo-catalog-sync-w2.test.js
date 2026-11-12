@@ -380,6 +380,23 @@ const FLORA = catalog.find(item => /FLORA/.test(item.name) && /&amp;/.test(item.
     setSite(id, { sale_price: '9990', price: '9990', on_sale: true, date_modified_gmt: '2026-11-11T21:59:00' });
   });
 
+  await test('V6.46 — date du site qui recule (restauration, import) : la synchro complète reprend le prix ; « Rendre au site » relit vraiment la fiche', async () => {
+    const before = one(NOVA);
+    assert.ok(before.woocommerceModifiedAt, 'date du site enregistrée');
+    setSite(NOVA, { regular_price: '3590', price: '3590', sale_price: '', on_sale: false, date_modified_gmt: '2026-10-20T10:00:00' });
+    const result = await admin.runWooCommerceSync('test-date-recule');
+    assert.strictEqual(one(NOVA).price, '3590', `prix repris malgré la date plus ancienne (stale=${result.stale})`);
+    // Webhook plus ancien que la fiche : toujours ignoré (ordre des livraisons).
+    const older = { ...site.find(item => item.id === NOVA), regular_price: '3490', price: '3490', date_modified_gmt: '2026-10-19T10:00:00' };
+    await admin.processWooCommerceWebhook('product.updated', older);
+    assert.strictEqual(one(NOVA).price, '3590', 'livraison plus ancienne ignorée');
+    setSite(NOVA, { regular_price: '3490', price: '3490', date_modified_gmt: '2026-10-19T10:00:00' });
+    const reset = await callRoute('post', '/api/products/:id/site-reset', { params: { id: one(NOVA).id } });
+    assert.strictEqual(reset.statusCode, 200, JSON.stringify(reset.body));
+    assert.strictEqual(reset.body.refreshed, true);
+    assert.strictEqual(reset.body.product.price, '3490', '« Rendre au site » : valeur du site reprise');
+  });
+
   await test('G9 — produit retiré entre deux pages : le produit décalé n’est pas désactivé ; le produit retiré l’est (synchro suivante)', async () => {
     const sorted = site.slice().sort((a, b) => a.id - b.id);
     const trashed = sorted[10].id; // page 1
