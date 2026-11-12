@@ -1068,20 +1068,26 @@ function instagramAttachmentRemoteUrl(attachment) {
 }
 
 async function fetchInstagramMediaUrl(remoteUrl) {
-  let response =
-    await fetchReadWithRetry(
-      remoteUrl,
-      {
-        headers: {
-          Authorization:
-            `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
-        }
-      },
-      { timeoutMs: MEDIA_FETCH_TIMEOUT_MS }
-    );
+  // V6.45 — token Instagram joint seulement vers un hôte Meta autorisé
+  // (lib/meta-token-host.js), jamais vers un hôte arbitraire du webhook.
+  let response = null;
+
+  if (INSTAGRAM_ACCESS_TOKEN && canSendMetaToken(remoteUrl)) {
+    response =
+      await fetchReadWithRetry(
+        remoteUrl,
+        {
+          headers: {
+            Authorization:
+              `Bearer ${INSTAGRAM_ACCESS_TOKEN}`
+          }
+        },
+        { timeoutMs: MEDIA_FETCH_TIMEOUT_MS }
+      );
+  }
 
   // Certains liens Meta sont déjà signés et n'ont pas besoin d'en-tête.
-  if (!response.ok) {
+  if (!response || !response.ok) {
     response =
       await fetchReadWithRetry(remoteUrl, {}, { timeoutMs: MEDIA_FETCH_TIMEOUT_MS });
   }
@@ -1244,7 +1250,9 @@ function facebookAttachmentRemoteUrl(attachment) {
 async function fetchFacebookMediaUrl(remoteUrl) {
   let response = null;
 
-  if (FACEBOOK_MESSENGER_TOKEN) {
+  // V6.45 — token joint seulement vers un hôte Meta autorisé
+  // (lib/meta-token-host.js), jamais vers un hôte arbitraire du webhook.
+  if (FACEBOOK_MESSENGER_TOKEN && canSendMetaToken(remoteUrl)) {
     response = await fetchReadWithRetry(
       remoteUrl,
       {
@@ -1956,7 +1964,12 @@ function markCustomerMessage(
               safeString(current.sourceContext.type) &&
               safeString(current.sourceContext.type) !== 'direct'
                 ? current.sourceContext
-                : { ...(current.sourceContext || {}), ...metadata.sourceContext }
+                : safeString(metadata.sourceContext.type) === 'ad'
+                  // V6.45 — contexte publicité remplacé (et non fusionné)
+                  // quand la pub change : l'aperçu de l'ancienne pub ne
+                  // survit plus à un téléchargement raté.
+                  ? mergeAdSourceContext(current.sourceContext, metadata.sourceContext)
+                  : { ...(current.sourceContext || {}), ...metadata.sourceContext }
             )
           : current.sourceContext,
 
@@ -2705,6 +2718,27 @@ function productHintFromAdBodyUncached(text, index) {
   return '';
 }
 
+// V6.45 — Visuel de la publicité d'origine : logique pure (champs média,
+// identité adKey, fusion, allègement) dans lib/ad-referral.js ;
+// téléchargement / enregistrement / réparation dans lib/ad-visual.js ;
+// token Meta limité aux hôtes Meta (lib/meta-token-host.js).
+const {
+  adReferralMediaFields,
+  adReferralKey,
+  adRecordKey,
+  adVisualCandidates,
+  mergeAdReferral,
+  mergeAdSourceContext,
+  storedAdVisualIsCurrent
+} = require('./lib/ad-referral');
+const {
+  downloadAdVisual,
+  saveAdVisualFile,
+  findAdVisualFile,
+  writeFileAtomic: writeAdVisualFileAtomic
+} = require('./lib/ad-visual');
+const { canSendMetaToken } = require('./lib/meta-token-host');
+
 function normalizeAdReferral(referral) {
   if (!referral || typeof referral !== 'object') {
     return null;
@@ -2770,18 +2804,14 @@ function normalizeAdReferral(referral) {
       safeString(referral?.post_id || adsContext?.post_id),
     sourceType:
       safeString(referral?.source_type),
-    mediaType:
-      safeString(referral?.video_url || adsContext?.video_url)
-        ? 'video'
-        : (safeString(referral?.image_url || referral?.thumbnail_url || adsContext?.photo_url) ? 'image' : ''),
-    mediaUrl:
-      safeString(
-        referral?.video_url ||
-        referral?.image_url ||
-        referral?.thumbnail_url ||
-        adsContext?.video_url ||
-        adsContext?.photo_url
-      ),
+    // V6.45 — media_type respecté ; mediaUrl = IMAGE affichable (vignette
+    // pour une pub vidéo), vidéo à part (videoUrl). Avant, une pub vidéo
+    // gardait seulement video_url (thumbnail_url ignoré) et la carte
+    // affichait 📣. Champs vides omis (voir lib/ad-referral.js).
+    ...adReferralMediaFields(referral),
+    // V6.45 — Identité stable de la pub (ad id, jamais ctwa_clid).
+    adKey:
+      adReferralKey(referral, { headline, body }),
     productHint:
       inferAdProductHint(referral)
     // V6.37.2 — `raw` (copie brute du referral Meta, ~1,3 Ko) n'est plus
@@ -2803,115 +2833,158 @@ function normalizeAdReferral(referral) {
   return normalized;
 }
 
-// V6.35.24 — Téléchargement (GET, rejouable sans risque) avec timeout +
-// retry, même faille que les autres appels réseau Meta déjà corrigés.
-async function fetchAdMediaWithRetry(url, options = {}) {
-  // V6.37 — délai propre à chaque tentative et reprise sur 429/5xx
-  // (lib/http.js) ; avant, les tentatives partageaient le même délai.
-  return fetchReadWithRetry(url, options, { timeoutMs: MEDIA_FETCH_TIMEOUT_MS });
+// V6.45 — fetchAdMediaWithRetry (V6.35.24) remplacé par downloadAdVisual
+// (lib/ad-visual.js) : même lecture avec timeout + retry (lib/http.js),
+// type réel vérifié sur les octets, token limité aux hôtes Meta.
+
+// V6.45 — Téléchargements de visuels de pub en cours (un seul par
+// conversation et par publicité).
+const adVisualDownloadsInFlight = new Map();
+// V6.45 — Budget d'un téléchargement de visuel de pub (en arrière-plan) :
+// 20 s par tentative, 1 nouvelle tentative, par lien.
+const AD_VISUAL_FETCH_TIMEOUT_MS = 20000;
+
+function adVisualFileExists(storedUrl) {
+  const value = safeString(storedUrl);
+  if (!value.startsWith('/admin/conversation-media/')) return false;
+  let filename = '';
+  try { filename = path.basename(decodeURIComponent(value.slice('/admin/conversation-media/'.length))); } catch { return false; }
+  return Boolean(filename) && fs.existsSync(path.join(CONVERSATION_MEDIA_DIR, filename));
 }
 
-async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '') {
-  const normalized = normalizeAdReferral(referral);
-  const remoteUrl = safeString(normalized?.mediaUrl);
+// V6.45 — Écrit le visuel enregistré dans l'état, seulement si la
+// conversation est toujours sur la même publicité (le client a pu cliquer
+// une autre pub pendant le téléchargement).
+function storeAdVisualInState(contact, adKey, visual) {
+  let applied = false;
+  updateConversationState(
+    contact,
+    current => {
+      const ad = current?.adReferral && typeof current.adReferral === 'object' ? current.adReferral : null;
+      if (!ad || adRecordKey(ad) !== adKey) return current;
+      const next = {
+        ...ad,
+        storedMediaUrl: safeString(visual?.url),
+        storedMediaType: safeString(visual?.type) || 'image',
+        storedMediaKey: adKey
+      };
+      delete next.mediaFetchError;
+      delete next.mediaFetchFailedAt;
+      applied = true;
+      return { ...current, cameFromAd: true, adReferral: next };
+    }
+  );
+  return applied;
+}
 
-  if (!remoteUrl) {
+async function downloadWhatsAppAdVisual(contact, normalized) {
+  const adKey = safeString(normalized?.adKey);
+  const candidates = adVisualCandidates(normalized);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const { buffer, sniffed } = await downloadAdVisual(candidate.url, {
+        // Le token WhatsApp n'est joint que vers un hôte Meta autorisé
+        // (graph.facebook.com / lookaside.fbsbx.com), jamais vers le CDN.
+        token: WHATSAPP_TOKEN,
+        maxBytes: MAX_CONVERSATION_MEDIA_BYTES,
+        timeoutMs: AD_VISUAL_FETCH_TIMEOUT_MS,
+        allowVideo: candidate.type === 'video'
+      });
+      const saved = saveAdVisualFile({
+        mediaDir: CONVERSATION_MEDIA_DIR,
+        adKey,
+        buffer,
+        sniffed,
+        writeFile: (target, data) => withStorageRetry(
+          () => writeAdVisualFileAtomic(target, data),
+          `visuel publicité ${path.basename(target)}`
+        )
+      });
+      storeAdVisualInState(contact, adKey, saved);
+      return safeString(saved.url);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  // Aucun lien utilisable : réutiliser le visuel déjà enregistré pour
+  // cette pub par une autre conversation.
+  const shared = findAdVisualFile(CONVERSATION_MEDIA_DIR, adKey);
+  if (shared) {
+    storeAdVisualInState(contact, adKey, shared);
+    return safeString(shared.url);
+  }
+
+  const message = safeString(lastError?.message) || 'Aucun lien de visuel fourni par Meta.';
+  console.warn('⚠️ Visuel publicité WhatsApp non sauvegardé :', message);
+  // V6.45 — L'échec est conservé (avec mediaUrl, non allégé) pour qu'une
+  // réparation (bouton/ouverture de la conversation, script de rattrapage)
+  // puisse réessayer.
+  updateConversationState(
+    contact,
+    current => {
+      const ad = current?.adReferral && typeof current.adReferral === 'object' ? current.adReferral : null;
+      if (!ad || adRecordKey(ad) !== adKey) return current;
+      return {
+        ...current,
+        adReferral: {
+          ...ad,
+          mediaFetchError: message.slice(0, 200),
+          mediaFetchFailedAt: new Date().toISOString()
+        }
+      };
+    }
+  );
+  return null;
+}
+
+async function persistWhatsAppAdReferralMedia(contact, referral, messageId = '', { wait = false } = {}) {
+  const normalized = normalizeAdReferral(referral);
+  const adKey = safeString(normalized?.adKey);
+
+  if (!normalized || !adKey) {
     return null;
   }
 
-  // V6.36.100 — Bug réel corrigé le 03/09 : si le client avait déjà une
-  // image de pub enregistrée (visite précédente), cette fonction
-  // s'arrêtait ICI et sautait tout le reste — y compris la mise à jour du
-  // texte (headline/productHint) avec la NOUVELLE publicité. Résultat :
-  // un client revenu via une pub différente gardait affichée l'ancienne
-  // pub (obsolète) dans la carte "origine publicité" de l'admin, alors
-  // que l'IA, elle, répondait correctement avec le bon produit (car elle
-  // lit le referral du message entrant, pas l'état stocké). Un commercial
-  // s'est fié à la carte obsolète et a répondu avec le mauvais produit
-  // (cas réel : Fatma Adel, carte "Bureau Bianca Junior" du 01/09 restée
-  // affichée alors qu'elle venait d'une pub "Bureau Zain" le 03/09).
-  // Le texte est maintenant toujours mis à jour ; seul le téléchargement
-  // de l'image (coûteux) est évité si une image existe déjà.
-  const existing = getConversationState(contact)?.adReferral || {};
-  if (safeString(existing?.storedMediaUrl).startsWith('/admin/conversation-media/') && fs.existsSync(path.join(CONVERSATION_MEDIA_DIR, path.basename(safeString(existing?.storedMediaUrl))))) {
-    updateConversationState(
-      contact,
-      current => ({
-        ...current,
-        cameFromAd: true,
-        adReferral: {
-          ...(current.adReferral || {}),
-          ...normalized,
-          storedMediaUrl: safeString(current?.adReferral?.storedMediaUrl),
-          productHint: normalized?.productHint || safeString(current?.adReferral?.productHint)
-        }
-      })
-    );
+  // V6.36.100 — Le texte de la NOUVELLE publicité est toujours écrit
+  // (cas réel : carte « Bureau Bianca Junior » restée affichée alors que la
+  // cliente venait d'une pub « Bureau Zain »). V6.45 — même chose pour le
+  // visuel : mergeAdReferral retire celui de l'ancienne pub si la pub a
+  // changé (avant, l'image de l'ancienne pub restait sous le nouveau titre).
+  const current = updateConversationState(
+    contact,
+    state => ({
+      ...state,
+      cameFromAd: true,
+      adReferral: mergeAdReferral(state.adReferral, normalized)
+    })
+  );
+
+  // Visuel déjà enregistré pour CETTE publicité (le fichier existe encore).
+  const existing = current?.adReferral || {};
+  if (storedAdVisualIsCurrent(existing, adKey) && adVisualFileExists(existing.storedMediaUrl)) {
     return safeString(existing.storedMediaUrl);
   }
 
-  try {
-    let response = null;
-
-    if (WHATSAPP_TOKEN) {
-      response = await fetchAdMediaWithRetry(remoteUrl, {
-        headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-          Connection: 'close'
-        }
-      });
-    }
-
-    // Les URL de créatives Meta sont souvent déjà signées. Si l'en-tête
-    // Authorization n'est pas accepté, retenter sans token.
-    if (!response || !response.ok) {
-      response = await fetchAdMediaWithRetry(remoteUrl);
-    }
-
-    if (!response.ok) {
-      throw new Error(`Téléchargement visuel publicité WhatsApp impossible (${response.status}).`);
-    }
-
-    const declaredLength = Number(response.headers.get('content-length') || 0);
-    if (declaredLength > MAX_CONVERSATION_MEDIA_BYTES) {
-      throw new Error('Visuel publicité WhatsApp trop volumineux.');
-    }
-
-    const buffer = await readResponseBufferWithLimit(response, MAX_CONVERSATION_MEDIA_BYTES);
-    const mediaType = safeString(normalized?.mediaType) || 'image';
-    const mimetype =
-      response.headers.get('content-type') ||
-      (mediaType === 'video' ? 'video/mp4' : 'image/jpeg');
-
-    const saved = await saveConversationMediaBuffer({
-      buffer,
-      mimetype,
-      type: mediaType,
-      messageId: `${messageId || Date.now()}-ad`,
-      index: 0,
-      channel: 'whatsapp',
-      direction: 'source-ad'
-    });
-
-    updateConversationState(
-      contact,
-      current => ({
-        ...current,
-        cameFromAd: true,
-        adReferral: {
-          ...(current.adReferral || {}),
-          ...normalized,
-          storedMediaUrl: safeString(saved?.url) || safeString(current?.adReferral?.storedMediaUrl),
-          productHint: normalized?.productHint || safeString(current?.adReferral?.productHint)
-        }
-      })
-    );
-
-    return safeString(saved?.url);
-  } catch (error) {
-    console.warn('⚠️ Visuel publicité WhatsApp non sauvegardé :', error.message);
-    return null;
+  const flightKey = `${contact}|${adKey}`;
+  if (adVisualDownloadsInFlight.has(flightKey)) {
+    return wait ? adVisualDownloadsInFlight.get(flightKey) : null;
   }
+
+  // V6.45 — Le téléchargement ne bloque plus la réponse au client (avant :
+  // jusqu'à ~2 min d'attente si le CDN Meta était lent). Il continue en
+  // arrière-plan ; la carte affiche le lien Meta en attendant.
+  const task = downloadWhatsAppAdVisual(contact, normalized)
+    .catch(error => {
+      console.warn('⚠️ Visuel publicité WhatsApp non sauvegardé :', error.message);
+      return null;
+    })
+    .finally(() => adVisualDownloadsInFlight.delete(flightKey));
+  adVisualDownloadsInFlight.set(flightKey, task);
+
+  return wait ? task : null;
 }
 
 // Patch session - Cherche une reponse rapide enregistree qui correspond
@@ -3044,15 +3117,12 @@ function rememberAdReferral(contact, referral) {
     current => ({
       ...current,
       cameFromAd: true,
-      adReferral: {
-        ...(current.adReferral || {}),
-        ...normalized,
-        // Ne pas effacer un produit déjà identifié si Meta renvoie
-        // ensuite un webhook moins riche.
-        productHint:
-          normalized.productHint ||
-          safeString(current?.adReferral?.productHint)
-      }
+      // V6.45 — mergeAdReferral (lib/ad-referral.js) : si la publicité a
+      // changé (adKey), le visuel de l'ancienne pub (storedMediaUrl,
+      // mediaUrl…) est retiré au lieu de rester sous le nouveau titre.
+      // productHint : inchangé (un produit déjà identifié n'est pas effacé
+      // si Meta renvoie ensuite un webhook moins riche).
+      adReferral: mergeAdReferral(current.adReferral, normalized)
     })
   );
 }
@@ -6136,15 +6206,25 @@ async function downloadWhatsAppMedia(
     );
   }
 
+  // V6.45 — Le token WhatsApp n'est envoyé qu'à un hôte Meta autorisé
+  // (lookaside.fbsbx.com, graph.facebook.com ; lib/meta-token-host.js).
+  // Autre hôte : lecture sans token (ajouter l'hôte à META_TOKEN_EXTRA_HOSTS
+  // si Meta en change).
+  const mediaTokenAllowed = canSendMetaToken(metadata.url);
+  if (!mediaTokenAllowed) {
+    console.warn('⚠️ Média WhatsApp : hôte non autorisé pour le token, lecture sans token :', safeString((() => { try { return new URL(metadata.url).hostname; } catch { return '?'; } })()));
+  }
   const mediaResponse =
     await fetchReadWithRetry(
       metadata.url,
-      {
-        headers: {
-          Authorization:
-            `Bearer ${WHATSAPP_TOKEN}`
-        }
-      },
+      mediaTokenAllowed
+        ? {
+            headers: {
+              Authorization:
+                `Bearer ${WHATSAPP_TOKEN}`
+            }
+          }
+        : {},
       { timeoutMs: MEDIA_FETCH_TIMEOUT_MS }
     );
 
@@ -9381,14 +9461,20 @@ async function processFacebookIncomingEvent({
 
   // Le visuel d'une publicité/référence est également copié dans /data si
   // Meta fournit une URL. Il reste distinct du média réellement envoyé.
+  // V6.45 — pour une pub : l'image (photo_url, sinon vignette video_url),
+  // téléchargée comme image ; le type réellement enregistré et l'identité
+  // de la pub (storedMediaType / storedMediaKey) sont notés.
+  const sourceAdCandidate = sourceContext?.type === 'ad'
+    ? (adVisualCandidates(sourceContext?.ad)[0] || null)
+    : null;
   const sourceRemoteUrl = sourceContext?.type === 'ad'
-    ? safeString(sourceContext?.ad?.mediaUrl)
+    ? safeString(sourceAdCandidate?.url)
     : safeString(sourceContext?.url);
 
   if (sourceRemoteUrl) {
     try {
       const sourceType = sourceContext?.type === 'ad'
-        ? (safeString(sourceContext?.ad?.mediaType) || 'image')
+        ? (safeString(sourceAdCandidate?.type) || 'image')
         : 'image';
       const savedSource = await persistFacebookAttachments(
         [{ type: sourceType, payload: { url: sourceRemoteUrl } }],
@@ -9403,7 +9489,12 @@ async function processFacebookIncomingEvent({
         sourceContext.previewType = safeString(savedSource?.[0]?.type);
         if (sourceContext.type === 'ad' && sourceContext.ad) {
           sourceContext.ad.storedMediaUrl = localPreview;
+          sourceContext.ad.storedMediaType = safeString(savedSource?.[0]?.type);
+          sourceContext.ad.storedMediaKey = safeString(sourceContext.ad.adKey);
         }
+      } else if (sourceContext.type === 'ad' && sourceContext.ad) {
+        sourceContext.ad.mediaFetchError = safeString(savedSource?.[0]?.error).slice(0, 200);
+        sourceContext.ad.mediaFetchFailedAt = new Date().toISOString();
       }
     } catch (error) {
       console.warn('⚠️ Visuel source Facebook non sauvegardé :', error.message);
@@ -10355,16 +10446,23 @@ async function processSingleInstagramEvent(event) {
   // Conserver aussi le visuel de contexte (Story/Reel/share/publicité) quand
   // Meta fournit une URL temporaire, sans le confondre avec le média envoyé
   // par le client.
+  // V6.45 — pour une pub : l'image (photo_url, sinon vignette video_url,
+  // qui est une image), téléchargée comme image ; type réellement enregistré
+  // et identité de la pub notés (storedMediaType / storedMediaKey).
+  const sourceAdCandidate =
+    sourceContext?.type === 'ad'
+      ? (adVisualCandidates(sourceContext?.ad)[0] || null)
+      : null;
   const sourceRemoteUrl =
     sourceContext?.type === 'ad'
-      ? safeString(sourceContext?.ad?.mediaUrl)
+      ? safeString(sourceAdCandidate?.url)
       : safeString(sourceContext?.url);
 
   if (sourceRemoteUrl) {
     try {
       const sourceType =
         sourceContext?.type === 'ad'
-          ? (safeString(sourceContext?.ad?.mediaType) || 'image')
+          ? (safeString(sourceAdCandidate?.type) || 'image')
           : (sourceContext?.type === 'reel' ? 'video' : 'image');
       const savedSource = await persistInstagramAttachments(
         [{ type: sourceType, payload: { url: sourceRemoteUrl } }],
@@ -10379,7 +10477,12 @@ async function processSingleInstagramEvent(event) {
         sourceContext.previewType = safeString(savedSource?.[0]?.type);
         if (sourceContext.type === 'ad' && sourceContext.ad) {
           sourceContext.ad.storedMediaUrl = localPreview;
+          sourceContext.ad.storedMediaType = safeString(savedSource?.[0]?.type);
+          sourceContext.ad.storedMediaKey = safeString(sourceContext.ad.adKey);
         }
+      } else if (sourceContext.type === 'ad' && sourceContext.ad) {
+        sourceContext.ad.mediaFetchError = safeString(savedSource?.[0]?.error).slice(0, 200);
+        sourceContext.ad.mediaFetchFailedAt = new Date().toISOString();
       }
     } catch (error) {
       console.warn('⚠️ Visuel source Instagram non sauvegardé :', error.message);
