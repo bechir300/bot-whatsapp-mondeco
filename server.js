@@ -3151,6 +3151,11 @@ function getConversationAdContext(contact) {
     );
 
   return {
+    // V6.45 — Identité de la pub (lib/ad-referral.js), lue par la
+    // résolution produit (conversationAdKey) : même valeur que sourceId
+    // pour les pubs identifiées, empreinte du texte sinon.
+    adKey:
+      adRecordKey(ad),
     headline:
       safeString(ad.headline),
     body:

@@ -143,8 +143,11 @@ test('client revenu par une autre pub SANS visuel : plus d’image de l’ancien
   const merged = mergeAdReferral(previous, { adKey: 'AD-BIANCA', sourceId: 'AD-BIANCA', headline: 'Bianca', productHint: '' });
   assert.strictEqual(merged.storedMediaUrl, undefined);
   assert.strictEqual(merged.mediaUrl, undefined);
-  // productHint : comportement inchangé (gardé si le nouveau webhook est moins riche).
+  // productHint : gardé si le nouveau webhook est moins riche (même pub ou
+  // identité inconnue), jamais repris d'une AUTRE pub.
   assert.strictEqual(mergeAdReferral({ productHint: 'Salon' }, { adKey: 'X' }).productHint, 'Salon');
+  assert.strictEqual(mergeAdReferral({ sourceId: 'X', productHint: 'Salon' }, { adKey: 'X' }).productHint, 'Salon');
+  assert.strictEqual(merged.productHint, '');
 });
 
 test('même pub (nouveau clic, autre ctwa_clid) : visuel enregistré conservé', () => {
