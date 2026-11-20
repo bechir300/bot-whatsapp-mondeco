@@ -145,6 +145,10 @@ const sqliteConnection = registerSqliteConnectionV646(createSqliteConnectionV646
   initialize(db) {
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
+    // V6.47 — Sans limite, le journal WAL garde la taille de son pic
+    // (346 Mo en production pour une base de 253 Mo) : il est ramené à
+    // 64 Mo au plus après chaque point de contrôle.
+    db.pragma('journal_size_limit = 67108864');
     db.exec(`
       CREATE TABLE IF NOT EXISTS conversation_states (
         contact TEXT PRIMARY KEY,
