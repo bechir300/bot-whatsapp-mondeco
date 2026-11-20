@@ -1202,6 +1202,10 @@ function emergencyFreeDisposableStorage() {
       }
 
       const favoriteMedia = collectFavoriteConversationMediaBasenames(retentionProtectedConversationContacts());
+      // V6.45 — visuels (images) des publicités d'origine de TOUTES les
+      // conversations : petits, partagés par pub, et impossibles à
+      // retélécharger une fois le lien Meta expiré.
+      for (const name of collectAdVisualMediaBasenames()) favoriteMedia.add(name);
       const mediaCutoff = Date.now() - EMERGENCY_MEDIA_RETENTION_DAYS * 24 * 60 * 60 * 1000;
       freed += pruneFilesOlderThan(
         CONVERSATION_MEDIA_DIR,
@@ -1405,6 +1409,41 @@ function collectFavoriteConversationMediaBasenames(favoriteContacts) {
     }
   } catch {}
 
+  return output;
+}
+
+// V6.45 — Noms des fichiers images des visuels de publicités (adReferral
+// et contexte « publicité » Instagram/Messenger) de toutes les
+// conversations, plus les visuels partagés ad-visual-*. Les vidéos (anciens
+// enregistrements de pubs vidéo, jusqu'à 20 Mo chacune) ne sont pas
+// protégées : la réparation les remplace par la vignette.
+function collectAdVisualMediaBasenames() {
+  const output = new Set();
+  const isImageName = name => /\.(jpe?g|png|webp|gif)$/i.test(name);
+  const add = value => {
+    const raw = safeString(value);
+    if (!raw.startsWith('/admin/conversation-media/')) return;
+    let fileName = safeString(raw.split('/').pop()).split(/[?#]/)[0];
+    try { fileName = decodeURIComponent(fileName); } catch {}
+    if (fileName && isImageName(fileName)) output.add(fileName);
+  };
+  try {
+    for (const state of Object.values(loadConversationStatesAdmin() || {})) {
+      if (!state || typeof state !== 'object') continue;
+      add(state.adReferral?.storedMediaUrl);
+      if (safeString(state.sourceContext?.type) === 'ad') {
+        add(state.sourceContext?.previewUrl);
+        add(state.sourceContext?.ad?.storedMediaUrl);
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ Storage Rescue : visuels publicités non listés :', error.message);
+  }
+  try {
+    for (const name of fs.readdirSync(CONVERSATION_MEDIA_DIR)) {
+      if (name.startsWith('ad-visual-') && isImageName(name)) output.add(name);
+    }
+  } catch {}
   return output;
 }
 
@@ -4350,6 +4389,24 @@ if (IS_RAILWAY) {
 // CONTEXTE IA
 // ============================================================
 
+// V6.45 — Décodage des fiches WooCommerce (WPBakery, caractéristiques) et
+// règles catalogue (variations, corrections volontaires, doublons
+// manuels). Chargés ici, avant tout usage (contexte IA et synchronisation).
+const wooDescription = require('./lib/woo-description');
+const wooCatalog = require('./lib/woo-catalog');
+
+// V6.45 — Longueur maximale de la description dans un bloc produit envoyé
+// à l'IA. Une description de plusieurs milliers de caractères (fiches
+// WPBakery) faisait sortir les autres produits du budget de contexte.
+const PRODUCT_CONTEXT_DESCRIPTION_MAX = Math.max(
+  200,
+  Math.min(
+    4000,
+    Number(process.env.MONDECO_PRODUCT_CONTEXT_DESCRIPTION_MAX || 600) || 600
+  )
+);
+const productContextTruncationLogged = new Set();
+
 function availabilityLabel(value) {
   const labels = {
     in_stock: 'En stock',
@@ -4369,8 +4426,10 @@ function availabilityLabel(value) {
 function productToContext(product) {
   const lines = [];
 
+  // V6.45 — Le nom vient toujours en premier (« Produit : … ») : le
+  // classement des blocs et les contrôles de prix s'appuient dessus.
   lines.push(
-    `Produit : ${safeString(product.name)}`
+    `Produit : ${safeString(product.name) || '(sans nom)'}`
   );
 
   if (product.category) {
@@ -4379,15 +4438,55 @@ function productToContext(product) {
     );
   }
 
-  if (product.price) {
+  // V6.45 — Fiche manuelle repérée comme doublon d'un produit du site
+  // (voir flagManualWooDuplicates). Doublon certain : aucun prix n'est
+  // transmis (il est souvent périmé, ex. « Chambre Bianca » 2800 DT), l'IA
+  // doit s'appuyer sur la fiche du site. Doublon possible : prix gardé,
+  // avec un avertissement.
+  const duplicateOfWooId =
+    Number(product.duplicateOfWooId) || 0;
+
+  const duplicateCertain =
+    Boolean(duplicateOfWooId) &&
+    product.duplicateConfidence !== 'possible';
+
+  // V6.45 — Produit variable : prix par variante (« à partir de »).
+  const variationContext =
+    duplicateCertain
+      ? null
+      : wooCatalog.variationContextLines(product);
+
+  if (duplicateOfWooId && !duplicateCertain) {
     lines.push(
-      `Prix normal : ${safeString(product.price)} TND`
+      `Attention : fiche manuelle, doublon possible de la fiche du site réf. ${duplicateOfWooId}. En cas de doute, utiliser la fiche du site.`
     );
   }
 
-  if (product.promoPrice) {
+  if (duplicateCertain) {
     lines.push(
-      `Prix promotionnel : ${safeString(product.promoPrice)} TND`
+      `Attention : ancienne fiche manuelle, doublon de la fiche du site réf. ${duplicateOfWooId}. Prix retiré : citer seulement le prix de la fiche du site, sinon [COMMERCIAL_REQUIRED].`
+    );
+  } else if (variationContext?.priceLines) {
+    lines.push(
+      ...variationContext.priceLines
+    );
+  } else {
+    if (product.price) {
+      lines.push(
+        `Prix normal : ${safeString(product.price)} TND`
+      );
+    }
+
+    if (product.promoPrice) {
+      lines.push(
+        `Prix promotionnel : ${safeString(product.promoPrice)} TND`
+      );
+    }
+  }
+
+  if (variationContext?.detailLines?.length) {
+    lines.push(
+      ...variationContext.detailLines
     );
   }
 
@@ -4406,6 +4505,19 @@ function productToContext(product) {
   if (product.composition) {
     lines.push(
       `Composition : ${safeString(product.composition)}`
+    );
+  }
+
+  // V6.45 — Autres caractéristiques lues sur la fiche du site (matière,
+  // plateau, style…), sans la composition ni les dimensions déjà listées.
+  const specsText =
+    wooDescription.otherSpecsText(
+      product.specs
+    );
+
+  if (specsText) {
+    lines.push(
+      `Caractéristiques : ${specsText}`
     );
   }
 
@@ -4458,12 +4570,49 @@ function productToContext(product) {
   }
 
   if (product.description) {
+    // V6.45 — Description plafonnée : un bloc trop long ne doit jamais
+    // évincer les autres produits du budget de contexte.
+    const description =
+      safeString(product.description);
+
+    const shortDescription =
+      description.length > PRODUCT_CONTEXT_DESCRIPTION_MAX
+        ? wooDescription.compactText(
+            description,
+            PRODUCT_CONTEXT_DESCRIPTION_MAX
+          )
+        : description;
+
+    if (
+      shortDescription.length < description.length &&
+      / …$/.test(shortDescription) &&
+      !productContextTruncationLogged.has(product.id || product.name)
+    ) {
+      productContextTruncationLogged.add(product.id || product.name);
+
+      // Une seule ligne par fiche et par démarrage.
+      console.debug(
+        `✂️ Description produit raccourcie pour l’IA : ${safeString(product.name)} (${description.length} → ${shortDescription.length} caractères)`
+      );
+    }
+
     lines.push(
-      `Description : ${safeString(product.description)}`
+      `Description : ${shortDescription}`
     );
   }
 
   return lines.join('\n');
+}
+
+// V6.45 — Ordre des fiches dans le contexte IA : les fiches manuelles
+// repérées comme doublons d'un produit du site passent après toutes les
+// autres (à score égal, le site l'emporte). Tri stable : l'ordre existant
+// est conservé pour le reste.
+function compareProductsForContext(a, b) {
+  return (
+    Number(Boolean(Number(a?.duplicateOfWooId))) -
+    Number(Boolean(Number(b?.duplicateOfWooId)))
+  );
 }
 
 function getBusinessContext() {
@@ -4484,7 +4633,8 @@ function getBusinessContext() {
 
   const activeProducts =
     loadProducts()
-      .filter(product => product.active !== false);
+      .filter(product => product.active !== false)
+      .sort(compareProductsForContext);
 
   const productsText =
     activeProducts
@@ -6891,6 +7041,85 @@ router.get(
     return res.sendStatus(404);
   }
 );
+
+// ============================================================
+// V6.45 — VISUEL DE LA PUBLICITÉ D'ORIGINE : RÉPARATION À LA DEMANDE
+// ============================================================
+// Appelée par la carte « publicité d'origine » quand son image est absente
+// ou ne se charge pas (fichier purgé, lien Meta expiré, pub vidéo ancienne
+// sans vignette). Ordre : visuel déjà enregistré pour la même pub (fichier
+// partagé ou autre conversation), liens Meta encore valides, puis API Graph
+// si META_ADS_TOKEN (token avec ads_read) est configuré. Voir
+// lib/ad-visual.js.
+const { createAdVisualRepair } = require('./lib/ad-visual');
+const { canSendMetaToken } = require('./lib/meta-token-host');
+
+// Même écriture que updateConversationState (server.js) : SQLite d'abord
+// (lu en priorité par server.js), puis le cache JSON en miroir.
+function updateAdVisualConversationState(contact, updater) {
+  const current = getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || {};
+  const draft = { ...current };
+  const result = updater(draft) || draft;
+  // Rien à changer (la pub a changé entre-temps, par exemple) : aucune écriture.
+  if (result === draft) return current;
+  const updated = slimConversationState(result);
+  setConversationStateSingle(contact, updated);
+  const states = loadConversationStatesAdmin();
+  states[contact] = updated;
+  saveConversationStatesAdmin(states);
+  return updated;
+}
+
+let adVisualRepairService = null;
+function adVisualRepairer() {
+  if (!adVisualRepairService) {
+    adVisualRepairService = createAdVisualRepair({
+      mediaDir: CONVERSATION_MEDIA_DIR,
+      getState: contact => getConversationStateSingle(contact) || loadConversationStatesAdmin()[contact] || null,
+      listStates: () => Object.entries(loadConversationStatesAdmin() || {}),
+      updateState: updateAdVisualConversationState,
+      fileExists: filename =>
+        fs.existsSync(path.join(CONVERSATION_MEDIA_DIR, filename)) ||
+        Boolean(cloudManifestEntry('media', filename)),
+      adsToken: safeString(process.env.META_ADS_TOKEN),
+      graphVersion: META_API_VERSION
+    });
+  }
+  return adVisualRepairService;
+}
+
+router.post('/api/conversations/:contact/ad-visual/refresh', requireAuth, async (req, res) => {
+  try {
+    const contact = safeString(req.params.contact);
+    if (!contact) return res.status(400).json({ error: 'Contact client obligatoire.' });
+    if (!requireCommercialConversationChannelAccess(req, res, contact)) return;
+    const result = await adVisualRepairer().repairConversation(contact, { force: req.body?.force === true });
+    const state = result?.state && typeof result.state === 'object'
+      ? result.state
+      : (getConversationStateSingle(contact) || {});
+    return res.json({
+      ok: Boolean(result?.ok),
+      changed: Boolean(result?.changed),
+      source: safeString(result?.source),
+      reason: safeString(result?.reason),
+      error: safeString(result?.error),
+      adReferral: state?.adReferral && typeof state.adReferral === 'object' ? state.adReferral : null,
+      sourceContext: state?.sourceContext && typeof state.sourceContext === 'object'
+        ? {
+            type: safeString(state.sourceContext.type),
+            previewUrl: safeString(state.sourceContext.previewUrl),
+            previewType: safeString(state.sourceContext.previewType),
+            ad: state.sourceContext.ad && typeof state.sourceContext.ad === 'object'
+              ? { adKey: safeString(state.sourceContext.ad.adKey) }
+              : undefined
+          }
+        : null
+    });
+  } catch (error) {
+    console.error('❌ Visuel publicité (réparation) :', error.message);
+    return res.status(500).json({ error: 'Impossible de récupérer le visuel de la publicité.' });
+  }
+});
 
 
 
@@ -10452,7 +10681,15 @@ const WOO_SYNC_DEFAULT_STATE = {
   lastDeactivated: 0,
   lastWebhookAt: null,
   lastWebhookTopic: '',
-  lastWebhookProductId: null
+  lastWebhookProductId: null,
+  // V6.45 — rapport de synchronisation enrichi.
+  lastVariableProducts: 0,
+  lastVariationsFetched: 0,
+  lastVariationErrors: 0,
+  lastDuplicateManualCount: 0,
+  lastDuplicateManualProducts: [],
+  lastOverridesCount: 0,
+  lastOverrides: []
 };
 
 let wooSyncRunning = false;
@@ -10580,54 +10817,40 @@ function wooPublicStatus(req = null) {
 
     webhookUrl,
 
-    ...sync
+    ...sync,
+
+    // V6.45 — alerte : aucune synchronisation réussie depuis plus de deux
+    // intervalles (catalogue et prix potentiellement périmés).
+    syncStale:
+      Boolean(
+        WOOCOMMERCE_SYNC_ENABLED &&
+        wooConfigured() &&
+        (
+          !sync.lastSuccessAt ||
+          Date.now() - Date.parse(sync.lastSuccessAt) >
+            2 * WOOCOMMERCE_SYNC_MINUTES * 60 * 1000
+        )
+      )
   };
 }
 
+// V6.45 — Les blocs WPBakery [vc_raw_html] (HTML encodé en URL puis en
+// base64) sont décodés, les autres shortcodes [vc_*] retirés et toutes les
+// entités HTML (&#215;, &#8211;…) décodées.
 function htmlToPlainText(value) {
-  return safeString(value)
-    .replace(
-      /<script[\s\S]*?<\/script>/gi,
-      ' '
+  return wooDescription.htmlToText(
+    wooDescription.expandWooDescriptionHtml(
+      safeString(value)
     )
-    .replace(
-      /<style[\s\S]*?<\/style>/gi,
-      ' '
-    )
-    .replace(
-      /<[^>]+>/g,
-      ' '
-    )
-    .replaceAll('&nbsp;', ' ')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#039;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replace(
-      /\s+/g,
-      ' '
-    )
-    .trim();
+  );
 }
 
+// V6.45 — Le « + » est significatif (« Salon Baya » ≠ « Salon Baya+ ») et
+// les entités HTML sont décodées avant comparaison.
 function normalizeWooLookup(value) {
-  return safeString(value)
-    .normalize('NFD')
-    .replace(
-      /[\u0300-\u036f]/g,
-      ''
-    )
-    .toLowerCase()
-    .replace(
-      /[^a-z0-9]+/g,
-      ' '
-    )
-    .replace(
-      /\s+/g,
-      ' '
-    )
-    .trim();
+  return wooCatalog.foldProductName(
+    safeString(value)
+  );
 }
 
 function wooAttributeValue(
@@ -10673,7 +10896,8 @@ function wooAttributeValue(
 
     const value =
       options
-        .map(safeString)
+        // V6.45 — entités HTML décodées (« Blanc &amp; Beige »).
+        .map(wooDescription.cleanInlineText)
         .filter(Boolean)
         .join(', ');
 
@@ -10786,7 +11010,8 @@ function mapWooCommerceProduct(product) {
   const category =
     categories
       .map(item =>
-        safeString(
+        // V6.45 — entités HTML décodées (« Salons &amp; Séjours »).
+        wooDescription.cleanInlineText(
           item?.name
         )
       )
@@ -10840,16 +11065,46 @@ function mapWooCommerceProduct(product) {
       ]
     );
 
-  const composition =
+  // V6.45 — Description longue WPBakery décodée : composition, dimensions
+  // par élément et caractéristiques lues dans l'encadré de la fiche.
+  const content =
+    wooDescription.parseWooProductContent(
+      product
+    );
+
+  // Attribut « composition » explicite, sinon la ligne « Composition » de
+  // la fiche, sinon (ancien comportement) un attribut « matière ».
+  const explicitComposition =
     wooAttributeValue(
       product,
       [
-        'composition',
-        'matiere',
-        'matieres',
-        'material',
-        'materials'
+        'composition'
       ]
+    );
+
+  // V6.45 — Pack (chambre + salon + salle à manger) : la composition est
+  // celle de tout le pack, ou vide ; jamais celle d'un seul ensemble ni la
+  // matière. compositionFromPack force le remplacement de la composition
+  // enregistrée par une synchronisation précédente.
+  const compositionFromPack =
+    !explicitComposition &&
+    Boolean(content.multiSet);
+
+  const composition =
+    explicitComposition ||
+    content.composition ||
+    (
+      compositionFromPack
+        ? ''
+        : wooAttributeValue(
+          product,
+          [
+            'matiere',
+            'matieres',
+            'material',
+            'materials'
+          ]
+        )
     );
 
   const showrooms =
@@ -10882,6 +11137,39 @@ function mapWooCommerceProduct(product) {
     safeString(
       product?.price
     );
+
+  // V6.45 — Une promotion programmée (sale_price renseigné mais on_sale
+  // faux) n'est pas encore active : pas de prix promotionnel.
+  const salePrice =
+    product?.on_sale === false
+      ? ''
+      : safeString(
+          product?.sale_price
+        );
+
+  // V6.45 — Produit variable : variations lues par fetchWooProductVariations
+  // (null = non récupérées, la fiche locale garde alors les précédentes).
+  const isVariable =
+    safeString(
+      product?.type
+    ) === 'variable';
+
+  const variations =
+    isVariable &&
+    Array.isArray(
+      product?.mondecoVariations
+    )
+      ? wooCatalog.mapWooVariations(
+          product.mondecoVariations
+        )
+      : null;
+
+  const variationSummary =
+    variations
+      ? wooCatalog.summarizeVariationPrices(
+          variations
+        )
+      : null;
 
   return {
     woocommerceId:
@@ -10928,21 +11216,23 @@ function mapWooCommerceProduct(product) {
         product?.date_modified
       ),
 
+    // V6.45 — entités HTML décodées (« Lit 90&#215;190 » → « Lit 90×190 »).
     name:
-      safeString(
+      wooDescription.cleanInlineText(
         product?.name
       ),
 
     category,
 
     price:
+      variationSummary?.price ||
       regularPrice ||
       currentPrice,
 
     promoPrice:
-      safeString(
-        product?.sale_price
-      ),
+      variationSummary
+        ? variationSummary.promoPrice
+        : salePrice,
 
     availability:
       wooAvailability(
@@ -10952,9 +11242,25 @@ function mapWooCommerceProduct(product) {
     dimensions:
       wooDimensionsText(
         product
-      ),
+      ) ||
+      content.dimensions,
 
     composition,
+
+    compositionFromPack,
+
+    specs:
+      content.specs,
+
+    variations,
+
+    priceFrom:
+      variationSummary?.priceFrom ||
+      '',
+
+    priceTo:
+      variationSummary?.priceTo ||
+      '',
 
     colors,
 
@@ -10967,11 +11273,10 @@ function mapWooCommerceProduct(product) {
 
     categoryUrl,
 
+    // V6.45 — texte court (description courte, sinon description longue
+    // décodée), plafonné ; les caractéristiques sont dans specs.
     description:
-      htmlToPlainText(
-        product?.short_description ||
-        product?.description
-      ),
+      content.description,
 
     imageUrl,
 
@@ -10982,28 +11287,60 @@ function mapWooCommerceProduct(product) {
   };
 }
 
+// V6.45 — Rapprochement sans collision. Une fiche locale qui porte déjà un
+// autre identifiant WooCommerce n'est JAMAIS reprise par nom : avant, « Salon
+// Baya » et « Salon Baya+ » (le « + » était ignoré), ou les deux « Table à
+// Manger Ronde Violine avec 4 Chaises », fusionnaient en une seule fiche qui
+// changeait de prix à chaque synchronisation. Le SKU et le slug (uniques sur
+// le site) peuvent reprendre une fiche sans identifiant, ou dont
+// l'identifiant n'existe plus sur le site (options.remoteIds, synchronisation
+// complète seulement : produit supprimé puis recréé).
 function findWooProductIndex(
   products,
-  remote
+  remote,
+  options = {}
 ) {
-  if (
-    remote.woocommerceId
-  ) {
+  const remoteId =
+    Number(
+      remote.woocommerceId
+    ) || 0;
+
+  if (remoteId) {
     const byId =
       products.findIndex(
         item =>
           Number(
             item?.woocommerceId
           ) ===
-          Number(
-            remote.woocommerceId
-          )
+          remoteId
       );
 
     if (byId >= 0) {
       return byId;
     }
   }
+
+  const remoteIds =
+    options.remoteIds instanceof Set
+      ? options.remoteIds
+      : null;
+
+  const adoptable = item => {
+    const localId =
+      Number(
+        item?.woocommerceId
+      ) || 0;
+
+    if (!localId) {
+      return true;
+    }
+
+    return Boolean(
+      remoteIds &&
+      localId !== remoteId &&
+      !remoteIds.has(localId)
+    );
+  };
 
   if (
     remote.woocommerceSku
@@ -11017,6 +11354,7 @@ function findWooProductIndex(
       products.findIndex(
         item =>
           sku &&
+          adoptable(item) &&
           (
             normalizeWooLookup(
               item?.woocommerceSku
@@ -11043,6 +11381,8 @@ function findWooProductIndex(
     const bySlug =
       products.findIndex(
         item =>
+          slug &&
+          adoptable(item) &&
           normalizeWooLookup(
             item?.woocommerceSlug
           ) === slug
@@ -11062,6 +11402,9 @@ function findWooProductIndex(
     return -1;
   }
 
+  // Par nom : uniquement une fiche manuelle (jamais synchronisée, sans
+  // identifiant WooCommerce), et seulement si elle est la seule à porter
+  // exactement ce nom.
   const sameNameIndexes =
     products
       .map(
@@ -11070,6 +11413,13 @@ function findWooProductIndex(
           index
         ) => ({
           index,
+          manual:
+            !Number(
+              item?.woocommerceId
+            ) &&
+            safeString(
+              item?.syncSource
+            ) !== 'woocommerce',
           name:
             normalizeWooLookup(
               item?.name
@@ -11078,6 +11428,7 @@ function findWooProductIndex(
       )
       .filter(
         item =>
+          item.manual &&
           item.name ===
           normalizedName
       )
@@ -11135,6 +11486,75 @@ function mergeWooProduct(
       '';
   }
 
+  // V6.45 — Une valeur fournie par le site remplace la valeur locale
+  // (périmée ou saisie avant la synchronisation), sauf correction
+  // volontaire enregistrée dans product.overrides (fiche produit ou
+  // correction commerciale). Si le site ne fournit rien, la valeur locale
+  // est conservée comme avant.
+  const overrides =
+    wooCatalog.sanitizeOverrides(
+      current?.overrides
+    );
+
+  const wooFieldValue = field =>
+    overrides[field]
+      ? overrides[field].value
+      : (
+          remote[field] ||
+          safeString(
+            current?.[field]
+          )
+        );
+
+  // V6.45 — Variations : si elles n'ont pas pu être relues (null), les
+  // précédentes sont gardées tant que leur prix minimum correspond encore au
+  // prix « à partir de » renvoyé par le site ; sinon elles sont retirées.
+  let variations =
+    remote.variations;
+
+  let price =
+    remote.price;
+
+  let promoPrice =
+    remote.promoPrice;
+
+  let priceFrom =
+    remote.priceFrom;
+
+  let priceTo =
+    remote.priceTo;
+
+  if (
+    variations === null &&
+    remote.woocommerceType === 'variable' &&
+    Array.isArray(
+      current?.variations
+    ) &&
+    current.variations.length
+  ) {
+    const kept =
+      wooCatalog.summarizeVariationPrices(
+        current.variations
+      );
+
+    if (
+      kept &&
+      wooCatalog.priceNumber(kept.priceFrom) ===
+        wooCatalog.priceNumber(remote.price)
+    ) {
+      variations =
+        current.variations;
+      price =
+        kept.price;
+      promoPrice =
+        kept.promoPrice;
+      priceFrom =
+        kept.priceFrom;
+      priceTo =
+        kept.priceTo;
+    }
+  }
+
   return {
     ...current,
 
@@ -11151,38 +11571,57 @@ function mergeWooProduct(
       ) ||
       'WooCommerce',
 
-    price:
-      remote.price,
+    price,
 
-    promoPrice:
-      remote.promoPrice,
+    promoPrice,
 
     availability:
       remote.availability,
 
     dimensions:
-      remote.dimensions ||
-      safeString(
-        current?.dimensions
+      wooFieldValue(
+        'dimensions'
       ),
 
     composition:
-      remote.composition ||
-      safeString(
-        current?.composition
-      ),
+      remote.compositionFromPack &&
+      !overrides.composition
+        ? safeString(
+            remote.composition
+          )
+        : wooFieldValue(
+            'composition'
+          ),
 
     colors:
-      remote.colors ||
-      safeString(
-        current?.colors
+      wooFieldValue(
+        'colors'
       ),
 
     showrooms:
-      remote.showrooms ||
-      safeString(
-        current?.showrooms
+      wooFieldValue(
+        'showrooms'
       ),
+
+    specs:
+      remote.specs &&
+      Object.keys(remote.specs).length
+        ? remote.specs
+        : undefined,
+
+    variations:
+      Array.isArray(variations) &&
+      variations.length
+        ? variations
+        : undefined,
+
+    priceFrom:
+      priceFrom ||
+      undefined,
+
+    priceTo:
+      priceTo ||
+      undefined,
 
     productUrl:
       remote.productUrl ||
@@ -11197,9 +11636,8 @@ function mergeWooProduct(
       ),
 
     description:
-      remote.description ||
-      safeString(
-        current?.description
+      wooFieldValue(
+        'description'
       ),
 
     image,
@@ -11282,6 +11720,27 @@ function createLocalProductFromWoo(
 
     showrooms:
       remote.showrooms,
+
+    // V6.45 — caractéristiques et variations (champs optionnels).
+    specs:
+      remote.specs &&
+      Object.keys(remote.specs).length
+        ? remote.specs
+        : undefined,
+
+    variations:
+      Array.isArray(remote.variations) &&
+      remote.variations.length
+        ? remote.variations
+        : undefined,
+
+    priceFrom:
+      remote.priceFrom ||
+      undefined,
+
+    priceTo:
+      remote.priceTo ||
+      undefined,
 
     productUrl:
       remote.productUrl,
@@ -11371,8 +11830,24 @@ function upsertWooProductInArray(
   products,
   wooProduct,
   now =
-    new Date().toISOString()
+    new Date().toISOString(),
+  options = {}
 ) {
+  // V6.45 — Une variation (webhook) n'est pas un produit du catalogue :
+  // elle est rattachée à son produit parent par processWooCommerceWebhook.
+  if (
+    safeString(
+      wooProduct?.type
+    ) === 'variation'
+  ) {
+    return {
+      action:
+        'skipped',
+      product:
+        null
+    };
+  }
+
   const remote =
     mapWooCommerceProduct(
       wooProduct
@@ -11389,7 +11864,8 @@ function upsertWooProductInArray(
   const index =
     findWooProductIndex(
       products,
-      remote
+      remote,
+      options
     );
 
   if (index === -1) {
@@ -11729,6 +12205,321 @@ async function fetchAllWooProducts() {
   return products;
 }
 
+// V6.45 — Variations des produits variables. L'API produits ne renvoie pour
+// un produit variable que le prix le plus bas (prix normal et promo vides) :
+// sans les variations, l'IA annonçait ce prix pour toutes les tailles ou
+// couleurs (ex. Lit Capitonné Nuage 590 / 690 DT) et perdait les promotions.
+const WOO_VARIATIONS_CONCURRENCY = 4;
+const WOO_VARIATIONS_MAX_PAGES = 10;
+const WOO_VARIATIONS_BUDGET_MS = 3 * 60 * 1000;
+const WOO_SYNC_REPORT_LIST_MAX = 50;
+
+async function fetchWooProductVariations(productId) {
+  const numericId =
+    Number(
+      productId
+    );
+
+  if (!numericId) {
+    return [];
+  }
+
+  const variations = [];
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const result =
+      await wooApiRequest(
+        `products/${numericId}/variations`,
+        {
+          query: {
+            per_page:
+              100,
+            page
+          }
+        }
+      );
+
+    if (
+      !Array.isArray(
+        result.data
+      )
+    ) {
+      throw new Error(
+        'Réponse WooCommerce variations invalide.'
+      );
+    }
+
+    variations.push(
+      ...result.data
+    );
+
+    totalPages =
+      Math.max(
+        1,
+        Number(
+          result.headers.get(
+            'x-wp-totalpages'
+          )
+        ) || 1
+      );
+
+    page += 1;
+  } while (
+    page <= totalPages &&
+    page <= WOO_VARIATIONS_MAX_PAGES
+  );
+
+  return variations;
+}
+
+// Ajoute product.mondecoVariations à chaque produit variable (lu ensuite
+// par mapWooCommerceProduct). Un échec laisse la fiche locale garder ses
+// variations précédentes ; la synchronisation n'échoue pas pour autant.
+async function attachWooVariations(remoteProducts) {
+  const variable =
+    (Array.isArray(remoteProducts) ? remoteProducts : [])
+      .filter(product =>
+        safeString(
+          product?.type
+        ) === 'variable' &&
+        Number(
+          product?.id
+        )
+      );
+
+  const stats = {
+    variableProducts:
+      variable.length,
+    fetched: 0,
+    errors: 0,
+    skipped: 0
+  };
+
+  const deadline =
+    Date.now() +
+    WOO_VARIATIONS_BUDGET_MS;
+
+  let cursor = 0;
+  let consecutiveErrors = 0;
+
+  const worker = async () => {
+    while (cursor < variable.length) {
+      const product =
+        variable[cursor];
+
+      cursor += 1;
+
+      // Site indisponible ou trop lent : on n'insiste pas.
+      if (
+        Date.now() > deadline ||
+        consecutiveErrors >= 5
+      ) {
+        stats.skipped += 1;
+        continue;
+      }
+
+      try {
+        product.mondecoVariations =
+          await fetchWooProductVariations(
+            product.id
+          );
+
+        stats.fetched += 1;
+        consecutiveErrors = 0;
+      } catch (error) {
+        stats.errors += 1;
+        consecutiveErrors += 1;
+
+        console.warn(
+          '⚠️ Variations WooCommerce non lues :',
+          Number(product.id),
+          error.message
+        );
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      {
+        length:
+          Math.min(
+            WOO_VARIATIONS_CONCURRENCY,
+            variable.length
+          )
+      },
+      worker
+    )
+  );
+
+  return stats;
+}
+
+// V6.45 — Fiches manuelles (jamais synchronisées) qui doublonnent un
+// produit du site, ex. « Chambre Bianca » 2800 DT ou « Lit Bianca + 2
+// chevets » à côté de « Chambre à Coucher Bianca » (WooCommerce). Elles ne
+// sont PAS supprimées ni désactivées : elles sont marquées
+// (duplicateOfWooId / duplicateOfName / duplicateConfidence « high » ou
+// « possible » / duplicateFlaggedAt) pour passer après la fiche du site
+// dans le contexte IA (sans prix si le doublon est certain) et sont listées
+// dans le rapport de synchronisation. product.notDuplicateOfWoo = true
+// désactive ce repérage pour une fiche.
+function flagManualWooDuplicates(
+  products,
+  now =
+    new Date().toISOString()
+) {
+  const isWooRecord = product =>
+    Number(
+      product?.woocommerceId
+    ) > 0 ||
+    safeString(
+      product?.syncSource
+    ) === 'woocommerce';
+
+  const matches =
+    wooCatalog.findManualDuplicates(
+      products.filter(product =>
+        product &&
+        !isWooRecord(product)
+      ),
+      products.filter(product =>
+        product &&
+        isWooRecord(product) &&
+        safeString(
+          product?.syncSource
+        ) === 'woocommerce'
+      )
+    );
+
+  const flagged = [];
+
+  for (
+    let index = 0;
+    index < products.length;
+    index += 1
+  ) {
+    const product =
+      products[index];
+
+    if (!product) {
+      continue;
+    }
+
+    const match =
+      isWooRecord(product)
+        ? null
+        : matches.get(product);
+
+    if (match) {
+      const sameTarget =
+        Number(
+          product.duplicateOfWooId
+        ) === match.wooId;
+
+      if (
+        !sameTarget ||
+        product.duplicateOfName !== match.wooName ||
+        product.duplicateConfidence !== match.confidence
+      ) {
+        products[index] = {
+          ...product,
+          duplicateOfWooId:
+            match.wooId,
+          duplicateOfName:
+            match.wooName,
+          duplicateConfidence:
+            match.confidence,
+          duplicateFlaggedAt:
+            sameTarget &&
+            product.duplicateFlaggedAt
+              ? product.duplicateFlaggedAt
+              : now
+        };
+      }
+
+      flagged.push({
+        id:
+          safeString(product.id),
+        name:
+          safeString(product.name),
+        price:
+          safeString(product.price),
+        promoPrice:
+          safeString(product.promoPrice),
+        duplicateOfWooId:
+          match.wooId,
+        duplicateOfName:
+          match.wooName,
+        confidence:
+          match.confidence
+      });
+
+      continue;
+    }
+
+    if (
+      product.duplicateOfWooId !== undefined ||
+      product.duplicateOfName !== undefined ||
+      product.duplicateConfidence !== undefined ||
+      product.duplicateFlaggedAt !== undefined
+    ) {
+      const cleaned = {
+        ...product
+      };
+
+      delete cleaned.duplicateOfWooId;
+      delete cleaned.duplicateOfName;
+      delete cleaned.duplicateConfidence;
+      delete cleaned.duplicateFlaggedAt;
+
+      products[index] =
+        cleaned;
+    }
+  }
+
+  return flagged;
+}
+
+// V6.45 — Fiches synchronisées dont un champ est volontairement figé
+// (product.overrides) : listées dans le rapport de synchronisation.
+function wooOverridesReport(products) {
+  const list = [];
+
+  for (const product of products) {
+    if (
+      safeString(
+        product?.syncSource
+      ) !== 'woocommerce'
+    ) {
+      continue;
+    }
+
+    const fields =
+      Object.keys(
+        wooCatalog.sanitizeOverrides(
+          product.overrides
+        )
+      );
+
+    if (fields.length) {
+      list.push({
+        id:
+          safeString(product.id),
+        name:
+          safeString(product.name),
+        woocommerceId:
+          Number(product.woocommerceId) || null,
+        fields
+      });
+    }
+  }
+
+  return list;
+}
+
 async function testWooCommerceConnection() {
   const result =
     await wooApiRequest(
@@ -11804,14 +12595,31 @@ async function runWooCommerceSync(
     const remoteProducts =
       await fetchAllWooProducts();
 
+    // V6.45 — variations des produits variables (prix par variante).
+    const variationStats =
+      await attachWooVariations(
+        remoteProducts
+      );
+
     const products =
       loadProducts();
 
     const now =
       new Date().toISOString();
 
+    // V6.45 — Identifiants présents sur le site, connus AVANT les mises à
+    // jour : une fiche dont l'identifiant a disparu du site peut être
+    // reprise par SKU/slug (produit recréé), jamais une fiche encore vivante.
     const remoteIds =
-      new Set();
+      new Set(
+        remoteProducts
+          .map(item =>
+            Number(
+              item?.id
+            )
+          )
+          .filter(Boolean)
+      );
 
     let created = 0;
     let updated = 0;
@@ -11837,7 +12645,10 @@ async function runWooCommerceSync(
         upsertWooProductInArray(
           products,
           wooProduct,
-          now
+          now,
+          {
+            remoteIds
+          }
         );
 
       if (
@@ -11906,9 +12717,33 @@ async function runWooCommerceSync(
       }
     }
 
+    // V6.45 — fiches manuelles en doublon d'un produit du site (marquées,
+    // jamais supprimées) et corrections volontaires en vigueur.
+    const duplicates =
+      flagManualWooDuplicates(
+        products,
+        now
+      );
+
+    const overrides =
+      wooOverridesReport(
+        products
+      );
+
     saveProducts(
       products
     );
+
+    if (duplicates.length) {
+      console.warn(
+        `⚠️ ${duplicates.length} fiche(s) manuelle(s) en doublon probable d’un produit du site (à vérifier puis désactiver) :`,
+        duplicates
+          .slice(0, 10)
+          .map(item =>
+            `${item.name}${item.price ? ` (${item.price} TND)` : ''} → ${item.duplicateOfName} #${item.duplicateOfWooId}`
+          )
+      );
+    }
 
     const syncState =
       saveWooCommerceSyncState({
@@ -11935,7 +12770,35 @@ async function runWooCommerceSync(
           unchanged,
 
         lastDeactivated:
-          deactivated
+          deactivated,
+
+        lastVariableProducts:
+          variationStats.variableProducts,
+
+        lastVariationsFetched:
+          variationStats.fetched,
+
+        lastVariationErrors:
+          variationStats.errors +
+          variationStats.skipped,
+
+        lastDuplicateManualCount:
+          duplicates.length,
+
+        lastDuplicateManualProducts:
+          duplicates.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          ),
+
+        lastOverridesCount:
+          overrides.length,
+
+        lastOverrides:
+          overrides.slice(
+            0,
+            WOO_SYNC_REPORT_LIST_MAX
+          )
       });
 
     console.log(
@@ -11947,7 +12810,16 @@ async function runWooCommerceSync(
         created,
         updated,
         unchanged,
-        deactivated
+        deactivated,
+        variableProducts:
+          variationStats.variableProducts,
+        variationErrors:
+          variationStats.errors +
+          variationStats.skipped,
+        duplicateManual:
+          duplicates.length,
+        overrides:
+          overrides.length
       }
     );
 
@@ -11962,6 +12834,14 @@ async function runWooCommerceSync(
       updated,
       unchanged,
       deactivated,
+
+      variations:
+        variationStats,
+
+      duplicateManualProducts:
+        duplicates,
+
+      overrides,
 
       state:
         syncState
@@ -12082,15 +12962,91 @@ async function processWooCommerceWebhook(
     normalizedTopic ===
       'product.updated'
   ) {
+    let wooProduct =
+      payload;
+
+    // V6.45 — WooCommerce envoie aussi product.created/updated pour une
+    // VARIATION (type « variation », parent_id) : avant, elle devenait une
+    // fausse fiche produit. On relit maintenant le produit parent.
+    if (
+      safeString(
+        payload?.type
+      ) === 'variation'
+    ) {
+      const parentId =
+        Number(
+          payload?.parent_id
+        ) || 0;
+
+      if (
+        !parentId ||
+        !wooConfigured()
+      ) {
+        console.log(
+          `⚡ WooCommerce webhook ${normalizedTopic} : variation ${wooId || '?'} ignorée (parent non relisible).`
+        );
+
+        saveWooCommerceSyncState({
+          lastWebhookAt:
+            now,
+          lastWebhookTopic:
+            normalizedTopic,
+          lastWebhookProductId:
+            wooId
+        });
+
+        return;
+      }
+
+      const parent =
+        await wooApiRequest(
+          `products/${parentId}`
+        );
+
+      wooProduct =
+        parent.data;
+    }
+
+    // V6.45 — produit variable : variations relues à chaque mise à jour.
+    if (
+      safeString(
+        wooProduct?.type
+      ) === 'variable' &&
+      wooConfigured()
+    ) {
+      try {
+        wooProduct = {
+          ...wooProduct,
+          mondecoVariations:
+            await fetchWooProductVariations(
+              wooProduct.id
+            )
+        };
+      } catch (error) {
+        console.warn(
+          '⚠️ Variations WooCommerce non lues (webhook) :',
+          Number(wooProduct?.id) || null,
+          error.message
+        );
+      }
+    }
+
     const products =
       loadProducts();
 
     const result =
       upsertWooProductInArray(
         products,
-        payload,
+        wooProduct,
         now
       );
+
+    // V6.45 — un nouveau produit du site peut rendre une fiche manuelle
+    // doublon (marquage seulement, voir flagManualWooDuplicates).
+    flagManualWooDuplicates(
+      products,
+      now
+    );
 
     saveProducts(
       products
@@ -12997,6 +13953,34 @@ router.put(
         updatedAt:
           new Date().toISOString()
       };
+
+      // V6.45 — Fiche synchronisée avec le site : un champ modifié ici
+      // (composition, dimensions, couleurs, showrooms, description) devient
+      // une correction volontaire que la synchronisation n'écrase plus ;
+      // vider le champ rend la main au site.
+      const withOverrides =
+        wooCatalog.recordProductOverrides(
+          current,
+          updated,
+          {
+            by:
+              safeString(
+                req.user?.name ||
+                req.user?.email ||
+                req.user?.id
+              ),
+            source:
+              'admin-product-form'
+          }
+        );
+
+      if (withOverrides !== updated) {
+        if (withOverrides.overrides) {
+          updated.overrides = withOverrides.overrides;
+        } else {
+          delete updated.overrides;
+        }
+      }
 
       if (req.file) {
         updated.image =
@@ -14432,12 +15416,48 @@ router.post(
       const oldValue =
         safeString(product[field]);
 
-      products[index] = {
-        ...product,
-        [field]: value,
-        updatedAt:
-          new Date().toISOString()
-      };
+      // V6.45 — Sur une fiche synchronisée avec le site, une correction de
+      // composition, dimensions, couleurs, showrooms ou description est
+      // enregistrée comme correction volontaire (product.overrides) : la
+      // synchronisation ne l'écrase plus. Les prix et la disponibilité
+      // restent ceux du site (à corriger sur mondeco.tn).
+      const isWooProduct =
+        safeString(
+          product.syncSource
+        ) === 'woocommerce';
+
+      const correctionDate =
+        new Date().toISOString();
+
+      products[index] =
+        wooCatalog.recordProductOverrides(
+          product,
+          {
+            ...product,
+            [field]: value,
+            updatedAt:
+              correctionDate
+          },
+          {
+            fields: [field],
+            by:
+              safeString(
+                req.user?.name ||
+                req.user?.email ||
+                req.user?.id
+              ),
+            at:
+              correctionDate,
+            source:
+              'commercial-correction'
+          }
+        );
+
+      const wooWarning =
+        isWooProduct &&
+        !wooCatalog.WOO_OVERRIDABLE_FIELDS.includes(field)
+          ? `${COMMERCIAL_PRODUCT_FIELDS[field]} : produit synchronisé avec le site, la valeur du site reviendra à la prochaine synchronisation. Corrigez-la aussi sur mondeco.tn.`
+          : '';
 
       saveProducts(products);
 
@@ -14482,7 +15502,13 @@ router.post(
       return res.json({
         correction,
         product:
-          products[index]
+          products[index],
+        // V6.45 — avertissement (prix / disponibilité d'une fiche du site).
+        ...(
+          wooWarning
+            ? { warning: wooWarning }
+            : {}
+        )
       });
     } catch (error) {
       console.error(
@@ -18618,9 +19644,10 @@ async function persistFacebookHistoryAttachments(message) {
       // V6.35.9 — Même protection réseau (timeout + retry) que les autres
       // appels Meta : le téléchargement d'une pièce jointe historique
       // (photo/vidéo) subissait le même "fetch failed" non protégé.
-      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, {
+      // V6.45 — token joint seulement vers un hôte Meta autorisé.
+      let response = await fetchFacebookAttachmentWithRetry(remoteUrl, canSendMetaToken(remoteUrl) ? {
         headers:{Authorization:`Bearer ${FACEBOOK_MESSENGER_TOKEN}`}
-      });
+      } : {});
       if(!response.ok) response = await fetchFacebookAttachmentWithRetry(remoteUrl);
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer=Buffer.from(await response.arrayBuffer());

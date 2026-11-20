@@ -1,18 +1,23 @@
 // MONDECO - Feed catalogue Meta + images produits publiques (lecture seule)
 const fs = require('fs');
 const path = require('path');
+const { decodeHtmlEntities } = require('./lib/woo-description');
 
-const DATA_DIR = process.env.DATA_DIR || '/data';
+// V6.45 — Même dossier de données qu'Admin.js et server.js (avant :
+// '/data' codé en dur si DATA_DIR n'était pas défini).
+const DATA_DIR = (
+  process.env.DATA_DIR ||
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  __dirname
+).trim();
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const PRODUCTS_PATH = path.join(DATA_DIR, 'products.json');
 const BASE_URL = process.env.PUBLIC_BASE_URL || 'https://app.mondeco.tn';
 const IMAGE_RE = /^product-[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp)$/i;
 
 function clean(v) {
-  return String(v == null ? '' : v)
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&amp;/g, '&').replace(/&#0?38;/g, '&')
-    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
+  // V6.45 — toutes les entités HTML (&#215;, &#8211;…), pas seulement &amp;.
+  return decodeHtmlEntities(String(v == null ? '' : v).replace(/<[^>]*>/g, ' '))
     .replace(/\s+/g, ' ').trim();
 }
 function csv(v) {
@@ -25,7 +30,12 @@ function money(v) {
 function loadActiveProducts() {
   const raw = JSON.parse(fs.readFileSync(PRODUCTS_PATH, 'utf8'));
   const list = Array.isArray(raw) ? raw : Object.values(raw);
-  return list.filter(p => p && p.active !== false);
+  // V6.45 — une fiche manuelle repérée comme doublon certain d'un produit
+  // du site (souvent avec un prix périmé) n'est pas publiée : le produit du
+  // site l'est déjà.
+  return list.filter(p =>
+    p && p.active !== false &&
+    !(Number(p.duplicateOfWooId) && p.duplicateConfidence !== 'possible'));
 }
 function buildFeed() {
   const header = ['id', 'title', 'description', 'availability', 'condition',

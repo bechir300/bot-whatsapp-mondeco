@@ -12609,25 +12609,126 @@ function renderThreadSystemEvent(entry){
   return `<div class="inbox-history-limit" style="max-width:520px;margin:6px auto;text-align:center">${escapeHtml(label)} • ${escapeHtml(formatDate(entry?.time))}</div>`;
 }
 
+// V6.45 — Visuel réellement disponible pour la publicité d'origine, utilisé
+// par toutes les cartes (bandeau, carte source, fiche client). Le type
+// affiché vient du fichier enregistré (storedMediaType, previewType,
+// extension) et JAMAIS de ad.mediaType, qui est le type de la PUB : une pub
+// vidéo a une vignette image (avant : 📣 pour toutes les pubs vidéo).
+// Ordre : copie locale de la même pub, aperçu Instagram/Messenger de la
+// même pub, puis lien Meta https (image, sinon vidéo).
+function adOriginVisual(state = {}){
+  const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:{};
+  const source=state?.sourceContext&&typeof state.sourceContext==='object'?state.sourceContext:{};
+  const isVideoAd=String(ad.mediaType||'').toLowerCase()==='video';
+  const videoExt=url=>/\.(mp4|mov|webm|m4v)$/i.test(String(url||'').split(/[?#]/)[0]);
+  const adKey=String(ad.adKey||'').trim();
+  const sameAd=key=>!adKey||!String(key||'').trim()||String(key).trim()===adKey;
+  const local=url=>{const safe=safeConversationMediaUrl(url||'');return safe.startsWith('/admin/conversation-media/')?safe:'';};
+  const typeOf=(declared,url)=>{const t=String(declared||'').toLowerCase();return t==='video'||t==='image'?t:(videoExt(url)?'video':'image');};
+  const stored=local(ad.storedMediaUrl);
+  if(stored&&sameAd(ad.storedMediaKey)) return {url:stored,type:typeOf(ad.storedMediaType,stored),isVideoAd,remote:false};
+  const preview=local(source.previewUrl);
+  if(preview&&String(source.type||'')==='ad'&&sameAd(source.ad?.adKey)) return {url:preview,type:typeOf(source.previewType,preview),isVideoAd,remote:false};
+  const videoUrl=String(ad.videoUrl||'').trim();
+  for(const candidate of [ad.imageUrl,ad.thumbnailUrl,ad.mediaUrl]){
+    const url=safeConversationMediaUrl(candidate||'');
+    if(url.startsWith('https://')&&url!==videoUrl&&!videoExt(url)) return {url,type:'image',isVideoAd,remote:true};
+  }
+  for(const candidate of [videoUrl,ad.mediaUrl]){
+    const url=safeConversationMediaUrl(candidate||'');
+    if(url.startsWith('https://')) return {url,type:'video',isVideoAd,remote:true};
+  }
+  return {url:'',type:'',isVideoAd,remote:false};
+}
+
+const AD_ORIGIN_PLACEHOLDER_HTML='<div class="inbox-ad-origin-thumb" style="display:grid;place-items:center;font-size:20px">📣</div>';
+// V6.45 — Liens qui ont déjà échoué dans cette page (évite de les
+// recharger à chaque rafraîchissement de la fiche client).
+const adOriginFailedUrls=new Set();
+
+// Contenu du cadre visuel : 'thumb' (bandeau) ou 'media' (carte, fiche).
+// Image : <img> avec repli 📣 ; ancienne copie MP4 seule : première image
+// de la vidéo (#t=0.1) ; badge ▶ pour une publicité vidéo.
+function adOriginMediaInnerHtml(visual, kind='thumb'){
+  const thumb=kind==='thumb';
+  const placeholder=thumb?AD_ORIGIN_PLACEHOLDER_HTML:'';
+  if(!visual?.url||adOriginFailedUrls.has(visual.url)) return placeholder;
+  const cls=thumb?'inbox-ad-origin-thumb':'inbox-source-context-media';
+  const onerror='onerror="adOriginVisualFailed(this)"';
+  const media=visual.type==='video'
+    ? `<video class="${cls}" muted playsinline preload="metadata"${thumb?'':' controls'} src="${escapeHtml(`${visual.url}#t=0.1`)}" data-ad-visual-url="${escapeHtml(visual.url)}" ${onerror}></video>`
+    : `<img class="${cls}" src="${escapeHtml(visual.url)}" data-ad-visual-url="${escapeHtml(visual.url)}" alt="Visuel de la publicité d’origine" loading="lazy" ${onerror}>`;
+  const size=thumb?'20px':'36px';
+  const badge=(visual.isVideoAd||visual.type==='video')&&(thumb||visual.type!=='video')
+    ? `<span class="inbox-ad-origin-play" title="Publicité vidéo" aria-label="Publicité vidéo" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:${size};height:${size};border-radius:50%;background:rgba(0,0,0,.55);color:#fff;display:grid;place-items:center;font-size:${thumb?'10px':'16px'};line-height:1;pointer-events:none">▶</span>`
+    : '';
+  return media+badge;
+}
+
+// Cadre complet (data-ad-visual) : retrouvé après une réparation pour
+// remplacer le visuel sans tout redessiner.
+function adOriginMediaFrameHtml(visual, kind='thumb', contact=''){
+  const style=kind==='thumb'?'position:relative;flex:0 0 auto;line-height:0':'position:relative;width:min(300px,100%)';
+  return `<div data-ad-visual="${kind==='thumb'?'thumb':'media'}" data-contact="${escapeHtml(String(contact||''))}" style="${style}">${adOriginMediaInnerHtml(visual,kind)}</div>`;
+}
+
+function adOriginContact(state = {}, contact = ''){
+  return String(contact||state?.contact||(typeof selectedConversationContact!=='undefined'?selectedConversationContact:'')||'').trim();
+}
+
+window.adOriginVisualFailed=function(element){
+  const failedUrl=element?.getAttribute?.('data-ad-visual-url')||'';
+  if(failedUrl) adOriginFailedUrls.add(failedUrl);
+  const frame=element?.closest?.('[data-ad-visual]');
+  if(!frame){try{element.remove();}catch{}return;}
+  frame.innerHTML=adOriginMediaInnerHtml(null,frame.getAttribute('data-ad-visual'));
+  // Copie locale illisible (fichier purgé…) : réparation forcée côté serveur.
+  requestAdVisualRepair(frame.getAttribute('data-contact')||'',failedUrl.startsWith('/admin/conversation-media/'));
+};
+
+// V6.45 — Réparation à la demande (POST …/ad-visual/refresh) : une seule
+// tentative par conversation et par chargement de page.
+const adVisualRepairRequests=new Set();
+async function requestAdVisualRepair(contact, force=false){
+  const key=String(contact||'').trim();
+  if(!key||adVisualRepairRequests.has(key)) return;
+  adVisualRepairRequests.add(key);
+  try{
+    const data=await apiFetch(`${API}/conversations/${encodeURIComponent(key)}/ad-visual/refresh`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({force:Boolean(force)})
+    });
+    if(!data?.adReferral) return;
+    if(selectedConversationContact===key&&selectedConversationData?.state){
+      selectedConversationData.state={...selectedConversationData.state,adReferral:data.adReferral};
+    }
+    const visual=adOriginVisual({adReferral:data.adReferral,sourceContext:data.sourceContext||{}});
+    if(!visual.url||visual.remote||adOriginFailedUrls.has(visual.url)) return;
+    document.querySelectorAll('[data-ad-visual]').forEach(frame=>{
+      if(frame.getAttribute('data-contact')!==key) return;
+      frame.innerHTML=adOriginMediaInnerHtml(visual,frame.getAttribute('data-ad-visual'));
+    });
+  }catch(error){
+    console.warn('Visuel de la publicité non récupéré :',error?.message||error);
+  }
+}
+
 function conversationSourceCardHtml(state = {}){
   const source=state?.sourceContext&&typeof state.sourceContext==='object'?state.sourceContext:null;
   const sourceChannel=String(state?.channel||'instagram').toLowerCase();
   const sourcePlatform=channelDisplayName(sourceChannel);
   const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
   if(ad){
-    const media=ad.storedMediaUrl||source?.previewUrl||ad.mediaUrl||'';
-    const mediaType=String(source?.previewType||ad.mediaType||'').toLowerCase();
+    // V6.45 — visuel commun à toutes les cartes (adOriginVisual).
+    const visual=adOriginVisual(state);
     const title=ad.adTitle||ad.headline||'';
     const product=ad.productHint||'';
     const campaign=ad.campaignName||ad.campaignId||'';
     const adset=ad.adsetName||ad.adsetId||'';
     const creative=ad.creativeName||ad.creativeId||'';
     const postId=ad.postId||'';
-    const mediaHtml=mediaType==='image'&&media
-      ? `<img class="inbox-source-context-media" src="${escapeHtml(media)}" alt="Visuel publicité" loading="lazy">`
-      : mediaType==='video'&&media
-        ? `<video class="inbox-source-context-media" controls preload="metadata" src="${escapeHtml(media)}"></video>`
-        : '';
+    const mediaHtml=visual.url?adOriginMediaFrameHtml(visual,'media',adOriginContact(state)):'';
     return `<div class="inbox-source-context"><strong>📣 Conversation issue d’une publicité Meta</strong>${product?`<div style="margin-top:6px"><b>Produit :</b> ${escapeHtml(product)}</div>`:''}${title?`<div style="margin-top:4px"><b>Publicité :</b> ${escapeHtml(title)}</div>`:''}${campaign?`<div style="margin-top:4px"><b>Campagne :</b> ${escapeHtml(campaign)}</div>`:''}${adset?`<div style="margin-top:4px"><b>Ensemble :</b> ${escapeHtml(adset)}</div>`:''}${creative?`<div style="margin-top:4px"><b>Créative :</b> ${escapeHtml(creative)}</div>`:''}${postId?`<div style="margin-top:4px"><b>Publication :</b> ${escapeHtml(postId)}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(ad.sourceUrl||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>`:''}</div>`;
   }
   if(!source||!source.type||source.type==='direct') return '';
@@ -12642,24 +12743,27 @@ function conversationSourceCardHtml(state = {}){
   return `<div class="inbox-source-context"><strong>${icon} ${escapeHtml(source.label||`Source ${sourcePlatform}`)}</strong>${source.id?`<div style="margin-top:5px;color:var(--muted)">ID : ${escapeHtml(source.id)}</div>`:''}${source.caption?`<div style="margin-top:5px">${escapeHtml(source.caption)}</div>`:''}${source.date?`<div style="margin-top:4px;color:var(--muted)">${escapeHtml(formatDate(source.date))}</div>`:''}${mediaHtml}${/^https?:\/\//i.test(String(source.url||''))?`<a class="btn small" style="margin-top:9px" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">Voir la source ↗</a>`:''}</div>`;
 }
 
-function conversationAdStickyHtml(state = {}){
+function conversationAdStickyHtml(state = {}, contact = ''){
   const ad=state?.adReferral&&typeof state.adReferral==='object'?state.adReferral:null;
   if(!ad) return '';
   const sourceChannel=String(state?.channel||'').toLowerCase();
   const sourcePlatform=sourceChannel==='facebook'?'FACEBOOK':sourceChannel==='instagram'?'INSTAGRAM':'META';
-  const media=safeConversationMediaUrl(ad.storedMediaUrl||ad.mediaUrl||'');
+  // V6.45 — visuel commun (adOriginVisual) : vignette pour une pub vidéo,
+  // repli 📣 si l'image ne se charge pas, puis réparation à la demande.
+  const visual=adOriginVisual(state);
+  const visualContact=adOriginContact(state,contact);
+  if(!visual.url&&visualContact&&typeof requestAdVisualRepair==='function'){
+    setTimeout(()=>requestAdVisualRepair(visualContact,false),0);
+  }
   const product=String(ad.productHint||'').trim();
   const headline=String(ad.adTitle||ad.headline||'').trim();
   const body=String(ad.body||'').trim();
   const label=product||headline||'Publicité Meta';
   const secondary=body||headline||'Le client a démarré cette conversation depuis cette publicité.';
-  const mediaHtml=media&&String(ad.mediaType||'image').toLowerCase()!=='video'
-    ? `<img class="inbox-ad-origin-thumb" src="${escapeHtml(media)}" alt="Publicité d’origine" loading="lazy">`
-    : '';
   const link=/^https?:\/\//i.test(String(ad.sourceUrl||''))
     ? `<a class="inbox-ad-origin-link" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir ↗</a>`
     : '';
-  return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation"><div>${mediaHtml||'<div class="inbox-ad-origin-thumb" style="display:grid;place-items:center;font-size:20px">📣</div>'}</div><div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ${sourcePlatform} ISSU D’UNE PUBLICITÉ</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
+  return `<div class="inbox-ad-origin-sticky" title="Origine de la conversation">${adOriginMediaFrameHtml(visual,'thumb',visualContact)}<div class="inbox-ad-origin-copy"><div class="inbox-ad-origin-kicker">CLIENT ${sourcePlatform} ISSU D’UNE PUBLICITÉ</div><div class="inbox-ad-origin-product">${escapeHtml(label)}</div><div class="inbox-ad-origin-text">${escapeHtml(secondary)}</div></div>${link}</div>`;
 }
 
 window.openMediaLightbox=function(url,alt=''){
@@ -13259,7 +13363,7 @@ function renderCustomerPanel(
           <div class="inbox-panel-title">Publicité d'origine</div>
           ${ad.headline ? `<strong style="font-size:11px">${escapeHtml(ad.headline)}</strong>` : ''}
           ${ad.body ? `<div style="margin-top:6px;font-size:10px;color:var(--muted)">${escapeHtml(ad.body)}</div>` : ''}
-          ${(ad.storedMediaUrl || state?.sourceContext?.previewUrl) ? `<img class="inbox-source-context-media" src="${escapeHtml(ad.storedMediaUrl || state?.sourceContext?.previewUrl)}" alt="Visuel publicité" loading="lazy">` : ''}
+          ${(() => { const visual = adOriginVisual(state); return visual.url ? adOriginMediaFrameHtml(visual, 'media', contact) : ''; })()}
           ${/^https?:\/\//i.test(String(ad.sourceUrl || '')) ? `<a class="btn small" style="margin-top:9px" href="${escapeHtml(ad.sourceUrl)}" target="_blank" rel="noopener">Voir la publication ↗</a>` : ''}
         </div>`
       : ''}
@@ -13391,7 +13495,7 @@ window.openConversation = async function(contact, targetMessageId = ''){
     null;
 
   const adHtml = state?.adReferral
-    ? conversationAdStickyHtml(state)
+    ? conversationAdStickyHtml(state, contact)
     : conversationSourceCardHtml(state);
 
   const messages =
@@ -13510,7 +13614,7 @@ window.loadOlderConversationMessages = async function(contact, before){
     selectedConversationData={...selectedConversationData,...older,entries};
     const detail=document.getElementById('conversationDetail');
     const state=selectedConversationData.state||{};
-    const sourceHtml=state?.adReferral?conversationAdStickyHtml(state):conversationSourceCardHtml(state);
+    const sourceHtml=state?.adReferral?conversationAdStickyHtml(state,contact):conversationSourceCardHtml(state);
     const messages=entries.map(entry=>{
       const commercial=String(entry.source||'').startsWith('commercial');
       return [renderThreadMessage('incoming',entry.incoming,entry,false),renderThreadMessage('outgoing',entry.reply,entry,commercial),renderThreadSystemEvent(entry),entry.image_reason?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.image_reason)}</div>`:'',entry.error?`<div class="inbox-alert" style="max-width:650px;margin:8px auto">${escapeHtml(entry.error)}</div>`:''].filter(Boolean).join('');
@@ -16591,7 +16695,11 @@ async function softRefreshSelectedConversation(){
       data.state?.adReferral ||
       null;
 
-    const adHtml = conversationSourceCardHtml(data.state || {});
+    // V6.45 — même bandeau que l'ouverture de la conversation (avant, le
+    // rafraîchissement basculait sur la carte source, au rendu différent).
+    const adHtml = data.state?.adReferral
+      ? conversationAdStickyHtml(data.state, selectedConversationContact)
+      : conversationSourceCardHtml(data.state || {});
 
     const messages =
       nextEntries

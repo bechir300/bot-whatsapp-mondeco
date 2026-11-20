@@ -1,6 +1,14 @@
 // MONDECO - Detecte si un message nomme un produit
 const fs = require('fs');
-const PRODUCTS = '/data/products.json';
+const path = require('path');
+// V6.45 — Même dossier de données qu'Admin.js (avant : '/data/products.json'
+// codé en dur, faux dès que DATA_DIR pointe ailleurs).
+const DATA_DIR = (
+  process.env.DATA_DIR ||
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  __dirname
+).trim();
+const PRODUCTS = path.join(DATA_DIR, 'products.json');
 let cache = { t: 0, words: null };
 
 function norm(t) {
