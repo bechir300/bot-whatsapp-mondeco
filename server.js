@@ -347,13 +347,34 @@ const GEMINI_MODEL =
 // V6.38.2 — Niveau de réflexion des modèles Gemini 3 (minimal, low,
 // medium, high). Vide = réglage par défaut de Google (réflexion poussée,
 // donc plus lente). Un niveau bas réduit nettement le temps de réponse.
+// V6.47 — « low » par défaut : sans réglage, Gemini 3 réfléchit au niveau
+// maximal (plusieurs secondes de plus par réponse au client). « default »
+// rend le réglage de Google.
 const GEMINI_THINKING_LEVEL =
   safeEnvThinkingLevel(process.env.GEMINI_THINKING_LEVEL);
 
 function safeEnvThinkingLevel(value) {
   const level = String(value || '').trim().toLowerCase();
-  return ['minimal', 'low', 'medium', 'high'].includes(level) ? level : '';
+  if (['minimal', 'low', 'medium', 'high'].includes(level)) return level;
+  if (level === 'default') return '';
+  return 'low';
 }
+
+// V6.47 — Chez Gemini, maxOutputTokens compte AUSSI les jetons de
+// réflexion : une réflexion longue épuisait le plafond de la réponse
+// (700-1400) et Gemini renvoyait une réponse vide, d'où un second appel
+// au secours Groq (temps de réponse doublé). Marge ajoutée selon le niveau ;
+// seuls les jetons réellement produits sont facturés.
+function geminiThinkingHeadroom(level) {
+  return { minimal: 512, low: 2048, medium: 4096, high: 8192 }[level] ?? 8192;
+}
+
+// V6.47 — Secours Groq : les modèles gpt-oss raisonnent au niveau « medium »
+// par défaut ; « low » suffit pour une réponse de vente et répond plus vite.
+const GROQ_REASONING_EFFORT = (() => {
+  const level = String(process.env.GROQ_REASONING_EFFORT || 'low').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(level) ? level : 'low';
+})();
 
 // V6.37 — Délai maximal d'un appel IA. Sans limite, un appel bloqué figeait
 // la conversation et le secours Groq ne se déclenchait jamais.
@@ -550,7 +571,8 @@ console.log(
 );
 console.log(
   'GEMINI_MODEL :',
-  GEMINI_MODEL
+  GEMINI_MODEL,
+  `(réflexion : ${GEMINI_THINKING_LEVEL || 'défaut Google'})`
 );
 console.log(
   'GROQ_API_KEY (backup) :',
@@ -5265,7 +5287,8 @@ function buildGeminiRequest(
   const request = {
     contents,
     generationConfig: {
-      maxOutputTokens,
+      maxOutputTokens:
+        maxOutputTokens + geminiThinkingHeadroom(GEMINI_THINKING_LEVEL),
       ...(GEMINI_THINKING_LEVEL
         ? { thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL } }
         : {})
@@ -5772,7 +5795,10 @@ async function callAIChat(
     const groqPayload = {
       ...payload,
       model:
-        fallbackModel
+        fallbackModel,
+      ...(/gpt-oss/i.test(fallbackModel)
+        ? { reasoning_effort: GROQ_REASONING_EFFORT }
+        : {})
     };
 
     const groqStarted = Date.now();
