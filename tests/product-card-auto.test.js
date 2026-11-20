@@ -38,6 +38,50 @@ test('aucune fiche si plusieurs produits, sans prix, inactif, nom trop court ou 
   assert.strictEqual(findProductForCard('Bonjour !', products), null);
 });
 
+test('V6.46 — fiche du produit identifié pour ce tour, jamais d’un doublon, de Baya au lieu de Baya+, ni après une question de choix', () => {
+  const catalog = [
+    { id: 'woo-60068', name: 'Chambre à Coucher Bianca', price: '7200', promoPrice: '6590', woocommerceId: 60068 },
+    { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high' },
+    { id: 'baya-plus', name: 'Salon Baya+', price: '2800' },
+    { id: 'baya', name: 'Salon Baya', price: '2200' },
+    { id: 'baya-gm', name: 'Salon Baya GM', price: '3200' },
+    { id: 'twin-1', name: 'Table Opale', price: '890' },
+    { id: 'twin-2', name: 'Table Opale', price: '990' }
+  ];
+  const bianca = catalog[0];
+  const reply = 'La Chambre Bianca est à 6590 DT au lieu de 7200 DT (promotion en cours). Voir mondeco.tn';
+  assert.strictEqual(findProductForCard(reply, catalog), null, 'doublon certain jamais choisi par son nom');
+  assert.strictEqual(findProductForCard(reply, catalog, { kind: 'ai', product: bianca })?.id, 'woo-60068');
+  assert.strictEqual(findProductForCard('Le Salon Baya+ est à 2800 DT', catalog)?.id, 'baya-plus');
+  assert.strictEqual(findProductForCard('Le Salon Baya est à 2200 DT', catalog)?.id, 'baya');
+  const question = 'Lequel vous intéresse ? • Salon Baya+ : 2800 dt • Salon Baya : 2200 dt • Salon Baya GM : 3200 dt';
+  assert.strictEqual(findProductForCard(question, catalog, { kind: 'disambiguation' }), null);
+  assert.strictEqual(findProductForCard(question, catalog), null, 'plusieurs produits cités');
+  assert.strictEqual(findProductForCard('La Table Opale est à 890 DT', catalog), null, 'deux produits au même nom');
+  // Produit identifié, mais la réponse en cite nommément un autre : aucune fiche.
+  assert.strictEqual(findProductForCard('Le Salon Baya GM est à 3200 DT', catalog, { kind: 'ai', product: catalog[3] }), null);
+  assert.strictEqual(findProductForCard('[COMMERCIAL_REQUIRED]', catalog, { kind: 'ai', product: bianca }), null);
+});
+
+test('V6.46 — « Baya Plus » / « Baya + » : jamais la fiche du Salon Baya ; réponse IA sans produit identifié pour ce tour → aucune fiche', () => {
+  const catalog = [
+    { id: 'baya-plus', name: 'Salon Baya+', price: '2800' },
+    { id: 'baya', name: 'Salon Baya', price: '2200' },
+    { id: 'baya-gm', name: 'Salon Baya GM', price: '3200' },
+    { id: 'bouclette-baya', name: 'Salon Bouclette Baya', price: '2900' }
+  ];
+  for (const reply of ['Le Salon Baya Plus est à 2800 DT.', 'Le Salon Baya + est à 2800 DT.']) {
+    // Question ambiguë côté résolveur : l'IA répond sans produit identifié.
+    assert.strictEqual(findProductForCard(reply, catalog, { kind: 'ai', product: null }), null, reply);
+    // Produit identifié Baya+ : sa fiche.
+    assert.strictEqual(findProductForCard(reply, catalog, { kind: 'ai', product: catalog[0] })?.id, 'baya-plus', reply);
+    // Sans tour connu : recherche par nom, jamais « Salon Baya ».
+    assert.notStrictEqual(findProductForCard(reply, catalog)?.id, 'baya', reply);
+  }
+  // « plus » adverbe : le Salon Baya reste reconnu.
+  assert.strictEqual(findProductForCard('Le Salon Baya est plus confortable, à 2200 DT.', catalog, { kind: 'ai', product: catalog[1] })?.id, 'baya');
+});
+
 test('pas deux fois la même fiche en 24 h, maximum par jour', () => {
   const now = Date.parse('2026-10-23T10:00:00Z');
   let state = {};

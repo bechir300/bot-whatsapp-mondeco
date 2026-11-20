@@ -1,8 +1,14 @@
 // MONDECO - Accuse de lecture + indicateur de frappe
 const fs = require('fs');
-const OFF = '/data/read-receipt.off';
+const path = require('path');
+// V6.46 — Interrupteur d'arrêt cherché dans le dossier des données
+// (DATA_DIR, même règle que server.js) ; l'ancien emplacement /data reste lu.
+// V6.46 — règle partagée (lib/data-dir.js) : DATA_DIR, sinon le volume
+// Railway, sinon le dossier de l'application.
+const DATA_DIR = require('./lib/data-dir').resolveDataDir();
+const OFF_FLAGS = [path.join(DATA_DIR, 'read-receipt.off'), '/data/read-receipt.off'];
 async function markRead(o) {
-  if (fs.existsSync(OFF)) return 'off';
+  if (OFF_FLAGS.some(file => fs.existsSync(file))) return 'off';
   if (!o || !o.messageId || !o.token || !o.phoneNumberId) {
     return 'skip';
   }
@@ -18,12 +24,13 @@ async function markRead(o) {
         Authorization: 'Bearer ' + o.token,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
+      // V6.45 — o.typing === false : accusé de lecture seul, sans
+      // « en train d'écrire… » (l'IA ne répondra pas : pause, commercial).
+      body: JSON.stringify(Object.assign({
         messaging_product: 'whatsapp',
         status: 'read',
-        message_id: o.messageId,
-        typing_indicator: { type: 'text' }
-      })
+        message_id: o.messageId
+      }, o.typing === false ? {} : { typing_indicator: { type: 'text' } }))
     });
     if (!r.ok) {
       throw new Error('HTTP ' + r.status + ' ' +

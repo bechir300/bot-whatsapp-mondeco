@@ -60,6 +60,7 @@ globalThis.__srv = { generateReply, generateReplySuggestion, generateVisionReply
   buildSmartBusinessContextDetailed, resolveConversationProduct, findMatchingQuickReplyForAd, rememberAdReferral,
   getConversationState, getLimitedHistoryForAI, normalizeForSearch, scoreContextBlock, stripReasoningLeak,
   appendCategoryLink, inferAdProductHint, recordAiHistoryReply, getCurrentMonthAiCostUsd, httpServer,
+  handleHumanMessageEcho, takeAiReplyTurn,
   MAX_PRODUCT_CONTEXT_CHARS, MAX_PINNED_PRODUCT_CHARS };`;
   }
   return originalCompile.call(this, content, filename);
@@ -144,6 +145,25 @@ async function test(label, fn) {
     assert.ok(!reply.includes('/categorie-produit/dressing/'));
   });
 
+  await test('V6.46 — fiche produit automatique : produit identifié du tour (jamais un doublon), aucune après une question de choix', async () => {
+    const { findProductForCard } = require('../lib/product-card-auto');
+    const catalog = [...products, { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true }];
+    const contact = '21698000012';
+    rememberBiancaAd(contact);
+    cannedReply = 'La Chambre Bianca est à 6590 dt au lieu de 7200 dt 😊';
+    const reply = await S.generateReply(contact, 'Prix', 'whatsapp');
+    const turn = S.takeAiReplyTurn(contact);
+    assert.strictEqual(turn.kind, 'ai');
+    assert.strictEqual(turn.product.id, BIANCA.id);
+    assert.strictEqual(findProductForCard(reply, catalog, turn)?.id, BIANCA.id, 'fiche du site à 6590/7200, pas la copie à 2800');
+
+    const other = '21698000013';
+    const question = await S.generateReply(other, 'prix bianca', 'whatsapp');
+    const questionTurn = S.takeAiReplyTurn(other);
+    assert.strictEqual(questionTurn.kind, 'disambiguation');
+    assert.strictEqual(findProductForCard(question, catalog, questionTurn), null, 'aucune fiche après « Lequel vous intéresse ? »');
+  });
+
   await test('« BIANCA » seul depuis la pub : le produit de la pub est épinglé', async () => {
     const contact = '21698000003';
     rememberBiancaAd(contact);
@@ -206,6 +226,16 @@ async function test(label, fn) {
     await S.generateReply(contact, 'Merci ! Et samedi ?', 'whatsapp');
     const contents = geminiRequests[0].contents.map(item => `${item.role}:${item.parts[0].text}`);
     assert.ok(contents.some(item => item.startsWith('model:Oui, le showroom de Sousse')), contents.join(' | '));
+  });
+
+  await test('réponse depuis l’application WhatsApp Business (écho) : entre aussi dans l’historique IA', async () => {
+    const contact = '21698000011';
+    S.handleHumanMessageEcho({
+      messages: [{ to: contact, id: 'wamid.ECHO-HIST', timestamp: String(Math.floor(Date.now() / 1000)), type: 'text', text: { body: 'La Chambre à Coucher Bianca est à 6590 dt au lieu de 7200 dt.' } }]
+    });
+    const history = S.getLimitedHistoryForAI(contact);
+    assert.deepStrictEqual(history.map(item => item.role), ['assistant']);
+    assert.ok(history[0].content.includes('6590 dt'));
   });
 
   await test('réponse rapide de pub : jamais si elle contredit la fiche ou si le client pose une question', async () => {
@@ -294,6 +324,40 @@ async function test(label, fn) {
     assert.strictEqual(S.resolveConversationProduct('', 'Prix', { adContext: { headline: 'Mondeco.tn', productHint: 'Mondeco.tn', body: 'Nouveau motif capitonné' } }).status, 'none');
     assert.strictEqual(S.inferAdProductHint({ headline: 'Mondeco.tn', body: 'Écrivez ZINA en commentaire' }), 'ZINA');
     assert.strictEqual(S.inferAdProductHint({ headline: 'Mondeco.tn', body: 'Envoyez le mot : ZINA, on vous répond' }), 'ZINA');
+  });
+
+  await test('V6.46 — promotion en cours : réponse du modèle « 7200 DT » seule remplacée par « 6590 dt au lieu de 7200 dt »', async () => {
+    const contact = '21698000081';
+    rememberBiancaAd(contact);
+    cannedReply = 'La Chambre à Coucher Bianca est à 7200 DT.';
+    const reply = await S.generateReply(contact, 'le prix de la chambre complète svp', 'whatsapp');
+    assert.strictEqual(geminiRequests.length, 1);
+    assert.ok(reply.includes('6590 dt au lieu de 7200 dt'), reply);
+    assert.ok(!reply.includes('est à 7200 DT'), reply);
+  });
+
+  await test('V6.46 — fiche du site Bianca masquée dans l’Admin (toujours publiée) : chambre complète → transfert, jamais « Pouf Chambre Luxe Bianca 350 DT »', async () => {
+    const productsPath = path.join(dataDir, 'products.json');
+    const original = fs.readFileSync(productsPath, 'utf8');
+    fs.writeFileSync(productsPath, JSON.stringify([
+      ...products.map(product => (product.woocommerceId === 60068 ? { ...product, active: false, hiddenByAdmin: true, woocommerceStatus: 'publish' } : product)),
+      { id: 'manual-bianca', name: 'Chambre Bianca', price: '2800', duplicateOfWooId: 60068, duplicateConfidence: 'high', active: true }
+    ]));
+    try {
+      let index = 0;
+      for (const message of ['le prix de la chambre complète svp', 'قداش الشومبر بيانكا كاملة', 'prix']) {
+        const contact = `2169800009${index++}`;
+        rememberBiancaAd(contact);
+        cannedReply = 'Le Pouf Chambre Luxe Bianca est à 350 DT.';
+        geminiRequests = [];
+        const reply = await S.generateReply(contact, message, 'whatsapp');
+        assert.strictEqual(reply, '[COMMERCIAL_REQUIRED]', `${message} -> ${reply}`);
+        assert.strictEqual(geminiRequests.length, 0, 'modèle jamais appelé');
+        assert.ok(!S.getConversationState(contact).activeProduct, 'aucun produit actif mémorisé');
+      }
+    } finally {
+      fs.writeFileSync(productsPath, original);
+    }
   });
 
   say(`\n${passed} test(s) ai-answers (intégration) OK`);

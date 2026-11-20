@@ -13,7 +13,15 @@
 // - Pause IA après intervention humaine (si webhook echo disponible)
 // ============================================================
 
-require('dotenv').config();
+// V6.46 — Vérifications de démarrage (lib/runtime-check.js), AVANT tout
+// autre module : version de Node prise en charge (sinon arrêt immédiat avec
+// un message clair : better-sqlite3 plante sous Node 20 au premier message,
+// après l'accusé 200 envoyé à Meta), puis .env lu dans le dossier de
+// l'application (et non plus dans le dossier courant : systemd/pm2 lancés
+// depuis un autre dossier démarraient sans secrets ni DATA_DIR).
+const runtimeCheck = require('./lib/runtime-check');
+runtimeCheck.assertSupportedNode();
+const APP_ENV_LOAD = runtimeCheck.loadAppEnv(__dirname);
 
 // V6.37 — Installé avant tout autre module : les logs d'Admin.js passent
 // aussi par le format structuré, l'identifiant de corrélation et les alertes.
@@ -55,6 +63,13 @@ const {
   parseProfileExtraction
 } = require('./lib/customer-profile');
 const { createConversationQueue, metaEventQueueKey } = require('./lib/conversation-queue');
+const { createMetaSendTransport, isPreflightNetworkFailure: isMetaPreflightNetworkFailure } = require('./lib/meta-send-transport');
+const { createInboundJournal } = require('./lib/inbound-journal');
+// V6.46 — /health réel (lib/health.js) et état de la base SQLite ouverte par
+// Admin.js (lib/sqlite-health.js, même instance de module).
+const { createDataDirProbe, buildHealthReport } = require('./lib/health');
+const { sharedSqliteConnection } = require('./lib/sqlite-health');
+const messagingRules = require('./lib/messaging-rules');
 const { createJsonObjectStore, flushAllJsonStores } = require('./lib/json-object-store');
 const {
   MEDIA_FETCH_TIMEOUT_MS,
@@ -97,7 +112,10 @@ const {
   flushConversationStatesWrite,
   // V6.44 — Fiche produit envoyée par l'IA.
   loadProducts,
-  getLocalProductImagePath
+  getLocalProductImagePath,
+  // V6.46 — Notifications : copie mémoire partagée avec Admin.js.
+  loadNotificationsStore: loadSharedNotificationsStore,
+  saveNotificationsStore: saveSharedNotificationsStore
 } = require('./Admin');
 
 const app = express();
@@ -109,26 +127,63 @@ app.use(requestContextMiddleware);
 // proxys locaux (Nginx sur le même VPS) sont crus ; TRUST_PROXY_HOPS=1 pour
 // Railway ou un proxy distant. Sans proxy de confiance, un client pourrait
 // fournir une fausse adresse via X-Forwarded-For.
-app.set(
-  'trust proxy',
-  process.env.TRUST_PROXY_HOPS !== undefined && process.env.TRUST_PROXY_HOPS !== ''
-    ? Math.max(0, Number(process.env.TRUST_PROXY_HOPS) || 0)
-    : 'loopback'
-);
+// V6.45 — Sur Railway (proxy distant, jamais en loopback), TRUST_PROXY_HOPS
+// vaut 1 par défaut : sinon toute l'équipe partageait l'adresse du proxy et
+// quelques échecs de connexion bloquaient tout le monde. Un avertissement
+// est écrit si un proxy distant est détecté sans réglage.
+const {
+  resolveTrustProxySetting,
+  createRemoteProxyDetector,
+  createOriginGuard,
+  createCrossSiteGetGuard,
+  originGuardOptionsFromEnv
+} = require('./lib/origin-guard');
+const {
+  resolveWebhookSignaturePolicy,
+  verifyMetaSignature,
+  webhookSignatureDecision,
+  webhookSignatureStartupMessages,
+  whatsappPhoneNumberIdAccepted
+} = require('./lib/webhook-signature');
+
+const TRUST_PROXY_SETTING = resolveTrustProxySetting(process.env);
+app.set('trust proxy', TRUST_PROXY_SETTING.value);
+console.log(`🌐 trust proxy : ${TRUST_PROXY_SETTING.label}`);
+if (TRUST_PROXY_SETTING.value === 'loopback') {
+  app.use(createRemoteProxyDetector());
+}
 app.disable('x-powered-by');
 
-// En-têtes de sécurité de base (sans dépendance externe). Pas de CSP stricte
-// sur les scripts : Admin.html repose sur du JavaScript inline.
+// En-têtes de sécurité de base (sans dépendance externe).
+// V6.45 — CSP renforcée : Admin.html repose sur du JavaScript inline
+// (onclick=…), d'où 'unsafe-inline', mais aucun script externe, aucun
+// plugin (object-src), aucune balise <base> détournée ni intégration de
+// l'application dans un cadre d'un autre site.
+const CONTENT_SECURITY_POLICY = [
+  "script-src 'self' 'unsafe-inline'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join('; ');
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
   if (req.secure) {
     res.setHeader('Strict-Transport-Security', 'max-age=15552000');
   }
   next();
 });
+
+// V6.45 — Protection CSRF des routes d'administration hors /admin (le
+// routeur /admin applique la même vérification d'origine).
+app.use('/reset-test-history', createOriginGuard(originGuardOptionsFromEnv(process.env, { label: 'reset-test-history' })));
+// /test-ia est un GET qui déclenche un appel IA facturé : refusé quand le
+// navigateur signale un appel depuis un autre site (ex. <img> sur *.mondeco.tn).
+app.use('/test-ia', createCrossSiteGetGuard({ label: 'test-ia' }));
 
 // V6.35.10 — Compression gzip des réponses (HTML/JSON/JS). Aucune
 // compression n'était activée : Admin.html (~630 Ko) et les réponses JSON
@@ -153,7 +208,15 @@ app.use(
   express.json({
     limit: '5mb',
     verify(req, res, buffer) {
-      if (req.originalUrl === '/webhook') {
+      // V6.46 — Corps brut gardé aussi pour le webhook WooCommerce : sa
+      // signature HMAC porte sur les octets envoyés par PHP (« \/ »,
+      // « é »), qu'un JSON.stringify ne reproduit jamais.
+      // V6.46 — « /webhook/ » (barre finale) traité comme « /webhook ».
+      const urlPath = String(req.originalUrl || '').split('?')[0].replace(/\/+$/, '');
+      if (
+        urlPath === '/webhook' ||
+        urlPath === '/admin/api/woocommerce/webhook'
+      ) {
         req.rawBody = Buffer.from(buffer);
       }
     }
@@ -284,13 +347,34 @@ const GEMINI_MODEL =
 // V6.38.2 — Niveau de réflexion des modèles Gemini 3 (minimal, low,
 // medium, high). Vide = réglage par défaut de Google (réflexion poussée,
 // donc plus lente). Un niveau bas réduit nettement le temps de réponse.
+// V6.47 — « low » par défaut : sans réglage, Gemini 3 réfléchit au niveau
+// maximal (plusieurs secondes de plus par réponse au client). « default »
+// rend le réglage de Google.
 const GEMINI_THINKING_LEVEL =
   safeEnvThinkingLevel(process.env.GEMINI_THINKING_LEVEL);
 
 function safeEnvThinkingLevel(value) {
   const level = String(value || '').trim().toLowerCase();
-  return ['minimal', 'low', 'medium', 'high'].includes(level) ? level : '';
+  if (['minimal', 'low', 'medium', 'high'].includes(level)) return level;
+  if (level === 'default') return '';
+  return 'low';
 }
+
+// V6.47 — Chez Gemini, maxOutputTokens compte AUSSI les jetons de
+// réflexion : une réflexion longue épuisait le plafond de la réponse
+// (700-1400) et Gemini renvoyait une réponse vide, d'où un second appel
+// au secours Groq (temps de réponse doublé). Marge ajoutée selon le niveau ;
+// seuls les jetons réellement produits sont facturés.
+function geminiThinkingHeadroom(level) {
+  return { minimal: 512, low: 2048, medium: 4096, high: 8192 }[level] ?? 8192;
+}
+
+// V6.47 — Secours Groq : les modèles gpt-oss raisonnent au niveau « medium »
+// par défaut ; « low » suffit pour une réponse de vente et répond plus vite.
+const GROQ_REASONING_EFFORT = (() => {
+  const level = String(process.env.GROQ_REASONING_EFFORT || 'low').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(level) ? level : 'low';
+})();
 
 // V6.37 — Délai maximal d'un appel IA. Sans limite, un appel bloqué figeait
 // la conversation et le secours Groq ne se déclenchait jamais.
@@ -427,15 +511,48 @@ const CLOUDFLARE_IMAGE_HEIGHT =
 // LOGS DÉMARRAGE
 // ============================================================
 
+// V6.46 — Version réellement déployée (package.json + commit Git), pour les
+// logs et /health (la bannière affichait « V6.33.1 » écrit en dur), et
+// canaux réellement traités (INSTAGRAM_WEBHOOK_ENABLED,
+// FACEBOOK_WEBHOOK_ENABLED ; WhatsApp uniquement par défaut).
+const APP_VERSION = runtimeCheck.readAppVersion(__dirname);
+const APP_COMMIT = runtimeCheck.readGitCommit(__dirname);
+const CHANNELS_ENABLED = runtimeCheck.resolveChannelFlags(process.env);
+const SERVER_STARTED_AT_MS = Date.now();
+
 console.log('');
 console.log(
   '=============================================='
 );
-console.log('🚀 MONDECO OMNICANAL WHATSAPP + INSTAGRAM + FACEBOOK V6.33.1');
+console.log(
+  `🚀 MONDECO ${runtimeCheck.channelsLabel(CHANNELS_ENABLED).toUpperCase()} V${APP_VERSION}` +
+  (APP_COMMIT ? ` (commit ${APP_COMMIT})` : '')
+);
 console.log(
   '=============================================='
 );
 console.log('Node :', process.version);
+console.log(
+  'Fichier .env :',
+  APP_ENV_LOAD.loaded.length
+    ? APP_ENV_LOAD.loaded.join(' + ')
+    : `aucun (${APP_ENV_LOAD.appEnvPath} absent : variables du système uniquement)`
+);
+if (APP_ENV_LOAD.fromCwdOnly) {
+  console.warn(
+    `⚠️ .env lu dans le dossier courant (${process.cwd()}) et non dans le dossier de l'application : ` +
+    `déplacez-le dans ${APP_ENV_LOAD.appEnvPath}.`
+  );
+}
+for (const failure of APP_ENV_LOAD.errors) {
+  console.error(`❌ Fichier .env illisible (${failure.file}) : ${failure.error}`);
+}
+console.log(
+  'Canaux traités :',
+  `${runtimeCheck.channelsLabel(CHANNELS_ENABLED)}` +
+  (CHANNELS_ENABLED.instagram ? '' : ' — webhooks Instagram ignorés (INSTAGRAM_WEBHOOK_ENABLED)') +
+  (CHANNELS_ENABLED.facebook ? '' : ' — webhooks Facebook ignorés (FACEBOOK_WEBHOOK_ENABLED)')
+);
 console.log(
   'VERIFY_TOKEN :',
   VERIFY_TOKEN ? '✅ OK' : '❌ MANQUANT'
@@ -454,7 +571,8 @@ console.log(
 );
 console.log(
   'GEMINI_MODEL :',
-  GEMINI_MODEL
+  GEMINI_MODEL,
+  `(réflexion : ${GEMINI_THINKING_LEVEL || 'défaut Google'})`
 );
 console.log(
   'GROQ_API_KEY (backup) :',
@@ -499,6 +617,26 @@ console.log(
   '=============================================='
 );
 console.log('');
+
+// V6.46 — Configuration indispensable au bot WhatsApp. En production
+// (NODE_ENV=production), un manque est une erreur (alerte
+// ALERT_WEBHOOK_URL) et /health répond « degraded » (HTTP 503) ; ailleurs,
+// simple avertissement. Le serveur démarre dans tous les cas (le centre de
+// pilotage reste accessible pour corriger).
+const REQUIRED_CONFIG = {
+  VERIFY_TOKEN: Boolean(VERIFY_TOKEN),
+  WHATSAPP_TOKEN: Boolean(WHATSAPP_TOKEN),
+  PHONE_NUMBER_ID: Boolean(PHONE_NUMBER_ID)
+};
+const REQUIRED_CONFIG_ENFORCED =
+  String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+const MISSING_REQUIRED_CONFIG = Object.keys(REQUIRED_CONFIG).filter(name => !REQUIRED_CONFIG[name]);
+if (MISSING_REQUIRED_CONFIG.length) {
+  console[REQUIRED_CONFIG_ENFORCED ? 'error' : 'warn'](
+    `${REQUIRED_CONFIG_ENFORCED ? '🚨' : '⚠️'} Configuration incomplète : ${MISSING_REQUIRED_CONFIG.join(', ')} manquant(s) ` +
+    `(fichier attendu : ${APP_ENV_LOAD.appEnvPath}). Les messages WhatsApp ne peuvent pas être vérifiés ou envoyés.`
+  );
+}
 
 // ============================================================
 // HELPERS
@@ -547,13 +685,18 @@ function conversationChannel(contact, state = null) {
   return 'whatsapp';
 }
 
-function withStorageRetry(operation, label = 'écriture') {
+// V6.46 — `neededBytes` : taille de l'écriture refusée, pour que le dernier
+// recours de Storage Rescue ne libère que la place nécessaire. Sans taille
+// (médias, avatars, compteurs) ou pour un fichier de statistiques (`label`
+// = ai-usage.json…), le dernier recours ne s'exécute pas : seuls les
+// fichiers jetables sont supprimés.
+function withStorageRetry(operation, label = 'écriture', neededBytes = 0) {
   try {
     return operation();
   } catch (error) {
     if (safeString(error?.code) !== 'ENOSPC') throw error;
     console.warn(`🛟 ENOSPC (${label}) : tentative de libération automatique du Volume.`);
-    try { ensureStorageHeadroom(); } catch {}
+    try { ensureStorageHeadroom({ neededBytes, target: label }); } catch {}
     return operation();
   }
 }
@@ -577,9 +720,31 @@ function writeJsonAtomic(filePath, data) {
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 
+  // V6.46 — Fichiers de taille raisonnable (≤ 2 Mo existants / ≤ 8 Mo
+  // écrits) : copie .bak de la version précédente (reprise si le fichier
+  // devient illisible, comme côté Admin.js) et contenu forcé sur disque
+  // (fsync) avant le rename. Les gros fichiers réécrits très souvent
+  // (conversation-log.json) gardent l'écriture rapide : leur copie
+  // permanente est dans conversation-events/*.jsonl.
+  const serializedBytes = Buffer.byteLength(serialized, 'utf8');
+  const durable = serializedBytes <= 8 * 1024 * 1024;
+  if (existingSizeHint > 0 && existingSizeHint <= COMPACT_JSON_THRESHOLD_BYTES) {
+    try { fs.copyFileSync(filePath, `${filePath}.bak`); } catch {}
+  }
+
   const attempt = () => {
     try {
-      fs.writeFileSync(tmp, serialized, 'utf8');
+      if (durable) {
+        const fd = fs.openSync(tmp, 'w');
+        try {
+          fs.writeFileSync(fd, serialized, 'utf8');
+          try { fs.fsyncSync(fd); } catch {}
+        } finally {
+          fs.closeSync(fd);
+        }
+      } else {
+        fs.writeFileSync(tmp, serialized, 'utf8');
+      }
       fs.renameSync(tmp, filePath);
     } finally {
       try {
@@ -589,7 +754,7 @@ function writeJsonAtomic(filePath, data) {
   };
 
   try {
-    withStorageRetry(attempt, path.basename(filePath));
+    withStorageRetry(attempt, path.basename(filePath), serializedBytes);
   } catch (error) {
     // En ultime recours, un fichier JSON existant plus grand que la nouvelle
     // version peut être compacté directement : le truncate libère immédiatement
@@ -645,13 +810,46 @@ function isoDateKey(value = new Date()) {
   return date.toISOString().slice(0, 10);
 }
 
+// V6.46 — Ajout d'une ligne à un journal .jsonl sans jamais le corrompre :
+// - un ajout interrompu (disque plein, ENOSPC au milieu de l'écriture) est
+//   annulé (le fichier reprend sa taille d'avant) ;
+// - au premier ajout dans un fichier (et après un échec), le dernier octet
+//   est vérifié : une ligne tronquée par un arrêt brutal est terminée par
+//   un saut de ligne au lieu d'absorber l'événement suivant.
+// Avant, la ligne suivante était collée à la ligne tronquée : le premier
+// message après le retour de l'espace disque était illisible lui aussi.
+const jsonlTailVerified = new Set();
+
+function appendTextLineSafely(filePath, text) {
+  const fd = fs.openSync(filePath, 'a+');
+  let sizeBefore = 0;
+  try {
+    sizeBefore = Number(fs.fstatSync(fd).size || 0);
+    let payload = text;
+    if (sizeBefore > 0 && !jsonlTailVerified.has(filePath)) {
+      const last = Buffer.alloc(1);
+      fs.readSync(fd, last, 0, 1, sizeBefore - 1);
+      if (last[0] !== 0x0a) payload = `\n${payload}`;
+    }
+    const data = Buffer.from(payload, 'utf8');
+    let offset = 0;
+    while (offset < data.length) {
+      offset += fs.writeSync(fd, data, offset, data.length - offset);
+    }
+    jsonlTailVerified.add(filePath);
+  } catch (error) {
+    jsonlTailVerified.delete(filePath);
+    try { fs.ftruncateSync(fd, sizeBefore); } catch {}
+    throw error;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+
 function appendJsonLine(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  withStorageRetry(() => fs.appendFileSync(
-    filePath,
-    `${JSON.stringify(value)}\n`,
-    'utf8'
-  ), path.basename(filePath));
+  const line = `${JSON.stringify(value)}\n`;
+  withStorageRetry(() => appendTextLineSafely(filePath, line), path.basename(filePath), Buffer.byteLength(line, 'utf8'));
 }
 
 function appendPersistentConversationEvent(entry) {
@@ -682,21 +880,108 @@ function loadPersistentMessageIds() {
   }
 }
 
+// V6.46 — Index plafonné en mémoire aussi (les plus anciens identifiants
+// sortent en premier) ; un identifiant non écrit (disque plein) est gardé
+// et réécrit avec les événements en attente.
+const PERSISTENT_MESSAGE_IDS_MAX = 120000;
+const pendingPersistentMessageIds = [];
+
+function rememberPersistentMessageId(id) {
+  persistentMessageIds.add(id);
+  if (persistentMessageIds.size > PERSISTENT_MESSAGE_IDS_MAX) {
+    let excess = persistentMessageIds.size - Math.floor(PERSISTENT_MESSAGE_IDS_MAX * 0.8);
+    for (const old of persistentMessageIds) {
+      if (excess-- <= 0) break;
+      persistentMessageIds.delete(old);
+    }
+  }
+}
+
+function appendMessageIdLine(id) {
+  fs.mkdirSync(path.dirname(MESSAGE_ID_INDEX_PATH), { recursive: true });
+  withStorageRetry(
+    () => appendTextLineSafely(MESSAGE_ID_INDEX_PATH, `${id}\n`),
+    'conversation-message-ids.jsonl',
+    Buffer.byteLength(`${id}\n`, 'utf8')
+  );
+}
+
 function persistMessageId(value) {
   const id = safeString(value);
   if (!id || persistentMessageIds.has(id)) return;
 
-  persistentMessageIds.add(id);
+  rememberPersistentMessageId(id);
 
   try {
-    withStorageRetry(() => fs.appendFileSync(
-      MESSAGE_ID_INDEX_PATH,
-      `${id}\n`,
-      'utf8'
-    ), 'conversation-message-ids.jsonl');
+    appendMessageIdLine(id);
   } catch (error) {
-    console.warn('⚠️ Index message_id non enregistré :', error.message);
+    console.warn('⚠️ Index message_id non enregistré (nouvel essai plus tard) :', error.message);
+    if (pendingPersistentMessageIds.length < 20000) pendingPersistentMessageIds.push(id);
+    schedulePendingPersistentWritesRetry();
   }
+}
+
+// V6.46 — Événements de conversation non écrits (disque plein) : gardés en
+// mémoire, dans l'ordre, et réécrits dès que possible (toutes les 15 s, et
+// à l'arrêt). Le message client reste aussi dans le journal récent en
+// mémoire et dans les notifications, donc visible après libération.
+const pendingPersistentEvents = [];
+const PENDING_PERSISTENT_EVENTS_MAX = 20000;
+let pendingPersistentWritesTimer = null;
+let pendingPersistentEventsAlertAt = 0;
+
+function queuePendingPersistentEvent(entry, error) {
+  if (pendingPersistentEvents.length >= PENDING_PERSISTENT_EVENTS_MAX) {
+    console.error('🚨 File des événements non écrits pleine : événement le plus ancien abandonné.');
+    pendingPersistentEvents.shift();
+  }
+  pendingPersistentEvents.push(entry);
+  if (Date.now() - pendingPersistentEventsAlertAt > 60 * 1000) {
+    pendingPersistentEventsAlertAt = Date.now();
+    console.error(
+      `🚨 Journal permanent des conversations non écrit (${safeString(error?.code || error?.message)}) : ` +
+      `${pendingPersistentEvents.length} événement(s) gardé(s) en mémoire, nouvel essai automatique. Libérez de l'espace disque.`
+    );
+  }
+  schedulePendingPersistentWritesRetry();
+}
+
+function flushPendingPersistentWrites() {
+  let written = 0;
+  while (pendingPersistentEvents.length) {
+    const entry = pendingPersistentEvents[0];
+    try {
+      appendPersistentConversationEvent(entry);
+    } catch {
+      return written;
+    }
+    pendingPersistentEvents.shift();
+    written++;
+  }
+  while (pendingPersistentMessageIds.length) {
+    try {
+      appendMessageIdLine(pendingPersistentMessageIds[0]);
+    } catch {
+      return written;
+    }
+    pendingPersistentMessageIds.shift();
+  }
+  if (written) {
+    console.log(`✅ Journal permanent : ${written} événement(s) en attente écrit(s).`);
+  }
+  return written;
+}
+
+function schedulePendingPersistentWritesRetry() {
+  if (pendingPersistentWritesTimer) return;
+  pendingPersistentWritesTimer = setTimeout(() => {
+    pendingPersistentWritesTimer = null;
+    try { flushPendingPersistentWrites(); } catch {}
+    if (pendingPersistentEvents.length || pendingPersistentMessageIds.length) {
+      schedulePendingPersistentWritesRetry();
+    }
+  }, 15 * 1000);
+  if (typeof pendingPersistentWritesTimer.unref === 'function') pendingPersistentWritesTimer.unref();
 }
 
 loadPersistentMessageIds();
@@ -705,6 +990,8 @@ const ESCALATION_NOTIFICATION_ACTIONS = new Set([
   'ai_needs_commercial',
   'ai_error_fallback_sent',
   'ai_error_no_reply',
+  // V6.45 — réponse IA générée mais non envoyée (erreur Meta, coupure).
+  'ai_reply_send_failed',
   'commercial_required',
   'human_pause',
   'ai_disabled',
@@ -741,17 +1028,16 @@ function conversationMediaPreview(entry) {
   return 'Nouveau message client';
 }
 
+// V6.46 — Même copie mémoire que Admin.js (écriture groupée, plafonnée) :
+// un message client ne relit et ne réécrit plus tout notifications.json,
+// et une notification en attente ne peut plus être écrasée par un
+// « marquer comme lu » de l'Admin (ou l'inverse).
 function loadNotificationsStore() {
-  const parsed = readJsonObject(NOTIFICATIONS_PATH, { items: [] });
-  return {
-    items: Array.isArray(parsed?.items) ? parsed.items : []
-  };
+  return loadSharedNotificationsStore();
 }
 
 function saveNotificationsStore(store) {
-  writeJsonAtomic(NOTIFICATIONS_PATH, {
-    items: Array.isArray(store?.items) ? store.items : []
-  });
+  saveSharedNotificationsStore(store);
 }
 
 function registerConversationNotification(entry) {
@@ -1389,27 +1675,146 @@ let historyLogCache = null;
 // V6.36.65 — Écriture différée pour conversation-log.json, voir
 // commentaire détaillé au point d'appel dans logConversation().
 const HISTORY_WRITE_DEBOUNCE_MS = 1500;
+// V6.46 — Attente maximale : sous un trafic continu, l'écriture n'est plus
+// repoussée indéfiniment par chaque nouveau message.
+const HISTORY_WRITE_MAX_DELAY_MS = 5000;
+const HISTORY_WRITE_RETRY_MS = 15000;
 let pendingHistoryLogWriteTimer = null;
 let pendingHistoryLogToWrite = null;
+let pendingHistoryLogSince = 0;
+// V6.46 — Après un échec d'écriture (disque plein…), aucun nouvel essai
+// avant cette date : chaque nouveau message ne relance plus une réécriture
+// complète du journal (et un nettoyage d'urgence) tout de suite.
+let historyLogRetryNotBefore = 0;
+// V6.46 — Entrées ajoutées depuis la dernière écriture réussie : reprises
+// si le fichier est réécrit entre-temps par Admin.js (rétention, purge,
+// rattrapage Facebook…) au lieu d'être perdues.
+let historyLogUnflushed = [];
 
 function flushHistoryLogWrite() {
   if (!pendingHistoryLogToWrite) return;
   const toWrite = pendingHistoryLogToWrite;
-  pendingHistoryLogToWrite = null;
+  if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
   pendingHistoryLogWriteTimer = null;
+  // Fichier modifié hors de server.js depuis la dernière lecture : on le
+  // relit et on y ajoute nos entrées en attente avant d'écrire.
+  const merged = currentHistoryLogEntries();
   try {
-    writeJsonAtomic(HISTORY_PATH, toWrite);
+    writeJsonAtomic(HISTORY_PATH, merged);
     historyLogCacheStamp = fileChangeStamp(HISTORY_PATH);
+    historyLogCache = merged;
+    if (pendingHistoryLogToWrite === toWrite || pendingHistoryLogToWrite === merged) {
+      pendingHistoryLogToWrite = null;
+      pendingHistoryLogSince = 0;
+      historyLogUnflushed = [];
+    }
+    historyLogRetryNotBefore = 0;
   } catch (error) {
-    console.error('❌ Écriture différée conversation-log.json :', error.message);
+    // V6.46 — Les entrées restent en attente (avant : perdues jusqu'au
+    // message suivant) ; nouvel essai automatique dans 15 s, que de
+    // nouveaux messages arrivent ou non.
+    console.error('❌ Écriture différée conversation-log.json (nouvel essai) :', error.message);
+    historyLogRetryNotBefore = Date.now() + HISTORY_WRITE_RETRY_MS;
+    pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, HISTORY_WRITE_RETRY_MS);
+    if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
   }
+}
+
+function scheduleHistoryLogWrite() {
+  if (!pendingHistoryLogSince) pendingHistoryLogSince = Date.now();
+  // V6.46 — Attente après échec en cours : le nouvel essai déjà planifié
+  // n'est ni annulé ni avancé.
+  if (historyLogRetryNotBefore > Date.now() && pendingHistoryLogWriteTimer) return;
+  if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
+  const waited = Date.now() - pendingHistoryLogSince;
+  const delay = Math.max(0, Math.min(HISTORY_WRITE_DEBOUNCE_MS, HISTORY_WRITE_MAX_DELAY_MS - waited));
+  pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, delay);
+  if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
 }
 
 process.on('SIGTERM', flushHistoryLogWrite);
 process.on('SIGINT', flushHistoryLogWrite);
 process.on('beforeExit', flushHistoryLogWrite);
+// V6.46 — Aussi après process.exit() (exception non rattrapée).
+process.on('exit', () => {
+  // Dossier de données disparu (volume démonté) : ne pas le recréer vide.
+  if (!fs.existsSync(DATA_DIR)) return;
+  try { flushHistoryLogWrite(); } catch {}
+  try { flushPendingPersistentWrites(); } catch {}
+});
 
 let historyLogCacheStamp = null;
+
+// V6.46 — Lecture de conversation-log.json pour un ajout :
+// - l'empreinte est mémorisée dès la lecture (avant : seulement après la
+//   première écriture, donc après un redémarrage chaque message d'une
+//   rafale relisait le fichier et effaçait les précédents non écrits) ;
+// - fichier illisible ou vide : conservé sous conversation-log.json.corrupt-<date>
+//   (jamais écrasé), reprise du .bak s'il est valide ;
+// - fichier réécrit par Admin.js pendant une écriture en attente : nos
+//   entrées non écrites sont ajoutées à la nouvelle version.
+function readHistoryLogFileForAppend() {
+  if (!fs.existsSync(HISTORY_PATH)) return [];
+  let raw = '';
+  try {
+    raw = fs.readFileSync(HISTORY_PATH, 'utf8');
+    if (!raw.trim()) throw new Error('fichier vide (0 octet)');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('❌ conversation-log.json illisible :', error.message);
+    const quarantine = `${HISTORY_PATH}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      if (raw.trim()) {
+        fs.renameSync(HISTORY_PATH, quarantine);
+        console.error(`🚨 conversation-log.json illisible conservé sous ${path.basename(quarantine)} (la copie permanente reste dans conversation-events/).`);
+      }
+    } catch (renameError) {
+      console.error('❌ conversation-log.json illisible non mis de côté :', renameError.message);
+    }
+    try {
+      const backup = JSON.parse(fs.readFileSync(`${HISTORY_PATH}.bak`, 'utf8'));
+      if (Array.isArray(backup)) {
+        console.warn(`♻️ conversation-log.json repris depuis conversation-log.json.bak (${backup.length} entrée(s)).`);
+        return backup;
+      }
+    } catch {}
+    return [];
+  }
+}
+
+function currentHistoryLogEntries() {
+  const stamp = fileChangeStamp(HISTORY_PATH);
+  if (historyLogCache && stamp === historyLogCacheStamp) {
+    return historyLogCache;
+  }
+  let logs = readHistoryLogFileForAppend();
+  if (historyLogUnflushed.length) {
+    logs = logs.concat(historyLogUnflushed);
+    if (logs.length > 5000) logs = logs.slice(-5000);
+  }
+  historyLogCache = logs;
+  historyLogCacheStamp = fileChangeStamp(HISTORY_PATH);
+  if (pendingHistoryLogToWrite) pendingHistoryLogToWrite = logs;
+  return logs;
+}
+
+// Ajout d'une entrée au journal récent (mémoire immédiate, disque groupé).
+function appendHistoryLogEntry(entry) {
+  let logs = currentHistoryLogEntries().slice();
+  logs.push(entry);
+  // Cache de compatibilité : limité pour garder les lectures rapides.
+  // La copie permanente est dans conversation-events/*.jsonl.
+  if (logs.length > 5000) {
+    logs = logs.slice(-5000);
+  }
+  historyLogUnflushed.push(entry);
+  if (historyLogUnflushed.length > 5000) historyLogUnflushed = historyLogUnflushed.slice(-5000);
+  historyLogCache = logs;
+  pendingHistoryLogToWrite = logs;
+  scheduleHistoryLogWrite();
+  return logs;
+}
 
 // Les webhooks Instagram renvoient aussi les messages envoyés par le compte.
 // On mémorise les IDs envoyés par l'API pour ne pas les confondre avec une
@@ -1675,17 +2080,22 @@ function logConversation(entry) {
           'ai_needs_commercial',
           'ai_error_fallback_sent',
           'ai_error_no_reply',
+          'ai_reply_send_failed',
           'commercial_required',
           'secure_image_commercial_required',
           'secure_image_analysis_error',
           'image_analysis_error'
         ]);
 
+        // V6.45 — Plus de reprise automatique silencieuse après 60 s : l'IA
+        // reste en pause (comme l'annonce l'Inbox « IA en pause ») jusqu'à
+        // « Réactiver IA », ou jusqu'à l'expiration du SLA sans aucune
+        // intervention (reprise documentée V6.36.34, checkSlaAutoResume).
         if (strictHandoffActions.has(action)) {
           pauseAiForCommercial(
             contact,
             safeString(entry?.image_reason || entry?.error || action),
-            60000
+            { aiHandoff: true }
           );
         }
       } catch (slaError) {
@@ -1750,42 +2160,12 @@ function logConversation(entry) {
         : undefined
     };
 
-    let logs = [];
-
-    const historyStamp = fileChangeStamp(HISTORY_PATH);
-    if (historyLogCache && historyStamp === historyLogCacheStamp) {
-      logs = historyLogCache.slice();
-    } else if (fs.existsSync(HISTORY_PATH)) {
-      try {
-        const parsed = JSON.parse(
-          fs.readFileSync(HISTORY_PATH, 'utf8') ||
-          '[]'
-        );
-
-        if (Array.isArray(parsed)) {
-          logs = parsed;
-        }
-      } catch {
-        logs = [];
-      }
-    }
-
-    // V6.19.6 : l'événement complet est conservé en append-only AVANT
-    // d'actualiser le cache JSON récent. Un déploiement ne touche jamais
-    // aux fichiers déjà présents dans /data/conversation-events/.
-    appendPersistentConversationEvent(entry);
-
-    persistMessageId(entry?.message_id);
-    persistMessageId(entry?.meta_message_id);
-
-    logs.push(entry);
-
-    // Cache de compatibilité : limité pour garder les lectures rapides.
-    // La copie permanente est dans conversation-events/*.jsonl.
-    if (logs.length > 5000) {
-      logs = logs.slice(-5000);
-    }
-
+    // V6.46 — Le message est d'abord enregistré en mémoire (journal récent,
+    // index des identifiants, notification), indépendamment du disque :
+    // avant, un ENOSPC sur le journal permanent sautait tout le reste et
+    // le message client disparaissait définitivement (le webhook était déjà
+    // acquitté, Meta ne le renvoie pas).
+    //
     // V6.36.65 — Écriture différée, même principe que le correctif
     // conversation-state.json (V6.36.62) : conversation-log.json atteint
     // 14+ Mo, et writeJsonAtomic (bloquant) ajoutait 150-180ms mesurés à
@@ -1794,11 +2174,30 @@ function logConversation(entry) {
     // seule l'écriture PHYSIQUE sur disque est groupée toutes les
     // HISTORY_WRITE_DEBOUNCE_MS pour éviter de réécrire 14 Mo à chaque
     // message individuel.
-    historyLogCache = logs;
-    pendingHistoryLogToWrite = logs;
-    if (pendingHistoryLogWriteTimer) clearTimeout(pendingHistoryLogWriteTimer);
-    pendingHistoryLogWriteTimer = setTimeout(flushHistoryLogWrite, HISTORY_WRITE_DEBOUNCE_MS);
-    if (typeof pendingHistoryLogWriteTimer.unref === 'function') pendingHistoryLogWriteTimer.unref();
+    try {
+      appendHistoryLogEntry(entry);
+    } catch (historyError) {
+      console.error('❌ Journal récent (conversation-log.json) :', historyError.message);
+    }
+
+    // V6.19.6 : l'événement complet est conservé en append-only. Un
+    // déploiement ne touche jamais aux fichiers déjà présents dans
+    // /data/conversation-events/. V6.46 — Disque plein : l'événement est
+    // gardé en mémoire (dans l'ordre) et réécrit automatiquement ; les
+    // événements déjà en attente passent avant pour garder l'ordre.
+    if (pendingPersistentEvents.length) {
+      queuePendingPersistentEvent(entry, new Error('événements précédents en attente'));
+      try { flushPendingPersistentWrites(); } catch {}
+    } else {
+      try {
+        appendPersistentConversationEvent(entry);
+      } catch (appendError) {
+        queuePendingPersistentEvent(entry, appendError);
+      }
+    }
+
+    persistMessageId(entry?.message_id);
+    persistMessageId(entry?.meta_message_id);
 
     registerConversationNotification(entry);
     // Patch session (06/10) - Invalidation centralisee du cache Inbox : jusqu ici, seul l envoi commercial manuel (ligne ~5688) invalidait le cache memoire de la fusion Inbox apres un message. Les 44 autres flux (message client entrant, reponse IA automatique, webhooks Facebook/Instagram) ne le faisaient jamais, laissant la liste de conversations affichee figee jusqu a expiration naturelle du cache (5 min) ou fermeture/reouverture de l app. Deplace ici, dans logConversation elle meme, pour couvrir tous les flux en un seul endroit.
@@ -1845,59 +2244,30 @@ function saveConversationStates(states) {
   saveConversationStatesAdmin(states);
 }
 
-// V6.36.64 — Migrée vers SQLite (accès ciblé, ~1ms) au lieu de
-// loadConversationStates() qui chargeait tout le JSON (24+ Mo) pour ne
-// lire qu'une seule conversation. Repli sur le cache JSON en mémoire si
-// jamais SQLite ne trouve rien (sécurité pendant la transition, ne
-// devrait normalement jamais se produire après la migration complète).
+// V6.45 — Lecture d'UNE conversation sur la source de vérité partagée avec
+// Admin.js (lib/conversation-state-store.js) : une prise en main, une
+// réactivation de l'IA, une affectation ou un SLA écrits côté Admin sont
+// visibles ici immédiatement. Avant, cette fonction lisait d'abord SQLite,
+// que les écritures Admin.js n'atteignaient que 8 à 60 s plus tard.
 function getConversationState(phone) {
-  const fromSqlite = getConversationStateSingle(phone);
-  if (fromSqlite) return fromSqlite;
-
-  const states = loadConversationStates();
-  return (
-    states[phone] &&
-    typeof states[phone] === 'object'
-      ? states[phone]
-      : null
-  );
+  return getConversationStateSingle(phone);
 }
 
-// V6.36.63 — Migré vers SQLite pour l'accès ciblé à UNE SEULE
-// conversation, au lieu du cycle complet loadConversationStates (24+ Mo)
-// / saveConversationStates à chaque appel. Le cache JSON en mémoire
-// (loadConversationStatesAdmin) reste mis à jour en miroir pour garder la
-// compatibilité avec tout le reste du code qui itère encore sur
-// l'ensemble des conversations (listes, rapports, exports) — seule
-// l'écriture PHYSIQUE sur disque du JSON reste différée/groupée
-// (V6.36.62), le vrai gain ici est que cette fonction elle-même ne
-// touche plus du tout le fichier JSON de 24+ Mo.
+// V6.45 — Lecture-modification-écriture atomique d'UNE conversation, sur la
+// même source de vérité que Admin.js (updateConversationStateAdmin) :
+// mémoire mise à jour et écrite tout de suite dans SQLite, JSON complet
+// écrit de façon groupée. Avant, la lecture se faisait depuis la ligne
+// SQLite (parfois périmée) et l'entrée JSON était remplacée en entier :
+// une prise en main faite dans l'Admin était effacée par le message client
+// ou le statut « lu » Meta suivant.
 function updateConversationState(
   phone,
   updater
 ) {
-  const current =
-    getConversationStateSingle(phone) || {};
-
-  // V6.37.2 — adReferral allégé (voir lib/ad-referral.js).
-  const updated =
-    slimConversationState(
-      updater({
-        ...current
-      }) || current
-    );
-
-  setConversationStateSingle(phone, updated);
-
-  // Miroir dans le cache mémoire JSON, pour compatibilité avec le reste
-  // du code (listes de conversations, rapports) sans déclencher d'écriture
-  // disque immédiate — saveConversationStatesAdmin gère déjà le
-  // regroupement des écritures (V6.36.62).
-  const states = loadConversationStates();
-  states[phone] = updated;
-  saveConversationStates(states);
-
-  return updated;
+  return updateConversationStateAdmin(
+    phone,
+    updater
+  );
 }
 
 function markCustomerMessage(
@@ -2084,25 +2454,33 @@ function markHumanTakeover(phone, settings) {
 // V6.19.2 — Pause IA stricte jusqu'à réactivation manuelle.
 // Utilisée quand l'IA ne connaît pas la réponse ou lorsqu'un média
 // nécessite une vérification humaine.
+// V6.45 — Deux cas :
+// - réponse d'un commercial (par défaut) : prise en main stricte
+//   (manualTakeover), levée uniquement par « Réactiver IA » ;
+// - handoff décidé par l'IA ({ aiHandoff: true }) : pause sans échéance
+//   (humanPaused, pausedUntil vide) ; elle est levée par « Réactiver IA »,
+//   par une réponse commerciale (qui la rend stricte) ou, si personne
+//   n'intervient, par checkSlaAutoResume à l'expiration du SLA. La reprise
+//   automatique après 60 s (invisible dans l'Inbox, qui affichait toujours
+//   « IA en pause ») est supprimée. Un nombre en 3e argument (ancien
+//   autoResumeAfterMs) est traité comme un handoff IA, sans échéance.
 function pauseAiForCommercial(
   phone,
   reason = 'Intervention commerciale requise.',
-  autoResumeAfterMs = null
+  options = {}
 ) {
   const now = new Date().toISOString();
-  const hasAutoResume =
-    Number.isFinite(autoResumeAfterMs) &&
-    autoResumeAfterMs > 0;
+  const aiHandoff =
+    typeof options === 'number' ||
+    Boolean(options && options.aiHandoff);
 
   updateConversationState(
     phone,
     current => ({
       ...current,
       humanPaused: true,
-      manualTakeover: !hasAutoResume,
-      pausedUntil: hasAutoResume
-        ? new Date(Date.now() + autoResumeAfterMs).toISOString()
-        : null,
+      manualTakeover: aiHandoff ? current.manualTakeover === true : true,
+      pausedUntil: null,
       awaitingResponse: false,
       commercialAttention: true,
       commercialAttentionReason:
@@ -2115,52 +2493,38 @@ function pauseAiForCommercial(
   );
 
   console.log(
-    hasAutoResume
-      ? `🤝 Handoff IA (auto) : IA suspendue pour ${maskPhoneForLog(phone)} pendant ${Math.round(autoResumeAfterMs / 1000)}s avant reprise automatique si aucun commercial n'intervient.`
+    aiHandoff
+      ? `🤝 Handoff IA : IA suspendue pour ${maskPhoneForLog(phone)} jusqu'à « Réactiver IA » ou expiration du SLA sans intervention.`
       : `🤝 Handoff strict : IA suspendue pour ${maskPhoneForLog(phone)} jusqu'à réactivation manuelle.`
   );
 }
+
+// V6.45 — Prédicat UNIQUE « l'IA est-elle en pause pour cette
+// conversation ? », identique au badge « IA en pause / Suivi commercial »
+// de l'Inbox (Admin.html) : voir lib/messaging-rules.js. Renvoie la raison,
+// ou '' si l'IA peut répondre.
+const conversationAiPauseReason = messagingRules.conversationAiPauseReason;
 
 function isHumanPaused(phone) {
   const state =
     getConversationState(phone);
 
-  // Une prise en main manuelle / handoff commercial est volontairement
-  // sans expiration : seul « Réactiver IA » doit la lever.
-  if (state?.manualTakeover === true) {
+  if (conversationAiPauseReason(state)) {
     return true;
   }
 
-  if (!state?.humanPaused) {
-    return false;
+  // Pause humaine expirée (prise en main via WhatsApp Business limitée à
+  // humanPauseMinutes) : on la lève.
+  if (state?.humanPaused === true) {
+    updateConversationState(
+      phone,
+      current => ({
+        ...current,
+        humanPaused: false,
+        pausedUntil: null
+      })
+    );
   }
-
-  const rawPausedUntil =
-    safeString(state.pausedUntil);
-
-  // humanPaused sans échéance = pause indéfinie.
-  if (!rawPausedUntil) {
-    return true;
-  }
-
-  const until =
-    Date.parse(rawPausedUntil);
-
-  if (
-    Number.isFinite(until) &&
-    until > Date.now()
-  ) {
-    return true;
-  }
-
-  updateConversationState(
-    phone,
-    current => ({
-      ...current,
-      humanPaused: false,
-      pausedUntil: null
-    })
-  );
 
   return false;
 }
@@ -2698,7 +3062,7 @@ function productHintFromAdBody(body) {
 
 function productHintFromAdBodyUncached(text, index) {
   const resolution = productResolver.resolveProduct({ message: text }, index);
-  if (resolution.status === 'resolved') {
+  if (resolution.status === 'resolved' || resolution.status === 'hidden') {
     return safeString(resolution.displayName);
   }
   if (resolution.status === 'ambiguous' && resolution.candidates.length) {
@@ -3231,12 +3595,15 @@ function getActiveProductsForAi() {
   }
 
   try {
-    const products = (loadProducts() || [])
+    const all = loadProducts() || [];
+    const products = all
       .filter(product => product && product.active !== false);
     aiProductsCache = {
       stamp,
       products,
-      index: productResolver.buildProductIndex(products)
+      // V6.46 — L'index garde aussi les fiches du site masquées dans
+      // l'Admin mais toujours publiées (bloquées : résultat « hidden »).
+      index: productResolver.buildProductIndex(all)
     };
   } catch (error) {
     console.warn('⚠️ Lecture catalogue (résolution produit IA) :', error.message);
@@ -4453,7 +4820,7 @@ function logAiProductResolution(contact, resolution, extra = {}) {
     console.log('🧭 Produit IA :', JSON.stringify({
       contact: maskPhoneForLog(contact),
       status: resolution?.status || 'none',
-      productId: resolution?.productKey || undefined,
+      productId: resolution?.productKey || resolution?.hiddenProductKey || undefined,
       source: resolution?.source || undefined,
       candidates: resolution?.status === 'ambiguous' ? resolution.candidateKeys : undefined,
       ...extra
@@ -4493,6 +4860,13 @@ function decidePreAiAction(contact, userText, resolution) {
 
   const status = resolution?.status || 'none';
   const arabic = containsArabic(userText);
+
+  // V6.46 — Fiche du site masquée / supprimée dans l'Admin mais toujours
+  // en vente sur mondeco.tn : l'équipe répond (avant : le produit voisin
+  // suivant, « Pouf Chambre Luxe Bianca 350 DT », devenait la chambre).
+  if (status === 'hidden') {
+    return { action: 'handoff', reason: 'product-hidden' };
+  }
 
   if (status === 'resolved') {
     if (looksLikePriceRequest(userText) && !replyFactGuard.hasCatalogPrice(resolution.product)) {
@@ -4913,7 +5287,8 @@ function buildGeminiRequest(
   const request = {
     contents,
     generationConfig: {
-      maxOutputTokens,
+      maxOutputTokens:
+        maxOutputTokens + geminiThinkingHeadroom(GEMINI_THINKING_LEVEL),
       ...(GEMINI_THINKING_LEVEL
         ? { thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL } }
         : {})
@@ -5420,7 +5795,10 @@ async function callAIChat(
     const groqPayload = {
       ...payload,
       model:
-        fallbackModel
+        fallbackModel,
+      ...(/gpt-oss/i.test(fallbackModel)
+        ? { reasoning_effort: GROQ_REASONING_EFFORT }
+        : {})
     };
 
     const groqStarted = Date.now();
@@ -5506,6 +5884,34 @@ const GENERATE_REPLY_LEAK_PATTERNS = [
 // conservée dans l'historique IA.
 const aiFactGuardFiredAt =
   new Map();
+
+// V6.46 — Nature de la dernière réponse générée pour chaque contact
+// (question de choix, clarification, transfert, réponse IA) et produit
+// identifié pour CE tour : la fiche produit automatique suit ce produit et
+// n'est jamais envoyée après une question de choix (avant : recherche par
+// nom dans tout le catalogue → fiche d'un autre produit ou d'un doublon).
+const aiReplyTurnContext =
+  new Map();
+
+function rememberAiReplyTurn(contact, kind, product = null) {
+  const key = safeString(contact);
+  if (!key) return;
+  aiReplyTurnContext.set(key, { kind: safeString(kind), product: product || null, at: Date.now() });
+  if (aiReplyTurnContext.size > 2000) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [entryKey, entry] of aiReplyTurnContext) {
+      if (entry.at < cutoff) aiReplyTurnContext.delete(entryKey);
+    }
+  }
+}
+
+function takeAiReplyTurn(contact, withinMs = 10 * 60 * 1000) {
+  const key = safeString(contact);
+  const entry = aiReplyTurnContext.get(key);
+  aiReplyTurnContext.delete(key);
+  if (!entry || Date.now() - entry.at > withinMs) return null;
+  return entry;
+}
 
 function aiFactGuardFiredRecently(contact, withinMs = 2 * 60 * 1000) {
   const at = aiFactGuardFiredAt.get(safeString(contact));
@@ -5608,10 +6014,12 @@ async function generateReply(
   if (decision.action === 'handoff') {
     logAiProductResolution(userId, resolution, { decision: decision.reason });
     addHistoryMessage(userId, 'user', cleanText);
+    rememberAiReplyTurn(userId, 'handoff');
     return '[COMMERCIAL_REQUIRED]';
   }
 
   if (decision.action === 'reply') {
+    rememberAiReplyTurn(userId, decision.kind || 'question');
     // Même plage horaire que l'IA : en journée, l'équipe répond.
     if (!evalSession && !isWithinAiActiveHours()) {
       addHistoryMessage(userId, 'user', cleanText);
@@ -5720,6 +6128,12 @@ async function generateReply(
       : appendCategoryLink(guarded.reply, {
           product: resolution?.status === 'resolved' ? resolution.product : null
         });
+
+  rememberAiReplyTurn(
+    userId,
+    guarded.fired ? 'guarded' : 'ai',
+    resolution?.status === 'resolved' ? resolution.product : null
+  );
 
   logAiProductResolution(userId, resolution, {
     decision: 'ai',
@@ -7020,7 +7434,46 @@ function assertWhatsAppWithinCustomerWindow(conversationKey) {
   throw error;
 }
 
-setCommercialSendHandler(
+// V6.45 — Un envoi commercial (Admin) est sérialisé avec le traitement des
+// messages du même client (même file que les webhooks WhatsApp) et signalé
+// immédiatement comme « envoi humain en cours » : une réponse IA dont la
+// génération se termine pendant cet envoi n'est pas envoyée (voir
+// aiAutoSendBlockReason). L'attente de la file est limitée à
+// COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS pour ne pas bloquer le commercial
+// derrière une génération IA lente : l'IA est de toute façon bloquée.
+const COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS = 10 * 1000;
+
+function serializedCommercialSend(handler) {
+  return async (sendArgs = {}) => {
+    const queueChannel =
+      normalizeChannel(
+        sendArgs.channel ||
+        conversationChannel(sendArgs.contact, getConversationState(sendArgs.contact))
+      );
+    const queueExternal =
+      safeString(sendArgs.externalContact) ||
+      (queueChannel === 'instagram' || queueChannel === 'facebook'
+        ? conversationExternalId(sendArgs.contact)
+        : normalizePhone(sendArgs.phone || sendArgs.contact));
+    const queueConversationKey = makeConversationKey(queueChannel, queueExternal);
+
+    if (!queueConversationKey) return handler(sendArgs);
+
+    markHumanSendStart(queueConversationKey);
+    try {
+      if (queueChannel !== 'whatsapp') return await handler(sendArgs);
+      return await conversationQueue.run(
+        `whatsapp:${normalizePhone(queueExternal)}`,
+        () => handler(sendArgs),
+        { maxWaitMs: COMMERCIAL_SEND_QUEUE_MAX_WAIT_MS }
+      );
+    } finally {
+      markHumanSendEnd(queueConversationKey);
+    }
+  };
+}
+
+setCommercialSendHandler(serializedCommercialSend(
   async ({
     phone,
     contact,
@@ -7372,7 +7825,7 @@ setCommercialSendHandler(
         result
     };
   }
-);
+));
 
 // ============================================================
 // V6.35.6 — Résilience réseau pour les envois de messages (WhatsApp,
@@ -7389,20 +7842,11 @@ setCommercialSendHandler(
 
 const SEND_MESSAGE_TIMEOUT_MS = 20000;
 
-function isPreflightNetworkFailure(error) {
-  // V6.35.11 — Élargi : en pratique, quand fetch() lève une TypeError
-  // "fetch failed" (par opposition à un AbortError de timeout), c'est
-  // presque toujours parce que la connexion n'a jamais abouti (DNS,
-  // TCP, TLS) — Node/undici ne remplit pas toujours error.cause.code de
-  // façon fiable, donc se limiter à une liste étroite de codes faisait
-  // que la quasi-totalité des échecs réels ne déclenchait AUCUN retry.
-  // Seul un AbortError (timeout, cas ambigu où la requête a pu partir)
-  // reste exclu du retry.
-  if (error?.name === 'AbortError') return false;
-  if (error instanceof TypeError && /fetch failed/i.test(String(error.message || ''))) return true;
-  const code = String(error?.cause?.code || error?.code || '');
-  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET'].includes(code);
-}
+// V6.45 — Voir lib/meta-send-transport.js : une nouvelle tentative n'a
+// lieu que si la connexion à Meta n'a jamais été établie (DNS, connexion
+// refusée, coupure pendant la négociation TLS). ECONNRESET / « socket hang
+// up » après l'envoi de la requête ne sont plus rejoués (doublons).
+const isPreflightNetworkFailure = isMetaPreflightNetworkFailure;
 
 // V6.36.0 VPS STABLE — transport Meta HTTPS natif
 // - IPv4 forcé
@@ -7447,203 +7891,27 @@ if (typeof metaKeepAlivePingTimer.unref === 'function') {
   metaKeepAlivePingTimer.unref();
 }
 
-async function attemptNativeHttpsRequest(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-
-    let target;
-    try {
-      target = new URL(url);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    const headers = { ...(options.headers || {}) };
-
-    for (const key of Object.keys(headers)) {
-      if (key.toLowerCase() === 'connection') {
-        delete headers[key];
-      }
-    }
-
-    let body = options.body ?? null;
-
-    if (
-      body !== null &&
-      body !== undefined &&
-      !Buffer.isBuffer(body) &&
-      typeof body !== 'string'
-    ) {
-      body = String(body);
-    }
-
-    const bodyBuffer =
-      body === null || body === undefined
-        ? null
-        : Buffer.isBuffer(body)
-          ? body
-          : Buffer.from(body);
-
-    if (bodyBuffer && !Object.keys(headers).some(
-      key => key.toLowerCase() === 'content-length'
-    )) {
-      headers['Content-Length'] = bodyBuffer.length;
-    }
-
-    console.log('⏱️ HTTPS-META START 0ms');
-
-    let settled = false;
-
-    const req = META_NATIVE_HTTPS.request(
-      {
-        protocol: target.protocol,
-        hostname: target.hostname,
-        port: target.port || 443,
-        path: `${target.pathname}${target.search}`,
-        method: options.method || 'GET',
-        headers,
-        family: 4,
-        agent: META_HTTPS_AGENT
-      },
-      res => {
-        console.log(
-          `⏱️ HTTPS-META HEADERS ${Date.now() - startedAt}ms ` +
-          `HTTP=${res.statusCode || 0} REUSED=${req.reusedSocket ? 'yes' : 'no'}`
-        );
-
-        const chunks = [];
-
-        res.on('data', chunk => chunks.push(chunk));
-
-        res.on('end', () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(overallTimer);
-
-          const raw = Buffer.concat(chunks).toString('utf8');
-
-          console.log(
-            `⏱️ HTTPS-META END ${Date.now() - startedAt}ms`
-          );
-
-          const responseHeaders = res.headers || {};
-
-          resolve({
-            ok:
-              Number(res.statusCode || 0) >= 200 &&
-              Number(res.statusCode || 0) < 300,
-
-            status: Number(res.statusCode || 0),
-
-            statusText: res.statusMessage || '',
-
-            headers: {
-              get(name) {
-                const value =
-                  responseHeaders[String(name || '').toLowerCase()];
-
-                if (Array.isArray(value)) {
-                  return value.join(', ');
-                }
-
-                return value == null ? null : String(value);
-              }
-            },
-
-            async text() {
-              return raw;
-            },
-
-            async json() {
-              if (!raw) return {};
-              return JSON.parse(raw);
-            }
-          });
-        });
-      }
-    );
-
-    req.on('socket', socket => {
-      if (socket.connecting) {
-        socket.once('secureConnect', () => {
-          console.log(
-            `⏱️ HTTPS-META TLS ${Date.now() - startedAt}ms ` +
-            `IP=${socket.remoteAddress || '?'}`
-          );
-        });
-      }
-    });
-
-    req.on('error', error => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(overallTimer);
-
-      logSendNetworkErrorDetail(error, 'node:https');
-
-      if (error?.code === 'SEND_TIMEOUT_UNCERTAIN') {
-        reject(error);
-        return;
-      }
-
-      const networkError = new Error(
-        'Coupure réseau pendant l’envoi. ' +
-        'Le message a peut-être été délivré malgré tout : ' +
-        'vérifiez la conversation avant de renvoyer.'
-      );
-
-      networkError.code = 'SEND_NETWORK_UNCERTAIN';
-      networkError.cause = error;
-
-      reject(networkError);
-    });
-
-    const overallTimer = setTimeout(() => {
-      if (settled) return;
-
-      const timeoutError = new Error(
-        `Envoi interrompu après ${SEND_MESSAGE_TIMEOUT_MS / 1000}s ` +
-        `sans réponse de Meta. Le message a peut-être été délivré malgré tout : ` +
-        `vérifiez la conversation avant de renvoyer.`
-      );
-
-      timeoutError.code = 'SEND_TIMEOUT_UNCERTAIN';
-
-      req.destroy(timeoutError);
-    }, SEND_MESSAGE_TIMEOUT_MS);
-
-    if (bodyBuffer) {
-      req.write(bodyBuffer);
-    }
-
-    req.end();
+// V6.45 — Transport extrait dans lib/meta-send-transport.js : la promesse
+// se termine toujours (coupure pendant la réponse, délai maximal), pour ne
+// plus bloquer la file du client.
+const metaSendTransport =
+  createMetaSendTransport({
+    https: META_NATIVE_HTTPS,
+    agent: META_HTTPS_AGENT,
+    timeoutMs: SEND_MESSAGE_TIMEOUT_MS,
+    logNetworkError: (error, label) => logSendNetworkErrorDetail(error, label)
   });
+
+async function attemptNativeHttpsRequest(url, options = {}) {
+  return metaSendTransport.request(url, options);
 }
 
-// V6.36.1 — Réintègre la nouvelle tentative automatique (V6.35.11) par-dessus
-// le nouveau transport HTTPS natif (V6.36.0). Ne retente QUE les échecs
-// survenus AVANT tout contact réseau réel avec Meta (DNS, connexion
-// refusée, connexion réinitialisée) — ceux-là n'ont provoqué aucun envoi,
-// donc aucun risque de double message. Un timeout (le message a peut-être
-// atteint Meta, seule la réponse s'est perdue) n'est JAMAIS retenté
-// automatiquement.
+// V6.36.1 — Nouvelle tentative automatique uniquement pour les échecs
+// survenus AVANT tout contact réseau réel avec Meta (V6.45 : connexion
+// jamais établie). Un timeout ou une coupure après l'envoi de la requête
+// ne sont JAMAIS retentés automatiquement.
 async function fetchWithSendTimeout(url, options = {}) {
-  let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      return await attemptNativeHttpsRequest(url, options);
-    } catch (error) {
-      lastError = error;
-      const underlying = error?.cause || error;
-      if (attempt < 3 && isPreflightNetworkFailure(underlying)) {
-        await new Promise(resolve => setTimeout(resolve, 600 * attempt));
-        continue;
-      }
-      throw error;
-    }
-  }
-  throw lastError;
+  return metaSendTransport.requestWithPreflightRetry(url, options);
 }
 
 // V6.35.11 — Log le détail brut (nom, message, cause.code, cause.message)
@@ -8883,19 +9151,15 @@ async function checkWhetherBotShouldReply(
     };
   }
 
-  const conversationState =
-    getConversationState(phone) || {};
-
-  if (
-    isHumanPaused(phone) &&
-    (
-      conversationState.manualTakeover === true ||
-      settings.pauseWhenHumanReplies
-    )
-  ) {
+  // V6.45 — Même prédicat que le badge de l'Inbox (lib/messaging-rules.js) :
+  // une conversation affichée « IA en pause » ne reçoit jamais de réponse
+  // IA. Avant, une pause sans prise en main (handoff IA, pause posée par
+  // l'Admin) était ignorée si pauseWhenHumanReplies était désactivé.
+  if (isHumanPaused(phone)) {
     return {
       allowed: false,
       reason: 'human_pause',
+      pauseReason: conversationAiPauseReason(getConversationState(phone)),
       settings
     };
   }
@@ -8966,25 +9230,53 @@ async function checkWhetherBotShouldReply(
 // ============================================================
 
 app.get('/', (req, res) => {
+  // V6.46 — Canaux réellement traités (WhatsApp uniquement par défaut).
   res
     .status(200)
     .send(
-      '✅ MONDECO Omnicanal WhatsApp + Instagram + Facebook actif.'
+      `✅ MONDECO ${runtimeCheck.channelsLabel(CHANNELS_ENABLED)} actif.`
     );
 });
+
+// V6.46 — /health : « ok » (HTTP 200) ou « degraded » (HTTP 503) avec les
+// raisons (dossier des données non inscriptible, base SQLite indisponible,
+// configuration indispensable absente en production). Version de
+// l'application et commit déployé ; plus aucune version de Node (lib/health.js).
+// Âge du dernier webhook Meta accepté : information seulement (la nuit,
+// aucun message n'est normal).
+const probeDataDirForHealth = createDataDirProbe(DATA_DIR);
+const lastWebhookAtMs = { any: 0, whatsapp: 0 };
+const ignoredWebhookCounts = {};
 
 app.get('/health', (req, res) => {
   const settings =
     getBotSettings();
 
-  res
-    .status(200)
-    .json({
-      status: 'ok',
-      service:
-        'bot-whatsapp-mondeco',
-      node:
-        process.version,
+  let sqliteCheck;
+  try {
+    const connection = sharedSqliteConnection();
+    sqliteCheck = connection
+      ? connection.probe()
+      : { ok: false, error: 'connexion SQLite non initialisée' };
+  } catch (error) {
+    sqliteCheck = { ok: false, error: String(error?.message || error).slice(0, 300) };
+  }
+
+  const report = buildHealthReport({
+    service: 'bot-whatsapp-mondeco',
+    version: APP_VERSION,
+    commit: APP_COMMIT,
+    startedAtMs: SERVER_STARTED_AT_MS,
+    dataDir: probeDataDirForHealth(),
+    sqlite: sqliteCheck,
+    config: {
+      required: REQUIRED_CONFIG,
+      enforce: REQUIRED_CONFIG_ENFORCED
+    },
+    lastWebhook: lastWebhookAtMs,
+    channels: CHANNELS_ENABLED,
+    ignoredWebhooks: ignoredWebhookCounts,
+    ai: {
       ai_enabled:
         settings.aiEnabled,
       ai_provider:
@@ -8998,10 +9290,14 @@ app.get('/health', (req, res) => {
       ai_model:
         GEMINI_API_KEY
           ? GEMINI_MODEL
-          : GROQ_MODEL,
-      timestamp:
-        new Date().toISOString()
-    });
+          : GROQ_MODEL
+    }
+  });
+
+  res.setHeader('Cache-Control', 'no-store');
+  return res
+    .status(report.httpStatus)
+    .json(report.body);
 });
 
 // V6.37 — Routes de diagnostic et de test : réservées aux administrateurs
@@ -9199,36 +9495,35 @@ function validMetaWebhookSignature(req) {
           ? FACEBOOK_APP_SECRET
           : META_APP_SECRET;
 
-  if (!appSecret) return null;
-
-  const header = safeString(req.headers['x-hub-signature-256']);
-  if (!header.startsWith('sha256=')) return false;
-  if (!Buffer.isBuffer(req.rawBody)) return false;
-
-  const expected = `sha256=${crypto
-    .createHmac('sha256', appSecret)
-    .update(req.rawBody)
-    .digest('hex')}`;
-
-  try {
-    const left = Buffer.from(header, 'utf8');
-    const right = Buffer.from(expected, 'utf8');
-    return left.length === right.length && crypto.timingSafeEqual(left, right);
-  } catch {
-    return false;
-  }
+  // V6.45 — Calcul HMAC partagé et testé (lib/webhook-signature.js).
+  return verifyMetaSignature(
+    req.rawBody,
+    req.headers['x-hub-signature-256'],
+    appSecret
+  );
 }
 
 const unsignedWebhookWarningChannels = new Set();
 
-// V6.37 — Avec WEBHOOK_SIGNATURE_REQUIRED=true, un webhook est refusé si
-// aucun App Secret n'est configuré pour son canal (au lieu d'être accepté
-// sans vérification). À activer dès que META_APP_SECRET est renseigné.
-const WEBHOOK_SIGNATURE_REQUIRED =
-  String(process.env.WEBHOOK_SIGNATURE_REQUIRED || '').trim().toLowerCase() === 'true';
+// V6.45 — Signature OBLIGATOIRE par défaut pour chaque canal couvert par un
+// App Secret (META_APP_SECRET ou secret du canal) : un webhook non signé ou
+// mal signé est refusé. Un canal sans secret reste accepté (alerte au
+// démarrage qui le nomme). Sans aucun secret, les
+// webhooks restent acceptés (compatibilité) avec une alerte au démarrage.
+// WEBHOOK_SIGNATURE_REQUIRED=false = désactivation d'urgence explicite.
+const WEBHOOK_SIGNATURE_POLICY = resolveWebhookSignaturePolicy({
+  envValue: process.env.WEBHOOK_SIGNATURE_REQUIRED,
+  secrets: {
+    meta: META_APP_SECRET,
+    whatsapp: process.env.WHATSAPP_APP_SECRET,
+    instagram: process.env.INSTAGRAM_APP_SECRET,
+    facebook: process.env.FACEBOOK_APP_SECRET
+  }
+});
+const WEBHOOK_SIGNATURE_REQUIRED = WEBHOOK_SIGNATURE_POLICY.required;
 
-if (WEBHOOK_SIGNATURE_REQUIRED && !META_APP_SECRET && !(WHATSAPP_APP_SECRET && INSTAGRAM_APP_SECRET && FACEBOOK_APP_SECRET)) {
-  console.error('❌ WEBHOOK_SIGNATURE_REQUIRED=true mais META_APP_SECRET est absent : les webhooks des canaux sans secret seront refusés.');
+for (const message of webhookSignatureStartupMessages(WEBHOOK_SIGNATURE_POLICY)) {
+  console[message.level](message.text);
 }
 
 app.post('/webhook', (req, res) => {
@@ -9237,21 +9532,27 @@ app.post('/webhook', (req, res) => {
       req.body?.object
     );
 
-  
   const signatureValid =
     validMetaWebhookSignature(req);
 
-  if (signatureValid === false) {
-    console.warn('❌ Webhook Meta rejeté : signature X-Hub-Signature-256 invalide.');
-    return res.sendStatus(401);
+  // V6.45 — Obligation décidée canal par canal (voir
+  // resolveWebhookSignaturePolicy).
+  const signatureDecision = webhookSignatureDecision({
+    signatureValid,
+    required: WEBHOOK_SIGNATURE_POLICY.requiredForObject(object)
+  });
+
+  if (signatureDecision.reason === 'invalid') {
+    console.warn('❌ Webhook Meta rejeté : signature X-Hub-Signature-256 invalide ou absente.');
+    return res.sendStatus(signatureDecision.status);
   }
 
-  if (signatureValid === null && WEBHOOK_SIGNATURE_REQUIRED) {
+  if (signatureDecision.reason === 'no_secret') {
     console.warn(`❌ Webhook Meta rejeté : aucun App Secret configuré pour « ${object || 'inconnu'} » alors que la signature est obligatoire.`);
-    return res.sendStatus(401);
+    return res.sendStatus(signatureDecision.status);
   }
 
-  if (signatureValid === null) {
+  if (signatureDecision.reason === 'unsigned') {
     const warningKey = object || 'unknown';
     if (!unsignedWebhookWarningChannels.has(warningKey)) {
       unsignedWebhookWarningChannels.add(warningKey);
@@ -9269,13 +9570,39 @@ app.post('/webhook', (req, res) => {
           : `📩 Webhook Meta reçu : ${object || 'objet inconnu'}`
   );
 
+  // V6.46 — Âge du dernier webhook accepté, affiché par /health.
+  lastWebhookAtMs.any = Date.now();
+  if (object === 'whatsapp_business_account') lastWebhookAtMs.whatsapp = lastWebhookAtMs.any;
+
+  // V6.45 — Chaque message WhatsApp est inscrit dans le journal des
+  // messages entrants (écriture synchrone) AVANT l'accusé 200 : Meta ne le
+  // renverra jamais, un arrêt pendant le traitement ne le perd plus (il est
+  // rejoué au démarrage).
+  if (object === 'whatsapp_business_account') {
+    journalWhatsAppInboundMessages(req.body);
+  }
+
   // Meta doit recevoir 200 rapidement. Le payload complet n'est plus écrit
   // dans les logs afin d'éviter d'exposer des messages clients sur Railway.
   res.sendStatus(200);
 
-  // Patch session (13/10) - Instagram desactive, application WhatsApp uniquement.
-  if (object === 'instagram') { return; }
-  if (false) {
+  // V6.46 — Canaux pilotés par INSTAGRAM_WEBHOOK_ENABLED et
+  // FACEBOOK_WEBHOOK_ENABLED (défaut false : depuis le 13/10, application
+  // WhatsApp uniquement). Un webhook ignoré est journalisé et compté
+  // (/health), et non plus jeté sans trace par un `if (false)` écrit en dur.
+  if (
+    (object === 'instagram' && !CHANNELS_ENABLED.instagram) ||
+    (object === 'page' && !CHANNELS_ENABLED.facebook)
+  ) {
+    ignoredWebhookCounts[object] = (ignoredWebhookCounts[object] || 0) + 1;
+    console.log(
+      `ℹ️ Webhook ${object === 'instagram' ? 'Instagram' : 'Facebook'} ignoré : canal désactivé ` +
+      `(${object === 'instagram' ? 'INSTAGRAM_WEBHOOK_ENABLED' : 'FACEBOOK_WEBHOOK_ENABLED'}=false).`
+    );
+    return;
+  }
+
+  if (object === 'instagram') {
     processInstagramWebhook(
       req.body
     ).catch(error => {
@@ -9301,9 +9628,7 @@ app.post('/webhook', (req, res) => {
     return;
   }
 
-  // Patch session (13/10) - Facebook desactive, application WhatsApp uniquement.
-  if (object === 'page') { return; }
-  if (false) {
+  if (object === 'page') {
     processFacebookWebhook(
       req.body
     ).catch(error => {
@@ -9820,6 +10145,188 @@ async function processFacebookWebhook(body) {
   }
 }
 
+// ============================================================
+// V6.45 — MESSAGES ENTRANTS : JOURNAL AVANT TRAITEMENT + REPRISE
+// ============================================================
+// Voir lib/inbound-journal.js. Chaque message WhatsApp est inscrit de façon
+// synchrone AVANT l'accusé 200 envoyé à Meta (route /webhook) puis marqué
+// terminé à la fin de son traitement. Au démarrage, un message resté en
+// attente (arrêt, déploiement, plantage pendant la génération IA, reprise
+// annulée par l'arrêt) est rejoué ; s'il a plus de INBOUND_REPLAY_MAX_AGE_MS
+// (60 min par défaut, variable d'environnement du même nom), il est
+// seulement présenté au commercial (action ai_reply_send_failed).
+const inboundJournal =
+  createInboundJournal({
+    filePath: path.join(DATA_DIR, 'inbound-journal.jsonl')
+  });
+
+const INBOUND_REPLAY_MAX_AGE_MS =
+  Math.max(
+    5 * 60 * 1000,
+    Number(process.env.INBOUND_REPLAY_MAX_AGE_MS) || 60 * 60 * 1000
+  );
+
+function whatsappWebhookInboundMessages(body) {
+  const found = [];
+  for (const entry of (Array.isArray(body?.entry) ? body.entry : [])) {
+    for (const change of (Array.isArray(entry?.changes) ? entry.changes : [])) {
+      if (safeString(change?.field) !== 'messages') continue;
+      const value = change?.value || {};
+      // V6.45 — Même règle que processWhatsAppWebhook (paquet sécurité) :
+      // autre numéro, ou numéro absent alors que PHONE_NUMBER_ID est
+      // configuré => jamais inscrit au journal. Sinon le message, ignoré par
+      // le traitement, restait « en attente » et était rejoué au démarrage
+      // suivant sans cette vérification.
+      if (!whatsappPhoneNumberIdAccepted({
+        configured: PHONE_NUMBER_ID,
+        incoming: value?.metadata?.phone_number_id,
+        requirePresence: true
+      })) continue;
+      const profiles = {};
+      for (const contactEntry of (Array.isArray(value.contacts) ? value.contacts : [])) {
+        const waId = normalizePhone(contactEntry?.wa_id);
+        const profileName = safeString(contactEntry?.profile?.name);
+        if (waId && profileName) profiles[waId] = profileName;
+      }
+      for (const message of (Array.isArray(value.messages) ? value.messages : [])) {
+        found.push({ message, profileName: profiles[normalizePhone(message?.from)] || '' });
+      }
+    }
+  }
+  return found;
+}
+
+// Inscription synchrone (appelée par la route /webhook avant l'accusé 200).
+// Une erreur ici n'empêche jamais l'accusé ni le traitement.
+function journalWhatsAppInboundMessages(body) {
+  try {
+    for (const { message, profileName } of whatsappWebhookInboundMessages(body)) {
+      inboundJournal.record(safeString(message?.id), {
+        channel: 'whatsapp',
+        message,
+        profileName
+      });
+    }
+  } catch (error) {
+    console.error('❌ Journal des messages entrants :', error.message);
+  }
+}
+
+// Message abandonné (dernière tentative en échec, ou trop ancien pour être
+// rejoué) : il est présenté au commercial, jamais perdu.
+function recordInboundGiveUp(message, error, profileName = '') {
+  const id = safeString(message?.id);
+  try {
+    if (!id || !persistentMessageIds.has(id)) {
+      const from = normalizePhone(message?.from);
+      if (from) {
+        const type = safeString(message?.type) || 'unknown';
+        // V6.45 — L'état de la conversation reçoit aussi ce message (heure
+        // réelle) : sinon lastCustomerAt restait ancien et la réponse du
+        // commercial était refusée « hors fenêtre de 24 h » alors que le
+        // client venait d'écrire. Jamais appliqué deux fois au même message
+        // ni par-dessus un message plus récent.
+        try {
+          const eventMs = inboundMessageTimeMs(message);
+          const state = getConversationState(from) || {};
+          const lastCustomerMs = Date.parse(safeString(state.lastCustomerAt));
+          const alreadyMarked =
+            (id && safeString(state.lastUnreadMessageId) === id) ||
+            (Number.isFinite(lastCustomerMs) && Number.isFinite(eventMs) && lastCustomerMs >= eventMs);
+          if (!alreadyMarked && type !== 'reaction') {
+            markCustomerMessage(from, message, messageHasAdReferral(message), {
+              channel: 'whatsapp',
+              externalContact: from,
+              profileName: safeString(profileName),
+              eventTime: Number.isFinite(eventMs) ? new Date(Math.min(eventMs, Date.now())).toISOString() : ''
+            });
+          }
+        } catch (stateError) {
+          console.warn('⚠️ État du message abandonné non mis à jour :', stateError.message);
+        }
+        logConversation({
+          message_id: id || null,
+          contact: from,
+          external_contact: from,
+          channel: 'whatsapp',
+          incoming:
+            safeString(
+              message?.text?.body ||
+              message?.image?.caption ||
+              message?.interactive?.button_reply?.title ||
+              message?.interactive?.list_reply?.title ||
+              message?.button?.text
+            ) || whatsappMediaSummary(message) || `[${type}]`,
+          type,
+          action: 'ai_reply_send_failed',
+          error: `Message non traité automatiquement : ${safeString(error?.message || error)}`,
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+      }
+    }
+  } catch (logError) {
+    console.error('❌ Message entrant abandonné non journalisé :', logError.message);
+  } finally {
+    inboundJournal.done(id);
+  }
+}
+
+function processWhatsAppInboundMessage(message, profileName = '') {
+  const id = safeString(message?.id);
+  return conversationQueue.runWithRetry({
+    queueKey: `whatsapp:${normalizePhone(message?.from)}`,
+    messageIds: [id],
+    label: 'message WhatsApp',
+    task: async () => {
+      await processSingleMessage(
+        message,
+        { profileName }
+      );
+      inboundJournal.done(id);
+    },
+    onGiveUp: error => recordInboundGiveUp(message, error, profileName)
+  });
+}
+
+function replayPendingInboundMessages() {
+  let pending = [];
+  try {
+    pending = inboundJournal.pending();
+  } catch (error) {
+    console.error('❌ Reprise des messages entrants :', error.message);
+    return;
+  }
+  if (pending.length) {
+    console.warn(`♻️ ${pending.length} message(s) WhatsApp non terminé(s) avant l'arrêt : reprise.`);
+  }
+  for (const item of pending) {
+    const id = safeString(item?.id);
+    const message = item?.payload?.message;
+    if (!message || typeof message !== 'object' || persistentMessageIds.has(id)) {
+      inboundJournal.done(id);
+      continue;
+    }
+    const receivedMs = Date.parse(safeString(item?.at));
+    if (Number.isFinite(receivedMs) && Date.now() - receivedMs > INBOUND_REPLAY_MAX_AGE_MS) {
+      recordInboundGiveUp(
+        message,
+        new Error('reçu pendant une interruption du serveur, trop ancien pour une réponse automatique'),
+        safeString(item?.payload?.profileName)
+      );
+      continue;
+    }
+    processWhatsAppInboundMessage(message, safeString(item?.payload?.profileName))
+      .catch(error => console.error('❌ Reprise message WhatsApp :', error?.message || error));
+  }
+  inboundJournal.compact();
+}
+
+// V6.45 — La reprise est lancée juste avant app.listen (fin du fichier),
+// plus 5 s après le démarrage : les messages interrompus entrent dans la
+// file de leur client AVANT tout nouveau webhook, et le client ne reçoit
+// plus la réponse à son message suivant avant celle du précédent.
+
 async function processWhatsAppWebhook(body) {
   if (
     body?.object !==
@@ -9853,6 +10360,17 @@ async function processWhatsAppWebhook(body) {
       // ======================================================
 
       if (field === 'smb_message_echoes') {
+        // V6.45 — Écho d'un autre numéro WhatsApp : ignoré (il mettait l'IA
+        // en pause pour le client). Sans numéro dans le webhook : traité.
+        if (!whatsappPhoneNumberIdAccepted({
+          configured: PHONE_NUMBER_ID,
+          incoming: value?.metadata?.phone_number_id,
+          requirePresence: false
+        })) {
+          console.log('🧪 Écho WhatsApp Business d’un autre numéro ignoré.');
+          continue;
+        }
+
         handleHumanMessageEcho(
           value
         );
@@ -9862,11 +10380,11 @@ async function processWhatsAppWebhook(body) {
 
       if (field === 'calls') {
         const incomingPhoneNumberId = safeString(value?.metadata?.phone_number_id);
-        if (
-          PHONE_NUMBER_ID &&
-          incomingPhoneNumberId &&
-          incomingPhoneNumberId !== PHONE_NUMBER_ID
-        ) {
+        if (!whatsappPhoneNumberIdAccepted({
+          configured: PHONE_NUMBER_ID,
+          incoming: incomingPhoneNumberId,
+          requirePresence: false
+        })) {
           console.log('🧪 Webhook appel WhatsApp autre numéro ignoré.');
           continue;
         }
@@ -9890,14 +10408,18 @@ async function processWhatsAppWebhook(body) {
             ?.phone_number_id
         );
 
-      if (
-        PHONE_NUMBER_ID &&
-        incomingPhoneNumberId &&
-        incomingPhoneNumberId !==
-          PHONE_NUMBER_ID
-      ) {
+      // V6.45 — Numéro obligatoire quand PHONE_NUMBER_ID est configuré :
+      // un webhook « messages » sans metadata.phone_number_id (jamais
+      // envoyé ainsi par Meta) est ignoré au lieu d'être traité.
+      if (!whatsappPhoneNumberIdAccepted({
+        configured: PHONE_NUMBER_ID,
+        incoming: incomingPhoneNumberId,
+        requirePresence: true
+      })) {
         console.log(
-          '🧪 Webhook autre numéro ignoré.'
+          incomingPhoneNumberId
+            ? '🧪 Webhook autre numéro ignoré.'
+            : '🛡️ Webhook WhatsApp sans numéro destinataire (metadata.phone_number_id) ignoré.'
         );
 
         continue;
@@ -9946,12 +10468,61 @@ async function processWhatsAppWebhook(body) {
           }
         }
 
+        // V6.45 — Échec de livraison conservé sur la conversation et affiché
+        // dans l'historique (avant : console uniquement ; une relance ou une
+        // réponse refusée par Meta passait pour envoyée).
+        if (statusKind === 'failed' && statusPhone) {
+          const failedContact = makeConversationKey('whatsapp', statusPhone);
+          const firstError = Array.isArray(status?.errors) ? status.errors[0] || {} : {};
+          const failureText = [
+            safeString(firstError?.code) ? `code ${safeString(firstError.code)}` : '',
+            safeString(firstError?.title) || safeString(firstError?.message),
+            safeString(firstError?.error_data?.details)
+          ].filter(Boolean).join(' — ') || 'raison non précisée';
+          try {
+            updateConversationState(failedContact, current => ({
+              ...current,
+              lastDeliveryFailedAt: statusIso,
+              lastDeliveryFailure: {
+                metaMessageId: safeString(status?.id),
+                code: safeString(firstError?.code),
+                title: safeString(firstError?.title || firstError?.message),
+                details: safeString(firstError?.error_data?.details),
+                at: statusIso
+              }
+            }));
+            logConversation({
+              contact: failedContact,
+              external_contact: statusPhone,
+              channel: 'whatsapp',
+              type: 'delivery_failed',
+              action: 'meta_delivery_failed',
+              source: 'whatsapp_status',
+              direction: 'system',
+              sender_kind: 'system',
+              related_message_id: safeString(status?.id),
+              system_body: `Message non livré par WhatsApp (${failureText})`,
+              reply_sent: false,
+              time: statusIso
+            });
+          } catch (failedStatusError) {
+            console.warn('⚠️ Statut « failed » non enregistré :', failedStatusError.message);
+          }
+          continue;
+        }
+
         if (!statusPhone || !['sent', 'delivered', 'read'].includes(statusKind)) continue;
         const statusContact = makeConversationKey('whatsapp', statusPhone);
+        // V6.46 — Statuts reçus dans le désordre (Meta ne garantit pas
+        // l'ordre) : l'horodatage le plus récent est gardé, jamais un plus
+        // ancien (✓✓ / « vu » ne reculent plus dans le centre de pilotage).
+        const laterIso = (previous, next) => (
+          Date.parse(previous || '') > Date.parse(next || '') ? previous : next
+        );
         updateConversationState(statusContact, current => {
           const patch = { ...current };
-          if (statusKind === 'read') patch.lastReadByCustomerAt = statusIso;
-          if (statusKind === 'delivered' || statusKind === 'read') patch.lastDeliveredAt = statusIso;
+          if (statusKind === 'read') patch.lastReadByCustomerAt = laterIso(current?.lastReadByCustomerAt, statusIso);
+          if (statusKind === 'delivered' || statusKind === 'read') patch.lastDeliveredAt = laterIso(current?.lastDeliveredAt, statusIso);
           return patch;
         });
       }
@@ -9975,15 +10546,10 @@ async function processWhatsAppWebhook(body) {
 
       for (const message of messages) {
         try {
-          await conversationQueue.runWithRetry({
-            queueKey: `whatsapp:${normalizePhone(message?.from)}`,
-            messageIds: [message?.id],
-            label: 'message WhatsApp',
-            task: () => processSingleMessage(
-              message,
-              { profileName: contactsProfileByPhone[normalizePhone(message?.from)] || '' }
-            )
-          });
+          await processWhatsAppInboundMessage(
+            message,
+            contactsProfileByPhone[normalizePhone(message?.from)] || ''
+          );
         } catch (error) {
           console.error(
             '❌ Erreur message WhatsApp :',
@@ -11061,6 +11627,12 @@ async function processSingleInstagramEvent(event) {
 // DÉTECTION INTERVENTION HUMAINE
 // ============================================================
 
+// V6.45 — Traité immédiatement (pas dans la file du client) : la pause et
+// lastHumanAt doivent être visibles AVANT qu'une réponse IA en cours de
+// génération atteigne sa vérification finale (aiAutoSendBlockReason). Mise
+// dans la file, l'écho attendrait la fin de cette génération et la réponse
+// IA partirait après celle du commercial. Toutes les écritures d'état sont
+// atomiques (source de vérité partagée, aucun await) : pas d'entrelacement.
 function handleHumanMessageEcho(value) {
   const settings =
     getBotSettings();
@@ -11145,6 +11717,13 @@ function handleHumanMessageEcho(value) {
       commercial_user_role: 'commercial',
       time: eventTime
     });
+
+    // V6.45 — Comme une réponse envoyée depuis l'Admin (paquet réponses IA) :
+    // le texte écrit depuis l'application WhatsApp Business entre dans
+    // l'historique IA, pour que l'IA ne contredise pas le conseiller à la
+    // reprise.
+    const echoText = safeString(message?.text?.body || message?.caption || '');
+    if (echoText) recordAiHistoryReply(candidate, echoText);
   }
 }
 
@@ -11155,27 +11734,47 @@ function handleHumanMessageEcho(value) {
 // défaut) : quand la réponse de l'IA cite un seul produit du catalogue dont
 // le prix est connu, sa fiche (photo, prix, bouton « Voir le produit ») est
 // envoyée juste après. Une erreur ici n'affecte jamais la réponse texte.
-async function maybeSendAiProductCard(from, reply) {
+// V6.46 — Photo : fichier local, sinon l'image JPEG/PNG du site (fiches
+// synchronisées) ; jamais de fiche pour un produit en rupture.
+const { loadProductImage } = require('./lib/product-image');
+
+async function maybeSendAiProductCard(from, reply, inboundAtMs = NaN) {
   try {
     if (getBotSettings()?.aiProductCards !== true) return;
     // V6.45 — Pas de fiche quand le garde-fou factuel vient de remplacer la réponse.
     if (aiFactGuardFiredRecently(from)) return;
-    const product = findProductForCard(reply, loadProducts());
+    // V6.46 — Fiche du produit identifié pour ce tour ; aucune après une
+    // question de choix, une clarification ou un transfert.
+    const turn = takeAiReplyTurn(from);
+    const product = findProductForCard(reply, loadProducts(), {
+      kind: turn?.kind || '',
+      product: turn?.product || null
+    });
     if (!product) return;
 
     const state = getConversationState(from) || {};
     if (!productCardAllowed(state, product.id)) return;
+    // V6.45 — Aucun envoi automatique si un humain a pris la main entre-temps.
+    if (aiAutoSendBlockReason(from, inboundAtMs)) return;
 
     let file = null;
-    const imagePath = getLocalProductImagePath(product);
-    if (imagePath && fs.existsSync(imagePath)) {
-      const buffer = fs.readFileSync(imagePath);
-      const mime = imageMimeFromBuffer(buffer);
-      // WhatsApp refuse le WebP : la fiche part alors avec un titre texte.
-      if (mime === 'image/jpeg' || mime === 'image/png') {
-        file = { buffer, mimetype: mime, originalname: mime === 'image/png' ? 'produit.png' : 'produit.jpg' };
+    // WhatsApp refuse le WebP : la fiche part alors avec un titre texte.
+    try {
+      const image = await loadProductImage(product, {
+        localPath: getLocalProductImagePath(product)
+      });
+      if (image) {
+        file = {
+          buffer: image.buffer,
+          mimetype: image.mimetype,
+          originalname: image.mimetype === 'image/png' ? 'produit.png' : 'produit.jpg'
+        };
       }
+    } catch (error) {
+      console.warn('⚠️ Photo de la fiche produit IA indisponible :', error.message);
     }
+    // Le téléchargement de la photo a pu prendre quelques secondes.
+    if (aiAutoSendBlockReason(from, inboundAtMs)) return;
 
     const built = buildProductCard(product, { hasImage: Boolean(file) });
     const result = await sendWhatsAppInteractive(from, built.interactive, file);
@@ -11201,6 +11800,231 @@ async function maybeSendAiProductCard(from, reply) {
     console.warn('⚠️ Fiche produit IA non envoyée :', error.message);
   }
 }
+
+// ============================================================
+// V6.45 — FIABILITÉ DES RÉPONSES AUTOMATIQUES
+// ============================================================
+
+// Envois commerciaux en cours, par conversation (mémoire seulement). Une
+// réponse IA dont la génération se termine pendant qu'un commercial envoie
+// son message n'est pas envoyée.
+const humanSendsInFlight = new Map();
+
+function markHumanSendStart(contact) {
+  const key = safeString(contact);
+  if (!key) return;
+  humanSendsInFlight.set(key, Number(humanSendsInFlight.get(key) || 0) + 1);
+}
+
+function markHumanSendEnd(contact) {
+  const key = safeString(contact);
+  const count = Number(humanSendsInFlight.get(key) || 0) - 1;
+  if (count > 0) humanSendsInFlight.set(key, count);
+  else humanSendsInFlight.delete(key);
+}
+
+// Heure d'envoi du message client (timestamp Meta, en secondes).
+const inboundMessageTimeMs = messagingRules.inboundMessageTimeMs;
+
+// Dernière vérification JUSTE AVANT un envoi automatique (réponse IA,
+// message de secours, fiche produit, épingle showroom…) : la génération
+// peut durer plusieurs dizaines de secondes, pendant lesquelles un
+// commercial a pu prendre la main, répondre (Admin ou WhatsApp Business) ou
+// l'IA être désactivée. Renvoie la raison du blocage, ou ''.
+function aiAutoSendBlockReason(contact, inboundAtMs = NaN) {
+  const settings = getBotSettings() || {};
+  if (!settings.aiEnabled) return 'ai_disabled';
+  const channel = conversationChannel(contact, null);
+  if (settings.aiEnabledChannels && settings.aiEnabledChannels[channel] === false) {
+    return 'ai_disabled_channel';
+  }
+  const state = getConversationState(contact) || {};
+  const pauseReason = conversationAiPauseReason(state);
+  if (pauseReason) return pauseReason;
+  if (humanSendsInFlight.has(safeString(contact))) return 'human_sending';
+  const lastHumanMs = Date.parse(safeString(state.lastHumanAt));
+  if (
+    Number.isFinite(lastHumanMs) &&
+    Number.isFinite(inboundAtMs) &&
+    lastHumanMs >= inboundAtMs
+  ) {
+    return 'human_replied';
+  }
+  return '';
+}
+
+// L'historique IA reçoit la réponse dès sa génération (generateReply) : si
+// elle n'est finalement pas envoyée, on la retire pour que l'IA ne croie
+// pas avoir répondu.
+function dropUnsentAiHistoryTurn(contact, reply) {
+  const text = safeString(reply).replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+  if (!text) return;
+  try {
+    const key = safeString(contact);
+    const item = aiHistoryStore.get(key);
+    const messages = Array.isArray(item?.messages) ? item.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const candidate = messages[index];
+      if (candidate?.role !== 'assistant') continue;
+      const content = safeString(candidate.content).replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+      if (content !== text) continue;
+      aiHistoryStore.update(key, current => ({
+        ...current,
+        messages: messages.filter((_, position) => position !== index)
+      }));
+      return;
+    }
+  } catch (error) {
+    console.warn('⚠️ Historique IA (réponse non envoyée) :', error.message);
+  }
+}
+
+// Réponse IA générée mais volontairement non envoyée : un humain a pris la
+// main entre-temps. Le message du client est journalisé (il reste visible
+// dans l'Inbox), sans nouvelle escalade : la conversation est déjà suivie.
+// Si un commercial a déjà répondu à ce message (human_replied), l'entrée est
+// datée de l'heure du message client : elle s'affiche avant la réponse du
+// commercial et la conversation n'est pas remise « À répondre ».
+function logAiReplySuppressed({
+  messageId,
+  contact,
+  incoming,
+  type = 'text',
+  attachmentFields = {},
+  reply,
+  reason,
+  source,
+  inboundAtMs = NaN
+}) {
+  const nowMs = Date.now();
+  // V6.45 — La date dépend de l'état, pas du contrôle qui a bloqué l'envoi :
+  // si un humain a répondu (ou envoie) après ce message client — écho de
+  // l'application WhatsApp Business (human_pause) ou envoi depuis l'Admin
+  // (manual_takeover) —, l'entrée garde l'heure du message client et se
+  // range AVANT la réponse du commercial. Sinon la conversation repassait
+  // « À répondre » alors qu'elle avait reçu une réponse.
+  let humanAfterInbound = reason === 'human_replied' || reason === 'human_sending';
+  if (!humanAfterInbound && Number.isFinite(inboundAtMs)) {
+    try {
+      const lastHumanMs = Date.parse(safeString((getConversationState(contact) || {}).lastHumanAt));
+      humanAfterInbound = Number.isFinite(lastHumanMs) && lastHumanMs >= inboundAtMs;
+    } catch {
+      humanAfterInbound = false;
+    }
+  }
+  const entryTimeMs =
+    humanAfterInbound && Number.isFinite(inboundAtMs)
+      ? Math.min(inboundAtMs, nowMs)
+      : nowMs;
+  dropUnsentAiHistoryTurn(contact, reply);
+  console.log(
+    `⏸️ Réponse IA non envoyée à ${maskPhoneForLog(contact)} : ${reason} (intervention humaine ou IA désactivée pendant la génération).`
+  );
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: contact,
+    channel: 'whatsapp',
+    incoming: safeString(incoming),
+    type,
+    ...attachmentFields,
+    action: 'ai_reply_suppressed_human_active',
+    suppression_reason: safeString(reason),
+    suppressed_reply: safeString(reply),
+    source: safeString(source) || 'organic',
+    reply_sent: false,
+    time: new Date(entryTimeMs).toISOString()
+  });
+}
+
+// Envoi de la réponse automatique en échec (erreur Meta, coupure, délai) :
+// le message du client est TOUJOURS journalisé et la conversation passe au
+// commercial (ai_reply_send_failed : SLA, pause IA, notification). Avant,
+// l'erreur était seulement écrite dans la console et le message disparaissait
+// de l'Inbox.
+function logAiReplySendFailed({
+  messageId,
+  contact,
+  incoming,
+  type = 'text',
+  attachmentFields = {},
+  reply,
+  error,
+  source
+}) {
+  dropUnsentAiHistoryTurn(contact, reply);
+  const uncertain = Boolean(
+    error?.requestMayHaveReachedMeta === true ||
+    ['SEND_TIMEOUT_UNCERTAIN', 'SEND_NETWORK_UNCERTAIN'].includes(safeString(error?.code))
+  );
+  console.error(
+    `❌ Réponse automatique non envoyée à ${maskPhoneForLog(contact)}${uncertain ? ' (peut-être délivrée)' : ''} : ${safeString(error?.message || error)}`
+  );
+  logConversation({
+    message_id: messageId || null,
+    contact,
+    external_contact: contact,
+    channel: 'whatsapp',
+    incoming: safeString(incoming),
+    type,
+    ...attachmentFields,
+    action: 'ai_reply_send_failed',
+    error: uncertain
+      ? `Envoi de la réponse IA incertain (peut-être délivrée) : ${safeString(error?.message || error)}`
+      : `Réponse IA non envoyée : ${safeString(error?.message || error)}`,
+    error_code: safeString(error?.code),
+    unsent_reply: safeString(reply),
+    send_uncertain: uncertain,
+    source: safeString(source) || 'organic',
+    reply_sent: false,
+    time: new Date().toISOString()
+  });
+}
+
+// V6.45 — Réaction emoji d'un client (👍 sur une réponse) : simple
+// information. Elle est conservée dans l'historique, sans compter comme un
+// message non lu, sans escalade ni pause de l'IA.
+function logWhatsAppReaction(from, message, webhookMeta = {}) {
+  const emoji = safeString(message?.reaction?.emoji);
+  const relatedMessageId = safeString(message?.reaction?.message_id);
+  const time = new Date(inboundMessageTimeMs(message)).toISOString();
+
+  updateConversationState(from, current => ({
+    ...current,
+    channel: current.channel || 'whatsapp',
+    externalContact: current.externalContact || from,
+    profileName: safeString(webhookMeta?.profileName || current.profileName),
+    lastReactionAt: time,
+    lastReactionEmoji: emoji,
+    lastReactionMessageId: relatedMessageId
+  }));
+
+  logConversation({
+    message_id: safeString(message?.id) || null,
+    contact: from,
+    external_contact: from,
+    channel: 'whatsapp',
+    type: 'reaction',
+    action: 'customer_reaction',
+    source: 'whatsapp_reaction',
+    direction: 'system',
+    sender_kind: 'system',
+    reaction: emoji,
+    reaction_action: emoji ? 'react' : 'remove',
+    related_message_id: relatedMessageId,
+    reply_sent: false,
+    time
+  });
+
+  console.log(
+    `👍 Réaction ${emoji ? 'reçue' : 'retirée'} de ${maskPhoneForLog(from)} : aucune réponse ni escalade.`
+  );
+}
+
+// Contenu lisible des médias sans traitement IA (vidéo, document,
+// localisation, contact, sticker, message non pris en charge) : voir
+// lib/messaging-rules.js.
+const whatsappMediaSummary = messagingRules.whatsappMediaSummary;
 
 // ============================================================
 // MESSAGE CLIENT
@@ -11260,18 +12084,59 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
     return;
   }
 
-  try {
-    require('./read-receipt')
-      .markRead({
-        messageId,
-        apiVersion: META_API_VERSION,
-        phoneNumberId: PHONE_NUMBER_ID,
-        token: WHATSAPP_TOKEN
-      })
-      .catch(e => console.error('Accuse lecture :', e.message));
-  } catch (rrErr) {
-    console.error('Accuse lecture :', rrErr.message);
+  // V6.45 — Heure du message client : référence pour la vérification
+  // juste avant l'envoi d'une réponse automatique.
+  const inboundAtMs = inboundMessageTimeMs(message);
+
+  // V6.45 — Une réaction emoji n'est pas un nouveau message : ni non-lu, ni
+  // escalade, ni pause de l'IA (elle déclenchait « Commercial requis »).
+  if (messageType === 'reaction') {
+    logWhatsAppReaction(from, message, webhookMeta);
+    return;
   }
+
+  // Événement système WhatsApp (changement de numéro…) : conservé, sans
+  // escalade. request_welcome (ouverture de la discussion) : rien à faire.
+  if (messageType === 'system' || messageType === 'request_welcome') {
+    if (messageType === 'system') {
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        type: 'system',
+        action: 'whatsapp_system_event',
+        source: 'whatsapp_system',
+        direction: 'system',
+        sender_kind: 'system',
+        system_body: safeString(message?.system?.body),
+        reply_sent: false,
+        time: new Date(inboundAtMs).toISOString()
+      });
+    }
+    console.log(`ℹ️ Événement WhatsApp « ${messageType} » de ${maskPhoneForLog(from)} : aucune réponse.`);
+    return;
+  }
+
+  // V6.45 — Accusé de lecture envoyé après la décision (voir plus bas) :
+  // l'indicateur « en train d'écrire… » n'est affiché que si l'IA va
+  // réellement répondre.
+  const sendReadReceipt = typing => {
+    try {
+      require('./read-receipt')
+        .markRead({
+          messageId,
+          apiVersion: META_API_VERSION,
+          phoneNumberId: PHONE_NUMBER_ID,
+          token: WHATSAPP_TOKEN,
+          typing
+        })
+        .catch(e => console.error('Accuse lecture :', e.message));
+    } catch (rrErr) {
+      console.error('Accuse lecture :', rrErr.message);
+    }
+  };
+
   const previousState =
     getConversationState(from);
 
@@ -11379,6 +12244,11 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       isNewCustomer
     );
 
+  sendReadReceipt(
+    decision.allowed === true &&
+    (messageType === 'text' || messageType === 'image')
+  );
+
   if (decision.sendAbsence) {
     const absenceMessage =
       safeString(
@@ -11441,7 +12311,60 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
           '❌ Message absence :',
           error.message
         );
+
+        // V6.45 — Le message du client reste visible dans l'Inbox même si
+        // le message d'absence n'a pas pu partir.
+        logConversation({
+          message_id:
+            messageId || null,
+          contact:
+            from,
+          external_contact:
+            from,
+          channel:
+            'whatsapp',
+          incoming:
+            safeString(
+              message?.text?.body ||
+              message?.image?.caption ||
+              ''
+            ),
+          type:
+            messageType,
+          ...whatsappAttachmentFields,
+          action:
+            'outside_hours',
+          error:
+            `Message d’absence non envoyé : ${safeString(error.message)}`,
+          source:
+            isAdReferral
+              ? 'meta_ad'
+              : 'organic',
+          reply_sent:
+            false,
+          time:
+            new Date().toISOString()
+        });
       }
+    } else {
+      // V6.45 — Mode « message d'absence » sans texte configuré : le
+      // message du client est quand même journalisé (avant : rien, il
+      // n'apparaissait pas dans l'Inbox).
+      logConversation({
+        message_id: messageId || null,
+        contact: from,
+        external_contact: from,
+        channel: 'whatsapp',
+        incoming:
+          safeString(message?.text?.body || message?.image?.caption || '') ||
+          whatsappMediaSummary(message),
+        type: messageType,
+        ...whatsappAttachmentFields,
+        action: 'outside_hours',
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        reply_sent: false,
+        time: new Date().toISOString()
+      });
     }
 
     return;
@@ -11463,8 +12386,11 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       channel:
         'whatsapp',
 
+      // V6.45 — Légende, nom de fichier, localisation… conservés aussi
+      // quand l'IA est en pause.
       incoming:
-        safeString(message?.text?.body || message?.image?.caption || ''),
+        safeString(message?.text?.body || message?.image?.caption || '') ||
+        whatsappMediaSummary(message),
 
       type:
         messageType,
@@ -11617,11 +12543,39 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
         return;
       }
 
-      const metaResult =
-        await sendWhatsAppMessage(
-          from,
-          choiceReply
-        );
+      // V6.45 — Vérification juste avant l'envoi automatique.
+      const choiceBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+      if (choiceBlockReason) {
+        logAiReplySuppressed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: choiceReply,
+          reason: choiceBlockReason,
+          source: isAdReferral ? 'meta_ad' : 'organic',
+          inboundAtMs
+        });
+        return;
+      }
+
+      let metaResult;
+      try {
+        metaResult =
+          await sendWhatsAppMessage(
+            from,
+            choiceReply
+          );
+      } catch (error) {
+        logAiReplySendFailed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: choiceReply,
+          error,
+          source: isAdReferral ? 'meta_ad' : 'organic'
+        });
+        return;
+      }
 
       markBotMessage(from, 'reply');
 
@@ -11663,11 +12617,25 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
         })
       );
 
-      const metaResult =
-        await sendWhatsAppMessage(
-          from,
-          prompt
-        );
+      let metaResult;
+      try {
+        metaResult =
+          await sendWhatsAppMessage(
+            from,
+            prompt
+          );
+      } catch (error) {
+        // V6.45 — Le message du client n'est jamais perdu.
+        logAiReplySendFailed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: prompt,
+          error,
+          source: isAdReferral ? 'meta_ad' : 'organic'
+        });
+        return;
+      }
 
       markBotMessage(from, 'routing');
 
@@ -11732,6 +12700,23 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
         message: userText,
         resolution: adResolution
       });
+      // V6.45 — Même vérification juste avant l'envoi automatique.
+      const quickReplyBlockReason =
+        matchedQuickReply && safeString(matchedQuickReply.content)
+          ? aiAutoSendBlockReason(from, inboundAtMs)
+          : '';
+      if (quickReplyBlockReason) {
+        logAiReplySuppressed({
+          messageId,
+          contact: from,
+          incoming: userText,
+          reply: '',
+          reason: quickReplyBlockReason,
+          source: 'meta_ad',
+          inboundAtMs
+        });
+        return;
+      }
       if (matchedQuickReply && safeString(matchedQuickReply.content)) {
         try {
           const quickReplyText = safeString(matchedQuickReply.content);
@@ -11755,6 +12740,22 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
           recordAiHistoryReply(from, quickReplyText, { customerText: userText });
           return;
         } catch (error) {
+          // V6.45 — Envoi peut-être arrivé chez le client (coupure, délai) :
+          // pas de seconde réponse IA par-dessus, le commercial prend le relais.
+          if (
+            error?.requestMayHaveReachedMeta === true ||
+            ['SEND_TIMEOUT_UNCERTAIN', 'SEND_NETWORK_UNCERTAIN'].includes(safeString(error?.code))
+          ) {
+            logAiReplySendFailed({
+              messageId,
+              contact: from,
+              incoming: userText,
+              reply: safeString(matchedQuickReply.content),
+              error,
+              source: 'meta_ad'
+            });
+            return;
+          }
           console.warn('⚠️ Envoi réponse rapide publicité échoué, poursuite avec IA :', error.message);
         }
       }
@@ -11819,15 +12820,21 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       );
 
       let fallbackSent = false;
-      try {
-        await sendWhatsAppMessage(
-          from,
-          'Merci pour votre message ! Notre équipe MONDECO revient vers vous très rapidement avec les informations demandées. 😊'
-        );
-        markBotMessage(from, 'fallback_error');
-        fallbackSent = true;
-      } catch (fallbackError) {
-        console.error("❌ Impossible d'envoyer le message de secours :", fallbackError.message);
+      // V6.45 — Pas de message de secours si un humain a pris la main.
+      const fallbackBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+      if (fallbackBlockReason) {
+        console.log(`⏸️ Message de secours non envoyé à ${maskPhoneForLog(from)} : ${fallbackBlockReason}.`);
+      } else {
+        try {
+          await sendWhatsAppMessage(
+            from,
+            'Merci pour votre message ! Notre équipe MONDECO revient vers vous très rapidement avec les informations demandées. 😊'
+          );
+          markBotMessage(from, 'fallback_error');
+          fallbackSent = true;
+        } catch (fallbackError) {
+          console.error("❌ Impossible d'envoyer le message de secours :", fallbackError.message);
+        }
       }
 
       logConversation({
@@ -11860,13 +12867,46 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       return;
     }
 
+    // V6.45 — Vérification JUSTE AVANT l'envoi : la génération a pu durer
+    // longtemps, un commercial a pu prendre la main ou répondre entre-temps
+    // (l'Inbox affichait alors « IA en pause » et la réponse IA partait
+    // quand même).
+    const replyBlockReason = aiAutoSendBlockReason(from, inboundAtMs);
+    if (replyBlockReason) {
+      logAiReplySuppressed({
+        messageId,
+        contact: from,
+        incoming: userText,
+        reply,
+        reason: replyBlockReason,
+        source: isAdReferral ? 'meta_ad' : 'organic',
+        inboundAtMs
+      });
+      return;
+    }
+
+    let metaResult;
     try {
-      const metaResult =
+      metaResult =
         await sendWhatsAppMessage(
           from,
           reply
         );
+    } catch (error) {
+      // V6.45 — Le message du client est journalisé et passe au commercial
+      // (avant : simple ligne de console, message absent de l'Inbox).
+      logAiReplySendFailed({
+        messageId,
+        contact: from,
+        incoming: userText,
+        reply,
+        error,
+        source: isAdReferral ? 'meta_ad' : 'organic'
+      });
+      return;
+    }
 
+    try {
       markBotMessage(
         from,
         'reply'
@@ -11915,24 +12955,28 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
       console.log(
         `✅ Réponse WhatsApp envoyée à ${maskPhoneForLog(from)}`
       );
-      await maybeSendAiProductCard(from, reply);
+      await maybeSendAiProductCard(from, reply, inboundAtMs);
       try {
-        require('./showroom-pin')
-          .maybeSendPin({
-            text: userText,
-            to: normalizePhone(from),
-            apiVersion: META_API_VERSION,
-            phoneNumberId: PHONE_NUMBER_ID,
-            token: WHATSAPP_TOKEN
-          })
-          .catch(e => console.error(
-            'Pin showroom :', e.message));
+        // V6.45 — Même vérification avant l'épingle showroom.
+        if (!aiAutoSendBlockReason(from, inboundAtMs)) {
+          require('./showroom-pin')
+            .maybeSendPin({
+              text: userText,
+              to: normalizePhone(from),
+              apiVersion: META_API_VERSION,
+              phoneNumberId: PHONE_NUMBER_ID,
+              token: WHATSAPP_TOKEN
+            })
+            .catch(e => console.error(
+              'Pin showroom :', e.message));
+        }
       } catch (pinErr) {
         console.error('Pin showroom :', pinErr.message);
       }
     } catch (error) {
+      // Réponse déjà envoyée : seule la suite (journal, fiche) a échoué.
       console.error(
-        '❌ Impossible d’envoyer WhatsApp :',
+        '❌ Après envoi WhatsApp :',
         error.message
       );
     }
@@ -12047,6 +13091,29 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
   // AUTRES MÉDIAS
   // ==========================================================
 
+  // V6.45 — Sticker (👍, « merci ») : utilisé comme une réaction. Conservé
+  // dans la conversation, sans escalade ni pause de l'IA : depuis que la
+  // pause de transfert n'expire plus après 60 s, un sticker privait le
+  // client de réponse automatique jusqu'au SLA (5 à 120 min).
+  if (messageType === 'sticker') {
+    console.log(
+      `😊 Sticker reçu de ${maskPhoneForLog(from)} : conservé, sans escalade.`
+    );
+    logConversation({
+      message_id: messageId || null,
+      contact: from,
+      external_contact: from,
+      channel: 'whatsapp',
+      incoming: whatsappMediaSummary(message) || '😊 Sticker',
+      type: 'sticker',
+      action: 'customer_sticker',
+      source: 'whatsapp_sticker',
+      reply_sent: false,
+      time: new Date(inboundAtMs).toISOString()
+    });
+    return;
+  }
+
   console.log(
     `👤 Message non texte reçu de ${maskPhoneForLog(from)} (${messageType}).`
   );
@@ -12055,6 +13122,10 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
     '➡️ Commercial requis.'
   );
 
+  // V6.45 — Le contenu (légende, nom du fichier, coordonnées, contact
+  // partagé) est conservé pour le commercial ; avant, seul le type l'était.
+  const otherMediaSummary = whatsappMediaSummary(message);
+
   logConversation({
     message_id:
       messageId ||
@@ -12062,6 +13133,8 @@ async function processSingleMessage(rawMessage, webhookMeta = {}) {
 
     contact:
       from,
+
+    ...(otherMediaSummary ? { incoming: otherMediaSummary } : {}),
 
     type:
       messageType ||
@@ -12333,6 +13406,22 @@ async function processWhatsAppImage(
             new Date().toISOString()
         });
       } else {
+        // V6.45 — Vérification juste avant l'envoi (l'analyse peut être longue).
+        const imageBlockReason = aiAutoSendBlockReason(from, inboundMessageTimeMs(message));
+        if (imageBlockReason) {
+          logAiReplySuppressed({
+            messageId: message?.id,
+            contact: from,
+            incoming: caption,
+            type: 'image',
+            attachmentFields,
+            reply: cleanAnalysis,
+            reason: imageBlockReason,
+            inboundAtMs: inboundMessageTimeMs(message)
+          });
+          return;
+        }
+
         await sendWhatsAppMessage(
           from,
           cleanAnalysis
@@ -12411,6 +13500,51 @@ async function processWhatsAppImage(
 
 let followUpRunning = false;
 
+// V6.45 — Limitation « une relance par client et par 24 h » : fichier dans
+// DATA_DIR (il était écrit en dur dans /data, hors du dossier de données
+// lorsque DATA_DIR est différent). L'ancien fichier /data/followup-last.json
+// est relu une fois s'il existe et que le nouveau est absent.
+const FOLLOWUP_LAST_PATH = path.join(DATA_DIR, 'followup-last.json');
+const FOLLOWUP_LEGACY_LAST_PATH = '/data/followup-last.json';
+// Marge avant la fin de la fenêtre WhatsApp de 24 h (envoi + délai Meta).
+const FOLLOWUP_WINDOW_MARGIN_MS = 10 * 60 * 1000;
+
+function loadFollowUpLast() {
+  if (global.__fuLast && typeof global.__fuLast === 'object') return global.__fuLast;
+  let loaded = {};
+  for (const candidate of [FOLLOWUP_LAST_PATH, FOLLOWUP_LEGACY_LAST_PATH]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        loaded = parsed;
+        break;
+      }
+    } catch {}
+  }
+  global.__fuLast = loaded;
+  return loaded;
+}
+
+function saveFollowUpLast(data) {
+  try {
+    writeJsonAtomic(FOLLOWUP_LAST_PATH, data);
+  } catch (fuErr) {
+    console.error('followup-last :', fuErr.message);
+  }
+}
+
+// Raison de ne pas relancer ce client maintenant, ou '' (voir
+// lib/messaging-rules.js : prise en main, 24 h entre deux relances,
+// fenêtre WhatsApp de 24 h).
+function followUpSkipReason(phone, state, { delayMs, maxFollowUps, followUpLast }) {
+  return messagingRules.followUpSkipReason(state, {
+    delayMs,
+    maxFollowUps,
+    lastFollowUpAtMs: Number(followUpLast?.[phone] || 0),
+    windowMarginMs: FOLLOWUP_WINDOW_MARGIN_MS
+  });
+}
+
 async function checkFollowUps() {
   if (followUpRunning) return;
 
@@ -12452,72 +13586,43 @@ async function checkFollowUps() {
 
     if (!message) return;
 
+    // V6.45 — La carte complète ne sert qu'à choisir les candidats : chaque
+    // relance est vérifiée puis enregistrée conversation par conversation
+    // (avant, la copie prise au début était réenregistrée en entier après
+    // les envois et effaçait les prises en main faites entre-temps).
     const states =
       loadConversationStates();
 
-    let changed = false;
     let fuSentThisRun = 0;
+    const followUpLast = loadFollowUpLast();
 
     for (
       const [phone, state]
       of Object.entries(states)
     ) {
-      if (!state?.awaitingResponse) {
-        continue;
-      }
-
-      if (
-        state.manualTakeover === true ||
-        state.humanPaused === true
-      ) {
-        // Aucune relance IA lorsqu'un commercial a la main.
-        continue;
-      }
-
-      const sent =
-        Number(
-          state.followUpsSent ||
-          0
-        );
-
-      if (sent >= maxFollowUps) {
-        continue;
-      }
       if (fuSentThisRun >= 25) { break; }
-      if (!global.__fuLast) {
-        try { global.__fuLast = JSON.parse(require('fs').readFileSync('/data/followup-last.json','utf8')); }
-        catch (e) { global.__fuLast = {}; }
-      }
-      if (Date.now() - Number(global.__fuLast[phone] || 0) < 24 * 3600 * 1000) {
+
+      if (followUpSkipReason(phone, state, { delayMs, maxFollowUps, followUpLast })) {
         continue;
       }
 
-      const lastBotAt =
-        Date.parse(
-          state.lastBotAt ||
-          ''
+      const followUpChannel =
+        conversationChannel(
+          phone,
+          state
         );
 
-      if (
-        !Number.isFinite(lastBotAt) ||
-        Date.now() - lastBotAt <
-          delayMs
-      ) {
-        continue;
-      }
+      const followUpRecipient =
+        safeString(
+          state.externalContact ||
+          conversationExternalId(phone)
+        );
 
-      try {
-        const followUpChannel =
-          conversationChannel(
-            phone,
-            state
-          );
-
-        const followUpRecipient =
-          safeString(
-            state.externalContact ||
-            conversationExternalId(phone)
-          );
+      const sendFollowUp = async () => {
+        // Nouvelle vérification au moment de l'envoi, sur l'état à jour.
+        const current = getConversationState(phone) || {};
+        const reason = followUpSkipReason(phone, current, { delayMs, maxFollowUps, followUpLast });
+        if (reason) return false;
 
         if (followUpChannel === 'instagram') {
           await sendInstagramMessage(
@@ -12531,21 +13636,21 @@ async function checkFollowUps() {
           );
         }
 
-        state.lastBotAt =
-          new Date().toISOString();
+        markBotMessage(phone, 'followup');
+        return true;
+      };
 
-        state.lastBotType =
-          'followup';
+      try {
+        const sent =
+          followUpChannel === 'whatsapp'
+            ? await conversationQueue.run(`whatsapp:${normalizePhone(followUpRecipient)}`, sendFollowUp)
+            : await sendFollowUp();
 
-        state.followUpsSent =
-          sent + 1;
+        if (!sent) continue;
 
-        changed = true;
         fuSentThisRun++;
-        try {
-          global.__fuLast[phone] = Date.now();
-          writeJsonAtomic('/data/followup-last.json', global.__fuLast);
-        } catch (fuErr) { console.error('followup-last :', fuErr.message); }
+        followUpLast[phone] = Date.now();
+        saveFollowUpLast(followUpLast);
 
         logConversation({
           contact:
@@ -12579,10 +13684,6 @@ async function checkFollowUps() {
           error.message
         );
       }
-    }
-
-    if (changed) {
-      saveConversationStates(states);
     }
   } catch (error) {
     console.error(
@@ -12628,6 +13729,7 @@ async function checkSlaAutoResume() {
 
     const now = Date.now();
     let changed = false;
+    const resumedContacts = [];
 
     for (
       const [contact, state]
@@ -12651,6 +13753,9 @@ async function checkSlaAutoResume() {
         humanPaused: false,
         pausedUntil: null,
         commercialAttention: false,
+        // V6.45 — L'alerte entière est levée avec la reprise de l'IA.
+        commercialAttentionReason: '',
+        imageNeedsCommercial: false,
         // V6.36.51 — Retirer assignedUserId : l'IA reprend seule la main,
         // aucun commercial n'est plus responsable de cette conversation.
         // Sans ce nettoyage, un commercial DIFFÉRENT ne pouvait plus la
@@ -12666,6 +13771,7 @@ async function checkSlaAutoResume() {
       };
 
       changed = true;
+      resumedContacts.push(contact);
 
       console.log(
         `🔁 SLA expiré sans réponse pour ${maskPhoneForLog(contact)} : IA réactivée automatiquement.`
@@ -12674,6 +13780,21 @@ async function checkSlaAutoResume() {
 
     if (changed) {
       saveConversationStates(states);
+      // V6.45 — La reprise automatique est visible dans l'historique de la
+      // conversation (l'Inbox repasse en « IA active » au même moment).
+      for (const contact of resumedContacts) {
+        logConversation({
+          contact,
+          type: 'system',
+          action: 'ai_auto_resumed',
+          source: 'sla_auto_resume',
+          direction: 'system',
+          sender_kind: 'system',
+          system_body: 'aucun commercial n’a répondu avant la fin du délai (SLA)',
+          reply_sent: false,
+          time: new Date().toISOString()
+        });
+      }
     }
   } catch (error) {
     console.error(
@@ -13032,91 +14153,209 @@ app.get(
 // importe déjà Admin.js, l'inverse créerait une dépendance circulaire.
 // Traite au maximum 50 conversations par appel pour rester raisonnable
 // (chaque réponse implique un appel IA + un envoi Meta).
+// V6.45 — Corrections : un second clic (ou un second poste) ne renvoie plus
+// la même réponse (verrou + clé par dernier message non lu, non-lus remis à
+// zéro après envoi) ; une conversation prise en main par un commercial
+// (Admin ou WhatsApp Business) n'est plus réactivée de force (sauf
+// includeTakeovers: true) ; les clients hors fenêtre WhatsApp de 24 h sont
+// ignorés (Meta refuse un message libre) ; chaque réponse passe par la file
+// du client, comme un message entrant, avec une vérification juste avant
+// l'envoi.
+let aiRespondAllUnreadRunning = false;
+
+const aiBulkUnreadKey = messagingRules.aiBulkUnreadKey;
+
+// Raison d'ignorer une conversation, ou '' si l'IA peut lui répondre (voir
+// lib/messaging-rules.js).
+function aiBulkUnreadSkipReason(contact, state, includeTakeovers) {
+  return messagingRules.aiBulkUnreadSkipReason(state, {
+    includeTakeovers,
+    humanSending: humanSendsInFlight.has(safeString(contact)),
+    windowExpired: whatsappCustomerWindowInfo(contact).expired
+  });
+}
+
 app.post(
   '/admin/api/conversations/ai-respond-all-unread',
   requireAuth,
   async (req, res) => {
-    const states = loadConversationStatesAdmin();
-    const targets = [];
-    for (const [contact, state] of Object.entries(states || {})) {
-      if (!state || typeof state !== 'object') continue;
-      if (state.resolved === true) continue;
-      const channel = safeString(state?.channel).toLowerCase() ||
-        (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
-      if (channel !== 'whatsapp') continue;
-      if (Number(state?.unreadCount || 0) <= 0) continue;
-      const lastText = safeString(state?.lastCustomerText);
-      if (!lastText) continue;
-      targets.push(contact);
-      if (targets.length >= 50) break;
+    if (aiRespondAllUnreadRunning) {
+      return res.status(409).json({
+        success: false,
+        error: 'Une réponse IA groupée est déjà en cours. Patientez quelques instants avant de relancer.'
+      });
     }
-    if (!targets.length) {
-      return res.json({ success: true, respondedCount: 0, skippedCount: 0, failedCount: 0, message: 'Aucun message WhatsApp non lu avec IA à réactiver.' });
-    }
-    const reactivatedAt = new Date().toISOString();
-    let responded = 0;
-    let skipped = 0;
-    let failed = 0;
-    const skippedContacts = [];
-    const failedContacts = [];
-    for (const contact of targets) {
-      const state = states[contact] || {};
-      const lastText = safeString(state?.lastCustomerText);
-      updateConversationStateAdmin(contact, current => ({
-        ...current,
-        manualTakeover: false,
-        humanPaused: false,
-        pausedUntil: null,
-        assignedUserId: '',
-        assignedTo: '',
-        aiModePreference: 'ai',
-        aiModeChoicePending: false,
-        aiModeSelectedAt: reactivatedAt,
-        commercialAttention: false,
-        commercialAttentionReason: '',
-        imageNeedsCommercial: false,
-        aiReactivatedAt: reactivatedAt
-      }));
-      try {
-        let reply = await generateReply(contact, lastText, 'whatsapp');
-        // V6.36.85 — Filtre anti-fuite de raisonnement, comme le pipeline
-        // normal. Remplace la réponse par [COMMERCIAL_REQUIRED] si une
-        // fuite est détectée, transférant au commercial plutôt que
-        // d'envoyer un texte de raisonnement interne au client.
-        reply = stripReasoningLeak(reply, contact);
-        const needsCommercial = /\[COMMERCIAL_REQUIRED\]/i.test(reply);
-        reply = reply.replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
-        if (needsCommercial || !reply) {
-          skipped += 1;
-          skippedContacts.push(contact);
+    aiRespondAllUnreadRunning = true;
+
+    try {
+      const includeTakeovers = req.body?.includeTakeovers === true;
+      const states = loadConversationStatesAdmin();
+      const targets = [];
+      const ignored = [];
+      for (const [contact, state] of Object.entries(states || {})) {
+        if (!state || typeof state !== 'object') continue;
+        if (state.resolved === true) continue;
+        const channel = safeString(state?.channel).toLowerCase() ||
+          (contact.startsWith('instagram:') ? 'instagram' : contact.startsWith('facebook:') ? 'facebook' : 'whatsapp');
+        if (channel !== 'whatsapp') continue;
+        if (Number(state?.unreadCount || 0) <= 0) continue;
+        if (!safeString(state?.lastCustomerText)) continue;
+        const reason = aiBulkUnreadSkipReason(contact, state, includeTakeovers);
+        if (reason) {
+          ignored.push({ contact, reason });
           continue;
         }
-        const result = await sendWhatsAppMessage(contact, reply);
-        logConversation({
-          contact,
-          channel: 'whatsapp',
-          reply,
-          action: 'ai_bulk_unread_response',
-          source: 'ai_bulk',
-          reply_sent: true,
-          meta_message_id: safeString(result?.messages?.[0]?.id) || null,
-          time: new Date().toISOString()
-        });
-        responded += 1;
-      } catch (error) {
-        console.warn(`⚠️ Réponse IA (non-lus) ${maskPhoneForLog(contact)} :`, error.message);
-        failed += 1;
-        failedContacts.push(contact);
+        targets.push(contact);
+        if (targets.length >= 50) break;
       }
+      if (!targets.length) {
+        return res.json({
+          success: true,
+          respondedCount: 0,
+          skippedCount: 0,
+          failedCount: 0,
+          ignoredCount: ignored.length,
+          ignored,
+          message: ignored.length
+            ? `Aucun message WhatsApp non lu à traiter par l’IA (${ignored.length} conversation(s) ignorée(s) : déjà répondues, prises en main ou hors fenêtre de 24 h).`
+            : 'Aucun message WhatsApp non lu avec IA à réactiver.'
+        });
+      }
+
+      let responded = 0;
+      let skipped = 0;
+      let failed = 0;
+      const skippedContacts = [];
+      const failedContacts = [];
+
+      for (const contact of targets) {
+        const outcome = await conversationQueue.run(
+          `whatsapp:${normalizePhone(contact)}`,
+          async () => {
+            // Nouvelle vérification dans la file : un message a pu être
+            // traité ou un commercial a pu intervenir entre-temps.
+            const current = getConversationState(contact) || {};
+            const reason = aiBulkUnreadSkipReason(contact, current, includeTakeovers);
+            if (reason) return { status: 'ignored', reason };
+
+            const unreadKey = aiBulkUnreadKey(current);
+            const lastText = safeString(current.lastCustomerText);
+            const lastCustomerMs = Date.parse(safeString(current.lastCustomerAt));
+            const reactivatedAt = new Date().toISOString();
+            updateConversationState(contact, latest => ({
+              ...latest,
+              manualTakeover: false,
+              humanPaused: false,
+              pausedUntil: null,
+              assignedUserId: '',
+              assignedTo: '',
+              aiModePreference: 'ai',
+              aiModeChoicePending: false,
+              aiModeSelectedAt: reactivatedAt,
+              commercialAttention: false,
+              commercialAttentionReason: '',
+              imageNeedsCommercial: false,
+              aiReactivatedAt: reactivatedAt
+            }));
+
+            let reply = await generateReply(contact, lastText, 'whatsapp');
+            // V6.36.85 — Filtre anti-fuite de raisonnement, comme le pipeline
+            // normal. Remplace la réponse par [COMMERCIAL_REQUIRED] si une
+            // fuite est détectée, transférant au commercial plutôt que
+            // d'envoyer un texte de raisonnement interne au client.
+            reply = stripReasoningLeak(reply, contact);
+            const needsCommercial = /\[COMMERCIAL_REQUIRED\]/i.test(reply);
+            reply = reply.replace(/\[COMMERCIAL_REQUIRED\]/gi, '').trim();
+            if (needsCommercial || !reply) {
+              // IA incertaine : la conversation repart au commercial (comme
+              // l'annonce l'interface) et ce message n'est plus retenté.
+              pauseAiForCommercial(
+                contact,
+                'IA incertaine (réponse groupée aux non-lus).',
+                { aiHandoff: true }
+              );
+              updateConversationState(contact, latest => ({
+                ...latest,
+                aiBulkAttemptedKey: unreadKey
+              }));
+              return { status: 'skipped' };
+            }
+
+            // Vérification juste avant l'envoi (prise en main pendant la génération).
+            const latest = getConversationState(contact) || {};
+            const blockReason =
+              conversationAiPauseReason(latest) ||
+              (humanSendsInFlight.has(safeString(contact)) ? 'human_sending' : '') ||
+              (aiBulkUnreadKey(latest) !== unreadKey ? 'new_customer_message' : '') ||
+              (Number.isFinite(lastCustomerMs) && (Date.parse(safeString(latest.lastHumanAt)) || 0) >= lastCustomerMs ? 'human_replied' : '');
+            if (blockReason) {
+              dropUnsentAiHistoryTurn(contact, reply);
+              return { status: 'ignored', reason: blockReason };
+            }
+
+            let result;
+            try {
+              result = await sendWhatsAppMessage(contact, reply);
+            } catch (error) {
+              dropUnsentAiHistoryTurn(contact, reply);
+              throw error;
+            }
+
+            markBotMessage(contact, 'reply');
+            const answeredAt = new Date().toISOString();
+            updateConversationState(contact, state => ({
+              ...state,
+              unreadCount: 0,
+              lastUnreadMessageId: '',
+              lastReadAt: answeredAt,
+              lastAnsweredAt: answeredAt,
+              lastAnsweredCustomerAt: safeString(state.lastCustomerAt),
+              aiBulkAnsweredKey: unreadKey,
+              aiBulkAnsweredAt: answeredAt
+            }));
+            logConversation({
+              contact,
+              channel: 'whatsapp',
+              reply,
+              action: 'ai_bulk_unread_response',
+              source: 'ai_bulk',
+              reply_sent: true,
+              meta_message_id: safeString(result?.messages?.[0]?.id) || null,
+              time: answeredAt
+            });
+            return { status: 'responded' };
+          }
+        ).catch(error => {
+          console.warn(`⚠️ Réponse IA (non-lus) ${maskPhoneForLog(contact)} :`, error.message);
+          return { status: 'failed' };
+        });
+
+        if (outcome?.status === 'responded') {
+          responded += 1;
+        } else if (outcome?.status === 'skipped') {
+          skipped += 1;
+          skippedContacts.push(contact);
+        } else if (outcome?.status === 'ignored') {
+          ignored.push({ contact, reason: outcome.reason });
+        } else {
+          failed += 1;
+          failedContacts.push(contact);
+        }
+      }
+
+      return res.json({
+        success: true,
+        respondedCount: responded,
+        skippedCount: skipped,
+        failedCount: failed,
+        ignoredCount: ignored.length,
+        skipped: skippedContacts,
+        failed: failedContacts,
+        ignored
+      });
+    } finally {
+      aiRespondAllUnreadRunning = false;
     }
-    return res.json({
-      success: true,
-      respondedCount: responded,
-      skippedCount: skipped,
-      failedCount: failed,
-      skipped: skippedContacts,
-      failed: failedContacts
-    });
   }
 );
 
@@ -13176,6 +14415,8 @@ app.use(
   }
 );
 
+// Promesse rejetée sans gestionnaire : journalisée en erreur, donc envoyée
+// à ALERT_WEBHOOK_URL (alertes groupées) ; le serveur continue.
 process.on(
   'unhandledRejection',
   reason => {
@@ -13186,22 +14427,71 @@ process.on(
   }
 );
 
+// V6.45 — Exception non rattrapée : les écritures en attente sont faites
+// avant de quitter (le gestionnaire de processus redémarre l'application).
+// Les messages en cours de traitement restent dans inbound-journal.jsonl et
+// sont rejoués au démarrage.
+// V6.46 — L'alerte ALERT_WEBHOOK_URL est envoyée AVANT de quitter (elle
+// était perdue : la sortie immédiate ne laissait pas partir l'envoi groupé),
+// et le serveur cesse d'accepter des connexions pendant ce temps
+// (lib/runtime-check.js, createFatalErrorHandler).
+process.on(
+  'uncaughtException',
+  runtimeCheck.createFatalErrorHandler({
+    log: error => console.error(
+      `❌ Exception non rattrapée (arrêt) — MONDECO V${APP_VERSION}${APP_COMMIT ? ` (${APP_COMMIT})` : ''} :`,
+      error
+    ),
+    stopAccepting: () => {
+      // httpServer n'existe pas encore si l'exception survient au démarrage
+      // (ReferenceError rattrapée par createFatalErrorHandler).
+      httpServer.close();
+    },
+    flushWrites: () => flushAllPendingWrites(),
+    flushAlerts: () => consoleLogger.flushAlerts(),
+    alertTimeoutMs: 4000
+  })
+);
+
 // ============================================================
 // DÉMARRAGE
 // ============================================================
 
+// V6.45 — Messages interrompus par l'arrêt précédent : mis en file avant
+// que le serveur n'accepte de nouveaux webhooks.
+try {
+  replayPendingInboundMessages();
+} catch (error) {
+  console.error('❌ Reprise des messages entrants au démarrage :', error?.message || error);
+}
+
+// V6.46 — Base SQLite ouverte AVANT d'accepter des webhooks : un module
+// natif incompatible ou une base illisible se voit au démarrage (log, alerte,
+// /health « degraded ») et non au premier message client.
+try {
+  const sqliteAtBoot = sharedSqliteConnection();
+  if (sqliteAtBoot) sqliteAtBoot.get();
+} catch (error) {
+  console.error('❌ Ouverture SQLite au démarrage :', error?.message || error);
+}
+
+// V6.46 — Adresse d'écoute : HOST (défaut 0.0.0.0, comportement inchangé,
+// indispensable sur Railway/Docker). Sur un VPS avec Nginx local, HOST=127.0.0.1
+// empêche l'accès direct en HTTP au port de l'application.
+const LISTEN_HOST = String(process.env.HOST || '').trim() || '0.0.0.0';
+
 const httpServer = app.listen(
   PORT,
-  '0.0.0.0',
+  LISTEN_HOST,
   () => {
     console.log(
       '=============================================='
     );
     console.log(
-      '✅ SERVEUR MONDECO DÉMARRÉ'
+      `✅ SERVEUR MONDECO V${APP_VERSION} DÉMARRÉ`
     );
     console.log(
-      `✅ Port : ${PORT}`
+      `✅ Port : ${PORT} (adresse ${LISTEN_HOST})`
     );
     console.log(
       '✅ Health : /health'
@@ -13243,6 +14533,13 @@ let shuttingDown = false;
 function flushAllPendingWrites() {
   try { flushAllJsonStores(); } catch (error) { console.error('❌ Arrêt : historique IA non écrit :', error.message); }
   try { flushHistoryLogWrite(); } catch (error) { console.error('❌ Arrêt : journal non écrit :', error.message); }
+  // V6.46 — Événements gardés en mémoire pendant un disque plein.
+  try {
+    flushPendingPersistentWrites();
+    if (pendingPersistentEvents.length) {
+      console.error(`🚨 Arrêt : ${pendingPersistentEvents.length} événement(s) de conversation non écrit(s) (disque plein).`);
+    }
+  } catch (error) { console.error('❌ Arrêt : journal permanent non écrit :', error.message); }
   try { flushConversationStatesWrite(); } catch (error) { console.error('❌ Arrêt : état des conversations non écrit :', error.message); }
 }
 
